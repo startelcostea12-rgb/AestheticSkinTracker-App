@@ -1,0 +1,50 @@
+﻿Analyzing aestheticskintracker...                               
+
+   info - Invalid use of a private type in a public API - lib\screens\premium_recovery_hub_screen.dart:36:6 - library_private_types_in_public_api
+warning - The declaration '_trendDeltaSummaryCard' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:3714:10 - unused_element
+warning - The declaration '_severityChip' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:4095:10 - unused_element
+warning - The declaration '_saveActionsCard' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:5655:10 - unused_element
+warning - The declaration '_heatmapImageForPath' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:5780:10 - unused_element
+warning - The declaration '_modelDisclosure' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:6479:10 - unused_element
+warning - The declaration '_overallScoreCard' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:6514:10 - unused_element
+warning - The declaration '_metricsGrid' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:6605:10 - unused_element
+warning - The declaration '_recommendationsCard' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:6721:10 - unused_element
+warning - The declaration '_clinicalInsightsCard' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:6789:10 - unused_element
+warning - The declaration '_textItemsCard' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:6863:10 - unused_element
+warning - The declaration '_getSmartNarrative' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:6922:10 - unused_element
+warning - The declaration '_framingNote' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:6999:10 - unused_element
+warning - The declaration '_aiNurseCtaCard' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:7024:10 - unused_element
+warning - The declaration '_buildReportBundle' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:7239:17 - unused_element
+warning - The declaration '_buildActionableRecommendations' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:7766:16 - unused_element
+warning - The declaration '_buildProductRecommendationsFromReport' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:7816:33 - unused_element
+warning - The declaration '_extractTextItems' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:7893:19 - unused_element
+warning - The declaration '_numericValue' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:7958:11 - unused_element
+warning - The declaration '_DetectionOverlayPainter' isn't referenced - lib\screens\skin_ai_analysis_screen.dart:8146:7 - unused_element
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\screens\skincare_routine_screen.dart:428:35 - use_build_context_synchronously
+   info - Statements in an if should be enclosed in a block - lib\utils\ai_intelligence_engine.dart:231:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\utils\ai_intelligence_engine.dart:238:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\utils\ai_intelligence_engine.dart:323:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\utils\ai_intelligence_engine.dart:383:7 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\utils\ai_intelligence_engine.dart:450:7 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\utils\ai_intelligence_engine.dart:517:7 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\utils\ai_intelligence_engine.dart:601:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\utils\ai_intelligence_engine.dart:661:7 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\utils\ai_intelligence_engine.dart:747:9 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\utils\ai_intelligence_engine.dart:808:7 - curly_braces_in_flow_control_structures
+warning - The declaration '_insightKeyFromLabel' isn't referenced - lib\utils\ai_intelligence_engine.dart:1085:17 - unused_element
+warning - The value of the local variable 'resolvedProcedureType' isn't used - lib\utils\ai_intelligence_engine.dart:1427:11 - unused_local_variable
+   info - Don't use 'BuildContext's across async gaps - lib\utils\report_flow.dart:88:65 - use_build_context_synchronously
+warning - The declaration '_narrativeForMetric' isn't referenced - lib\utils\report_service.dart:2882:17 - unused_element
+   info - Invalid use of a private type in a public API - lib\utils\tracked_item_display.dart:21:8 - library_private_types_in_public_api
+warning - 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead - lib\utils\web_blob_bytes_web.dart:4:1 - deprecated_member_use
+   info - Don't use web-only libraries outside Flutter web plugins - lib\widgets\report_share_helper_web.dart:1:1 - avoid_web_libraries_in_flutter
+warning - 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead - lib\widgets\report_share_helper_web.dart:1:1 - deprecated_member_use
+
+flutter : 39 issues found. (ran in 8.0s)
+At line:1 char:8
++ $out = flutter analyze 2>&1; $out | Out-File -FilePath analyze_cleanu ...
++        ~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (39 issues found. (ran in 8.0s):St 
+   ring) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

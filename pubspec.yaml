@@ -1,0 +1,130 @@
+name: aesthetic_skin_tracker
+description: "Aesthetic Skin Tracker - Personalized skincare & procedure tracking"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.0
+  flutter: ">=3.19.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  share_plus: ^10.1.4
+  path_provider: ^2.1.4
+  shared_preferences: ^2.3.2
+  image_picker: ^1.1.2
+  file_picker: ^8.1.7
+  desktop_drop: ^0.5.0
+  dotted_border: ^2.1.0
+  camera: ^0.11.0+2
+  image: ^4.5.4
+  google_mlkit_commons: ^0.11.0
+  google_mlkit_face_detection: ^0.13.1
+  google_mlkit_face_mesh_detection: ^0.4.2
+  google_mlkit_pose_detection: ^0.14.0
+  intl: ^0.20.2
+  google_generative_ai: ^0.4.7
+  http: ^1.6.0
+  json_annotation: 4.9.0
+  record: ^6.1.0
+
+  purchases_flutter: ^9.16.1
+  purchases_ui_flutter: ^9.16.1
+
+  cupertino_icons: ^1.0.8
+  fl_chart: ^1.2.0
+  shimmer: ^3.0.0
+  before_after: ^3.2.0
+  pdf: ^3.10.8
+  printing: ^5.12.0
+
+  url_launcher: ^6.3.1
+  audioplayers: ^6.1.0
+  vibration: ^3.1.8
+  speech_to_text: ^7.0.0
+  firebase_core: ^4.5.0
+  firebase_crashlytics: ^5.0.8
+  flutter_local_notifications: ^17.2.3
+  permission_handler: ^11.3.1
+  timezone: ^0.9.4
+
+  # ── On-device AI inference (native platforms only) ───────────────
+  # tflite_flutter is used on Android / iOS / macOS / Windows / Linux.
+  # On Web the model is loaded via TensorFlow.js (JS interop in
+  # lib/utils/ai/acne_severity_model_web.dart). When the model file is
+  # absent on any platform, the system falls back to the calibrated
+  # rule engine in acne_rosacea_photo_analysis.dart.
+  tflite_flutter: ^0.11.0
+  video_player: ^2.11.1
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  uuid: ^4.5.3
+  flutter_riverpod: 2.6.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  build_runner: 2.4.6
+  flutter_launcher_icons: ^0.14.1
+  flutter_native_splash: ^2.4.0
+  json_serializable: 6.8.0
+  hive_generator: 2.0.1
+
+flutter:
+  uses-material-design: true
+
+  # Assets
+  assets:
+    - lib/data/skincare_knowledge_base.json
+    - assets/logo/logo.png
+    - assets/logo/
+    - assets/images/
+    - assets/models/
+    - assets/fonts/
+    - assets/videos/
+
+  fonts:
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto-Regular.ttf
+        - asset: assets/fonts/Roboto-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Roboto-Italic.ttf
+          style: italic
+
+# Flutter Launcher Icons
+flutter_launcher_icons:
+  android: true
+  ios: true
+  web:
+    generate: true
+    image_path: "assets/logo/logo.png"
+    background_color: "#FDF8F5"
+    theme_color: "#D4AF37"
+  image_path: "assets/logo/logo.png"
+  remove_alpha_ios: true
+  min_sdk_android: 21
+  macos:
+    generate: true
+    image_path: "assets/logo/logo.png"
+  windows:
+    generate: true
+    image_path: "assets/logo/logo.png"
+    icon_size: 256
+
+# Flutter Native Splash
+flutter_native_splash:
+  color: "#FDF8F5"
+  image: "assets/logo/logo.png"
+  android: true
+  ios: true
+  web: true
+  android_gravity: center
+  ios_content_mode: scaleAspectFit
+  android_12:
+    image: "assets/logo/logo.png"
+    icon_background_color: "#FDF8F5"

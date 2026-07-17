@@ -1,0 +1,19 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - build/**
+    - lib/**/*.g.dart
+    - lib/**/*.freezed.dart
+    - tool/**
+  errors:
+    deprecated_member_use: warning
+    unused_local_variable: warning
+    include_file_not_found: ignore   # helps with the warning you saw
+
+linter:
+  rules:
+    prefer_const_constructors: true
+    prefer_const_declarations: true
+    unnecessary_this: true
+    avoid_print: false

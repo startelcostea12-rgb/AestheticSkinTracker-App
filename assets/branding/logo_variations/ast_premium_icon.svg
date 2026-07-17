@@ -1,0 +1,32 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" rx="248" fill="#FFFDFC"/>
+  <defs>
+    <linearGradient id="iconRoseGold" x1="280" y1="184" x2="705" y2="742" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E8BBC1"/>
+      <stop offset="0.5" stop-color="#DEAC92"/>
+      <stop offset="1" stop-color="#D4B16A"/>
+    </linearGradient>
+    <linearGradient id="iconSage" x1="515" y1="196" x2="736" y2="460" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B5C9B6"/>
+      <stop offset="1" stop-color="#89A58C"/>
+    </linearGradient>
+    <radialGradient id="iconGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(512 512) rotate(90) scale(314)">
+      <stop stop-color="#FAEFEC"/>
+      <stop offset="1" stop-color="#FFFDFC" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect x="116" y="116" width="792" height="792" rx="220" fill="#FFFFFF"/>
+  <rect x="117" y="117" width="790" height="790" rx="219" stroke="#F3DDD7" stroke-width="2"/>
+  <circle cx="512" cy="512" r="300" fill="url(#iconGlow)"/>
+
+  <path d="M480 256C421 316 383 389 383 476C383 606 474 696 615 699C531 639 486 560 486 467C486 393 512 326 565 268C533 272 506 270 480 256Z" stroke="url(#iconRoseGold)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M562 240C649 246 717 286 763 368C673 367 603 333 551 264C546 256 552 239 562 240Z" fill="url(#iconSage)"/>
+  <path d="M569 271C648 282 707 319 746 381" stroke="#89A58C" stroke-width="15" stroke-linecap="round"/>
+
+  <path d="M443 403C474 381 505 371 536 369" stroke="#D7A898" stroke-width="14" stroke-linecap="round" opacity="0.8"/>
+  <path d="M411 540C464 532 511 545 553 576" stroke="#E4C286" stroke-width="15" stroke-linecap="round"/>
+
+  <circle cx="675" cy="335" r="21" fill="#E8C98E"/>
+  <circle cx="716" cy="297" r="10" fill="#E8BBC1" opacity="0.82"/>
+</svg>

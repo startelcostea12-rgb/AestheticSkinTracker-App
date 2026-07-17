@@ -1,0 +1,368 @@
+<!DOCTYPE html><html><head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="A new Flutter project.">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="aestheticskintracker">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png">
+
+  <title>aestheticskintracker</title>
+  <link rel="manifest" href="manifest.json">
+  <style id="splash-screen-style">
+    html {
+      height: 100%
+    }
+
+    body {
+      margin: 0;
+      min-height: 100%;
+      background-color: #FDF8F5;
+          background-size: 100% 100%;
+    }
+
+    .center {
+      margin: 0;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      -ms-transform: translate(-50%, -50%);
+      transform: translate(-50%, -50%);
+    }
+
+    .contain {
+      display:block;
+      width:100%; height:100%;
+      object-fit: contain;
+    }
+
+    .stretch {
+      display:block;
+      width:100%; height:100%;
+    }
+
+    .cover {
+      display:block;
+      width:100%; height:100%;
+      object-fit: cover;
+    }
+
+    .bottom {
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      -ms-transform: translate(-50%, 0);
+      transform: translate(-50%, 0);
+    }
+
+    .bottomLeft {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+    }
+
+    .bottomRight {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+    }
+  </style>
+  <script id="splash-screen-script">
+    function removeSplashFromWeb() {
+      document.getElementById("splash")?.remove();
+      document.getElementById("splash-branding")?.remove();
+      document.body.style.background = "transparent";
+    }
+  </script>
+  <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport">
+</head>
+<body>
+  <picture id="splash">
+      <source srcset="splash/img/light-1x.png 1x, splash/img/light-2x.png 2x, splash/img/light-3x.png 3x, splash/img/light-4x.png 4x" media="(prefers-color-scheme: light)">
+      <source srcset="splash/img/dark-1x.png 1x, splash/img/dark-2x.png 2x, splash/img/dark-3x.png 3x, splash/img/dark-4x.png 4x" media="(prefers-color-scheme: dark)">
+      <img class="center" aria-hidden="true" src="splash/img/light-1x.png" alt="">
+  </picture>
+  <script>
+    // Flutter Web image picker — called from Dart via dart:js
+    window._flutterPickImage = function(callback) {
+      var input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.addEventListener('change', function() {
+        if (input.files && input.files.length > 0) {
+          var reader = new FileReader();
+          reader.onload = function(e) {
+            callback(e.target.result); // data URL: "data:image/...;base64,..."
+          };
+          reader.readAsDataURL(input.files[0]);
+        } else {
+          callback(null);
+        }
+      });
+      // Handle cancel: window regains focus without onChange firing
+      window.addEventListener('focus', function onFocus() {
+        window.removeEventListener('focus', onFocus);
+        setTimeout(function() {
+          if (input.files == null || input.files.length === 0) {
+            callback(null);
+          }
+        }, 500);
+      });
+      input.click();
+    };
+  </script>
+
+  <!-- Tesseract.js OCR — used for surgeon document photo text recognition -->
+  <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
+
+  <!-- Cropper.js — required by the image_cropper Flutter package on web -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.js"></script>
+  <script>
+    // ── Image pre-processing ─────────────────────────────────────────────────
+    // Upscale, convert to grayscale and boost contrast before sending to
+    // Tesseract.  Better input → significantly higher accuracy.
+    window.preprocessForOCR = function(dataUrl) {
+      return new Promise(function(resolve) {
+        var img = new Image();
+        img.onerror = function() { resolve(dataUrl); };
+        img.onload = function() {
+          try {
+            // Scale so the shorter dimension is at least 1800px (Tesseract
+            // likes ~300 DPI; most phone photos are fine at 1.5–2×)
+            var MAX_DIM = 2400;
+            var scale = Math.max(1.5, Math.min(3, MAX_DIM / Math.max(img.width, img.height, 1)));
+            var canvas = document.createElement('canvas');
+            canvas.width  = Math.round(img.width  * scale);
+            canvas.height = Math.round(img.height * scale);
+            var ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+            // Grayscale + contrast stretch
+            var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            var d = imageData.data;
+            for (var i = 0; i < d.length; i += 4) {
+              var gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+              // Stretch: [30, 225] → [0, 255]  then slight gamma brighten
+              gray = Math.min(255, Math.max(0, ((gray - 30) / 195) * 255));
+              gray = Math.pow(gray / 255, 0.85) * 255;
+              d[i] = d[i + 1] = d[i + 2] = Math.round(gray);
+            }
+            ctx.putImageData(imageData, 0, 0);
+            resolve(canvas.toDataURL('image/png'));
+          } catch (e) {
+            resolve(dataUrl); // fallback: use original
+          }
+        };
+        img.src = dataUrl;
+      });
+    };
+
+    // ── Main OCR entry point ─────────────────────────────────────────────────
+    // Called from Dart via @JS('runOCR').  Returns Promise<string>.
+    window.runOCR = async function(dataUrl) {
+      try {
+        var processedUrl = await window.preprocessForOCR(dataUrl);
+        var params = { logger: function() {} };
+        // Use LSTM neural-network engine + automatic page segmentation
+        try {
+          params.tessedit_ocr_engine_mode = (Tesseract.OEM || {}).LSTM_ONLY !== undefined
+              ? Tesseract.OEM.LSTM_ONLY : 1;
+          params.tessedit_pageseg_mode = (Tesseract.PSM || {}).AUTO !== undefined
+              ? Tesseract.PSM.AUTO : 3;
+          params.preserve_interword_spaces = '1';
+        } catch (e) {}
+        var result = await Tesseract.recognize(processedUrl, 'eng', params);
+        return (result && result.data && result.data.text) ? result.data.text : '';
+      } catch (e) {
+        console.warn('Tesseract OCR error:', e);
+        return '';
+      }
+    };
+
+    // ── Medical text post-processor ──────────────────────────────────────────
+    // Called from Dart via @JS('cleanMedicalText').  Synchronous; returns string.
+    window.cleanMedicalText = function(raw) {
+      if (!raw) return '';
+      var t = raw;
+
+      // 1. Normalise line endings
+      t = t.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+      // 2. Remove non-printable control characters (keep tab + newline + printable ASCII/Latin-1)
+      t = t.replace(/[^\x09\x0A\x20-\x7E\xA0-\xFF]/g, '');
+
+      // 3. Common digit/letter OCR confusions
+      t = t.replace(/\b1(?=[a-z])/g, 'I');             // leading 1 before lowercase → I
+      t = t.replace(/\b0(?=[a-z])/g, 'O');             // leading 0 before lowercase → O
+      t = t.replace(/([a-zA-Z])0([a-zA-Z])/g, '$1o$2'); // mid-word 0 → o
+      t = t.replace(/([a-zA-Z])1([a-zA-Z])/g, '$1l$2'); // mid-word 1 → l
+      t = t.replace(/([a-zA-Z])\|([a-zA-Z])/g, '$1l$2'); // pipe inside word → l
+
+      // 4. Fix spaced-out letters e.g. "A v o i d" → "Avoid" (3+ singles)
+      t = t.replace(/\b([A-Za-z]) ([A-Za-z]) ([A-Za-z])( [A-Za-z])*\b/g, function(m) {
+        return m.replace(/ /g, '');
+      });
+
+      // 5. Common medical word repairs
+      var fixes = {
+        'instruc tions': 'instructions',
+        'medica tion': 'medication',
+        'medicati on': 'medication',
+        'prescri ption': 'prescription',
+        'anti biotic': 'antibiotic',
+        'inflam mation': 'inflammation',
+        'recov ery': 'recovery',
+        'swel ling': 'swelling',
+        'swell ing': 'swelling',
+        'follow up': 'follow-up',
+        'post op': 'post-op',
+        'post-op erative': 'post-operative',
+        'pre op': 'pre-op',
+        'expo sure': 'exposure',
+        'oint ment': 'ointment',
+        'treat ment': 'treatment',
+        'appoint ment': 'appointment',
+        'dis comfort': 'discomfort',
+        '\\bqd\\b': 'once daily',
+        '\\bbid\\b': 'twice daily',
+        '\\btid\\b': 'three times daily',
+        '\\bqid\\b': 'four times daily',
+        '\\bprn\\b': 'as needed',
+        '\\bpo\\b':  'by mouth',
+        '\\bnpo\\b': 'nothing by mouth',
+        '\\bhrs\\b': 'hours',
+        '\\bwks\\b': 'weeks',
+        '\\bmos\\b': 'months',
+        '\\btabs?\\b': 'tablet',
+        '\\bcaps?\\b': 'capsule',
+        '\\bmg\\b':  'mg',
+        '\\bml\\b':  'mL',
+      };
+      for (var pattern in fixes) {
+        if (Object.prototype.hasOwnProperty.call(fixes, pattern)) {
+          try {
+            t = t.replace(new RegExp(pattern, 'gi'), fixes[pattern]);
+          } catch (e) {
+            t = t.replace(pattern, fixes[pattern]);
+          }
+        }
+      }
+
+      // 6. Fix punctuation spacing
+      t = t.replace(/ +([.,;:!?])/g, '$1');        // no space before punctuation
+      t = t.replace(/([.,;:!?])(?=[A-Za-z])/g, '$1 '); // space after punctuation if missing
+
+      // 7. Collapse 3+ blank lines → 2
+      t = t.replace(/\n{3,}/g, '\n\n');
+
+      // 8. Collapse multiple spaces
+      t = t.replace(/ {2,}/g, ' ');
+
+      // 9. Trim each line
+      t = t.split('\n').map(function(line) { return line.trim(); }).join('\n');
+
+      return t.trim();
+    };
+  </script>
+
+  <!-- ───────────────────────────────────────────────────────────────────
+       TensorFlow.js skin-analysis shim. Loads an ACNE04-trained model
+       converted to TF.js Graph Model format from `models/acne_severity/`
+       (relative to the site root). Exposes:
+           window.skinAnalysisAi.ready        : Promise<boolean>
+           window.skinAnalysisAi.analyzeBytes : (Uint8Array) => Promise<{grade,confidence}>
+       Consumed by lib/utils/ai/acne_severity_model_web.dart.
+       If model files are absent, `ready` resolves to `false` and Dart
+       falls back to the calibrated rule engine.
+       ─────────────────────────────────────────────────────────────────── -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+  <script>
+    (function () {
+      var MODEL_URL = 'models/acne_severity/model.json';
+      var INPUT_SIZE = 224;
+      var ENABLE_OPTIONAL_WEB_MODEL = false;
+      var modelPromise = null;
+
+      function loadModel() {
+        if (modelPromise) return modelPromise;
+        modelPromise = (async function () {
+          try {
+            if (!ENABLE_OPTIONAL_WEB_MODEL) return null;
+            // HEAD probe so we can fail fast without a noisy console error.
+            var head = await fetch(MODEL_URL, { method: 'HEAD' });
+            if (!head.ok) return null;
+            return await tf.loadGraphModel(MODEL_URL);
+          } catch (e) {
+            return null;
+          }
+        })();
+        return modelPromise;
+      }
+
+      function bytesToImage(bytes) {
+        return new Promise(function (resolve, reject) {
+          var blob = new Blob([bytes]);
+          var url = URL.createObjectURL(blob);
+          var img = new Image();
+          img.onload = function () { URL.revokeObjectURL(url); resolve(img); };
+          img.onerror = function (e) { URL.revokeObjectURL(url); reject(e); };
+          img.src = url;
+        });
+      }
+
+      window.skinAnalysisAi = {
+        ready: (async function () {
+          var m = await loadModel();
+          return !!m;
+        })(),
+        analyzeBytes: async function (bytes) {
+          var model = await loadModel();
+          if (!model) return { grade: 0, confidence: 0 };
+          var img = await bytesToImage(bytes);
+          var result = tf.tidy(function () {
+            var t = tf.browser.fromPixels(img)
+              .resizeBilinear([INPUT_SIZE, INPUT_SIZE])
+              .toFloat()
+              .div(255.0)
+              .expandDims(0);
+            var out = model.predict(t);
+            var arr = out.dataSync();
+            var top = 0; var topP = arr[0];
+            for (var i = 1; i < arr.length; i++) {
+              if (arr[i] > topP) { topP = arr[i]; top = i; }
+            }
+            return { grade: top, confidence: topP };
+          });
+          return result;
+        }
+      };
+    })();
+  </script>
+
+  <script src="flutter_bootstrap.js" async=""></script>
+
+
+</body></html>

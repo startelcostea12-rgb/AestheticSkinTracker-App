@@ -1,0 +1,426 @@
+import 'dart:io';
+import 'dart:math' as math;
+
+import 'package:camera/camera.dart';
+import 'package:flutter/services.dart';
+import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
+import 'package:image/image.dart' as img;
+
+import 'landmark_assessment.dart';
+
+final FaceDetector _streamFaceDetector = FaceDetector(
+  options: FaceDetectorOptions(
+    enableLandmarks: true,
+    enableTracking: true,
+    performanceMode: FaceDetectorMode.fast,
+  ),
+);
+
+final FaceDetector _singleFaceDetector = FaceDetector(
+  options: FaceDetectorOptions(
+    enableLandmarks: true,
+    enableClassification: true,
+    performanceMode: FaceDetectorMode.accurate,
+  ),
+);
+
+final PoseDetector _streamPoseDetector = PoseDetector(
+  options: PoseDetectorOptions(mode: PoseDetectionMode.stream),
+);
+
+final PoseDetector _singlePoseDetector = PoseDetector(
+  options: PoseDetectorOptions(
+    mode: PoseDetectionMode.single,
+    model: PoseDetectionModel.accurate,
+  ),
+);
+
+const _orientations = {
+  DeviceOrientation.portraitUp: 0,
+  DeviceOrientation.landscapeLeft: 90,
+  DeviceOrientation.portraitDown: 180,
+  DeviceOrientation.landscapeRight: 270,
+};
+
+Future<LandmarkAssessment> analyzeLiveLandmarks({
+  required CameraImage image,
+  required CameraDescription camera,
+  required DeviceOrientation deviceOrientation,
+  required bool isBody,
+  required String poseTemplate,
+}) async {
+  if (!Platform.isAndroid && !Platform.isIOS) {
+    return LandmarkAssessment.unsupported;
+  }
+
+  final inputImage = _inputImageFromCameraImage(
+    image: image,
+    camera: camera,
+    deviceOrientation: deviceOrientation,
+  );
+  if (inputImage == null) return LandmarkAssessment.unsupported;
+
+  return isBody
+      ? _assessBody(inputImage, poseTemplate, useSingle: false)
+      : _assessFace(inputImage, poseTemplate, useSingle: false);
+}
+
+Future<LandmarkAssessment> analyzeCapturedLandmarks({
+  required Uint8List bytes,
+  String? filePath,
+  required bool isBody,
+  required String poseTemplate,
+}) async {
+  if (!Platform.isAndroid && !Platform.isIOS) {
+    return LandmarkAssessment.unsupported;
+  }
+
+  InputImage? inputImage;
+  if (filePath != null && filePath.trim().isNotEmpty) {
+    inputImage = InputImage.fromFilePath(filePath);
+  } else {
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) return LandmarkAssessment.unsupported;
+    final rgbaBytes = Uint8List(decoded.width * decoded.height * 4);
+    var offset = 0;
+    for (var y = 0; y < decoded.height; y++) {
+      for (var x = 0; x < decoded.width; x++) {
+        final pixel = decoded.getPixel(x, y);
+        rgbaBytes[offset++] = pixel.r.toInt();
+        rgbaBytes[offset++] = pixel.g.toInt();
+        rgbaBytes[offset++] = pixel.b.toInt();
+        rgbaBytes[offset++] = pixel.a.toInt();
+      }
+    }
+    inputImage = InputImage.fromBitmap(
+      bitmap: rgbaBytes,
+      width: decoded.width,
+      height: decoded.height,
+    );
+  }
+
+  return isBody
+      ? _assessBody(inputImage, poseTemplate, useSingle: true)
+      : _assessFace(inputImage, poseTemplate, useSingle: true);
+}
+
+Future<void> closeLandmarkAnalyzers() async {
+  await _streamFaceDetector.close();
+  await _singleFaceDetector.close();
+  await _streamPoseDetector.close();
+  await _singlePoseDetector.close();
+}
+
+InputImage? _inputImageFromCameraImage({
+  required CameraImage image,
+  required CameraDescription camera,
+  required DeviceOrientation deviceOrientation,
+}) {
+  final sensorOrientation = camera.sensorOrientation;
+  InputImageRotation? rotation;
+  if (Platform.isIOS) {
+    rotation = InputImageRotationValue.fromRawValue(sensorOrientation);
+  } else if (Platform.isAndroid) {
+    var rotationCompensation = _orientations[deviceOrientation];
+    if (rotationCompensation == null) return null;
+    if (camera.lensDirection == CameraLensDirection.front) {
+      rotationCompensation = (sensorOrientation + rotationCompensation) % 360;
+    } else {
+      rotationCompensation =
+          (sensorOrientation - rotationCompensation + 360) % 360;
+    }
+    rotation = InputImageRotationValue.fromRawValue(rotationCompensation);
+  }
+  if (rotation == null) return null;
+
+  final format = InputImageFormatValue.fromRawValue(image.format.raw);
+  if (format == null) return null;
+
+  const androidSupportedFormats = [
+    InputImageFormat.nv21,
+    InputImageFormat.yv12,
+    InputImageFormat.yuv_420_888,
+  ];
+
+  if ((Platform.isAndroid && !androidSupportedFormats.contains(format)) ||
+      (Platform.isIOS && format != InputImageFormat.bgra8888)) {
+    return null;
+  }
+
+  InputImageFormat resolvedFormat = format;
+  Uint8List bytes;
+  if (image.planes.length == 1) {
+    bytes = image.planes.first.bytes;
+  } else if (Platform.isAndroid &&
+      (format == InputImageFormat.yuv_420_888 ||
+          format == InputImageFormat.yv12) &&
+      image.planes.length == 3) {
+    bytes = _convertYUV420ToNV21(image);
+    resolvedFormat = InputImageFormat.nv21;
+  } else {
+    bytes = _concatenatePlanes(image);
+  }
+
+  return InputImage.fromBytes(
+    bytes: bytes,
+    metadata: InputImageMetadata(
+      size: Size(image.width.toDouble(), image.height.toDouble()),
+      rotation: rotation,
+      format: resolvedFormat,
+      bytesPerRow: image.planes.first.bytesPerRow,
+    ),
+  );
+}
+
+Uint8List _convertYUV420ToNV21(CameraImage image) {
+  final width = image.width;
+  final height = image.height;
+  final yPlane = image.planes[0];
+  final uPlane = image.planes[1];
+  final vPlane = image.planes[2];
+  final nv21 = Uint8List(width * height + (width * height ~/ 2));
+  nv21.setRange(0, width * height, yPlane.bytes);
+  final uvPixelStride = uPlane.bytesPerPixel ?? 1;
+  final vPixelStride = vPlane.bytesPerPixel ?? 1;
+  var uvIndex = width * height;
+  for (int row = 0; row < height ~/ 2; row++) {
+    final uRowStart = row * uPlane.bytesPerRow;
+    final vRowStart = row * vPlane.bytesPerRow;
+    for (int col = 0; col < width ~/ 2; col++) {
+      final uIndex = uRowStart + col * uvPixelStride;
+      final vIndex = vRowStart + col * vPixelStride;
+      nv21[uvIndex++] = vPlane.bytes[vIndex];
+      nv21[uvIndex++] = uPlane.bytes[uIndex];
+    }
+  }
+  return nv21;
+}
+
+Uint8List _concatenatePlanes(CameraImage image) {
+  final totalBytes = image.planes.fold<int>(
+    0,
+    (sum, plane) => sum + plane.bytes.length,
+  );
+  final buffer = Uint8List(totalBytes);
+  var offset = 0;
+  for (final plane in image.planes) {
+    buffer.setRange(offset, offset + plane.bytes.length, plane.bytes);
+    offset += plane.bytes.length;
+  }
+  return buffer;
+}
+
+Future<LandmarkAssessment> _assessFace(
+  InputImage inputImage,
+  String poseTemplate, {
+  required bool useSingle,
+}) async {
+  final detector = useSingle ? _singleFaceDetector : _streamFaceDetector;
+  final faces = await detector.processImage(inputImage);
+  if (faces.isEmpty) {
+    return const LandmarkAssessment(
+      available: false,
+      primaryInstruction: 'Center your face inside the outline.',
+      secondaryInstruction:
+          'Keep the whole face visible for accurate guidance.',
+      mode: 'face',
+    );
+  }
+
+  faces.sort((a, b) {
+    final aArea = a.boundingBox.width * a.boundingBox.height;
+    final bArea = b.boundingBox.width * b.boundingBox.height;
+    return bArea.compareTo(aArea);
+  });
+  final face = faces.first;
+  final imageSize = inputImage.metadata?.size;
+  final imageWidth = imageSize?.width ?? face.boundingBox.width;
+  final imageHeight = imageSize?.height ?? face.boundingBox.height;
+  final faceCenterX = face.boundingBox.center.dx / imageWidth;
+  final faceCenterY = face.boundingBox.center.dy / imageHeight;
+  final imageArea = (imageWidth * imageHeight).clamp(1.0, double.infinity);
+  final faceArea =
+      (face.boundingBox.width * face.boundingBox.height).clamp(0.0, imageArea);
+  final faceFillRatio = (faceArea / imageArea).clamp(0.0, 1.0).toDouble();
+  final centerOffsetX = faceCenterX - 0.5;
+  final centerOffsetY = faceCenterY - 0.43;
+  final yaw = face.headEulerAngleY ?? 0;
+  final pitch = face.headEulerAngleX ?? 0;
+  final roll = face.headEulerAngleZ ?? 0;
+  final leftEye = face.landmarks[FaceLandmarkType.leftEye]?.position;
+  final rightEye = face.landmarks[FaceLandmarkType.rightEye]?.position;
+  double eyeTilt = 0;
+  if (leftEye != null && rightEye != null) {
+    eyeTilt =
+        math.atan2(
+          (rightEye.y - leftEye.y).toDouble(),
+          (rightEye.x - leftEye.x).toDouble(),
+        ) *
+        180 /
+        math.pi;
+  }
+
+  final targetYaw = switch (poseTemplate) {
+    'Front' => 0.0,
+    'Left 45°' => -28.0,
+    'Left Profile' => -48.0,
+    'Right 45°' => 28.0,
+    'Right Profile' => 48.0,
+    _ => 0.0,
+  };
+  final yawDelta = yaw - targetYaw;
+  final centerPenalty =
+      (centerOffsetX.abs() * 100) + (centerOffsetY.abs() * 90);
+  final posePenalty =
+      (yawDelta.abs() * 0.8) +
+      (pitch.abs() * 0.7) +
+      (roll.abs() * 0.8) +
+      (eyeTilt.abs() * 0.6);
+  final quality = (100 - centerPenalty - posePenalty).clamp(0, 100).toDouble();
+
+  String primary;
+  if (centerOffsetX.abs() > 0.08) {
+    primary = centerOffsetX > 0
+        ? 'Move your face slightly left to center it.'
+        : 'Move your face slightly right to center it.';
+  } else if (centerOffsetY.abs() > 0.08) {
+    primary = centerOffsetY > 0
+        ? 'Raise the camera slightly or lift your face higher.'
+        : 'Lower the camera slightly to match the frame.';
+  } else if (roll.abs() > 6 || eyeTilt.abs() > 5) {
+    primary = roll > 0
+        ? 'Tilt your head slightly right to level the eyes.'
+        : 'Tilt your head slightly left to level the eyes.';
+  } else if (pitch.abs() > 7) {
+    primary = pitch > 0
+        ? 'Lower your chin slightly.'
+        : 'Lift your chin slightly.';
+  } else if (yawDelta.abs() > 8) {
+    primary = yawDelta > 0
+        ? 'Turn your face slightly left to match the target angle.'
+        : 'Turn your face slightly right to match the target angle.';
+  } else {
+    primary = 'Pose is aligned. Hold still and match the ghost overlay.';
+  }
+
+  return LandmarkAssessment(
+    available: true,
+    primaryInstruction: primary,
+    secondaryInstruction:
+        'Keep both eyes level and the face centered for the most reliable facial metrics.',
+    yaw: yaw,
+    pitch: pitch,
+    roll: roll,
+    eyeTilt: eyeTilt,
+    centerOffsetX: centerOffsetX,
+    centerOffsetY: centerOffsetY,
+    landmarkQuality: quality / 100,
+    poseSimilarity: (100 - posePenalty).clamp(0, 100).toDouble(),
+    rotationProxy: yaw,
+    faceFillRatio: faceFillRatio,
+    mode: 'face',
+  );
+}
+
+Future<LandmarkAssessment> _assessBody(
+  InputImage inputImage,
+  String poseTemplate, {
+  required bool useSingle,
+}) async {
+  final detector = useSingle ? _singlePoseDetector : _streamPoseDetector;
+  final poses = await detector.processImage(inputImage);
+  if (poses.isEmpty) {
+    return const LandmarkAssessment(
+      available: false,
+      primaryInstruction: 'Center your body inside the outline.',
+      secondaryInstruction:
+          'Keep shoulders and hips visible for accurate body alignment.',
+      mode: 'body',
+    );
+  }
+
+  final pose = poses.first;
+  final leftShoulder = pose.landmarks[PoseLandmarkType.leftShoulder];
+  final rightShoulder = pose.landmarks[PoseLandmarkType.rightShoulder];
+  final leftHip = pose.landmarks[PoseLandmarkType.leftHip];
+  final rightHip = pose.landmarks[PoseLandmarkType.rightHip];
+  if (leftShoulder == null ||
+      rightShoulder == null ||
+      leftHip == null ||
+      rightHip == null) {
+    return const LandmarkAssessment(
+      available: false,
+      primaryInstruction:
+          'Keep the upper body fully visible for alignment guidance.',
+      secondaryInstruction: 'Show both shoulders and hips in frame.',
+      mode: 'body',
+    );
+  }
+
+  final centerX =
+      (leftShoulder.x + rightShoulder.x + leftHip.x + rightHip.x) / 4;
+  final centerY =
+      (leftShoulder.y + rightShoulder.y + leftHip.y + rightHip.y) / 4;
+  final centerOffsetX = (centerX / inputImage.metadata!.size.width) - 0.5;
+  final centerOffsetY = (centerY / inputImage.metadata!.size.height) - 0.52;
+  final shoulderTilt =
+      math.atan2(
+        rightShoulder.y - leftShoulder.y,
+        rightShoulder.x - leftShoulder.x,
+      ) *
+      180 /
+      math.pi;
+  final shoulderWidth = (rightShoulder.x - leftShoulder.x).abs();
+  final hipWidth = (rightHip.x - leftHip.x).abs().clamp(1, double.infinity);
+  final widthRatio = shoulderWidth / hipWidth;
+
+  final targetRatio = switch (poseTemplate) {
+    'Front' => 1.0,
+    'Back' => 1.0,
+    'Left 45°' => 0.82,
+    'Right 45°' => 0.82,
+    'Left Side' => 0.55,
+    'Right Side' => 0.55,
+    _ => 1.0,
+  };
+
+  final rotationProxy = widthRatio;
+  final ratioDelta = (widthRatio - targetRatio).abs() * 60;
+  final centerPenalty =
+      (centerOffsetX.abs() * 100) + (centerOffsetY.abs() * 90);
+  final posePenalty = ratioDelta + (shoulderTilt.abs() * 0.9);
+  final quality = (100 - centerPenalty - posePenalty).clamp(0, 100).toDouble();
+
+  String primary;
+  if (centerOffsetX.abs() > 0.09) {
+    primary = centerOffsetX > 0
+        ? 'Move your body slightly left to center it.'
+        : 'Move your body slightly right to center it.';
+  } else if (shoulderTilt.abs() > 5) {
+    primary = shoulderTilt > 0
+        ? 'Lower your right shoulder to level the frame.'
+        : 'Lower your left shoulder to level the frame.';
+  } else if (ratioDelta > 10) {
+    primary = widthRatio > targetRatio
+        ? 'Rotate slightly more toward the side angle.'
+        : 'Rotate slightly back toward the front angle.';
+  } else {
+    primary =
+        'Body alignment looks strong. Hold still and match the ghost overlay.';
+  }
+
+  return LandmarkAssessment(
+    available: true,
+    primaryInstruction: primary,
+    secondaryInstruction:
+        'Keep shoulders level, torso centered, and match the selected body angle.',
+    shoulderTilt: shoulderTilt,
+    centerOffsetX: centerOffsetX,
+    centerOffsetY: centerOffsetY,
+    landmarkQuality: quality / 100,
+    poseSimilarity: (100 - posePenalty).clamp(0, 100).toDouble(),
+    rotationProxy: rotationProxy,
+    mode: 'body',
+  );
+}

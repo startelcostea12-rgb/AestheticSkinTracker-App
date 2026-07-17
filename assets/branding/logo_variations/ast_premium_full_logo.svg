@@ -1,0 +1,49 @@
+<svg width="1600" height="520" viewBox="0 0 1600 520" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1600" height="520" rx="40" fill="#FFFDFC"/>
+  <defs>
+    <linearGradient id="astRoseGold" x1="110" y1="84" x2="388" y2="404" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E8B9BF"/>
+      <stop offset="0.55" stop-color="#DFA387"/>
+      <stop offset="1" stop-color="#D4B16A"/>
+    </linearGradient>
+    <linearGradient id="astSage" x1="148" y1="120" x2="308" y2="320" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B6C8B6"/>
+      <stop offset="1" stop-color="#8CA68D"/>
+    </linearGradient>
+    <radialGradient id="astGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(255 255) rotate(90) scale(200)">
+      <stop stop-color="#F8E8E5" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#FFFDFC" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softShadow" x="54" y="50" width="404" height="404" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#DAB8AE" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#softShadow)">
+    <rect x="86" y="82" width="338" height="338" rx="96" fill="#FFFFFF"/>
+    <rect x="86.75" y="82.75" width="336.5" height="336.5" rx="95.25" stroke="#F1D8D1" stroke-width="1.5"/>
+  </g>
+
+  <circle cx="255" cy="252" r="176" fill="url(#astGlow)"/>
+
+  <path d="M254 123C222 157 201 198 201 245C201 312 249 359 322 359C287 332 266 295 266 247C266 204 281 167 311 132C292 136 272 142 254 123Z" fill="url(#astRoseGold)" fill-opacity="0.18"/>
+  <path d="M241 136C208 171 187 211 187 255C187 322 234 369 305 374C262 343 239 302 239 251C239 213 251 178 280 142C266 143 253 141 241 136Z" stroke="url(#astRoseGold)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <path d="M277 126C323 129 359 149 383 190C335 190 297 173 270 138C268 134 271 125 277 126Z" fill="url(#astSage)"/>
+  <path d="M280 141C323 146 355 165 376 199" stroke="#8CA68D" stroke-width="8" stroke-linecap="round"/>
+
+  <path d="M219 209C235 198 251 192 267 191" stroke="#D6A596" stroke-width="7" stroke-linecap="round" opacity="0.72"/>
+  <path d="M204 281C231 277 255 283 277 298" stroke="#E6C58A" stroke-width="7" stroke-linecap="round" opacity="0.88"/>
+  <circle cx="330" cy="180" r="10" fill="#E8C98E"/>
+  <circle cx="349" cy="162" r="5" fill="#E8B9BF" opacity="0.82"/>
+
+  <text x="500" y="220" fill="#463433" font-family="Avenir Next, Avenir, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="66" font-weight="600" letter-spacing="0.5">AestheticSkinTracker</text>
+  <text x="503" y="275" fill="#9F8A81" font-family="Avenir Next, Avenir, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="24" font-weight="500" letter-spacing="3.2">PREMIUM SKINCARE AND RECOVERY TRACKING</text>
+
+  <g opacity="0.95">
+    <path d="M504 328H1115" stroke="#EEDFD8" stroke-width="1.5"/>
+    <circle cx="1168" cy="328" r="6" fill="#B6C8B6"/>
+  </g>
+
+  <text x="503" y="378" fill="#7E6C66" font-family="Avenir Next, Avenir, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="28" font-weight="500">Elegant beauty-tech branding with recovery, growth, and trust at the core.</text>
+</svg>

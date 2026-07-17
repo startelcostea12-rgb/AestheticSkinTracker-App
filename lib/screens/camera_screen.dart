@@ -1,0 +1,4568 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
+
+import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:image/image.dart' as img;
+import 'package:image_picker/image_picker.dart';
+
+import '../app_theme.dart';
+import '../models/skin_profile.dart';
+import '../models/procedure.dart';
+import '../utils/app_prefs.dart';
+import '../utils/landmark_assessment.dart';
+import '../utils/local_image_bytes.dart';
+import '../utils/premium_access.dart';
+import '../utils/premium_recovery_service.dart';
+import '../utils/skin_analysis_service.dart';
+import '../utils/web_upload_image_utils.dart';
+import '../utils/web_image_picker.dart';
+import '../models/scan_history.dart';
+import '../widgets/adaptive_camera_guide_visuals.dart';
+import '../widgets/clinical_camera_guidance.dart';
+import '../widgets/clinical_section_header.dart';
+import '../widgets/image_crop_dialog.dart';
+import '../widgets/local_image_preview.dart';
+import '../widgets/makeup_badge.dart';
+import '../widgets/makeup_disclosure_dialog.dart';
+import 'skin_ai_analysis_screen.dart';
+
+class CameraScreen extends StatefulWidget {
+  final Procedure? procedure;
+  final bool isSkincareScan;
+  final String? productName;
+  final String? initialProcedureId;
+  final String? initialProcedureLabel;
+
+  const CameraScreen({
+    this.procedure,
+    this.isSkincareScan = false,
+    this.productName,
+    this.initialProcedureId,
+    this.initialProcedureLabel,
+  }) : super(key: null);
+
+  @override
+  State<CameraScreen> createState() => _CameraScreenState();
+}
+
+class _CameraScreenState extends State<CameraScreen>
+    with TickerProviderStateMixin {
+  bool _capturing = false;
+  bool _cameraReady = false;
+  bool _cameraInitFailed = false;
+  bool _lightingStreamActive = false;
+  late final AnimationController _shimmerController;
+  late final AnimationController _successController;
+  late final Animation<double> _successAnim;
+  bool _showSuccessBurst = false;
+  CameraController? _cameraController;
+  List<CameraDescription> _availableCameras = const [];
+  String? _cameraError;
+
+  String _scanProcedureLabel = '';
+  String? _selectedProcedureId;
+  String? _scanFocusArea;
+  String? _scanCustomDescription;
+
+  static const List<String> _faceGuidanceTips = [
+    'Keep your face at the same angle for every scan',
+    'Use the same lighting conditions each time',
+    'Hold the camera at the same distance from your face',
+    'Remove makeup and keep skin clean',
+    'Use a plain background for best results',
+    'Keep a neutral expression and relax your jaw',
+    'Avoid shadows and glare on your face',
+  ];
+
+  static const List<String> _bodyGuidanceTips = [
+    'Keep the same body area centered in every scan',
+    'Stand at the same distance from the camera each time',
+    'Use even front lighting without overhead shadows',
+    'Wear consistent fitted clothing or expose the same treatment area',
+    'Keep posture neutral and avoid twisting your torso',
+    'Use a plain background so contour changes are easier to compare',
+    'Avoid cropping the hips, waist, or treatment edges',
+  ];
+
+  int _currentTipIndex = 0;
+  ScanHistoryEntry? _referenceScan;
+  String? _referenceImagePath;
+  Uint8List? _referenceImageBytes;
+  bool _showGhostOverlay = true;
+  double _ghostOverlayOpacity = 0.20;
+  bool _isGoodReferencePhoto = false;
+  String _selectedPoseTemplate = 'Front';
+  _LightingGuidance _lightingGuidance = const _LightingGuidance.unknown();
+  LandmarkAssessment _liveLandmarkAssessment = LandmarkAssessment.unsupported;
+  bool _landmarkAssessmentInFlight = false;
+  int _landmarkFrameCounter = 0;
+  int? _lastConsistencyScore;
+
+  /// Result of the pre-scan makeup disclosure dialog. `null` until the user
+  /// answers. Once the user has chosen, the scan flow proceeds and this flag
+  /// is propagated onto every [ScanHistoryEntry] saved from this session.
+  bool? _makeupPresent;
+  bool _disclosureInFlight = false;
+
+  String? _postOpDaysForBackend() {
+    final procedure = widget.procedure;
+    if (procedure == null) return null;
+    final days = DateTime.now().difference(procedure.startDate).inDays + 1;
+    if (days < 0) return null;
+    return days.toString();
+  }
+
+  Future<double?> _latestTrackerMetric(String metricKey) async {
+    final logs = await AppPrefs.getAcneRosaceaLogsForMetric(metricKey);
+    if (logs.isEmpty) return null;
+    return logs.first.value.toDouble().clamp(0.0, 10.0);
+  }
+
+  double _sensitivityFromProfile(SensitivityLevel level) {
+    switch (level) {
+      case SensitivityLevel.low:
+        return 2.5;
+      case SensitivityLevel.moderate:
+        return 4.5;
+      case SensitivityLevel.high:
+        return 7.0;
+      case SensitivityLevel.veryHigh:
+        return 8.5;
+    }
+  }
+
+  bool _containsAnyToken(String text, List<String> tokens) {
+    final lower = text.toLowerCase();
+    for (final token in tokens) {
+      if (lower.contains(token)) return true;
+    }
+    return false;
+  }
+
+  Future<Map<String, String>> _buildSafetySignalFields() async {
+    const defaultRosacea = 2.5;
+    const defaultSensitivity = 4.5;
+
+    final profile = await AppPrefs.getSkinProfileOrNull();
+    final recentRosacea = await _latestTrackerMetric('rosaceaSeverity');
+    final recentSensitivity = await _latestTrackerMetric('skinSensitivity');
+
+    final concernText = [
+      ...?profile?.mainConcerns,
+      ...?profile?.goals,
+      profile?.notes ?? '',
+      _scanCustomDescription ?? '',
+      _focusAreaForSave ?? '',
+    ].join(' ').toLowerCase();
+
+    final rosaceaConcern = _containsAnyToken(concernText, const [
+      'rosacea',
+      'flushing',
+      'persistent redness',
+      'redness',
+      'vascular',
+    ]);
+    final barrierConcern = _containsAnyToken(concernText, const [
+      'barrier',
+      'compromised',
+      'irritation',
+      'reactive',
+      'stinging',
+      'burning',
+      'sensitive',
+    ]);
+
+    final profileSensitivity = profile == null
+        ? null
+        : _sensitivityFromProfile(profile.sensitivityLevel);
+
+    final rosacea =
+        (recentRosacea ?? (rosaceaConcern ? 6.0 : null) ?? defaultRosacea)
+            .clamp(0.0, 10.0);
+    final sensitivity =
+        (recentSensitivity ?? profileSensitivity ?? defaultSensitivity).clamp(
+          0.0,
+          10.0,
+        );
+
+    final compromisedBarrier =
+        barrierConcern ||
+        sensitivity >= 7.0 ||
+        (profile?.skinType == SkinType.sensitive);
+
+    return {
+      'rosacea_score': rosacea.toStringAsFixed(1),
+      'sensitivity_score': sensitivity.toStringAsFixed(1),
+      'compromised_barrier': compromisedBarrier ? 'true' : 'false',
+    };
+  }
+
+  // ── Clinical auto-capture state ──────────────────────────────────────────
+  /// Timestamp at which all four quality signals became green. Reset whenever
+  /// any signal drops out of green.
+  DateTime? _qualityGreenSince;
+
+  /// Countdown shown to the user once the green-stable window is met. When
+  /// non-null, the capture button renders a progress ring + "Hold still…"
+  /// label and an internal [Timer] fires the actual capture.
+  int? _autoCaptureCountdown;
+  Timer? _autoCaptureTimer;
+
+  /// Set true when [_handleCaptureTap] is in flight to prevent double-fires
+  /// from the auto-capture timer and a manual tap simultaneously.
+  bool _captureInProgress = false;
+
+  /// The most recent cropped image bytes from the user's crop step.
+  /// Populated after a successful crop and used by [_handleDeepAnalysis].
+  Uint8List? _croppedImageBytes;
+
+  /// Cached Premium state for the deep-analysis gate.
+  bool _hasPremiumAccess = false;
+  bool _premiumStatusLoading = true;
+
+  /// Hard gate: the user must explicitly accept the pre-analysis disclaimer
+  /// before any image is sent to the backend. The Deep Analysis button stays
+  /// disabled until a cropped image exists AND this is true.
+  bool _consentAccepted = false;
+
+  /// True while [_handleDeepAnalysis] is awaiting a backend response.
+  bool _isAnalyzing = false;
+
+  final List<String> _affirmations = [
+    "Every scan brings you closer to the skin you deserve.",
+    "Consistency is beautiful. You're doing amazing.",
+    "Your skin is healing and glowing — keep going!",
+    "Progress looks good on you.",
+    "Small steps today create big transformations tomorrow.",
+    "You're investing in yourself — that's powerful.",
+    "Patience and persistence create radiant skin.",
+    "You're building something beautiful, one photo at a time.",
+  ];
+  int _lastAffirmationIndex = 0;
+
+  final ImagePicker _picker = ImagePicker();
+  int _lightingFrameCounter = 0;
+  int _sharpnessFrameCounter = 0;
+  double _liveSharpness = 0;
+  double _liveMeanBrightness = 0;
+  double _liveBacklightDelta = 0;
+  double _liveFaceFillRatio = 0;
+  String _qaBannerMessage = 'Center your face inside the mask';
+
+  List<String> get _guidanceTips =>
+      _isBodyGuide ? _bodyGuidanceTips : _faceGuidanceTips;
+
+  ProcedureCameraGuideType get _guideType =>
+      procedureCameraGuideType(_effectiveGuideProcedureType);
+
+  String get _effectiveGuideProcedureType {
+    if (widget.procedure != null) return widget.procedure!.type;
+    return _scanProcedureLabel;
+  }
+
+  bool get _isBodyGuide {
+    return _guideType == ProcedureCameraGuideType.body;
+  }
+
+  List<String> get _overlayAngles {
+    return _poseTemplates;
+  }
+
+  List<String> get _poseTemplates {
+    switch (_guideType) {
+      case ProcedureCameraGuideType.facial:
+        return const [
+          'Front',
+          'Left 45°',
+          'Left Profile',
+          'Right 45°',
+          'Right Profile',
+        ];
+      case ProcedureCameraGuideType.body:
+        return const [
+          'Front',
+          'Left 45°',
+          'Left Side',
+          'Back',
+          'Right 45°',
+          'Right Side',
+        ];
+      case ProcedureCameraGuideType.general:
+        return const ['Front'];
+    }
+  }
+
+  String? get _focusAreaForSave {
+    if (widget.isSkincareScan) return null;
+    final focusArea = (_scanFocusArea ?? widget.procedure?.focusArea)?.trim();
+    return focusArea == null || focusArea.isEmpty ? null : focusArea;
+  }
+
+  String? get _customDescriptionForSave {
+    return normalizedCustomDescription(
+      _scanCustomDescription ?? widget.procedure?.customDescription,
+    );
+  }
+
+  String get _bottomConsistencyReminder {
+    switch (_guideType) {
+      case ProcedureCameraGuideType.facial:
+        return 'Match the exact same distance, angle, and lighting as your previous photos. Keep a neutral expression for reliable facial metrics.';
+      case ProcedureCameraGuideType.body:
+        return 'Match the exact same distance, angle, and lighting as your previous photos. Keep posture neutral and show the same treated area each time.';
+      case ProcedureCameraGuideType.general:
+        return 'Match the exact same distance, angle, and lighting as your previous photos so every comparison stays trustworthy.';
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _shimmerController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat();
+    _successController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 820),
+    );
+    _successAnim = CurvedAnimation(
+      parent: _successController,
+      curve: Curves.easeOutCubic,
+    );
+    _loadScanProcedureContext();
+    _refreshPremiumStatus();
+    // Surface the makeup disclosure before any camera resources are claimed.
+    // _initLiveCamera() runs only after the patient acknowledges either the
+    // "clean face" or "wearing makeup" path. A cancel pops the screen.
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _promptMakeupDisclosure(),
+    );
+  }
+
+  Future<void> _promptMakeupDisclosure() async {
+    if (_disclosureInFlight || _makeupPresent != null) return;
+    _disclosureInFlight = true;
+    final result = await MakeupDisclosureDialog.show(context);
+    _disclosureInFlight = false;
+    if (!mounted) return;
+    if (result == null) {
+      // User dismissed without choosing — leave the camera screen.
+      Navigator.of(context).maybePop();
+      return;
+    }
+    setState(() => _makeupPresent = result);
+    // Now that the patient has acknowledged the disclosure, start the camera.
+    _initLiveCamera();
+  }
+
+  Future<void> _refreshPremiumStatus() async {
+    final isPremium = await PremiumAccess.isPremiumUser();
+    if (!mounted) return;
+    setState(() {
+      _hasPremiumAccess = isPremium;
+      _premiumStatusLoading = false;
+    });
+  }
+
+  Future<void> _initLiveCamera() async {
+    try {
+      final cameras = await availableCameras();
+      if (!mounted) return;
+      if (cameras.isEmpty) {
+        setState(() {
+          _cameraInitFailed = true;
+          _cameraError = 'No camera detected on this device.';
+        });
+        return;
+      }
+      _availableCameras = cameras;
+      final preferred = cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.front,
+        orElse: () => cameras.first,
+      );
+      await _initializeController(preferred);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _cameraInitFailed = true;
+        _cameraError = 'Unable to start camera: $e';
+      });
+    }
+  }
+
+  Future<void> _initializeController(CameraDescription description) async {
+    final old = _cameraController;
+    if (old != null) {
+      await old.dispose();
+    }
+
+    final controller = CameraController(
+      description,
+      ResolutionPreset.high,
+      enableAudio: false,
+      imageFormatGroup: ImageFormatGroup.yuv420,
+    );
+
+    try {
+      await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+
+      setState(() {
+        _cameraController = controller;
+        _cameraReady = true;
+        _cameraInitFailed = false;
+        _cameraError = null;
+      });
+
+      _startLightingStream(controller);
+    } catch (e) {
+      await controller.dispose();
+      if (!mounted) return;
+      setState(() {
+        _cameraReady = false;
+        _cameraInitFailed = true;
+        _cameraError = 'Camera initialization failed: $e';
+      });
+    }
+  }
+
+  Future<void> _toggleCameraLens() async {
+    if (_availableCameras.length < 2) return;
+    final current = _cameraController?.description;
+    final currentIndex = _availableCameras.indexWhere(
+      (c) => c.name == current?.name,
+    );
+    final nextIndex = currentIndex == -1
+        ? 0
+        : (currentIndex + 1) % _availableCameras.length;
+    await _initializeController(_availableCameras[nextIndex]);
+  }
+
+  void _startLightingStream(CameraController controller) {
+    if (kIsWeb || _lightingStreamActive) return;
+    if (!controller.value.isInitialized) return;
+
+    _lightingStreamActive = true;
+    if (mounted) {
+      setState(() {});
+    }
+    controller
+        .startImageStream((image) async {
+          if (!mounted || _capturing) return;
+
+          _sharpnessFrameCounter = (_sharpnessFrameCounter + 1) % 3;
+          final shouldRefreshSharpness = _sharpnessFrameCounter == 0;
+
+          _lightingFrameCounter = (_lightingFrameCounter + 1) % 4;
+          final shouldRefreshLighting = _lightingFrameCounter == 0;
+          if (shouldRefreshLighting || shouldRefreshSharpness) {
+            final summary = _summarizeCameraImage(image);
+            final guidance = shouldRefreshLighting
+                ? _lightingFromCameraImage(image)
+                : _lightingGuidance;
+
+            final edgeDelta = [
+              (summary.leftMean - summary.rightMean).abs(),
+              (summary.topMean - summary.bottomMean).abs(),
+            ].reduce(math.max);
+            final sharpness = shouldRefreshSharpness
+                ? _estimateLaplacianVarianceFromYPlane(image)
+                : _liveSharpness;
+
+            final needsUiUpdate =
+                guidance.level != _lightingGuidance.level ||
+                guidance.label != _lightingGuidance.label ||
+                (_liveSharpness - sharpness).abs() >= 1.5 ||
+                (_liveMeanBrightness - summary.mean).abs() >= 2.0 ||
+                (_liveBacklightDelta - edgeDelta).abs() >= 2.0;
+
+            if (needsUiUpdate && mounted) {
+              setState(() {
+                _lightingGuidance = guidance;
+                _liveSharpness = sharpness;
+                _liveMeanBrightness = summary.mean;
+                _liveBacklightDelta = edgeDelta;
+              });
+            }
+          }
+
+          if (kIsWeb || _landmarkAssessmentInFlight) return;
+          _landmarkFrameCounter = (_landmarkFrameCounter + 1) % 6;
+          if (_landmarkFrameCounter != 0) return;
+
+          _landmarkAssessmentInFlight = true;
+          try {
+            final assessment = await analyzeLiveLandmarks(
+              image: image,
+              camera: controller.description,
+              deviceOrientation: _currentDeviceOrientation(controller),
+              isBody: _isBodyGuide,
+              poseTemplate: _selectedPoseTemplate,
+            );
+            if (!mounted) return;
+            if (_shouldRefreshLandmarkAssessment(assessment)) {
+              setState(() {
+                _liveLandmarkAssessment = assessment;
+                if (assessment.faceFillRatio > 0) {
+                  _liveFaceFillRatio = assessment.faceFillRatio;
+                }
+              });
+            }
+          } catch (_) {
+            if (!mounted) return;
+          } finally {
+            _landmarkAssessmentInFlight = false;
+          }
+        })
+        .catchError((_) {
+          _lightingStreamActive = false;
+          if (mounted) {
+            setState(() {});
+          }
+        });
+  }
+
+  _LightingGuidance _lightingFromCameraImage(CameraImage image) {
+    final plane = image.planes.firstOrNull;
+    if (plane == null || plane.bytes.isEmpty) {
+      return _lightingGuidance;
+    }
+
+    final thresholds = _lightingThresholds;
+    final summary = _summarizeCameraImage(image);
+    if (summary.isEmpty) return _lightingGuidance;
+
+    if (summary.mean < thresholds.darkMeanFloor ||
+        summary.darkRatio > thresholds.darkRatioCeil) {
+      return _LightingGuidance(
+        level: _LightingLevel.tooDark,
+        label: 'Too dark',
+        instruction: _buildLightingInstruction(summary, tooDark: true),
+      );
+    }
+    if (summary.mean > thresholds.harshMeanCeil ||
+        summary.brightRatio > thresholds.harshRatioCeil) {
+      return _LightingGuidance(
+        level: _LightingLevel.tooHarsh,
+        label: 'Too harsh',
+        instruction: _buildLightingInstruction(summary, tooDark: false),
+      );
+    }
+    return const _LightingGuidance(
+      level: _LightingLevel.optimal,
+      label: 'Lighting optimal',
+      instruction:
+          'Lighting is optimal. Keep this exact setup for reliable comparison.',
+    );
+  }
+
+  Future<void> _playSuccessBurst() async {
+    if (!mounted) return;
+    setState(() => _showSuccessBurst = true);
+    await _successController.forward(from: 0);
+    if (!mounted) return;
+    setState(() => _showSuccessBurst = false);
+  }
+
+  Future<void> _loadScanProcedureContext() async {
+    if (widget.procedure != null) {
+      _selectedProcedureId = widget.procedure!.id;
+      _scanProcedureLabel = widget.procedure!.type;
+      _scanFocusArea = widget.procedure!.focusArea;
+      _scanCustomDescription = widget.procedure!.customDescription;
+      await _loadReferenceContext();
+      if (mounted) setState(() {});
+      return;
+    }
+
+    if (widget.isSkincareScan &&
+        widget.productName != null &&
+        widget.productName!.isNotEmpty) {
+      _selectedProcedureId = null;
+      _scanProcedureLabel = widget.productName!;
+      _scanFocusArea = null;
+      _scanCustomDescription = null;
+      await _loadReferenceContext();
+      if (mounted) setState(() {});
+      return;
+    }
+
+    final selectedId =
+        widget.initialProcedureId ?? await AppPrefs.resolveActiveProcedureId();
+    var procedureLabel = widget.initialProcedureLabel ?? '';
+    String? focusArea;
+    String? customDescription;
+    if (selectedId != null && selectedId.isNotEmpty) {
+      try {
+        final procedures = await AppPrefs.getProcedureEntries();
+        final match = procedures.firstWhere(
+          (p) => (p['id']?.toString() ?? '') == selectedId,
+        );
+        final procedure = Procedure.fromJson(Map<String, dynamic>.from(match));
+        if (procedureLabel.trim().isEmpty) {
+          procedureLabel = procedure.type.trim();
+        }
+        focusArea = procedure.focusArea;
+        customDescription = procedure.customDescription;
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    setState(() {
+      _selectedProcedureId = selectedId;
+      _scanProcedureLabel = procedureLabel;
+      _scanFocusArea = focusArea;
+      _scanCustomDescription = customDescription;
+    });
+    await _loadReferenceContext();
+  }
+
+  Future<void> _loadReferenceContext() async {
+    final history = await AppPrefs.getScanEntries();
+    final filtered = history.where(_isComparableEntry).toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+    ScanHistoryEntry? ref;
+    String? refPath;
+    Uint8List? refBytes;
+    var selectedGoodReference = false;
+    var bestScore = double.negativeInfinity;
+
+    for (final entry in filtered.take(12)) {
+      final candidatePath = entry.imagePath;
+      if (candidatePath == null || candidatePath.trim().isEmpty) {
+        continue;
+      }
+      final candidateBytes = await _bytesFromImagePath(candidatePath);
+
+      if (candidateBytes == null || candidateBytes.isEmpty) {
+        continue;
+      }
+
+      final candidateLighting = _analyzeLighting(candidateBytes);
+      final candidateConfidence =
+          entry.lightingConfidence ??
+          _estimateLightingConfidence(candidateBytes);
+      final samePose =
+          (entry.poseTemplate ?? '').trim() == _selectedPoseTemplate;
+      final landmarkQuality = entry.metrics['capture_landmark_quality'] ?? 0.0;
+      final poseSimilarity = entry.metrics['capture_pose_similarity'] ?? 0.0;
+      final isGood =
+          entry.preferredReference ||
+          candidateLighting.level == _LightingLevel.optimal;
+      final score =
+          (samePose ? 45.0 : 0.0) +
+          (isGood ? 30.0 : 0.0) +
+          (entry.preferredReference ? 15.0 : 0.0) +
+          (candidateConfidence * 10.0) +
+          (landmarkQuality * 20.0) +
+          (poseSimilarity * 0.12);
+
+      if (score > bestScore) {
+        bestScore = score;
+        ref = entry;
+        refPath = candidatePath;
+        refBytes = candidateBytes;
+        selectedGoodReference = isGood && samePose && landmarkQuality >= 0.72;
+      }
+    }
+
+    final lighting = _analyzeLighting(refBytes);
+
+    if (!mounted) return;
+    setState(() {
+      _referenceScan = ref;
+      _referenceImagePath = refPath;
+      _referenceImageBytes = refBytes;
+      _isGoodReferencePhoto = selectedGoodReference;
+      _lightingGuidance = lighting;
+      final templates = _poseTemplates;
+      if (!templates.contains(_selectedPoseTemplate)) {
+        _selectedPoseTemplate = templates.first;
+      }
+    });
+  }
+
+  bool _isComparableEntry(ScanHistoryEntry entry) {
+    if (widget.isSkincareScan) {
+      final product = widget.productName?.trim() ?? '';
+      if (product.isEmpty) {
+        return entry.productName == null ||
+            (entry.productName ?? '').trim().isEmpty;
+      }
+      return (entry.productName ?? '').trim().toLowerCase() ==
+          product.toLowerCase();
+    }
+
+    final selectedId = widget.procedure?.id ?? _selectedProcedureId;
+    if (selectedId != null && selectedId.isNotEmpty) {
+      return entry.procedureId == selectedId;
+    }
+
+    return (entry.productName ?? '').trim().isEmpty;
+  }
+
+  Future<Uint8List?> _bytesFromImagePath(String? imagePath) async {
+    if (imagePath == null || imagePath.trim().isEmpty) return null;
+    final ref = imagePath.trim();
+    if (ref.startsWith('data:image')) {
+      final comma = ref.indexOf(',');
+      if (comma == -1) return null;
+      try {
+        return base64Decode(ref.substring(comma + 1));
+      } catch (_) {
+        return null;
+      }
+    }
+    return readLocalImageBytes(ref);
+  }
+
+  _LightingGuidance _analyzeLighting(Uint8List? bytes) {
+    if (bytes == null || bytes.isEmpty) {
+      return const _LightingGuidance.unknown();
+    }
+
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) {
+      return const _LightingGuidance.unknown();
+    }
+
+    final thresholds = _lightingThresholds;
+    final summary = _summarizeDecodedImage(decoded);
+
+    if (summary.mean < thresholds.darkMeanFloor ||
+        summary.darkRatio > thresholds.darkRatioCeil) {
+      return _LightingGuidance(
+        level: _LightingLevel.tooDark,
+        label: 'Too dark',
+        instruction: _buildLightingInstruction(summary, tooDark: true),
+      );
+    }
+    if (summary.mean > thresholds.harshMeanCeil ||
+        summary.brightRatio > thresholds.harshRatioCeil) {
+      return _LightingGuidance(
+        level: _LightingLevel.tooHarsh,
+        label: 'Too harsh',
+        instruction: _buildLightingInstruction(summary, tooDark: false),
+      );
+    }
+
+    return const _LightingGuidance(
+      level: _LightingLevel.optimal,
+      label: 'Lighting optimal',
+      instruction:
+          'Lighting is optimal. Keep this exact setup for reliable comparison.',
+    );
+  }
+
+  int _calculateConsistencyScore(
+    Uint8List currentBytes,
+    SkinMetrics currentMetrics, {
+    LandmarkAssessment? landmarkAssessment,
+  }) {
+    var lightingScore = 78.0;
+    var alignmentScore = 76.0;
+    final refBytes = _referenceImageBytes;
+    if (refBytes != null && refBytes.isNotEmpty) {
+      final currentStats = _quickImageStats(currentBytes);
+      final refStats = _quickImageStats(refBytes);
+      final brightnessDelta = (currentStats.$1 - refStats.$1).abs();
+      final contrastDelta = (currentStats.$2 - refStats.$2).abs();
+      lightingScore = (100 - (brightnessDelta * 0.72))
+          .clamp(50, 100)
+          .toDouble();
+      alignmentScore = (100 - (contrastDelta * 1.08)).clamp(50, 100).toDouble();
+    }
+
+    var poseScore = 80.0;
+    final previous = _referenceScan?.toSkinMetrics();
+    if (previous != null) {
+      final deltas = [
+        (currentMetrics.redness - previous.redness).abs(),
+        (currentMetrics.texture - previous.texture).abs(),
+        (currentMetrics.wrinkle - previous.wrinkle).abs(),
+        (currentMetrics.pore - previous.pore).abs(),
+        (currentMetrics.darkSpots - previous.darkSpots).abs(),
+        (currentMetrics.elasticity - previous.elasticity).abs(),
+      ];
+      final avgDelta = deltas.reduce((a, b) => a + b) / deltas.length;
+      poseScore = (100 - (avgDelta * 11.6)).clamp(50, 100).toDouble();
+      if ((_referenceScan?.poseTemplate ?? '').trim() ==
+          _selectedPoseTemplate) {
+        poseScore = (poseScore + 8).clamp(50, 100).toDouble();
+      } else if ((_referenceScan?.poseTemplate ?? '').trim().isNotEmpty) {
+        poseScore = (poseScore - 10).clamp(40, 100).toDouble();
+      }
+    }
+
+    final landmarkScore =
+        landmarkAssessment == null || !landmarkAssessment.available
+        ? null
+        : _landmarkConsistencyScore(landmarkAssessment);
+
+    final finalScore = landmarkScore == null
+        ? ((alignmentScore * 0.40) +
+                  (lightingScore * 0.35) +
+                  (poseScore * 0.25))
+              .round()
+        : ((alignmentScore * 0.28) +
+                  (lightingScore * 0.24) +
+                  (poseScore * 0.16) +
+                  (landmarkScore * 0.32))
+              .round();
+    return finalScore.clamp(55, 100);
+  }
+
+  double _landmarkConsistencyScore(LandmarkAssessment assessment) {
+    final refMetrics = _referenceScan?.metrics ?? const <String, double>{};
+    var score = assessment.poseSimilarity.clamp(0, 100).toDouble();
+    score =
+        (score * 0.72) +
+        ((assessment.landmarkQuality * 100).clamp(0, 100) * 0.28);
+
+    final refCenterOffsetX = refMetrics['capture_center_offset_x'];
+    final refCenterOffsetY = refMetrics['capture_center_offset_y'];
+    if (refCenterOffsetX != null) {
+      score -= (assessment.centerOffsetX - refCenterOffsetX).abs() * 170;
+    }
+    if (refCenterOffsetY != null) {
+      score -= (assessment.centerOffsetY - refCenterOffsetY).abs() * 150;
+    }
+
+    final refYaw = refMetrics['capture_yaw'];
+    if (assessment.yaw != null && refYaw != null) {
+      score -= (assessment.yaw! - refYaw).abs() * 1.05;
+    }
+    final refPitch = refMetrics['capture_pitch'];
+    if (assessment.pitch != null && refPitch != null) {
+      score -= (assessment.pitch! - refPitch).abs() * 0.9;
+    }
+    final refRoll = refMetrics['capture_roll'];
+    if (assessment.roll != null && refRoll != null) {
+      score -= (assessment.roll! - refRoll).abs() * 0.95;
+    }
+    final refEyeTilt = refMetrics['capture_eye_tilt'];
+    if (assessment.eyeTilt != null && refEyeTilt != null) {
+      score -= (assessment.eyeTilt! - refEyeTilt).abs() * 0.95;
+    }
+    final refShoulderTilt = refMetrics['capture_shoulder_tilt'];
+    if (assessment.shoulderTilt != null && refShoulderTilt != null) {
+      score -= (assessment.shoulderTilt! - refShoulderTilt).abs() * 1.15;
+    }
+    final refRotationProxy = refMetrics['capture_rotation_proxy'];
+    if (refRotationProxy != null) {
+      final delta = (assessment.rotationProxy - refRotationProxy).abs();
+      score -= _isBodyGuide ? delta * 58 : delta * 0.9;
+    }
+
+    return score.clamp(45, 100).toDouble();
+  }
+
+  Map<String, dynamic>? _baselineMetricMatrix() {
+    final refMetrics = _referenceScan?.metrics;
+    if (refMetrics == null || refMetrics.isEmpty) {
+      return null;
+    }
+
+    double readMetric(List<String> keys) {
+      for (final key in keys) {
+        final raw = refMetrics[key];
+        if (raw == null) continue;
+        return raw.clamp(0.0, 10.0).toDouble();
+      }
+      return 0.0;
+    }
+
+    final redness = readMetric(const ['redness', 'erythema']);
+    final texture = readMetric(const ['texture', 'roughness']);
+    final pores = readMetric(const ['pores', 'pore']);
+    final acne = readMetric(const ['acne_severity', 'acneSeverity']);
+
+    return {
+      'localized_redness': double.parse((redness * 10).toStringAsFixed(1)),
+      'texture_smoothness': double.parse(
+        ((10 - texture).clamp(0.0, 10.0) * 10).toStringAsFixed(1),
+      ),
+      'pore_visibility': double.parse((pores * 10).toStringAsFixed(1)),
+      'breakout_activity': double.parse((acne * 10).toStringAsFixed(1)),
+    };
+  }
+
+  Widget _buildGhostReferenceOverlay() {
+    final path = _referenceImagePath;
+    if (!_showGhostOverlay || path == null) {
+      return const SizedBox.shrink();
+    }
+
+    final imageChild = path.startsWith('data:image')
+        ? Image.memory(
+            _referenceImageBytes ?? Uint8List(0),
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+          )
+        : buildLocalImagePreview(
+            path,
+            width: double.infinity,
+            height: double.infinity,
+            borderRadius: 28,
+          );
+
+    return Positioned.fill(
+      child: Opacity(
+        opacity: _ghostOverlayOpacity,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: ColorFiltered(
+            colorFilter: const ColorFilter.matrix(<double>[
+              0.2126,
+              0.7152,
+              0.0722,
+              0,
+              0,
+              0.2126,
+              0.7152,
+              0.0722,
+              0,
+              0,
+              0.2126,
+              0.7152,
+              0.0722,
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+            ]),
+            child: imageChild,
+          ),
+        ),
+      ),
+    );
+  }
+
+  DeviceOrientation _currentDeviceOrientation(CameraController controller) {
+    return controller.value.deviceOrientation;
+  }
+
+  bool _shouldRefreshLandmarkAssessment(LandmarkAssessment next) {
+    final current = _liveLandmarkAssessment;
+    return current.available != next.available ||
+        current.primaryInstruction != next.primaryInstruction ||
+        current.secondaryInstruction != next.secondaryInstruction ||
+        (current.poseSimilarity - next.poseSimilarity).abs() >= 3 ||
+        (current.landmarkQuality - next.landmarkQuality).abs() >= 0.04;
+  }
+
+  ({Color color, String label, String note}) _consistencyVisuals(int score) {
+    if (score >= 90) {
+      return (
+        color: AppColors.mutedSage,
+        label: 'Excellent Match',
+        note:
+            'Alignment, lighting, and pose are highly consistent with your reference photo.',
+      );
+    }
+    if (score >= 78) {
+      return (
+        color: AppColors.champagneGold,
+        label: 'Good Match',
+        note:
+            'Small differences detected. Your photo is still suitable for trend metrics.',
+      );
+    }
+    return (
+      color: AppColors.softTerracotta,
+      label: 'Needs Better Match',
+      note:
+          'Re-align using the ghost overlay and improve lighting for more reliable metrics.',
+    );
+  }
+
+  Future<void> _showConsistencyResultSheet({
+    required int score,
+    String? premiumInsightText,
+  }) async {
+    final visuals = _consistencyVisuals(score);
+    final progressValue = (score / 100).clamp(0.0, 1.0);
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return SafeArea(
+          child: Container(
+            margin: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 22),
+            decoration: MyApp.surfaceCardDecoration(tintOpacity: 0.08),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: visuals.color.withValues(alpha: 0.10),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: visuals.color.withValues(alpha: 0.22),
+                        ),
+                      ),
+                      child: Icon(
+                        Icons.verified_outlined,
+                        color: visuals.color,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Consistency Score',
+                            style: MyApp.pageTitleStyle(),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Progress comparison completed',
+                            style: TextStyle(
+                              color: MyApp.textBrown.withValues(alpha: 0.66),
+                              fontWeight: FontWeight.w600,
+                              fontSize: 11.6,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                  decoration: BoxDecoration(
+                    color: visuals.color.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: visuals.color.withValues(alpha: 0.32),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            '$score%',
+                            style: TextStyle(
+                              color: visuals.color,
+                              fontSize: 33,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              visuals.label,
+                              style: TextStyle(
+                                color: visuals.color,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14.5,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            score >= 90
+                                ? 'High confidence'
+                                : score >= 78
+                                ? 'Reliable'
+                                : 'Retake suggested',
+                            style: TextStyle(
+                              color: visuals.color.withValues(alpha: 0.88),
+                              fontSize: 11.8,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(999),
+                        child: LinearProgressIndicator(
+                          value: progressValue,
+                          minHeight: 7,
+                          backgroundColor: visuals.color.withValues(
+                            alpha: 0.14,
+                          ),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            visuals.color,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        visuals.note,
+                        style: TextStyle(
+                          color: MyApp.textBrown.withValues(alpha: 0.84),
+                          fontWeight: FontWeight.w600,
+                          height: 1.35,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        score >= 78
+                            ? 'This capture quality is suitable for trusted trend tracking.'
+                            : 'For the most trustworthy comparison, retake with matched angle and light.',
+                        style: TextStyle(
+                          color: MyApp.textBrown.withValues(alpha: 0.63),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11.5,
+                          height: 1.32,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (premiumInsightText != null &&
+                    premiumInsightText.trim().isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: MyApp.goldShimmer.withValues(alpha: 0.22),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.auto_awesome,
+                          color: MyApp.goldShimmer,
+                          size: 17,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Premium insight: $premiumInsightText',
+                            style: TextStyle(
+                              color: MyApp.textBrown.withValues(alpha: 0.82),
+                              fontWeight: FontWeight.w600,
+                              height: 1.35,
+                              fontSize: 12.5,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: MyApp.primaryGoldButton,
+                    child: const Text('Save & Continue'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  (double, double) _quickImageStats(Uint8List bytes) {
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) return (128, 24);
+    final summary = _summarizeDecodedImage(decoded);
+    return (summary.mean, summary.contrast);
+  }
+
+  double _estimateLightingConfidence(Uint8List bytes) {
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) return 0.0;
+    final summary = _summarizeDecodedImage(decoded);
+    final balancePenalty = (summary.leftMean - summary.rightMean).abs() / 255.0;
+    final exposureScore = (1 - ((summary.mean - 138).abs() / 138)).clamp(
+      0.0,
+      1.0,
+    );
+    final shadowScore = (1 - summary.darkRatio).clamp(0.0, 1.0);
+    return ((exposureScore * 0.45) +
+            (shadowScore * 0.35) +
+            ((1 - balancePenalty) * 0.20))
+        .clamp(0.0, 1.0);
+  }
+
+  double _lightingConfidenceFromGuidance(_LightingGuidance guidance) {
+    switch (guidance.level) {
+      case _LightingLevel.optimal:
+        return 0.84;
+      case _LightingLevel.tooHarsh:
+        return 0.46;
+      case _LightingLevel.tooDark:
+        return 0.38;
+      case _LightingLevel.unknown:
+        return 0.56;
+    }
+  }
+
+  Uint8List _prepareWebStorageBytes(Uint8List bytes) {
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) return bytes;
+
+    final maxSide = math.max(decoded.width, decoded.height);
+    if (maxSide <= 960) {
+      return Uint8List.fromList(img.encodeJpg(decoded, quality: 58));
+    }
+
+    final resized = img.copyResize(
+      decoded,
+      width: decoded.width >= decoded.height ? 960 : null,
+      height: decoded.height > decoded.width ? 960 : null,
+      interpolation: img.Interpolation.average,
+    );
+    return Uint8List.fromList(img.encodeJpg(resized, quality: 58));
+  }
+
+  _LightingFrameSummary _summarizeCameraImage(CameraImage image) {
+    final plane = image.planes.first;
+    final width = image.width;
+    final height = image.height;
+    final stepX = math.max(1, width ~/ 28);
+    final stepY = math.max(1, height ~/ 28);
+    var total = 0.0;
+    var leftTotal = 0.0;
+    var rightTotal = 0.0;
+    var topTotal = 0.0;
+    var bottomTotal = 0.0;
+    var count = 0;
+    var leftCount = 0;
+    var rightCount = 0;
+    var topCount = 0;
+    var bottomCount = 0;
+    var darkPixels = 0;
+    var brightPixels = 0;
+    final samples = <double>[];
+
+    for (var y = 0; y < height; y += stepY) {
+      final rowStart = y * plane.bytesPerRow;
+      for (var x = 0; x < width; x += stepX) {
+        final index = rowStart + x;
+        if (index >= plane.bytes.length) continue;
+        final luminance = plane.bytes[index].toDouble();
+        samples.add(luminance);
+        total += luminance;
+        count += 1;
+        if (x < width / 2) {
+          leftTotal += luminance;
+          leftCount += 1;
+        } else {
+          rightTotal += luminance;
+          rightCount += 1;
+        }
+        if (y < height / 2) {
+          topTotal += luminance;
+          topCount += 1;
+        } else {
+          bottomTotal += luminance;
+          bottomCount += 1;
+        }
+        if (luminance < 58) darkPixels += 1;
+        if (luminance > 210) brightPixels += 1;
+      }
+    }
+
+    if (count == 0) return const _LightingFrameSummary.empty();
+
+    final mean = total / count;
+    var variance = 0.0;
+    for (final sample in samples) {
+      final delta = sample - mean;
+      variance += delta * delta;
+    }
+    variance /= samples.length;
+
+    return _LightingFrameSummary(
+      mean: mean,
+      contrast: math.sqrt(variance),
+      darkRatio: darkPixels / count,
+      brightRatio: brightPixels / count,
+      leftMean: leftCount == 0 ? mean : leftTotal / leftCount,
+      rightMean: rightCount == 0 ? mean : rightTotal / rightCount,
+      topMean: topCount == 0 ? mean : topTotal / topCount,
+      bottomMean: bottomCount == 0 ? mean : bottomTotal / bottomCount,
+    );
+  }
+
+  _LightingFrameSummary _summarizeDecodedImage(img.Image image) {
+    final stepX = math.max(1, image.width ~/ 36);
+    final stepY = math.max(1, image.height ~/ 36);
+    var total = 0.0;
+    var leftTotal = 0.0;
+    var rightTotal = 0.0;
+    var topTotal = 0.0;
+    var bottomTotal = 0.0;
+    var count = 0;
+    var leftCount = 0;
+    var rightCount = 0;
+    var topCount = 0;
+    var bottomCount = 0;
+    var darkPixels = 0;
+    var brightPixels = 0;
+    final samples = <double>[];
+
+    for (var y = 0; y < image.height; y += stepY) {
+      for (var x = 0; x < image.width; x += stepX) {
+        final pixel = image.getPixel(x, y);
+        final luminance =
+            (0.299 * pixel.r) + (0.587 * pixel.g) + (0.114 * pixel.b);
+        samples.add(luminance);
+        total += luminance;
+        count += 1;
+        if (x < image.width / 2) {
+          leftTotal += luminance;
+          leftCount += 1;
+        } else {
+          rightTotal += luminance;
+          rightCount += 1;
+        }
+        if (y < image.height / 2) {
+          topTotal += luminance;
+          topCount += 1;
+        } else {
+          bottomTotal += luminance;
+          bottomCount += 1;
+        }
+        if (luminance < 54) darkPixels += 1;
+        if (luminance > 218) brightPixels += 1;
+      }
+    }
+
+    if (count == 0) {
+      return const _LightingFrameSummary.empty();
+    }
+
+    final mean = total / count;
+    var variance = 0.0;
+    for (final sample in samples) {
+      final delta = sample - mean;
+      variance += delta * delta;
+    }
+    variance /= samples.length;
+
+    return _LightingFrameSummary(
+      mean: mean,
+      contrast: math.sqrt(variance),
+      darkRatio: darkPixels / count,
+      brightRatio: brightPixels / count,
+      leftMean: leftCount == 0 ? mean : leftTotal / leftCount,
+      rightMean: rightCount == 0 ? mean : rightTotal / rightCount,
+      topMean: topCount == 0 ? mean : topTotal / topCount,
+      bottomMean: bottomCount == 0 ? mean : bottomTotal / bottomCount,
+    );
+  }
+
+  String _buildLightingInstruction(
+    _LightingFrameSummary summary, {
+    required bool tooDark,
+  }) {
+    final horizontalDelta = summary.leftMean - summary.rightMean;
+    final verticalDelta = summary.topMean - summary.bottomMean;
+
+    if (tooDark) {
+      if (horizontalDelta > 18) {
+        return 'Move closer to a window and brighten the right side of the frame.';
+      }
+      if (horizontalDelta < -18) {
+        return 'Move closer to a window and brighten the left side of the frame.';
+      }
+      if (verticalDelta > 20) {
+        return 'Lift the light source slightly or reduce overhead shadow on the lower face/body.';
+      }
+      return 'Move closer to a window and keep soft front light evenly across the treatment area.';
+    }
+
+    if (horizontalDelta > 20) {
+      return 'Soften shadows on the right side and reduce strong light from the left.';
+    }
+    if (horizontalDelta < -20) {
+      return 'Soften shadows on the left side and reduce strong light from the right.';
+    }
+    if (verticalDelta.abs() > 22) {
+      return 'Reduce overhead glare and aim for softer front lighting.';
+    }
+    return 'Diffuse the light slightly and reduce strong highlights for more reliable comparison.';
+  }
+
+  String get _liveAlignmentInstruction {
+    if (_lightingGuidance.level == _LightingLevel.tooDark ||
+        _lightingGuidance.level == _LightingLevel.tooHarsh) {
+      return _lightingGuidance.instruction;
+    }
+    if (_liveLandmarkAssessment.available) {
+      return _liveLandmarkAssessment.primaryInstruction;
+    }
+    if (_showGhostOverlay && _referenceImagePath != null) {
+      if (_isBodyGuide) {
+        if (_selectedPoseTemplate == 'Front') {
+          return 'Align with ghost and straighten shoulders before capture.';
+        }
+        if (_selectedPoseTemplate.contains('Side')) {
+          return 'Match the ghost profile and keep hips stacked vertically.';
+        }
+        if (_selectedPoseTemplate == 'Back') {
+          return 'Center the back view and keep shoulders level with the ghost.';
+        }
+        return 'Rotate until your body contour matches the ghost outline.';
+      }
+      if (_selectedPoseTemplate == 'Front') {
+        return 'Align eyes, nose, and chin with the ghost for the closest match.';
+      }
+      if (_selectedPoseTemplate.contains('Profile')) {
+        return 'Turn to profile and keep chin level with the ghost outline.';
+      }
+      return 'Rotate until the cheek and nose line match the ghost overlay.';
+    }
+    return _isBodyGuide
+        ? 'Keep posture neutral and center the treatment area inside the guide.'
+        : 'Keep a neutral expression and center the face inside the outline.';
+  }
+
+  String get _liveAlignmentSecondary {
+    if (_liveLandmarkAssessment.available) {
+      final poseMatch = _liveLandmarkAssessment.poseSimilarity.round().clamp(
+        0,
+        100,
+      );
+      return '${_liveLandmarkAssessment.secondaryInstruction} Landmark match $poseMatch%.';
+    }
+    if (_referenceImagePath != null) {
+      return 'Match distance, framing, and camera height before capturing.';
+    }
+    return 'Capture one strong baseline photo first to unlock more exact ghost matching.';
+  }
+
+  void _cycleGuidance() {
+    setState(() {
+      _currentTipIndex = (_currentTipIndex + 1) % _guidanceTips.length;
+    });
+  }
+
+  Future<void> _showPhotoGuide() async {
+    final isBodyGuide = _isBodyGuide;
+    final correctPoints = isBodyGuide
+        ? const [
+            'Keep the full treatment area centered inside the body outline',
+            'Stand upright with even front lighting and a neutral stance',
+            'Match distance, clothing coverage, and camera height each time',
+          ]
+        : const [
+            'Keep your face centered inside the outline with forehead and chin fully visible',
+            'Use even front lighting with no hard shadows across the cheeks or eyes',
+            'Match your angle, expression, and camera distance each time',
+          ];
+    final incorrectPoints = isBodyGuide
+        ? const [
+            'Twisted torso, cropped hips, or framing only one side of the body',
+            'Overhead shadows, backlighting, or bright glare across the treatment area',
+            'Different stance, zoom level, or loose clothing that hides contour changes',
+          ]
+        : const [
+            'Tilted angle, cropped forehead, or off-center framing',
+            'Overhead shadows, strong side light, or bright glare on the skin',
+            'Smiling, turning your head, or moving much closer or farther away',
+          ];
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return SafeArea(
+          child: Container(
+            margin: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+            decoration: MyApp.surfaceCardDecoration(tintOpacity: 0.08),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: MyApp.goldShimmer.withValues(alpha: 0.18),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.camera_enhance_outlined,
+                        color: MyApp.goldShimmer,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text('Photo Guide', style: MyApp.pageTitleStyle()),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'Use the same distance, angle, and lighting as your previous photos for accurate metrics.',
+                  style: TextStyle(
+                    color: MyApp.textBrown.withValues(alpha: 0.85),
+                    height: 1.45,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  height: 240,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      CameraExampleImageCard(
+                        guideType: _guideType,
+                        title: 'Good example',
+                        caption: correctPoints.join(' '),
+                        isGood: true,
+                      ),
+                      const SizedBox(width: 12),
+                      CameraExampleImageCard(
+                        guideType: _guideType,
+                        title: 'Bad example',
+                        caption: incorrectPoints.join(' '),
+                        isGood: false,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: MyApp.primaryGoldButton,
+                    child: const Text('Close Guide'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  List<String> _buildProcedurePhotoSummaryPaths(
+    List<ScanHistoryEntry> history,
+    String procedureId,
+  ) {
+    final procedureScans =
+        history
+            .where((entry) => entry.procedureId == procedureId)
+            .where((entry) => (entry.imagePath ?? '').trim().isNotEmpty)
+            .toList()
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+    if (procedureScans.isEmpty) {
+      return const [];
+    }
+
+    final latestPath = procedureScans.first.imagePath!;
+    final baselinePath = procedureScans.last.imagePath!;
+    if (baselinePath == latestPath) {
+      return [baselinePath];
+    }
+    return [baselinePath, latestPath];
+  }
+
+  Procedure _buildUpdatedProcedurePhotoSummary({
+    required Procedure currentProc,
+    required List<ScanHistoryEntry> history,
+    required String procedureId,
+    required Uint8List latestBytes,
+  }) {
+    final summaryPaths = _buildProcedurePhotoSummaryPaths(history, procedureId);
+    if (kIsWeb) {
+      return currentProc.copyWith(
+        taggedPhotos: summaryPaths,
+        beforePhotoBytes: null,
+        afterPhotoBytes: null,
+      );
+    }
+
+    final hasBaseline =
+        currentProc.beforePhotoBytes != null &&
+        currentProc.beforePhotoBytes!.isNotEmpty;
+    final baselineBytes = hasBaseline
+        ? currentProc.beforePhotoBytes
+        : latestBytes;
+    final hasProgressPhoto = summaryPaths.length > 1;
+
+    return currentProc.copyWith(
+      taggedPhotos: summaryPaths,
+      beforePhotoBytes: baselineBytes,
+      afterPhotoBytes: hasProgressPhoto ? latestBytes : null,
+    );
+  }
+
+  /// Shows the Cropper.js dialog for web. Creates a temporary blob URL from
+  /// [bytes], launches the image_cropper dialog so the user can select a
+  /// skin patch, then returns the cropped bytes. Returns null if the user
+  /// cancels the crop.
+  Future<Uint8List?> _cropWebBytes(Uint8List bytes) async {
+    return showDialog<Uint8List>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => ImageCropDialog(imageBytes: bytes),
+    );
+  }
+
+  // ── Deep Analysis flow (Premium gated + disclaimer + backend) ────────────
+  Future<void> _handleDeepAnalysis() async {
+    // 1. A cropped image is mandatory — ONLY cropped bytes are ever sent.
+    if (_croppedImageBytes == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please capture and crop a photo first.'),
+            backgroundColor: AppColors.softTerracotta,
+          ),
+        );
+      }
+      return;
+    }
+
+    // 2. Premium gate.
+    if (_premiumStatusLoading) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Checking your membership status...'),
+            backgroundColor: AppColors.champagneGold,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!_hasPremiumAccess) {
+      final bool? shouldSubscribe = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Premium Feature'),
+          content: const Text(
+            'Deep Analysis uses our advanced AI models and is available to Premium members.\n\n'
+            'Upgrade to unlock unlimited analysis, richer progress tracking, and provider-ready insights.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Maybe Later'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Upgrade to Premium'),
+            ),
+          ],
+        ),
+      );
+      if (shouldSubscribe == true) {
+        if (!mounted) return;
+        final navigator = Navigator.of(context);
+        final messenger = ScaffoldMessenger.of(context);
+        final unlocked = await navigator.pushNamed('/paywall');
+        await _refreshPremiumStatus();
+        if (!mounted) return;
+        if (_hasPremiumAccess || unlocked == true) {
+          messenger.showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Premium unlocked. You can continue with Deep Analysis.',
+              ),
+              backgroundColor: AppColors.mutedSage,
+            ),
+          );
+          if (_consentAccepted) {
+            await _handleDeepAnalysis();
+          }
+        }
+      }
+      return;
+    }
+
+    // 3. Hard consent gate — must be accepted before any backend call.
+    if (!_consentAccepted) {
+      final accepted = await _showDeepAnalysisConsent();
+      if (accepted != true) return;
+    }
+
+    // 4. Start analysis with loading state
+    if (mounted) setState(() => _isAnalyzing = true);
+
+    try {
+      final deepFile = XFile.fromData(
+        _croppedImageBytes!,
+        name: 'deep_analysis_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        mimeType: 'image/jpeg',
+      );
+
+      final postOpDays = _postOpDaysForBackend();
+      final safetyFields = await _buildSafetySignalFields();
+      final baselineMetricMatrix = _baselineMetricMatrix();
+
+      final fields = <String, String>{
+        if ((widget.procedure?.type ?? '').trim().isNotEmpty)
+          'procedure_type': widget.procedure!.type.trim(),
+        if (postOpDays != null) 'days_post_op': postOpDays,
+        if ((_scanCustomDescription ?? '').trim().isNotEmpty)
+          'skin_profile_note': (_scanCustomDescription ?? '').trim(),
+        if ((_focusAreaForSave ?? '').trim().isNotEmpty)
+          'selected_skin_profile_note': (_focusAreaForSave ?? '').trim(),
+        ...safetyFields,
+      };
+
+      dynamic result;
+      try {
+        result = await SkinAnalysisService.uploadSingleImageFile(
+          image: deepFile,
+          fields: fields,
+          baselineMetricMatrix: baselineMetricMatrix,
+        );
+      } catch (_) {
+        // Fallback to legacy JSON-bytes route where multipart is unavailable.
+        result = await SkinAnalysisService.analyzeImageFromBytes(
+          _croppedImageBytes!,
+          filename: deepFile.name,
+          baselineMetricMatrix: baselineMetricMatrix,
+        );
+      }
+
+      if (!mounted) return;
+      setState(() => _isAnalyzing = false);
+
+      debugPrint('[DeepAnalysis] Result: $result');
+      final resultMap = _normalizeDeepAnalysisResult(result);
+      final status = resultMap['status']?.toString().toLowerCase();
+      final isSuccess =
+          resultMap['success'] == true ||
+          status == null ||
+          status == 'success' ||
+          status == 'ok' ||
+          status == 'completed';
+
+      if (isSuccess) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => SkinAiAnalysisResultsScreen(
+              analysisResult: resultMap,
+              croppedImageBytes: _croppedImageBytes,
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              resultMap['message']?.toString() ??
+                  'Analysis could not be completed.',
+            ),
+            backgroundColor: AppColors.softTerracotta,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[DeepAnalysis] Failed: $e');
+      if (!mounted) return;
+      setState(() => _isAnalyzing = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Analysis failed: ${e.toString()}'),
+          backgroundColor: AppColors.softTerracotta,
+        ),
+      );
+    }
+  }
+
+  Map<String, dynamic> _normalizeDeepAnalysisResult(dynamic result) {
+    final root = result is Map
+        ? Map<String, dynamic>.from(result)
+        : <String, dynamic>{'status': 'success', 'analysis': result};
+
+    final nestedMetrics = (() {
+      final raw = root['metrics'];
+      if (raw is Map<String, dynamic>) return raw;
+      if (raw is Map) return Map<String, dynamic>.from(raw);
+      return <String, dynamic>{};
+    })();
+
+    final normalized = Map<String, dynamic>.from(root);
+    if (nestedMetrics.isNotEmpty) {
+      normalized['metrics'] = nestedMetrics;
+    }
+
+    final trendDeltas =
+        normalized['trend_deltas'] ?? nestedMetrics['trend_deltas'];
+    if (trendDeltas is Map) {
+      normalized['trend_deltas'] = Map<String, dynamic>.from(trendDeltas);
+    }
+
+    final metricMatrix =
+        normalized['metric_matrix'] ?? nestedMetrics['metric_matrix'];
+    if (metricMatrix is Map) {
+      normalized['metric_matrix'] = Map<String, dynamic>.from(metricMatrix);
+    }
+
+    return normalized;
+  }
+
+  /// Non-dismissible pre-analysis consent. Returns true only when the user
+  /// explicitly taps "I Understand and Continue", and records [_consentAccepted]
+  /// so the Deep Analysis button unlocks. Uses cautious, non-diagnostic language.
+  Future<bool> _showDeepAnalysisConsent() async {
+    final accepted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+          contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+          title: Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: AppColors.champagneGold.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.health_and_safety_outlined,
+                  color: AppColors.champagneGold,
+                  size: 19,
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Before you continue',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                ),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _deepConsentBullet(
+                  Icons.info_outline_rounded,
+                  'This is not medical advice',
+                  'Deep Analysis does not diagnose any condition and is not a '
+                      'substitute for a licensed dermatologist or physician.',
+                ),
+                _deepConsentBullet(
+                  Icons.auto_awesome_outlined,
+                  'Personal cosmetic tracking only',
+                  'Results are estimates generated from your photo to help you '
+                      'observe and track changes over time \u2014 not to make '
+                      'treatment decisions.',
+                ),
+                _deepConsentBullet(
+                  Icons.lock_outline_rounded,
+                  'Your photo stays private',
+                  'Only the cropped image is sent for processing and it is '
+                      'deleted immediately afterwards.',
+                ),
+                _deepConsentBullet(
+                  Icons.local_hospital_outlined,
+                  'Seek professional care',
+                  'For any concern, changing or painful lesion, or a '
+                      'persistent symptom, please consult a qualified '
+                      'healthcare professional.',
+                ),
+              ],
+            ),
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(
+                'Cancel',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: MyApp.clinicalSlate,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.champagneGold,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text(
+                'I Understand and Continue',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (accepted == true && mounted) {
+      setState(() => _consentAccepted = true);
+    }
+    return accepted == true;
+  }
+
+  Widget _deepConsentBullet(IconData icon, String title, String body) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: MyApp.clinicalTeal),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w900,
+                    color: MyApp.clinicalNavy,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  body,
+                  style: TextStyle(
+                    fontSize: 11,
+                    height: 1.4,
+                    color: MyApp.textBrown.withValues(alpha: 0.85),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<SkinMetrics> _metricsFromBackendOrThrow(
+    Uint8List bytes, {
+    required String filename,
+  }) async {
+    final raw = await SkinAnalysisService.analyzeImageFromBytes(
+      bytes,
+      filename: filename,
+      baselineMetricMatrix: _baselineMetricMatrix(),
+    );
+    final map = raw is Map
+        ? Map<String, dynamic>.from(raw)
+        : <String, dynamic>{};
+    final metricsSource = map['metrics'];
+    final metrics = metricsSource is Map
+        ? Map<String, dynamic>.from(metricsSource)
+        : map;
+
+    double readScore(List<String> keys) {
+      for (final key in keys) {
+        final value = metrics[key];
+        if (value == null) continue;
+        final parsed = double.tryParse(value.toString());
+        if (parsed == null) continue;
+        if (parsed <= 1.0) return (parsed * 10.0).clamp(0.0, 10.0);
+        if (parsed <= 10.0) return parsed.clamp(0.0, 10.0);
+        return (parsed / 10.0).clamp(0.0, 10.0);
+      }
+      throw Exception(
+        'Backend response missing required metric keys: $keys. '
+        'Ensure YOLO + MediaPipe pipeline is loaded.',
+      );
+    }
+
+    final redness = readScore(['redness_score', 'redness']);
+    final texture = readScore(['texture_score', 'texture']);
+    final wrinkle = readScore(['wrinkle_score', 'wrinkle']);
+    final pore = readScore(['pore_count', 'pore_score', 'pore']);
+    final darkSpots = readScore(['pigmentation_score', 'dark_spots_score']);
+    final elasticity = (10.0 - texture).clamp(0.0, 10.0);
+
+    return SkinMetrics(
+      redness: redness,
+      texture: texture,
+      wrinkle: wrinkle,
+      pore: pore,
+      darkSpots: darkSpots,
+      elasticity: elasticity,
+      date: DateTime.now(),
+    );
+  }
+
+  /// Premium Deep Analysis block: a top disclaimer, the consent gate, and the
+  /// gated Run button. The button stays disabled until a cropped image exists
+  /// AND the disclaimer has been accepted.
+  Widget _buildDeepAnalysisSection() {
+    final hasCrop = _croppedImageBytes != null;
+    final needsPremium = !_premiumStatusLoading && !_hasPremiumAccess;
+    final canRun =
+        hasCrop &&
+        !_isAnalyzing &&
+        !_premiumStatusLoading &&
+        (_hasPremiumAccess ? _consentAccepted : true);
+    final gateAccent = _consentAccepted
+        ? AppColors.mutedSage
+        : AppColors.champagneGold;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            MyApp.clinicalNavy.withValues(alpha: 0.04),
+            AppColors.champagneGold.withValues(alpha: 0.05),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppColors.champagneGold.withValues(alpha: 0.30),
+          width: 0.8,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.auto_awesome_rounded,
+                size: 16,
+                color: AppColors.champagneGold,
+              ),
+              const SizedBox(width: 7),
+              Text(
+                'AI DEEP ANALYSIS',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.0,
+                  color: MyApp.clinicalNavy,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'AI-assisted observations for personal cosmetic tracking only. Premium unlocks the full analysis flow and richer progress insights.',
+            style: TextStyle(
+              fontSize: 10.5,
+              height: 1.4,
+              color: MyApp.textBrown.withValues(alpha: 0.85),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: MyApp.surface.withValues(alpha: 0.92),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color:
+                    (_premiumStatusLoading
+                            ? MyApp.clinicalSlate
+                            : needsPremium
+                            ? AppColors.softTerracotta
+                            : hasCrop
+                            ? AppColors.mutedSage
+                            : AppColors.champagneGold)
+                        .withValues(alpha: 0.35),
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  _premiumStatusLoading
+                      ? Icons.hourglass_top_rounded
+                      : needsPremium
+                      ? Icons.workspace_premium_outlined
+                      : hasCrop
+                      ? Icons.check_circle_outline_rounded
+                      : Icons.crop_free_rounded,
+                  size: 18,
+                  color: _premiumStatusLoading
+                      ? MyApp.clinicalSlate
+                      : needsPremium
+                      ? AppColors.softTerracotta
+                      : hasCrop
+                      ? AppColors.mutedSage
+                      : AppColors.champagneGold,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _premiumStatusLoading
+                            ? 'Checking access'
+                            : needsPremium
+                            ? 'Premium required'
+                            : hasCrop
+                            ? 'Photo ready for analysis'
+                            : 'Capture and crop a photo first',
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w900,
+                          color: MyApp.clinicalNavy,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        _premiumStatusLoading
+                            ? 'Verifying your membership so the correct analysis options appear.'
+                            : needsPremium
+                            ? 'Unlock unlimited Deep Analysis, richer recovery insights, and report-ready results.'
+                            : hasCrop
+                            ? 'Your cropped image is ready. Review the disclaimer once, then run analysis.'
+                            : 'Deep Analysis only runs on a cropped image so results stay focused and private.',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          height: 1.35,
+                          color: MyApp.textBrown.withValues(alpha: 0.85),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: (!hasCrop || _consentAccepted || needsPremium)
+                  ? null
+                  : _showDeepAnalysisConsent,
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: gateAccent.withValues(alpha: 0.07),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: gateAccent.withValues(alpha: 0.45),
+                    width: 0.9,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _consentAccepted
+                          ? Icons.verified_rounded
+                          : Icons.shield_outlined,
+                      color: gateAccent,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _consentAccepted
+                                ? 'Disclaimer accepted'
+                                : 'Review the analysis disclaimer',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w900,
+                              color: gateAccent,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            !hasCrop
+                                ? 'Capture and crop a photo first.'
+                                : needsPremium
+                                ? 'Upgrade to Premium to unlock the analysis flow.'
+                                : _consentAccepted
+                                ? 'You can run Deep Analysis below. Tap to read again.'
+                                : 'Required before analysis. Tap to read and accept.',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              height: 1.35,
+                              color: MyApp.textBrown.withValues(alpha: 0.85),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_consentAccepted)
+                      TextButton(
+                        onPressed: _showDeepAnalysisConsent,
+                        child: Text(
+                          'View',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: gateAccent,
+                          ),
+                        ),
+                      )
+                    else if (hasCrop)
+                      Icon(Icons.chevron_right_rounded, color: gateAccent),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: canRun ? _handleDeepAnalysis : null,
+              icon: _isAnalyzing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.analytics_rounded, size: 18),
+              label: Text(
+                _isAnalyzing
+                    ? 'Analyzing\u2026'
+                    : needsPremium
+                    ? 'Unlock Premium to Analyze'
+                    : 'Run AI Analysis',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.3,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.champagneGold,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: MyApp.clinicalSlate.withValues(
+                  alpha: 0.25,
+                ),
+                disabledForegroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+          ),
+          if (_isAnalyzing) ...[
+            const SizedBox(height: 8),
+            Text(
+              'This usually takes 10-20 seconds. Keep the app open while we process your cropped photo.',
+              style: TextStyle(
+                fontSize: 10.5,
+                height: 1.35,
+                color: MyApp.clinicalSlate,
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.info_outline_rounded,
+                size: 12,
+                color: MyApp.clinicalSlate.withValues(alpha: 0.85),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Not a diagnosis and not a substitute for professional '
+                  'medical advice. Always consult a qualified healthcare '
+                  'professional for any concern.',
+                  style: TextStyle(
+                    fontSize: 10,
+                    height: 1.4,
+                    color: MyApp.clinicalSlate,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Reliable Web Gallery Picker (exact pattern that works in scar_healing_tracker) ──
+  void _triggerWebGalleryPicker() {
+    String? procedureIdToSave;
+    String? productNameToSave;
+
+    debugPrint(
+      '[WEB PICKER] isSkincareScan=${widget.isSkincareScan} procedure=${widget.procedure?.id} selectedProcedureId=$_selectedProcedureId productName=${widget.productName}',
+    );
+
+    if (widget.isSkincareScan &&
+        widget.productName != null &&
+        widget.productName!.isNotEmpty) {
+      productNameToSave = widget.productName;
+    } else if (!widget.isSkincareScan) {
+      final procedureId = widget.procedure?.id ?? _selectedProcedureId;
+      if (procedureId == null || procedureId.isEmpty) {
+        // Still open picker — save will prompt for procedure selection
+        debugPrint('[WEB PICKER] No procedure ID — will open picker anyway');
+      } else {
+        procedureIdToSave = procedureId;
+      }
+    }
+
+    setState(() {
+      _capturing = true;
+      _croppedImageBytes = null;
+    });
+    openWebImagePicker((bytes) async {
+      debugPrint('[WEB PICKER] complete, bytes=${bytes?.length}');
+      try {
+        if (bytes == null || bytes.isEmpty) {
+          if (mounted) setState(() => _capturing = false);
+          return;
+        }
+
+        final prepared = await prepareWebUploadImage(bytes);
+        if (!prepared.isSuccess) {
+          if (mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(prepared.errorMessage!)));
+          }
+          return;
+        }
+
+        final workingBytes = prepared.image!.bytes;
+        if (!mounted) return;
+        Uint8List? croppedBytes;
+        try {
+          croppedBytes = await _cropWebBytes(workingBytes);
+        } catch (e) {
+          debugPrint('[WEB PICKER] crop failed, using original bytes: $e');
+          croppedBytes = workingBytes;
+        }
+        if (croppedBytes == null) {
+          if (mounted) setState(() => _capturing = false);
+          return;
+        }
+        if (mounted) setState(() => _croppedImageBytes = croppedBytes);
+        await _saveWebGalleryBytes(
+          croppedBytes,
+          procedureIdToSave,
+          productNameToSave,
+        );
+      } catch (e) {
+        debugPrint('[WEB PICKER] exception: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'We could not process the selected image. Please choose a valid photo file and try again.',
+              ),
+            ),
+          );
+        }
+      } finally {
+        if (mounted && _capturing) {
+          setState(() => _capturing = false);
+        }
+      }
+    });
+  }
+
+  void _triggerGalleryPicker() {
+    if (kIsWeb) {
+      _triggerWebGalleryPicker();
+      return;
+    }
+    _pickAndSavePhoto(source: ImageSource.gallery);
+  }
+
+  Future<void> _saveWebGalleryBytes(
+    Uint8List bytes,
+    String? procedureIdToSave,
+    String? productNameToSave,
+  ) async {
+    final resolvedProcedureId = !widget.isSkincareScan
+        ? (procedureIdToSave?.trim().isNotEmpty == true
+              ? procedureIdToSave!.trim()
+              : (widget.procedure?.id ??
+                    _selectedProcedureId ??
+                    await AppPrefs.resolveActiveProcedureId()))
+        : null;
+
+    if (!widget.isSkincareScan &&
+        (resolvedProcedureId == null || resolvedProcedureId.isEmpty)) {
+      debugPrint(
+        '[_saveWebGalleryBytes] ERROR: Procedure scan but no procedureId!',
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select a procedure first.')),
+        );
+      }
+      return;
+    }
+
+    debugPrint(
+      '[_saveWebGalleryBytes] START bytes.length=${bytes.length} procedureIdToSave=$resolvedProcedureId productNameToSave=$productNameToSave isSkincareScan=${widget.isSkincareScan}',
+    );
+
+    final nextMetrics = await _metricsFromBackendOrThrow(
+      bytes,
+      filename: 'scan_${DateTime.now().millisecondsSinceEpoch}.jpg',
+    );
+
+    final bytesForStorage = kIsWeb ? _prepareWebStorageBytes(bytes) : bytes;
+    final imagePathToSave =
+        'data:image/jpeg;base64,${base64Encode(bytesForStorage)}';
+    try {
+      debugPrint(
+        '[_saveWebGalleryBytes] imagePathToSave length=${imagePathToSave.length}, originalBytes=${bytes.length}, storedBytes=${bytesForStorage.length}',
+      );
+      List<ScanHistoryEntry> updatedHistory = const [];
+
+      debugPrint('[_saveWebGalleryBytes] _cycleGuidance() starting');
+      _cycleGuidance();
+      debugPrint('[_saveWebGalleryBytes] _cycleGuidance() done');
+
+      final liveLighting = _analyzeLighting(bytes);
+      debugPrint(
+        '[_saveWebGalleryBytes] liveLighting analyzed, level=${liveLighting.level}',
+      );
+      final lightingConfidence = kIsWeb
+          ? _lightingConfidenceFromGuidance(liveLighting)
+          : _estimateLightingConfidence(bytes);
+      debugPrint(
+        '[_saveWebGalleryBytes] lightingConfidence=$lightingConfidence',
+      );
+
+      debugPrint('[_saveWebGalleryBytes] analyzeCapturedLandmarks() starting');
+      final capturedLandmarks = kIsWeb
+          ? await analyzeCapturedLandmarks(
+              bytes: bytes,
+              filePath: null,
+              isBody: _isBodyGuide,
+              poseTemplate: _selectedPoseTemplate,
+            ).timeout(
+              const Duration(seconds: 4),
+              onTimeout: () {
+                debugPrint(
+                  '[_saveWebGalleryBytes] analyzeCapturedLandmarks timeout on web, using unsupported fallback',
+                );
+                return LandmarkAssessment.unsupported;
+              },
+            )
+          : await analyzeCapturedLandmarks(
+              bytes: bytes,
+              filePath: null,
+              isBody: _isBodyGuide,
+              poseTemplate: _selectedPoseTemplate,
+            );
+      debugPrint(
+        '[_saveWebGalleryBytes] analyzeCapturedLandmarks() done, available=${capturedLandmarks.available}',
+      );
+
+      if (mounted) {
+        setState(() {
+          _lightingGuidance = liveLighting;
+          if (capturedLandmarks.available) {
+            _liveLandmarkAssessment = capturedLandmarks;
+          }
+        });
+        debugPrint(
+          '[_saveWebGalleryBytes] setState after landmark analysis done',
+        );
+      }
+
+      debugPrint('[_saveWebGalleryBytes] nextMetrics created');
+
+      final consistencyScore = _calculateConsistencyScore(
+        bytes,
+        nextMetrics,
+        landmarkAssessment: capturedLandmarks,
+      );
+      debugPrint('[_saveWebGalleryBytes] consistencyScore=$consistencyScore');
+
+      final preferredReference =
+          liveLighting.level == _LightingLevel.optimal &&
+          lightingConfidence >= 0.72 &&
+          (!capturedLandmarks.available ||
+              capturedLandmarks.landmarkQuality >= 0.76) &&
+          consistencyScore >= 84;
+      _lastConsistencyScore = consistencyScore;
+      debugPrint(
+        '[_saveWebGalleryBytes] preferredReference=$preferredReference',
+      );
+
+      if (widget.isSkincareScan) {
+        debugPrint('[_saveWebGalleryBytes] Saving skincare scan');
+        updatedHistory = await AppPrefs.addScanMetric(
+          nextMetrics,
+          procedureId: null,
+          productName: productNameToSave,
+          imagePath: imagePathToSave,
+          poseTemplate: _selectedPoseTemplate,
+          focusArea: _focusAreaForSave,
+          customDescription: _customDescriptionForSave,
+          lightingConfidence: lightingConfidence,
+          preferredReference: preferredReference,
+          extraMetrics: capturedLandmarks.toMetricMap(),
+          makeupPresent: _makeupPresent ?? false,
+          distanceEstimate: _distanceEstimate(),
+          headTiltAngle: _headTiltAngle(),
+          expressionConfidence: _expressionConfidence(),
+        );
+        debugPrint(
+          '[_saveWebGalleryBytes] skincare scan saved, updatedHistory.length=${updatedHistory.length}',
+        );
+      } else {
+        debugPrint(
+          '[_saveWebGalleryBytes] Saving procedure scan, procedureIdToSave=$resolvedProcedureId',
+        );
+        updatedHistory = await AppPrefs.addScanMetric(
+          nextMetrics,
+          procedureId: resolvedProcedureId,
+          productName: null,
+          imagePath: imagePathToSave,
+          poseTemplate: _selectedPoseTemplate,
+          focusArea: _focusAreaForSave,
+          customDescription: _customDescriptionForSave,
+          lightingConfidence: lightingConfidence,
+          preferredReference: preferredReference,
+          extraMetrics: capturedLandmarks.toMetricMap(),
+          makeupPresent: _makeupPresent ?? false,
+          distanceEstimate: _distanceEstimate(),
+          headTiltAngle: _headTiltAngle(),
+          expressionConfidence: _expressionConfidence(),
+        );
+        debugPrint(
+          '[_saveWebGalleryBytes] procedure scan saved, updatedHistory.length=${updatedHistory.length}',
+        );
+
+        final proceduresJson = await AppPrefs.getProcedureEntries();
+        final idx = proceduresJson.indexWhere(
+          (p) => (p['id'] ?? '') == resolvedProcedureId,
+        );
+        debugPrint('[_saveWebGalleryBytes] proceduresJson idx=$idx');
+        if (idx == -1) {
+          throw Exception('Procedure not found for ID: $resolvedProcedureId');
+        }
+        Procedure currentProc = Procedure.fromJson(
+          Map<String, dynamic>.from(proceduresJson[idx]),
+        );
+        final updatedProc = _buildUpdatedProcedurePhotoSummary(
+          currentProc: currentProc,
+          history: updatedHistory,
+          procedureId: resolvedProcedureId!,
+          latestBytes: bytes,
+        );
+        proceduresJson[idx] = updatedProc.toJson();
+        debugPrint(
+          '[_saveWebGalleryBytes] procedure updated in proceduresJson',
+        );
+        try {
+          await AppPrefs.saveProcedureHistory(proceduresJson);
+        } catch (e) {
+          if (!kIsWeb || !e.toString().contains('QuotaExceededError')) {
+            rethrow;
+          }
+          debugPrint(
+            '[_saveWebGalleryBytes] Quota exceeded, compacting procedure history and retrying',
+          );
+          for (final procedure in proceduresJson) {
+            procedure.remove('beforePhotoBytes');
+            procedure.remove('afterPhotoBytes');
+            procedure['taggedPhotos'] =
+                ((procedure['taggedPhotos'] as List?) ?? const [])
+                    .map((e) => e.toString())
+                    .toList();
+          }
+          await AppPrefs.saveProcedureHistory(proceduresJson);
+        }
+        debugPrint('[_saveWebGalleryBytes] saveProcedureHistory done');
+      }
+
+      String? premiumInsightText;
+      final isPremium = await PremiumAccess.isPremiumUser();
+      debugPrint(
+        '[_saveWebGalleryBytes] isPremium=$isPremium, updatedHistory.length=${updatedHistory.length}',
+      );
+      if (isPremium && updatedHistory.length >= 2) {
+        debugPrint('[_saveWebGalleryBytes] Processing premium insights');
+        final sorted = List<ScanHistoryEntry>.from(updatedHistory)
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        final insight =
+            await PremiumRecoveryService.autoAnalyzeLatestProgressFromHistory(
+              sorted,
+            );
+        await PremiumRecoveryService.autoGenerateFuturePredictionFromHistory(
+          sorted,
+        );
+        await PremiumRecoveryService.buildSmartRemindersFromLatestScan(sorted);
+        premiumInsightText = insight?.summary;
+        debugPrint('[_saveWebGalleryBytes] Premium insights done');
+      }
+
+      final affirmation = _affirmations[_lastAffirmationIndex];
+      _lastAffirmationIndex =
+          (_lastAffirmationIndex + 1) % _affirmations.length;
+
+      if (mounted) {
+        debugPrint('[_saveWebGalleryBytes] Widget is mounted, showing UI');
+        final messenger = ScaffoldMessenger.of(context);
+        final navigator = Navigator.of(context);
+        debugPrint('[_saveWebGalleryBytes] About to play success burst');
+        await _playSuccessBurst();
+        debugPrint('[_saveWebGalleryBytes] Success burst done');
+        if (!mounted) {
+          debugPrint(
+            '[_saveWebGalleryBytes] Widget unmounted after success burst, returning early',
+          );
+          return;
+        }
+        debugPrint(
+          '[_saveWebGalleryBytes] About to show consistency result sheet, score=$consistencyScore',
+        );
+        await _showConsistencyResultSheet(
+          score: consistencyScore,
+          premiumInsightText: premiumInsightText,
+        );
+        debugPrint('[_saveWebGalleryBytes] Consistency sheet closed');
+        if (!mounted) {
+          debugPrint(
+            '[_saveWebGalleryBytes] Widget unmounted after consistency sheet, returning early',
+          );
+          return;
+        }
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(affirmation),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+        debugPrint('[_saveWebGalleryBytes] Affirmation snackbar shown');
+        await _loadReferenceContext();
+        debugPrint('[_saveWebGalleryBytes] Reference context loaded');
+        if (!mounted) {
+          debugPrint(
+            '[_saveWebGalleryBytes] Widget unmounted after loading context, returning early',
+          );
+          return;
+        }
+        debugPrint('[_saveWebGalleryBytes] About to pop navigator');
+        navigator.pop(true);
+        debugPrint('[_saveWebGalleryBytes] Navigator popped');
+      } else {
+        debugPrint(
+          '[_saveWebGalleryBytes] Widget NOT mounted, skipping UI updates',
+        );
+      }
+    } catch (e) {
+      debugPrint('[_saveWebGalleryBytes] Exception caught: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to save photo: $e')));
+      }
+    } finally {
+      debugPrint(
+        '[_saveWebGalleryBytes] Finally block, setting _capturing=false',
+      );
+      if (mounted) setState(() => _capturing = false);
+    }
+  }
+
+  // ── Mobile / camera photo picker ──────────────────────────────────────────
+  Future<void> _pickAndSavePhoto({
+    ImageSource source = ImageSource.camera,
+  }) async {
+    if (source == ImageSource.gallery) {
+      // Reset current selection; it becomes valid again only after crop success.
+      setState(() {
+        _capturing = true;
+        _croppedImageBytes = null;
+      });
+    } else {
+      setState(() => _capturing = true);
+    }
+
+    String? procedureIdToSave;
+    String? productNameToSave;
+
+    if (widget.isSkincareScan) {
+      productNameToSave = widget.productName?.trim().isNotEmpty == true
+          ? widget.productName!.trim()
+          : null;
+    } else {
+      final procedureId =
+          widget.procedure?.id ??
+          _selectedProcedureId ??
+          await AppPrefs.resolveActiveProcedureId();
+      if (procedureId == null || procedureId.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please select a procedure before taking a scan.'),
+            ),
+          );
+        }
+        setState(() => _capturing = false);
+        return;
+      }
+      procedureIdToSave = procedureId;
+    }
+
+    try {
+      final XFile? pickedFile = source == ImageSource.gallery
+          ? await _picker.pickImage(
+              source: ImageSource.gallery,
+              imageQuality: 85,
+            )
+          : await _captureFromLiveCamera();
+
+      if (pickedFile == null) {
+        if (mounted && source == ImageSource.gallery) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No photo was selected.')),
+          );
+        }
+        setState(() => _capturing = false);
+        return;
+      }
+
+      // ── Manual crop: let the user select a focused skin patch ──────────
+      final rawBytes = await pickedFile.readAsBytes();
+      if (!mounted) {
+        setState(() => _capturing = false);
+        return;
+      }
+      final croppedBytes = await showDialog<Uint8List>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) =>
+            ImageCropDialog(imageBytes: Uint8List.fromList(rawBytes)),
+      );
+      if (croppedBytes == null) {
+        // User cancelled the cropper
+        if (mounted) setState(() => _capturing = false);
+        return;
+      }
+      final bytes = croppedBytes;
+      final imagePathToSave = pickedFile.path;
+      if (mounted) setState(() => _croppedImageBytes = bytes);
+
+      List<ScanHistoryEntry> updatedHistory = const [];
+      _cycleGuidance();
+
+      final liveLighting = _analyzeLighting(bytes);
+      final lightingConfidence = _estimateLightingConfidence(bytes);
+      final capturedLandmarks = await analyzeCapturedLandmarks(
+        bytes: bytes,
+        filePath: imagePathToSave,
+        isBody: _isBodyGuide,
+        poseTemplate: _selectedPoseTemplate,
+      );
+      if (mounted) {
+        setState(() {
+          _lightingGuidance = liveLighting;
+          if (capturedLandmarks.available) {
+            _liveLandmarkAssessment = capturedLandmarks;
+          }
+        });
+      }
+
+      final nextMetrics = await _metricsFromBackendOrThrow(
+        bytes,
+        filename: 'scan_${DateTime.now().millisecondsSinceEpoch}.jpg',
+      );
+      final consistencyScore = _calculateConsistencyScore(
+        bytes,
+        nextMetrics,
+        landmarkAssessment: capturedLandmarks,
+      );
+      final preferredReference =
+          liveLighting.level == _LightingLevel.optimal &&
+          lightingConfidence >= 0.72 &&
+          (!capturedLandmarks.available ||
+              capturedLandmarks.landmarkQuality >= 0.76) &&
+          consistencyScore >= 84;
+      _lastConsistencyScore = consistencyScore;
+
+      if (widget.isSkincareScan) {
+        updatedHistory = await AppPrefs.addScanMetric(
+          nextMetrics,
+          procedureId: null,
+          productName: productNameToSave,
+          imagePath: imagePathToSave,
+          poseTemplate: _selectedPoseTemplate,
+          focusArea: _focusAreaForSave,
+          customDescription: _customDescriptionForSave,
+          lightingConfidence: lightingConfidence,
+          preferredReference: preferredReference,
+          extraMetrics: capturedLandmarks.toMetricMap(),
+          makeupPresent: _makeupPresent ?? false,
+          distanceEstimate: _distanceEstimate(),
+          headTiltAngle: _headTiltAngle(),
+          expressionConfidence: _expressionConfidence(),
+        );
+      } else {
+        updatedHistory = await AppPrefs.addScanMetric(
+          nextMetrics,
+          procedureId: procedureIdToSave,
+          productName: null,
+          imagePath: imagePathToSave,
+          poseTemplate: _selectedPoseTemplate,
+          focusArea: _focusAreaForSave,
+          customDescription: _customDescriptionForSave,
+          lightingConfidence: lightingConfidence,
+          preferredReference: preferredReference,
+          extraMetrics: capturedLandmarks.toMetricMap(),
+          makeupPresent: _makeupPresent ?? false,
+          distanceEstimate: _distanceEstimate(),
+          headTiltAngle: _headTiltAngle(),
+          expressionConfidence: _expressionConfidence(),
+        );
+
+        final proceduresJson = await AppPrefs.getProcedureEntries();
+        final idx = proceduresJson.indexWhere(
+          (p) => (p['id'] ?? '') == procedureIdToSave,
+        );
+        if (idx == -1) throw Exception('Procedure not found');
+        Procedure currentProc = Procedure.fromJson(
+          Map<String, dynamic>.from(proceduresJson[idx]),
+        );
+        final updatedProc = _buildUpdatedProcedurePhotoSummary(
+          currentProc: currentProc,
+          history: updatedHistory,
+          procedureId: procedureIdToSave!,
+          latestBytes: bytes,
+        );
+        proceduresJson[idx] = updatedProc.toJson();
+        await AppPrefs.saveProcedureHistory(proceduresJson);
+      }
+
+      String? premiumInsightText;
+      final isPremium = await PremiumAccess.isPremiumUser();
+      if (isPremium && updatedHistory.length >= 2) {
+        final sorted = List<ScanHistoryEntry>.from(updatedHistory)
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        final insight =
+            await PremiumRecoveryService.autoAnalyzeLatestProgressFromHistory(
+              sorted,
+            );
+        await PremiumRecoveryService.autoGenerateFuturePredictionFromHistory(
+          sorted,
+        );
+        await PremiumRecoveryService.buildSmartRemindersFromLatestScan(sorted);
+        premiumInsightText = insight?.summary;
+      }
+
+      final affirmation = _affirmations[_lastAffirmationIndex];
+      _lastAffirmationIndex =
+          (_lastAffirmationIndex + 1) % _affirmations.length;
+
+      if (mounted) {
+        final messenger = ScaffoldMessenger.of(context);
+        final navigator = Navigator.of(context);
+        await _playSuccessBurst();
+        if (!mounted) return;
+        await _showConsistencyResultSheet(
+          score: consistencyScore,
+          premiumInsightText: premiumInsightText,
+        );
+        if (!mounted) return;
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(affirmation),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+        await _loadReferenceContext();
+        if (!mounted) return;
+        navigator.pop(true);
+      }
+    } catch (e) {
+      debugPrint('Photo save error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to save photo: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _capturing = false);
+    }
+  }
+
+  Future<XFile?> _captureFromLiveCamera() async {
+    final controller = _cameraController;
+    if (controller == null || !controller.value.isInitialized) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Live camera unavailable. Opening Gallery...'),
+        ),
+      );
+      return _picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+    }
+    if (controller.value.isTakingPicture) return null;
+
+    try {
+      if (_lightingStreamActive && !kIsWeb) {
+        await controller.stopImageStream();
+        if (!mounted) return null;
+        _lightingStreamActive = false;
+      }
+      final file = await controller.takePicture();
+      if (!mounted) return null;
+      _startLightingStream(controller);
+      return file;
+    } catch (e) {
+      if (!mounted) return null;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Capture failed: $e')));
+      _startLightingStream(controller);
+      return null;
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_lightingStreamActive && !kIsWeb) {
+      _cameraController?.stopImageStream();
+    }
+    closeLandmarkAnalyzers();
+    _autoCaptureTimer?.cancel();
+    _cameraController?.dispose();
+    _shimmerController.dispose();
+    _successController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (kIsWeb) {
+      // Web fallback: no live camera — patient supplies a still image instead.
+      // We surface the clinical disclosure status and a deliberate
+      // "Select Test Image from Computer" path for desktop QA.
+      return Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          iconTheme: IconThemeData(color: MyApp.clinicalNavy),
+        ),
+        body: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 460),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Icon(
+                    Icons.camera_alt_outlined,
+                    size: 56,
+                    color: MyApp.clinicalTeal.withValues(alpha: 0.85),
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    'Progress scan upload',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: MyApp.textBrown,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.1,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Live camera capture is best on a phone. On this device, '
+                    'upload a still photo and the same AI-powered analysis will run.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: MyApp.textBrown.withValues(alpha: 0.72),
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                      height: 1.45,
+                    ),
+                  ),
+                  const ClinicalSectionHeader(
+                    icon: Icons.photo_camera_rounded,
+                    eyebrow: 'STEP 1',
+                    title: 'Choose a photo',
+                  ),
+                  const SizedBox(height: 10),
+
+                  // ── Disclosure status and controls ──────────────────────
+                  if (_makeupPresent == true)
+                    const Center(child: MakeupBadge())
+                  else if (_makeupPresent == false)
+                    const _CleanFaceConfirmedChip()
+                  else
+                    const SizedBox.shrink(),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: _capturing
+                        ? null
+                        : () async {
+                            final result = await MakeupDisclosureDialog.show(
+                              context,
+                            );
+                            if (!mounted || result == null) return;
+                            setState(() => _makeupPresent = result);
+                          },
+                    icon: const Icon(Icons.face_retouching_natural, size: 18),
+                    label: const Text('Update pre-scan disclosure'),
+                    style: MyApp.secondaryOutlineButton(),
+                  ),
+                  const SizedBox(height: 12),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: null,
+                          icon: const Icon(Icons.photo_camera_rounded),
+                          label: const Text('Take Photo'),
+                          style: MyApp.secondaryOutlineButton(),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _capturing
+                              ? null
+                              : () => _triggerGalleryPicker(),
+                          icon: const Icon(Icons.photo_library_rounded),
+                          label: Text(
+                            _capturing ? 'Opening...' : 'Choose from Gallery',
+                          ),
+                          style: MyApp.primaryGoldButton,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Camera capture is available from the mobile scan screen; gallery upload is enabled here for fast testing.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: MyApp.textBrown.withValues(alpha: 0.58),
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      height: 1.35,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  TextButton.icon(
+                    onPressed: _showPhotoGuide,
+                    icon: const Icon(Icons.info_outline),
+                    label: const Text('Photo Guide'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: MyApp.clinicalTeal,
+                      textStyle: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // ── Mobile camera UI (live preview + clinical-grade guidance) ────────
+    return _buildMobileCameraBody(context);
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Clinical quality + auto-capture helpers
+  // ───────────────────────────────────────────────────────────────────────
+
+  /// Numeric estimate (0..1) of how well-framed the subject is, derived
+  /// from landmark detection quality and centring offset.
+  double? _distanceEstimate() {
+    final a = _liveLandmarkAssessment;
+    if (!a.available) return null;
+    final centring =
+        1.0 - (a.centerOffsetX.abs() + a.centerOffsetY.abs()).clamp(0.0, 1.0);
+    return (a.landmarkQuality * 0.7 + centring * 0.3).clamp(0.0, 1.0);
+  }
+
+  /// Aggregate head-tilt magnitude in degrees. Lower = more neutral.
+  double? _headTiltAngle() {
+    final a = _liveLandmarkAssessment;
+    if (!a.available) return null;
+    final yaw = a.yaw?.abs() ?? 0.0;
+    final pitch = a.pitch?.abs() ?? 0.0;
+    final roll = a.roll?.abs() ?? 0.0;
+    if (yaw == 0 && pitch == 0 && roll == 0) {
+      // Fallback: use rotation proxy + eye tilt as a synthetic degree value.
+      return (a.rotationProxy * 30.0).abs() +
+          ((a.eyeTilt?.abs() ?? 0.0) * 30.0);
+    }
+    return yaw + pitch + roll;
+  }
+
+  /// Synthesised expression-acceptability confidence (0..1). High when the
+  /// face is detected with neutral pose and good landmark quality.
+  double? _expressionConfidence() {
+    final a = _liveLandmarkAssessment;
+    if (!a.available) return null;
+    final tilt = _headTiltAngle() ?? 0.0;
+    final tiltPenalty = (tilt / 60.0).clamp(0.0, 1.0); // 60°+ ⇒ zero credit
+    return (a.landmarkQuality * (1.0 - tiltPenalty * 0.6)).clamp(0.0, 1.0);
+  }
+
+  /// Compose the live 4-signal traffic-light report shown above the
+  /// capture button.
+  ClinicalQualityReport _buildClinicalQualityReport() {
+    final hasFace = _liveLandmarkAssessment.available;
+
+    // ── Scale / proximity (targeted face occupancy for ROI fidelity) ──────
+    QualitySignal scale;
+    final fill = _liveFaceFillRatio;
+    if (!hasFace || fill <= 0) {
+      scale = const QualitySignal(
+        label: 'Scale',
+        state: QualityState.yellow,
+        detail: 'Center your face inside the mask',
+      );
+    } else if (fill < _targetFaceFillFloor) {
+      scale = const QualitySignal(
+        label: 'Scale',
+        state: QualityState.red,
+        detail: 'Move closer — fill more of the guide',
+      );
+    } else if (fill > _targetFaceFillCeil) {
+      scale = const QualitySignal(
+        label: 'Scale',
+        state: QualityState.red,
+        detail: 'Move slightly back — face is too close',
+      );
+    } else {
+      scale = const QualitySignal(
+        label: 'Scale',
+        state: QualityState.green,
+        detail: 'Face size in target range',
+      );
+    }
+
+    // ── Alignment (centering + neutral head pose) ────────────────────────
+    QualitySignal alignment;
+    final tilt = _headTiltAngle() ?? 999;
+    final centerDelta =
+        _liveLandmarkAssessment.centerOffsetX.abs() +
+        _liveLandmarkAssessment.centerOffsetY.abs();
+    if (!hasFace) {
+      alignment = const QualitySignal(
+        label: 'Alignment',
+        state: QualityState.red,
+        detail: 'Center your face inside the mask',
+      );
+    } else if (centerDelta > 0.18 || tilt > 22) {
+      alignment = const QualitySignal(
+        label: 'Alignment',
+        state: QualityState.red,
+        detail: 'Center your face inside the mask',
+      );
+    } else if (centerDelta > 0.11 || tilt > 14) {
+      alignment = const QualitySignal(
+        label: 'Alignment',
+        state: QualityState.yellow,
+        detail: 'Straighten and center your face',
+      );
+    } else {
+      alignment = const QualitySignal(
+        label: 'Alignment',
+        state: QualityState.green,
+        detail: 'Eyes, nose, and chin are aligned',
+      );
+    }
+
+    // ── Lighting & luminance/backlight checks ────────────────────────────
+    QualitySignal lighting;
+    if (_lightingGuidance.level == _LightingLevel.tooDark) {
+      lighting = const QualitySignal(
+        label: 'Lighting',
+        state: QualityState.red,
+        detail: 'Too dark — move to a well-lit area',
+      );
+    } else if (_lightingGuidance.level == _LightingLevel.tooHarsh ||
+        _liveBacklightDelta > _backlightDeltaCeil) {
+      lighting = const QualitySignal(
+        label: 'Lighting',
+        state: QualityState.red,
+        detail: 'Harsh backlighting detected',
+      );
+    } else if (_lightingGuidance.level == _LightingLevel.unknown) {
+      lighting = const QualitySignal(
+        label: 'Lighting',
+        state: QualityState.yellow,
+        detail: 'Sampling exposure…',
+      );
+    } else {
+      lighting = const QualitySignal(
+        label: 'Lighting',
+        state: QualityState.green,
+        detail: 'Balanced, even lighting',
+      );
+    }
+
+    // ── Sharpness / blur gate ─────────────────────────────────────────────
+    QualitySignal sharpness;
+    if (_liveSharpness <= 0) {
+      sharpness = const QualitySignal(
+        label: 'Sharpness',
+        state: QualityState.yellow,
+        detail: 'Hold steady while camera calibrates',
+      );
+    } else if (_liveSharpness < _sharpnessVarianceFloor) {
+      sharpness = const QualitySignal(
+        label: 'Sharpness',
+        state: QualityState.red,
+        detail: 'Camera blurry — hold steady',
+      );
+    } else {
+      sharpness = const QualitySignal(
+        label: 'Sharpness',
+        state: QualityState.green,
+        detail: 'Image detail is clear',
+      );
+    }
+
+    // Priority message: blur -> lighting -> alignment -> scale.
+    String primary = 'Ready to capture';
+    for (final s in [sharpness, lighting, alignment, scale]) {
+      if (s.state == QualityState.red) {
+        primary = s.detail;
+        break;
+      }
+    }
+    if (primary == 'Ready to capture') {
+      for (final s in [sharpness, lighting, alignment, scale]) {
+        if (s.state == QualityState.yellow) {
+          primary = s.detail;
+          break;
+        }
+      }
+    }
+
+    final report = ClinicalQualityReport(
+      distance: scale,
+      headAngle: alignment,
+      lighting: lighting,
+      expression: sharpness,
+      primaryInstruction: primary,
+    );
+    _updateQaBannerFromReport(report);
+    return report;
+  }
+
+  /// Called from the lighting / landmark setState pipeline. Tracks how long
+  /// all four signals have been green and kicks off a 3-second auto-capture
+  /// countdown after a 2-second stable window.
+  void _evaluateAutoCapture(ClinicalQualityReport report) {
+    if (_capturing || _captureInProgress) return;
+    if (!report.allGreen) {
+      if (_qualityGreenSince != null ||
+          _autoCaptureCountdown != null ||
+          _autoCaptureTimer != null) {
+        _qualityGreenSince = null;
+        _autoCaptureTimer?.cancel();
+        _autoCaptureTimer = null;
+        if (mounted && _autoCaptureCountdown != null) {
+          setState(() => _autoCaptureCountdown = null);
+        } else {
+          _autoCaptureCountdown = null;
+        }
+      }
+      return;
+    }
+
+    final now = DateTime.now();
+    _qualityGreenSince ??= now;
+    final stableFor = now.difference(_qualityGreenSince!);
+    if (stableFor.inMilliseconds < 2000) return;
+    if (_autoCaptureTimer != null) return;
+
+    setState(() => _autoCaptureCountdown = 3);
+    _autoCaptureTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      final next = (_autoCaptureCountdown ?? 0) - 1;
+      if (next <= 0) {
+        t.cancel();
+        _autoCaptureTimer = null;
+        setState(() => _autoCaptureCountdown = null);
+        _handleCaptureTap(auto: true);
+      } else {
+        setState(() => _autoCaptureCountdown = next);
+      }
+    });
+  }
+
+  /// Unified capture entry point used by the manual button and the
+  /// auto-capture timer. Honours the quality gate; if conditions are not
+  /// ideal the user must explicitly confirm an override.
+  Future<void> _handleCaptureTap({bool auto = false}) async {
+    if (_captureInProgress || _capturing) return;
+    final report = _buildClinicalQualityReport();
+
+    if (!report.allGreen) {
+      _updateQaBannerFromReport(report);
+      if (!auto && mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(report.primaryInstruction),
+              duration: const Duration(milliseconds: 1200),
+              backgroundColor: AppColors.softTerracotta,
+            ),
+          );
+      }
+      return;
+    }
+
+    _captureInProgress = true;
+    try {
+      // ImageSource.camera invokes the system camera which honours the
+      // platform's hardware capture pipeline. The live preview above has
+      // already coached the user into the correct pose.
+      await _pickAndSavePhoto(source: ImageSource.camera);
+    } finally {
+      _captureInProgress = false;
+      // Reset quality stability so a new countdown starts fresh.
+      _qualityGreenSince = null;
+      _autoCaptureTimer?.cancel();
+      _autoCaptureTimer = null;
+      if (mounted) {
+        setState(() => _autoCaptureCountdown = null);
+      }
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Mobile body
+  // ───────────────────────────────────────────────────────────────────────
+
+  Widget _buildMobileCameraBody(BuildContext context) {
+    final report = _buildClinicalQualityReport();
+    double signalScore(QualityState state) {
+      switch (state) {
+        case QualityState.green:
+          return 1.0;
+        case QualityState.yellow:
+          return 0.55;
+        case QualityState.red:
+          return 0.10;
+      }
+    }
+
+    final alignmentOverlayScore =
+        (signalScore(report.distance.state) +
+            signalScore(report.headAngle.state)) /
+        2.0;
+    // Drive the auto-capture state machine off every rebuild — this is fed
+    // by setState calls in the lighting / landmark streams which already
+    // throttle to roughly 6–10 Hz.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _evaluateAutoCapture(report);
+    });
+
+    final disclosureBanner = _makeupPresent == null
+        ? const SizedBox.shrink()
+        : Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _makeupPresent == true
+                ? const MakeupBadge()
+                : const _CleanFaceConfirmedChip(),
+          );
+
+    return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back, color: MyApp.clinicalNavy),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
+        title: Text(
+          widget.isSkincareScan
+              ? (widget.productName ?? 'Skincare scan')
+              : (_scanProcedureLabel.isEmpty
+                    ? 'Progress scan'
+                    : _scanProcedureLabel),
+          style: TextStyle(
+            color: MyApp.clinicalNavy,
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: 'Photo guide',
+            icon: Icon(Icons.info_outline, color: MyApp.clinicalNavy),
+            onPressed: _showPhotoGuide,
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  disclosureBanner,
+                  const ClinicalSectionHeader(
+                    icon: Icons.photo_camera_rounded,
+                    eyebrow: 'STEP 1',
+                    title: 'Choose a photo',
+                  ),
+                  const SizedBox(height: 18),
+                  const ClinicalSectionHeader(
+                    icon: Icons.center_focus_strong_rounded,
+                    eyebrow: 'STEP 2',
+                    title: 'Position photo',
+                  ),
+                  const SizedBox(height: 10),
+                  _buildCameraStatusBar(),
+                  const SizedBox(height: 12),
+
+                  // ── Live preview with adaptive guide + crosshair overlay ──
+                  Center(
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        _buildPlacementGuide(),
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: AnimatedBuilder(
+                              animation: _shimmerController,
+                              builder: (_, __) => CustomPaint(
+                                painter: ClinicalCameraOverlayPainter(
+                                  score: alignmentOverlayScore,
+                                  pulse: _shimmerController.value,
+                                  bodyMode: _isBodyGuide,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  // ── Primary live instruction ─────────────────────────────
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                    decoration: BoxDecoration(
+                      color: MyApp.clinicalNavy.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: MyApp.clinicalTeal.withValues(alpha: 0.30),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.center_focus_strong_rounded,
+                          color: MyApp.clinicalTeal,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            report.primaryInstruction,
+                            style: TextStyle(
+                              color: MyApp.clinicalNavy,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w800,
+                              height: 1.35,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  // ── Quality indicator chips ──────────────────────────────
+                  ClinicalQualityIndicators(report: report),
+
+                  const SizedBox(height: 18),
+
+                  // ── Capture button (gated) ──────────────────────────────
+                  Center(
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 26),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ClinicalCaptureButton(
+                            enabled: report.allGreen,
+                            busy: _capturing,
+                            countdownProgress: _autoCaptureCountdown == null
+                                ? null
+                                : (3 - _autoCaptureCountdown!) / 3.0,
+                            countdownLabel: _autoCaptureCountdown != null
+                                ? 'Hold still… ${_autoCaptureCountdown!}s'
+                                : null,
+                            onPressed: _capturing
+                                ? null
+                                : () => _handleCaptureTap(),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Take Photo',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.92),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  // ── Secondary actions ────────────────────────────────────
+                  OutlinedButton.icon(
+                    onPressed: _capturing
+                        ? null
+                        : () async {
+                            final result = await MakeupDisclosureDialog.show(
+                              context,
+                            );
+                            if (!mounted || result == null) return;
+                            setState(() => _makeupPresent = result);
+                          },
+                    icon: const Icon(Icons.face_retouching_natural, size: 18),
+                    label: const Text('Update pre-scan disclosure'),
+                    style: MyApp.secondaryOutlineButton(),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: _capturing
+                        ? null
+                        : () => _triggerGalleryPicker(),
+                    icon: const Icon(Icons.photo_library_rounded, size: 18),
+                    label: const Text('Choose from Gallery'),
+                    style: MyApp.secondaryOutlineButton(),
+                  ),
+
+                  const SizedBox(height: 14),
+                  _buildDeepAnalysisSection(),
+
+                  const SizedBox(height: 8),
+                  _buildLiveGuidanceCard(),
+                  const SizedBox(height: 12),
+                  _buildClinicalControlsCard(),
+                ],
+              ),
+            ),
+          ),
+          Align(
+            alignment: Alignment.topCenter,
+            child: _buildQaTopBanner(report),
+          ),
+          _buildSuccessOverlay(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSuccessOverlay() {
+    if (!_showSuccessBurst) return const SizedBox.shrink();
+
+    final sparkles = <({Alignment align, double size, IconData icon})>[
+      (align: Alignment.topCenter, size: 34, icon: Icons.auto_awesome),
+      (align: Alignment.centerLeft, size: 22, icon: Icons.star_rounded),
+      (align: Alignment.centerRight, size: 24, icon: Icons.star_rounded),
+      (align: const Alignment(-0.22, 0.20), size: 18, icon: Icons.auto_awesome),
+      (align: const Alignment(0.28, 0.24), size: 20, icon: Icons.auto_awesome),
+      (align: const Alignment(0.0, -0.24), size: 16, icon: Icons.star_rounded),
+    ];
+
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: AnimatedBuilder(
+          animation: _successAnim,
+          builder: (context, _) {
+            final t = _successAnim.value;
+            return Opacity(
+              opacity: (1.0 - t).clamp(0.0, 1.0),
+              child: Container(
+                color: Colors.black.withAlpha((30 * (1 - t)).toInt()),
+                child: Center(
+                  child: SizedBox(
+                    width: 230,
+                    height: 230,
+                    child: Stack(
+                      children: sparkles.map((item) {
+                        final spread = 50 + (t * 80);
+                        final dx = item.align.x * spread;
+                        final dy = item.align.y * spread;
+                        return Align(
+                          alignment: Alignment.center,
+                          child: Transform.translate(
+                            offset: Offset(dx, dy),
+                            child: Icon(
+                              item.icon,
+                              size: item.size + (t * 6),
+                              color: MyApp.goldShimmer.withAlpha(
+                                (210 - (t * 150)).toInt(),
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlacementGuide() {
+    return AnimatedBuilder(
+      animation: _shimmerController,
+      builder: (context, child) {
+        final pulse = 0.65 + (_shimmerController.value * 0.35);
+        return Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(maxWidth: 360),
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(32),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                AppColors.champagneGold.withValues(alpha: 0.12),
+                MyApp.goldShimmer.withValues(alpha: 0.18),
+              ],
+            ),
+            border: Border.all(
+              color: MyApp.goldShimmer.withValues(alpha: pulse),
+              width: 1.4,
+            ),
+          ),
+          child: Opacity(
+            opacity: 0.96,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(28),
+                    child: _buildLiveCameraPreview(),
+                  ),
+                ),
+                if (_showGhostOverlay && _referenceImagePath != null)
+                  _buildGhostReferenceOverlay(),
+                AdaptiveCameraOutline(
+                  guideType: _guideType,
+                  height: _isBodyGuide ? 380 : 340,
+                  angleChips: _overlayAngles,
+                  selectedAngleChip: _selectedPoseTemplate,
+                  poseTemplate: _selectedPoseTemplate,
+                  bottomLabel: _bottomConsistencyReminder,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildLiveCameraPreview() {
+    final controller = _cameraController;
+    if (_cameraInitFailed) {
+      return DecoratedBox(
+        decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.6)),
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Text(
+              _cameraError ?? 'Camera unavailable',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    if (controller == null || !controller.value.isInitialized) {
+      return const ColoredBox(
+        color: Color(0x33000000),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    return FittedBox(
+      fit: BoxFit.cover,
+      child: SizedBox(
+        width: 300,
+        height: (_isBodyGuide ? 380 : 340),
+        child: CameraPreview(controller),
+      ),
+    );
+  }
+
+  Widget _buildCameraStatusBar() {
+    final hasMultiLens = _availableCameras.length > 1;
+    final fullMode = _cameraReady && _lightingStreamActive;
+    final simulatedMode = _cameraReady && kIsWeb;
+    final fallbackMode = _cameraReady && !fullMode && !simulatedMode;
+
+    final badgeColor = fullMode
+        ? AppColors.mutedSage
+        : simulatedMode
+        ? AppColors.champagneGold
+        : AppColors.softTerracotta;
+
+    final badgeLabel = fullMode
+        ? 'Optimal'
+        : simulatedMode
+        ? 'Web Analysis'
+        : 'Needs Light';
+
+    final primaryStatus = !_cameraReady
+        ? (_cameraError ?? 'Starting camera...')
+        : fullMode
+        ? 'Lighting is well-calibrated for accurate comparisons.'
+        : simulatedMode
+        ? 'Guidance is active with browser-safe analysis mode.'
+        : fallbackMode
+        ? 'Move to softer front light for the most reliable results.'
+        : 'Camera ready.';
+
+    final secondaryStatus = simulatedMode
+        ? 'Using photo analysis'
+        : fallbackMode
+        ? 'Tip: face a window or soft front light to improve consistency.'
+        : null;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: MyApp.surfaceCardDecoration(tintOpacity: 0.05),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(
+            _cameraReady
+                ? Icons.verified_outlined
+                : Icons.warning_amber_rounded,
+            color: _cameraReady
+                ? AppColors.mutedSage
+                : AppColors.softTerracotta,
+            size: 18,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  primaryStatus,
+                  style: TextStyle(
+                    color: MyApp.textBrown,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12.2,
+                    height: 1.26,
+                  ),
+                ),
+                if (secondaryStatus != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3),
+                    child: Text(
+                      secondaryStatus,
+                      style: TextStyle(
+                        color: MyApp.textBrown.withValues(alpha: 0.68),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 11.3,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          _buildSubtleStatusBadge(
+            label: badgeLabel,
+            textColor: badgeColor,
+            backgroundColor: badgeColor.withValues(alpha: 0.10),
+            borderColor: badgeColor.withValues(alpha: 0.24),
+          ),
+          if (hasMultiLens)
+            IconButton(
+              tooltip: 'Switch lens',
+              onPressed: _capturing ? null : _toggleCameraLens,
+              icon: Icon(Icons.cameraswitch_outlined, color: MyApp.goldShimmer),
+            ),
+        ],
+      ),
+    );
+  }
+
+  _LightingThresholds get _lightingThresholds {
+    switch (_guideType) {
+      case ProcedureCameraGuideType.facial:
+        // Facial captures should be strict: underexposed cheeks and forehead
+        // reduce landmark stability and lesion-confidence precision.
+        return const _LightingThresholds(
+          darkMeanFloor: 104,
+          harshMeanCeil: 168,
+          darkRatioCeil: 0.24,
+          harshRatioCeil: 0.17,
+        );
+      case ProcedureCameraGuideType.body:
+        // Body framing includes more background, so brightness variance is
+        // naturally wider than face-only captures.
+        return const _LightingThresholds(
+          darkMeanFloor: 96,
+          harshMeanCeil: 176,
+          darkRatioCeil: 0.28,
+          harshRatioCeil: 0.21,
+        );
+      case ProcedureCameraGuideType.general:
+        // General mode balances common webcam + phone front-camera behavior.
+        return const _LightingThresholds(
+          darkMeanFloor: 100,
+          harshMeanCeil: 172,
+          darkRatioCeil: 0.26,
+          harshRatioCeil: 0.19,
+        );
+    }
+  }
+
+  double get _sharpnessVarianceFloor {
+    switch (_guideType) {
+      case ProcedureCameraGuideType.facial:
+        // Higher detail floor for pore-level facial metrics.
+        return 48.0;
+      case ProcedureCameraGuideType.body:
+        // Body surfaces have lower high-frequency detail than facial skin.
+        return 32.0;
+      case ProcedureCameraGuideType.general:
+        // Strict, but still realistic for typical webcams and phones.
+        return 38.0;
+    }
+  }
+
+  double get _targetFaceFillFloor {
+    switch (_guideType) {
+      case ProcedureCameraGuideType.facial:
+        // Require adequate on-sensor face pixels for robust ROI analysis.
+        return 0.15;
+      case ProcedureCameraGuideType.body:
+        // Wider body composition framing accepts smaller face occupancy.
+        return 0.10;
+      case ProcedureCameraGuideType.general:
+        return 0.13;
+    }
+  }
+
+  double get _targetFaceFillCeil {
+    switch (_guideType) {
+      case ProcedureCameraGuideType.facial:
+        // Prevent close-up distortion / clipping around forehead and chin.
+        return 0.24;
+      case ProcedureCameraGuideType.body:
+        return 0.20;
+      case ProcedureCameraGuideType.general:
+        return 0.22;
+    }
+  }
+
+  double get _backlightDeltaCeil {
+    switch (_guideType) {
+      case ProcedureCameraGuideType.facial:
+        // Tight tolerance for asymmetrical edge illumination in facial mode.
+        return 42.0;
+      case ProcedureCameraGuideType.body:
+        return 50.0;
+      case ProcedureCameraGuideType.general:
+        return 46.0;
+    }
+  }
+
+  double _estimateLaplacianVarianceFromYPlane(CameraImage image) {
+    final yPlane = image.planes.firstOrNull;
+    if (yPlane == null || yPlane.bytes.isEmpty) return 0;
+
+    final bytes = yPlane.bytes;
+    final width = image.width;
+    final height = image.height;
+    final rowStride = yPlane.bytesPerRow;
+    if (width < 6 || height < 6 || rowStride < width) return 0;
+
+    // Downsample aggressively to keep the stream loop lightweight.
+    const step = 4;
+    var count = 0;
+    var sum = 0.0;
+    var sumSq = 0.0;
+
+    for (var y = 2; y < height - 2; y += step) {
+      final row = y * rowStride;
+      for (var x = 2; x < width - 2; x += step) {
+        final idx = row + x;
+        final c = bytes[idx].toDouble();
+        final left = bytes[idx - 1].toDouble();
+        final right = bytes[idx + 1].toDouble();
+        final up = bytes[idx - rowStride].toDouble();
+        final down = bytes[idx + rowStride].toDouble();
+
+        final lap = (4 * c) - left - right - up - down;
+        sum += lap;
+        sumSq += lap * lap;
+        count++;
+      }
+    }
+
+    if (count == 0) return 0;
+    final mean = sum / count;
+    final variance = (sumSq / count) - (mean * mean);
+    return variance.isFinite ? variance.clamp(0.0, 5000.0) : 0.0;
+  }
+
+  void _updateQaBannerFromReport(ClinicalQualityReport report) {
+    final next = report.primaryInstruction;
+    if (next == _qaBannerMessage) return;
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || next == _qaBannerMessage) return;
+      setState(() => _qaBannerMessage = next);
+    });
+  }
+
+  Widget _buildQaTopBanner(ClinicalQualityReport report) {
+    final show = !report.allGreen || _capturing;
+    final warning = report.all.any((s) => s.state == QualityState.red);
+    final bg = warning
+        ? AppColors.softTerracotta.withValues(alpha: 0.94)
+        : AppColors.champagneGold.withValues(alpha: 0.94);
+
+    return AnimatedSlide(
+      offset: show ? Offset.zero : const Offset(0, -1.25),
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+      child: AnimatedOpacity(
+        opacity: show ? 1 : 0,
+        duration: const Duration(milliseconds: 200),
+        child: SafeArea(
+          bottom: false,
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.15),
+                  blurRadius: 14,
+                  offset: const Offset(0, 5),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  warning ? Icons.warning_rounded : Icons.info_outline_rounded,
+                  size: 16,
+                  color: Colors.white,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _qaBannerMessage,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      height: 1.25,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildClinicalControlsCard() {
+    final lightingColor = switch (_lightingGuidance.level) {
+      _LightingLevel.optimal => AppColors.mutedSage,
+      _LightingLevel.tooDark => AppColors.softTerracotta,
+      _LightingLevel.tooHarsh => AppColors.softTerracotta,
+      _LightingLevel.unknown => MyApp.textBrown,
+    };
+
+    final modeLabel = switch (_guideType) {
+      ProcedureCameraGuideType.facial => 'Facial template set',
+      ProcedureCameraGuideType.body => 'Body template set',
+      ProcedureCameraGuideType.general => 'General template set',
+    };
+
+    final guidanceLabel = _liveLandmarkAssessment.available
+        ? 'Live Pose Detection'
+        : 'Standard Guidance';
+    final referenceLabel = _referenceImagePath == null
+        ? 'No Reference Yet'
+        : _isGoodReferencePhoto
+        ? 'Good Reference'
+        : 'Standard Reference';
+    final guidanceColor = _liveLandmarkAssessment.available
+        ? AppColors.mutedSage
+        : AppColors.refinedSlate.withValues(alpha: 0.58);
+    const referencePanelBorder = AppColors.borders;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+      decoration: MyApp.surfaceCardDecoration(tintOpacity: 0.06),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.fact_check_outlined,
+                color: MyApp.goldShimmer,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Progress Capture Controls',
+                style: TextStyle(
+                  color: MyApp.textBrown,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                modeLabel,
+                style: TextStyle(
+                  color: MyApp.textBrown.withValues(alpha: 0.62),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 11.3,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            decoration: BoxDecoration(
+              color: AppColors.cardBackground.withValues(alpha: 0.92),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: referencePanelBorder),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      'Reference Alignment',
+                      style: TextStyle(
+                        color: MyApp.textBrown.withValues(alpha: 0.70),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 11.4,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                    const Spacer(),
+                    _buildSubtleStatusBadge(
+                      label: '$guidanceLabel • $referenceLabel',
+                      textColor: guidanceColor,
+                      backgroundColor: _liveLandmarkAssessment.available
+                          ? AppColors.mutedSage.withValues(alpha: 0.12)
+                          : AppColors.borders.withValues(alpha: 0.34),
+                      borderColor: _liveLandmarkAssessment.available
+                          ? AppColors.mutedSage.withValues(alpha: 0.32)
+                          : AppColors.borders,
+                      showDot: true,
+                      dotColor: guidanceColor,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Switch(
+                      value: _showGhostOverlay,
+                      onChanged: _referenceImagePath == null
+                          ? null
+                          : (v) => setState(() => _showGhostOverlay = v),
+                      activeThumbColor: MyApp.goldShimmer,
+                      activeTrackColor: MyApp.goldShimmer.withValues(
+                        alpha: 0.4,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _referenceImagePath == null
+                            ? 'Ghost overlay unlocks after your first baseline capture.'
+                            : 'Ghost overlay is active. Match to your best prior reference.',
+                        style: TextStyle(
+                          color: MyApp.textBrown.withValues(alpha: 0.82),
+                          fontSize: 12.2,
+                          fontWeight: FontWeight.w700,
+                          height: 1.28,
+                        ),
+                      ),
+                    ),
+                    if (_referenceImagePath != null)
+                      Text(
+                        '${(_ghostOverlayOpacity * 100).round()}%',
+                        style: TextStyle(
+                          color: MyApp.textBrown.withValues(alpha: 0.52),
+                          fontSize: 10.8,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 1),
+                Row(
+                  children: [
+                    Text(
+                      'Ghost blend',
+                      style: TextStyle(
+                        color: MyApp.textBrown.withValues(alpha: 0.58),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      _showGhostOverlay ? 'Aligned overlay' : 'Overlay off',
+                      style: TextStyle(
+                        color: MyApp.textBrown.withValues(alpha: 0.52),
+                        fontSize: 10.8,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+                Slider(
+                  value: _ghostOverlayOpacity,
+                  min: 0.12,
+                  max: 0.32,
+                  divisions: 10,
+                  label: '${(_ghostOverlayOpacity * 100).round()}%',
+                  onChanged: (_referenceImagePath == null || !_showGhostOverlay)
+                      ? null
+                      : (v) => setState(() => _ghostOverlayOpacity = v),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Exact pose template',
+            style: TextStyle(
+              color: MyApp.textBrown,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 36,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _poseTemplates.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, index) {
+                final template = _poseTemplates[index];
+                final selected = template == _selectedPoseTemplate;
+                return ChoiceChip(
+                  label: Text(template),
+                  selected: selected,
+                  onSelected: (_) {
+                    if (template == _selectedPoseTemplate) return;
+                    setState(() => _selectedPoseTemplate = template);
+                    _loadReferenceContext();
+                  },
+                  selectedColor: MyApp.goldShimmer.withValues(alpha: 0.24),
+                  labelStyle: TextStyle(
+                    color: MyApp.textBrown,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            decoration: BoxDecoration(
+              color: AppColors.cardBackground.withValues(alpha: 0.94),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: lightingColor.withValues(alpha: 0.28)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.wb_twilight_outlined,
+                      color: lightingColor,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Smart lighting guidance: ${_lightingGuidance.label}',
+                      style: TextStyle(
+                        color: lightingColor,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12.8,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  _lightingGuidance.instruction,
+                  style: TextStyle(
+                    color: MyApp.textBrown.withValues(alpha: 0.8),
+                    fontSize: 12.2,
+                    fontWeight: FontWeight.w600,
+                    height: 1.32,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_lastConsistencyScore != null) ...[
+            const SizedBox(height: 10),
+            Builder(
+              builder: (context) {
+                final visuals = _consistencyVisuals(_lastConsistencyScore!);
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: visuals.color.withValues(alpha: 0.09),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: visuals.color.withValues(alpha: 0.34),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Consistency Score: $_lastConsistencyScore% (${visuals.label})',
+                        style: TextStyle(
+                          color: visuals.color,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13.2,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        visuals.note,
+                        style: TextStyle(
+                          color: MyApp.textBrown.withValues(alpha: 0.82),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLiveGuidanceCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: MyApp.surfaceCardDecoration(tintOpacity: 0.05),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.center_focus_strong,
+                color: MyApp.goldShimmer,
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Live alignment guidance',
+                style: TextStyle(
+                  color: MyApp.textBrown,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _liveAlignmentInstruction,
+            style: TextStyle(
+              color: MyApp.textBrown,
+              fontWeight: FontWeight.w700,
+              height: 1.3,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            _liveAlignmentSecondary,
+            style: TextStyle(
+              color: MyApp.textBrown.withValues(alpha: 0.74),
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
+              height: 1.3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSubtleStatusBadge({
+    required String label,
+    required Color textColor,
+    required Color backgroundColor,
+    required Color borderColor,
+    bool showDot = false,
+    Color? dotColor,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (showDot) ...[
+            Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(
+                color: dotColor ?? textColor,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 10.2,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum _LightingLevel { unknown, tooDark, tooHarsh, optimal }
+
+class _LightingGuidance {
+  final _LightingLevel level;
+  final String label;
+  final String instruction;
+
+  const _LightingGuidance({
+    required this.level,
+    required this.label,
+    required this.instruction,
+  });
+
+  const _LightingGuidance.unknown()
+    : level = _LightingLevel.unknown,
+      label = 'Calibration needed',
+      instruction =
+          'Capture a baseline image to calibrate lighting recommendations.';
+}
+
+class _LightingThresholds {
+  final double darkMeanFloor;
+  final double harshMeanCeil;
+  final double darkRatioCeil;
+  final double harshRatioCeil;
+
+  const _LightingThresholds({
+    required this.darkMeanFloor,
+    required this.harshMeanCeil,
+    required this.darkRatioCeil,
+    required this.harshRatioCeil,
+  });
+}
+
+class _LightingFrameSummary {
+  final double mean;
+  final double contrast;
+  final double darkRatio;
+  final double brightRatio;
+  final double leftMean;
+  final double rightMean;
+  final double topMean;
+  final double bottomMean;
+
+  const _LightingFrameSummary({
+    required this.mean,
+    required this.contrast,
+    required this.darkRatio,
+    required this.brightRatio,
+    required this.leftMean,
+    required this.rightMean,
+    required this.topMean,
+    required this.bottomMean,
+  });
+
+  const _LightingFrameSummary.empty()
+    : mean = 0,
+      contrast = 0,
+      darkRatio = 0,
+      brightRatio = 0,
+      leftMean = 0,
+      rightMean = 0,
+      topMean = 0,
+      bottomMean = 0;
+
+  bool get isEmpty =>
+      mean == 0 && contrast == 0 && leftMean == 0 && rightMean == 0;
+}
+
+/// Subtle teal confirmation pill shown on the web pre-capture screen once the
+/// patient has acknowledged the makeup disclosure with "Face is clean".
+class _CleanFaceConfirmedChip extends StatelessWidget {
+  const _CleanFaceConfirmedChip();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: MyApp.clinicalTeal.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: MyApp.clinicalTeal.withValues(alpha: 0.45)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.verified_outlined, color: MyApp.clinicalTeal, size: 13),
+            const SizedBox(width: 5),
+            Text(
+              'Clean face confirmed',
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w800,
+                color: MyApp.clinicalTeal,
+                letterSpacing: 0.4,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

@@ -1,0 +1,3524 @@
+import 'dart:convert';
+import 'dart:io' show File;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
+import '../utils/app_prefs.dart';
+import '../utils/app_logger.dart';
+import '../app_theme.dart';
+import '../models/procedure.dart';
+import '../models/product_tracker.dart';
+import '../models/scan_history.dart';
+import 'active_skincare_details_screen.dart';
+import 'procedure_profiles_screen.dart';
+import '../widgets/clinical_section_header.dart';
+import '../widgets/luxe_report_layout.dart';
+import '../utils/ai_product_recommendation_engine.dart';
+import '../utils/report_flow.dart';
+import '../widgets/product_recommendation_card.dart';
+
+enum ProgressReportViewMode { reports, scans }
+
+class _ProcedureScanGroup {
+  _ProcedureScanGroup({
+    required this.key,
+    required List<ScanHistoryEntry> scans,
+  }) : scans = List<ScanHistoryEntry>.from(scans)
+         ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+  final String key;
+  final List<ScanHistoryEntry> scans;
+
+  ScanHistoryEntry get baseline => scans.first;
+  ScanHistoryEntry get latest => scans.last;
+  int get count => scans.length;
+
+  String get title {
+    final procedure = latest.procedure?.trim();
+    if (procedure != null && procedure.isNotEmpty) return procedure;
+    final baselineProcedure = baseline.procedure?.trim();
+    if (baselineProcedure != null && baselineProcedure.isNotEmpty) {
+      return baselineProcedure;
+    }
+    return 'Procedure Scan';
+  }
+
+  String get focus {
+    final latestFocus = (latest.focusArea ?? latest.customDescription ?? '')
+        .trim();
+    if (latestFocus.isNotEmpty) return latestFocus;
+    return (baseline.focusArea ?? baseline.customDescription ?? '').trim();
+  }
+}
+
+class _MetricDelta {
+  const _MetricDelta({
+    required this.key,
+    required this.label,
+    required this.baselineValue,
+    required this.latestValue,
+    required this.improved,
+  });
+
+  final String key;
+  final String label;
+  final double baselineValue;
+  final double latestValue;
+  final bool improved;
+
+  double get delta => latestValue - baselineValue;
+  double get magnitude => delta.abs();
+}
+
+class ProgressReportScreen extends StatefulWidget {
+  final bool showSkincareFirst; // New: control which tab opens first
+  final int initialTabIndex;
+  final ProgressReportViewMode viewMode;
+
+  const ProgressReportScreen({
+    super.key,
+    this.showSkincareFirst = false,
+    this.initialTabIndex = 0,
+    this.viewMode = ProgressReportViewMode.reports,
+  });
+
+  @override
+  State<ProgressReportScreen> createState() => _ProgressReportScreenState();
+}
+
+class _ProgressReportScreenState extends State<ProgressReportScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  List<Procedure> _procedures = [];
+  List<TrackedProduct> _trackedProducts = [];
+  List<ScanHistoryEntry> _scanEntries = [];
+  bool _isLoading = true;
+  int? _latestSkinAge;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(
+      length: 4,
+      vsync: this,
+      initialIndex: widget.showSkincareFirst
+          ? 2
+          : widget.initialTabIndex.clamp(0, 3),
+    );
+    _loadProcedures();
+  }
+
+  Future<void> _loadProcedures() async {
+    setState(() => _isLoading = true);
+    try {
+      final results = await Future.wait([
+        AppPrefs.getProcedureEntries(),
+        AppPrefs.getScanEntries(),
+        AppPrefs.getTrackedProducts(),
+      ]);
+      final procedures =
+          (results[0] as List<dynamic>)
+              .map((json) => Procedure.fromJson(json as Map<String, dynamic>))
+              .toList()
+            ..sort((a, b) => b.startDate.compareTo(a.startDate));
+
+      final scans = results[1] as List<ScanHistoryEntry>;
+      final products = (results[2] as List<TrackedProduct>)
+        ..sort((a, b) => b.startDate.compareTo(a.startDate));
+      int? skinAge;
+      if (scans.isNotEmpty) {
+        final latest = scans.reduce(
+          (a, b) => a.timestamp.isAfter(b.timestamp) ? a : b,
+        );
+        final estimated = latest.estimatedSkinAge > 0
+            ? latest.estimatedSkinAge
+            : estimateVisualSkinAgeFromAiMetrics(latest.metrics);
+        skinAge = estimated?.round();
+      }
+
+      setState(() {
+        _procedures = procedures;
+        _trackedProducts = products;
+        _scanEntries = List<ScanHistoryEntry>.from(scans)
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        _latestSkinAge = skinAge;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  List<ScanHistoryEntry> _filteredScans(String? scanType) {
+    if (scanType == null) return _scanEntries;
+    return _scanEntries
+        .where((scan) => scan.resolvedScanType == scanType)
+        .toList();
+  }
+
+  List<_ProcedureScanGroup> _procedureScanGroups(List<ScanHistoryEntry> scans) {
+    final grouped = <String, List<ScanHistoryEntry>>{};
+    for (final scan in scans.where((scan) => scan.isProcedureScan)) {
+      final keyParts = [
+        (scan.procedureId ?? '').trim(),
+        (scan.procedure ?? '').trim().toLowerCase(),
+        (scan.focusArea ?? scan.customDescription ?? '').trim().toLowerCase(),
+      ].where((part) => part.isNotEmpty).toList();
+      final key = keyParts.isEmpty ? 'procedure' : keyParts.join('|');
+      grouped.putIfAbsent(key, () => <ScanHistoryEntry>[]).add(scan);
+    }
+
+    final groups =
+        grouped.entries
+            .map(
+              (entry) =>
+                  _ProcedureScanGroup(key: entry.key, scans: entry.value),
+            )
+            .toList()
+          ..sort((a, b) => b.latest.timestamp.compareTo(a.latest.timestamp));
+    return groups;
+  }
+
+  DateTime _repositoryItemTimestamp(Object item) {
+    if (item is _ProcedureScanGroup) return item.latest.timestamp;
+    return (item as ScanHistoryEntry).timestamp;
+  }
+
+  List<_MetricDelta> _metricDeltas(
+    ScanHistoryEntry baseline,
+    ScanHistoryEntry latest,
+  ) {
+    final rows = <_MetricDelta>[];
+    final baselineRows = ScanDetailScreen.displayMetricsFor(baseline);
+    final latestRows = ScanDetailScreen.displayMetricsFor(latest);
+    for (final latestRow in latestRows) {
+      final baselineMatches = baselineRows.where(
+        (row) => row.key == latestRow.key || row.label == latestRow.label,
+      );
+      if (baselineMatches.isEmpty) continue;
+      final baselineRow = baselineMatches.first;
+      final baselineValue = baselineRow.value;
+      final latestValue = latestRow.value;
+      final delta = latestValue - baselineValue;
+      if (delta.abs() < 0.05) continue;
+      final higherIsBetter = ScanDetailScreen._higherIsBetterMetric(
+        latestRow.key,
+      );
+      rows.add(
+        _MetricDelta(
+          key: latestRow.key,
+          label: latestRow.label,
+          baselineValue: baselineValue,
+          latestValue: latestValue,
+          improved: higherIsBetter ? delta > 0 : delta < 0,
+        ),
+      );
+    }
+    rows.sort((a, b) => b.magnitude.compareTo(a.magnitude));
+    return rows;
+  }
+
+  ({IconData icon, String label, Color color}) _scanTypeMeta(
+    ScanHistoryEntry scan,
+  ) {
+    switch (scan.resolvedScanType) {
+      case ScanHistoryEntry.scanTypeAiAnalysis:
+        return (
+          icon: Icons.auto_awesome_rounded,
+          label: 'AI Analysis',
+          color: AppColors.champagneGold,
+        );
+      case ScanHistoryEntry.scanTypeSkincare:
+        return (
+          icon: Icons.spa_rounded,
+          label: 'Skincare',
+          color: AppColors.mutedSage,
+        );
+      default:
+        return (
+          icon: Icons.medical_services_outlined,
+          label: 'Procedure',
+          color: AppColors.refinedSlate,
+        );
+    }
+  }
+
+  Widget _buildScanRepositorySection(String? scanType) {
+    if (_isLoading) return const Center(child: CircularProgressIndicator());
+
+    final scans = _filteredScans(scanType);
+    final List<Object> repositoryItems;
+    if (scanType == ScanHistoryEntry.scanTypeProcedure) {
+      repositoryItems = _procedureScanGroups(scans);
+    } else if (scanType == null) {
+      repositoryItems =
+          <Object>[
+            ..._procedureScanGroups(
+              _filteredScans(ScanHistoryEntry.scanTypeProcedure),
+            ),
+            ..._scanEntries.where((scan) => !scan.isProcedureScan),
+          ]..sort(
+            (a, b) => _repositoryItemTimestamp(
+              b,
+            ).compareTo(_repositoryItemTimestamp(a)),
+          );
+    } else {
+      repositoryItems = scans;
+    }
+    final title = switch (scanType) {
+      ScanHistoryEntry.scanTypeProcedure => 'No procedure scans yet',
+      ScanHistoryEntry.scanTypeSkincare => 'No skincare logs yet',
+      ScanHistoryEntry.scanTypeAiAnalysis => 'No AI analyses yet',
+      _ => 'No scans saved yet',
+    };
+    final subtitle = switch (scanType) {
+      ScanHistoryEntry.scanTypeProcedure =>
+        'Procedure progress captures will appear here after your next scan.',
+      ScanHistoryEntry.scanTypeSkincare =>
+        'Skincare product check-ins and face scans will appear here.',
+      ScanHistoryEntry.scanTypeAiAnalysis =>
+        'Run Skin AI Analysis to automatically save deep-analysis results here.',
+      _ => 'Procedure scans, skincare logs, and AI analyses will collect here.',
+    };
+
+    if (scans.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
+            decoration: BoxDecoration(
+              color: AppColors.cardBackground,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: AppColors.borders),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.photo_library_outlined,
+                  color: AppColors.champagneGold,
+                  size: 40,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: MyApp.textBrown,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  subtitle,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: MyApp.textBrown.withValues(alpha: 0.66),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+      itemCount: repositoryItems.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (context, index) {
+        final item = repositoryItems[index];
+        if (item is _ProcedureScanGroup) {
+          return _buildProcedureScanGroupCard(item);
+        }
+        return _buildScanRepositoryCard(item as ScanHistoryEntry);
+      },
+    );
+  }
+
+  Widget _buildProcedureScanGroupCard(_ProcedureScanGroup group) {
+    const meta = (
+      icon: Icons.medical_services_outlined,
+      label: 'Procedure Progress',
+      color: AppColors.refinedSlate,
+    );
+    final deltas = _metricDeltas(group.baseline, group.latest);
+    final improvedCount = deltas.where((delta) => delta.improved).length;
+    final worsenedCount = deltas.length - improvedCount;
+    final dateRange = group.count > 1
+        ? '${_shortDate(group.baseline.timestamp)} -> ${_shortDate(group.latest.timestamp)}'
+        : _shortDate(group.latest.timestamp);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => _ProcedureScanComparisonDetailScreen(group: group),
+            ),
+          );
+        },
+        child: Ink(
+          decoration: BoxDecoration(
+            color: AppColors.cardBackground,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: meta.color.withValues(alpha: 0.22)),
+            boxShadow: [
+              BoxShadow(
+                color: meta.color.withValues(alpha: 0.07),
+                blurRadius: 14,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 94,
+                  height: 74,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _comparisonThumb(
+                          group.baseline.imagePath,
+                          'Base',
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: _comparisonThumb(group.latest.imagePath, 'Now'),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              group.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: MyApp.textBrown,
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                          _scanTypeBadge(meta.icon, meta.label, meta.color),
+                        ],
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        '$dateRange • ${group.count} upload${group.count == 1 ? '' : 's'}',
+                        style: TextStyle(
+                          color: MyApp.textBrown.withValues(alpha: 0.62),
+                          fontSize: 11.8,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (group.focus.isNotEmpty) ...[
+                        const SizedBox(height: 5),
+                        Text(
+                          group.focus,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: AppColors.refinedSlate.withValues(
+                              alpha: 0.76,
+                            ),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: deltas.isEmpty
+                            ? [
+                                _summaryChip(
+                                  'Baseline saved',
+                                  AppColors.champagneGold,
+                                  Icons.flag_rounded,
+                                ),
+                              ]
+                            : [
+                                if (improvedCount > 0)
+                                  _summaryChip(
+                                    '$improvedCount improved',
+                                    AppColors.mutedSage,
+                                    Icons.trending_up_rounded,
+                                  ),
+                                if (worsenedCount > 0)
+                                  _summaryChip(
+                                    '$worsenedCount worsened',
+                                    AppColors.softTerracotta,
+                                    Icons.trending_down_rounded,
+                                  ),
+                                ...deltas.take(2).map(_deltaPreviewChip),
+                              ],
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: meta.color.withValues(alpha: 0.74),
+                  size: 22,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _comparisonThumb(String? imagePath, String label) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          _scanImage(imagePath),
+          Positioned(
+            left: 4,
+            bottom: 4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppColors.refinedSlate.withValues(alpha: 0.72),
+                borderRadius: BorderRadius.circular(7),
+              ),
+              child: Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 8.8,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryChip(String label, Color color, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.24)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 12),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 10.4,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _deltaPreviewChip(_MetricDelta delta) {
+    final color = delta.improved
+        ? AppColors.mutedSage
+        : AppColors.softTerracotta;
+    final arrow = delta.improved
+        ? Icons.arrow_upward_rounded
+        : Icons.warning_rounded;
+    return _summaryChip(delta.label, color, arrow);
+  }
+
+  String _shortDate(DateTime timestamp) {
+    final date = timestamp.toLocal();
+    return '${date.month}/${date.day}/${date.year}';
+  }
+
+  Widget _buildScanRepositoryCard(ScanHistoryEntry scan) {
+    final meta = _scanTypeMeta(scan);
+    final focus = (scan.focusArea ?? scan.customDescription ?? '').trim();
+    final title = scan.isAiAnalysisScan
+        ? 'AI Deep Analysis'
+        : scan.isSkincareScan
+        ? (scan.productName?.trim().isNotEmpty == true
+              ? scan.productName!.trim()
+              : 'Skincare Log')
+        : ((scan.procedure ?? '').trim().isNotEmpty
+              ? scan.procedure!.trim()
+              : 'Procedure Scan');
+    final metricPreview = ScanDetailScreen.displayMetricsFor(
+      scan,
+    ).take(3).toList();
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => ScanDetailScreen(scan: scan)),
+          );
+        },
+        child: Ink(
+          decoration: BoxDecoration(
+            color: AppColors.cardBackground,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: meta.color.withValues(alpha: 0.22)),
+            boxShadow: [
+              BoxShadow(
+                color: meta.color.withValues(alpha: 0.07),
+                blurRadius: 14,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(13),
+                  child: SizedBox(
+                    width: 74,
+                    height: 74,
+                    child: _scanImage(scan.imagePath),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: MyApp.textBrown,
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                          _scanTypeBadge(meta.icon, meta.label, meta.color),
+                        ],
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        scan.timestamp.toLocal().toString().split(' ').first,
+                        style: TextStyle(
+                          color: MyApp.textBrown.withValues(alpha: 0.62),
+                          fontSize: 11.8,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (focus.isNotEmpty) ...[
+                        const SizedBox(height: 5),
+                        Text(
+                          focus,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: AppColors.refinedSlate.withValues(
+                              alpha: 0.76,
+                            ),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                      if (metricPreview.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: metricPreview
+                              .map(
+                                (entry) => _metricChip(
+                                  entry.label,
+                                  entry.value,
+                                  meta.color,
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: meta.color.withValues(alpha: 0.74),
+                  size: 22,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReportsLanding() {
+    if (_isLoading) return const Center(child: CircularProgressIndicator());
+
+    final procedureScans = _filteredScans(ScanHistoryEntry.scanTypeProcedure);
+    final skincareScans = _filteredScans(ScanHistoryEntry.scanTypeSkincare);
+    final aiScans = _filteredScans(ScanHistoryEntry.scanTypeAiAnalysis);
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 32),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: AppColors.cardBackground,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: AppColors.champagneGold.withValues(alpha: 0.24),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.refinedSlate.withValues(alpha: 0.06),
+                blurRadius: 16,
+                offset: const Offset(0, 5),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _sectionHeader(
+                Icons.analytics_rounded,
+                'Progress Journal',
+                eyebrow: 'Reports & exports',
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Create provider-ready summaries from your procedure history, skincare logs, and scan archive.',
+                style: TextStyle(
+                  color: AppColors.refinedSlate.withValues(alpha: 0.72),
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: _reportStatTile(
+                      'Scans',
+                      _scanEntries.length.toString(),
+                      Icons.photo_library_outlined,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _reportStatTile(
+                      'Procedures',
+                      _procedures.length.toString(),
+                      Icons.medical_services_outlined,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _reportStatTile(
+                      'AI',
+                      aiScans.length.toString(),
+                      Icons.auto_awesome_rounded,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        _reportActionCard(
+          icon: Icons.ios_share_rounded,
+          title: 'Export Provider Report',
+          subtitle:
+              'Generate a polished PDF from the active procedure profile.',
+          buttonLabel: 'Create Export',
+          onPressed: () => runGatedReportFlow(context),
+        ),
+        const SizedBox(height: 12),
+        _reportActionCard(
+          icon: Icons.folder_special_rounded,
+          title: 'Saved Exported Reports',
+          subtitle: 'Review or download reports you already generated.',
+          buttonLabel: 'Open Saved Reports',
+          onPressed: () => Navigator.of(context).pushNamed('/report'),
+        ),
+        const SizedBox(height: 18),
+        _sectionHeader(
+          Icons.summarize_outlined,
+          'Summary Sources',
+          eyebrow: 'Progress data',
+        ),
+        const SizedBox(height: 12),
+        _sourceSummaryCard(
+          'Procedure Scans',
+          '${procedureScans.length} captured',
+          Icons.medical_services_outlined,
+          AppColors.refinedSlate,
+          () => _openScansTab(1),
+        ),
+        const SizedBox(height: 10),
+        _sourceSummaryCard(
+          'Skincare Logs',
+          '${skincareScans.length} captured',
+          Icons.spa_rounded,
+          AppColors.mutedSage,
+          () => _openScansTab(2),
+        ),
+        const SizedBox(height: 10),
+        _sourceSummaryCard(
+          'AI Deep Analysis',
+          '${aiScans.length} captured',
+          Icons.auto_awesome_rounded,
+          AppColors.champagneGold,
+          () => _openScansTab(3),
+        ),
+      ],
+    );
+  }
+
+  Widget _reportStatTile(String label, String value, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.warmAlabaster,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.borders),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: AppColors.champagneGold, size: 18),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: TextStyle(
+              color: MyApp.textBrown,
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: MyApp.textBrown.withValues(alpha: 0.62),
+              fontSize: 10.5,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _reportActionCard({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required String buttonLabel,
+    required VoidCallback onPressed,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppColors.champagneGold.withValues(alpha: 0.2),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.refinedSlate.withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: AppColors.champagneGold.withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Icon(icon, color: AppColors.champagneGold, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: MyApp.textBrown,
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: MyApp.textBrown.withValues(alpha: 0.64),
+                        fontSize: 12.3,
+                        fontWeight: FontWeight.w600,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: onPressed,
+              icon: const Icon(Icons.arrow_forward_rounded),
+              label: Text(buttonLabel),
+              style: MyApp.primaryGoldButton,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sourceSummaryCard(
+    String title,
+    String subtitle,
+    IconData icon,
+    Color accent,
+    VoidCallback onTap,
+  ) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Ink(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.cardBackground,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: accent.withValues(alpha: 0.2)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: accent, size: 21),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: MyApp.textBrown,
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: MyApp.textBrown.withValues(alpha: 0.62),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: accent),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openScansTab(int index) {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => ProgressReportScreen(
+          viewMode: ProgressReportViewMode.scans,
+          initialTabIndex: index,
+        ),
+      ),
+    );
+  }
+
+  Widget _scanTypeBadge(IconData icon, String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 12),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 10.2,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _metricChip(String key, double value, Color color) {
+    final label = key.replaceAll('_', ' ').replaceAllMapped(
+      RegExp(r'([a-z])([A-Z])'),
+      (match) {
+        return '${match.group(1)} ${match.group(2)}';
+      },
+    );
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: AppColors.warmAlabaster,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
+      ),
+      child: Text(
+        '${label.toUpperCase()} ${value.toStringAsFixed(1)}',
+        style: TextStyle(
+          color: MyApp.textBrown.withValues(alpha: 0.72),
+          fontSize: 9.8,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+
+  // ignore: unused_element
+  Widget _buildProcedureList() {
+    if (_isLoading) return const Center(child: CircularProgressIndicator());
+
+    if (_procedures.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.only(top: 80),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  MyApp.roseGold.withValues(alpha: 0.13),
+                  MyApp.champagne.withValues(alpha: 0.92),
+                  MyApp.goldShimmer.withValues(alpha: 0.10),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: [
+                BoxShadow(
+                  color: MyApp.roseGold.withValues(alpha: 0.10),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+              border: Border.all(
+                color: MyApp.goldShimmer.withValues(alpha: 0.18),
+                width: 1.2,
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.insights,
+                  size: 44,
+                  color: MyApp.roseGold.withValues(alpha: 0.55),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  "No procedure progress reports yet.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 18,
+                    color: MyApp.textBrown.withValues(alpha: 0.8),
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.13,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  "Your future progress reports will appear here, beautifully formatted and ready to share with your provider.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14.2,
+                    color: MyApp.textBrown.withValues(alpha: 0.62),
+                    fontWeight: FontWeight.w600,
+                    height: 1.44,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.all(20),
+      itemCount: _procedures.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 18),
+      itemBuilder: (context, index) {
+        final proc = _procedures[index];
+        return Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                Colors.white.withValues(alpha: 0.97),
+                MyApp.champagne.withValues(alpha: 0.93),
+                MyApp.roseGold.withValues(alpha: 0.07),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: MyApp.roseGold.withValues(alpha: 0.07),
+                blurRadius: 18,
+                offset: const Offset(0, 6),
+              ),
+            ],
+            border: Border.all(
+              color: MyApp.goldShimmer.withValues(alpha: 0.13),
+              width: 1,
+            ),
+          ),
+          child: ListTile(
+            contentPadding: const EdgeInsets.all(18),
+            leading: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: proc.beforePhotoBytes != null
+                  ? Image.memory(
+                      proc.beforePhotoBytes!,
+                      width: 60,
+                      height: 60,
+                      fit: BoxFit.cover,
+                    )
+                  : Icon(
+                      Icons.image,
+                      size: 60,
+                      color: MyApp.roseGold.withValues(alpha: 0.32),
+                    ),
+            ),
+            title: Text(
+              proc.type,
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: MyApp.textBrown,
+                fontSize: 19,
+                letterSpacing: 0.12,
+              ),
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${proc.provider} � ${proc.numSessions} sessions',
+                  style: TextStyle(
+                    color: MyApp.textBrown.withValues(alpha: 0.82),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  "Started: ${proc.startDate.toString().split(' ')[0]}",
+                  style: TextStyle(
+                    color: MyApp.textBrown.withValues(alpha: 0.62),
+                    fontSize: 13.2,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: proc.isCompleted
+                        ? AppColors.mutedSage.withValues(alpha: 0.12)
+                        : MyApp.roseGold.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: proc.isCompleted
+                          ? AppColors.mutedSage.withValues(alpha: 0.35)
+                          : MyApp.roseGold.withValues(alpha: 0.32),
+                    ),
+                  ),
+                  child: Text(
+                    proc.isCompleted ? 'Completed' : 'Active',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: proc.isCompleted
+                          ? AppColors.mutedSage
+                          : MyApp.roseGold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            trailing: Icon(
+              Icons.chevron_right,
+              color: MyApp.goldShimmer,
+              size: 28,
+            ),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ProcedureDetailScreen(procedure: proc),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ignore: unused_element
+  Widget _buildSkincareSection() {
+    if (_isLoading) return const Center(child: CircularProgressIndicator());
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildTrackedSkincareList(),
+          if (_trackedProducts.isNotEmpty) const SizedBox(height: 28),
+          _sectionHeader(
+            Icons.cake_outlined,
+            'Estimated Skin Age',
+            eyebrow: 'Biological indicator',
+          ),
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  MyApp.champagne.withValues(alpha: 0.97),
+                  MyApp.goldShimmer.withValues(alpha: 0.13),
+                  MyApp.roseGold.withValues(alpha: 0.08),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: [
+                BoxShadow(
+                  color: MyApp.roseGold.withValues(alpha: 0.08),
+                  blurRadius: 18,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+              border: Border.all(
+                color: MyApp.goldShimmer.withValues(alpha: 0.22),
+                width: 1,
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 24),
+              child: Column(
+                children: [
+                  ShaderMask(
+                    shaderCallback: (b) => LinearGradient(
+                      colors: [MyApp.goldShimmer, MyApp.roseGold],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ).createShader(b),
+                    child: Text(
+                      _latestSkinAge != null ? '$_latestSkinAge' : '--',
+                      style: const TextStyle(
+                        fontSize: 64,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                        height: 1.0,
+                        letterSpacing: -2,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'years',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: MyApp.textBrown.withValues(alpha: 0.6),
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    _latestSkinAge != null
+                        ? 'Based on your latest AI skin metrics'
+                        : 'No scans yet - take one to estimate',
+                    style: TextStyle(
+                      color: MyApp.textBrown.withValues(alpha: 0.65),
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 28),
+
+          // Product Recommendations based on latest skin metrics
+          FutureBuilder<List<ScanHistoryEntry>>(
+            future: AppPrefs.getScanEntries(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                return const SizedBox.shrink();
+              }
+              final scans = snapshot.data!;
+              final latest = scans.reduce(
+                (a, b) => a.timestamp.isAfter(b.timestamp) ? a : b,
+              );
+              final latestMetrics = latest.toSkinMetrics();
+              final recentProcedureTypes = scans
+                  .map((s) => s.procedure?.trim())
+                  .whereType<String>()
+                  .where((p) => p.isNotEmpty && p.toLowerCase() != 'unknown')
+                  .toSet()
+                  .toList();
+              final resolvedProcedureType = (() {
+                final latestProcedure = (latest.procedure ?? '').trim();
+                if (latestProcedure.isNotEmpty &&
+                    latestProcedure.toLowerCase() != 'unknown') {
+                  return latestProcedure;
+                }
+                if (recentProcedureTypes.isNotEmpty) {
+                  return recentProcedureTypes.first;
+                }
+                return 'General Skincare';
+              })();
+              AppLogger.verbose(
+                '[ProgressReportScreen] resolvedProcedureType=$resolvedProcedureType (recent=${recentProcedureTypes.join('|')})',
+              );
+              final recommendations =
+                  AIProductRecommendationEngine.generateRecommendations(
+                    latestMetrics,
+                    procedureType: resolvedProcedureType,
+                    maxRecommendations: 3,
+                    userSkinConcerns: [
+                      if (latestMetrics.redness > 6.0) 'redness',
+                      if (latestMetrics.texture > 6.0) 'texture',
+                      if (latestMetrics.wrinkle > 6.0) 'aging',
+                      if (latestMetrics.pore > 6.0) 'pores',
+                      if (latestMetrics.darkSpots > 6.0) 'pigmentation',
+                      if (latestMetrics.elasticity < 4.8) 'firmness',
+                      if (latestMetrics.redness > 6.0) 'sensitive',
+                    ],
+                    recentProcedureTypes:
+                      resolvedProcedureType.toLowerCase() !=
+                        'general skincare'
+                      ? recentProcedureTypes
+                      : null,
+                  );
+              return ClinicalProductRecommendationsSection(
+                recommendations: recommendations,
+                sectionSubtitle:
+                    'Tailored to improve your current skin metrics',
+              );
+            },
+          ),
+
+          const SizedBox(height: 28),
+
+          _sectionHeader(
+            Icons.local_fire_department_outlined,
+            'Scan Streaks',
+            eyebrow: 'Consistency',
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Colors.white.withValues(alpha: 0.97),
+                  MyApp.champagne.withValues(alpha: 0.93),
+                  MyApp.roseGold.withValues(alpha: 0.07),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(
+                  color: MyApp.roseGold.withValues(alpha: 0.07),
+                  blurRadius: 14,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+              border: Border.all(
+                color: MyApp.goldShimmer.withValues(alpha: 0.18),
+                width: 1,
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFFFB36B), Color(0xFFFF7B5A)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFFFF7B5A).withValues(alpha: 0.30),
+                        blurRadius: 10,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.whatshot_rounded,
+                    color: Colors.white,
+                    size: 26,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Current Streak: 7 days',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          color: MyApp.textBrown,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Great consistency � keep it going!',
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: MyApp.textBrown.withValues(alpha: 0.65),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 28),
+
+          _sectionHeader(
+            Icons.compare_outlined,
+            'Before & After',
+            eyebrow: 'Visual evidence',
+          ),
+          const SizedBox(height: 12),
+          FutureBuilder<List<ScanHistoryEntry>>(
+            future: AppPrefs.getScanEntries(),
+            builder: (context, snapshot) {
+              final skincareScans =
+                  (snapshot.data ?? const <ScanHistoryEntry>[])
+                      .where((s) {
+                        // Include scans linked to a tracked skincare product OR
+                        // general (non-procedure) progress scans. Exclude scans
+                        // that belong to a tracked procedure.
+                        final hasProcedure = (s.procedureId ?? '')
+                            .trim()
+                            .isNotEmpty;
+                        final hasProduct = (s.productName ?? '')
+                            .trim()
+                            .isNotEmpty;
+                        return hasProduct || !hasProcedure;
+                      })
+                      .where((s) => (s.imagePath ?? '').isNotEmpty)
+                      .toList()
+                    ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+              final before = skincareScans.isNotEmpty
+                  ? skincareScans.first
+                  : null;
+              final after = skincareScans.length > 1
+                  ? skincareScans.last
+                  : null;
+              return Row(
+                children: [
+                  Expanded(child: _buildBeforeAfterCard('Before', before)),
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildBeforeAfterCard('After', after)),
+                ],
+              );
+            },
+          ),
+
+          const SizedBox(height: 28),
+
+          _sectionHeader(
+            Icons.tips_and_updates_outlined,
+            'Quick Tips',
+            eyebrow: 'Expert guidance',
+          ),
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Colors.white.withValues(alpha: 0.97),
+                  MyApp.champagne.withValues(alpha: 0.93),
+                  MyApp.roseGold.withValues(alpha: 0.07),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(
+                  color: MyApp.roseGold.withValues(alpha: 0.07),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+              border: Border.all(
+                color: MyApp.goldShimmer.withValues(alpha: 0.18),
+                width: 1,
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _tipRow(
+                    Icons.wb_sunny_outlined,
+                    'Apply SPF every 2 hours outdoors',
+                  ),
+                  _tipRow(Icons.water_drop_outlined, 'Drink 2.5L water daily'),
+                  _tipRow(Icons.bedtime_outlined, 'Gentle cleansing at night'),
+                  _tipRow(
+                    Icons.wb_iridescent_outlined,
+                    'Consistent lighting for scans',
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 32),
+
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => Navigator.pushNamed(context, '/camera'),
+              icon: const Icon(Icons.camera_alt_rounded, color: Colors.white),
+              label: const Text(
+                'New Face Scan',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                  fontSize: 15,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: MyApp.roseGold,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                elevation: 2,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTrackedSkincareList() {
+    if (_trackedProducts.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              MyApp.roseGold.withValues(alpha: 0.12),
+              MyApp.champagne.withValues(alpha: 0.92),
+              MyApp.goldShimmer.withValues(alpha: 0.10),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: MyApp.goldShimmer.withValues(alpha: 0.18)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.spa_outlined,
+              size: 40,
+              color: MyApp.roseGold.withValues(alpha: 0.55),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'No tracked skincare products yet.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: MyApp.textBrown.withValues(alpha: 0.8),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Log a skincare product from Home to see its progress photos here.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: MyApp.textBrown.withValues(alpha: 0.62),
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Tracked Skincare Products',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: MyApp.textBrown,
+          ),
+        ),
+        const SizedBox(height: 12),
+        ...List.generate(_trackedProducts.length, (index) {
+          final product = _trackedProducts[index];
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Colors.white.withValues(alpha: 0.97),
+                    MyApp.champagne.withValues(alpha: 0.93),
+                    MyApp.roseGold.withValues(alpha: 0.07),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: MyApp.goldShimmer.withValues(alpha: 0.13),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: MyApp.roseGold.withValues(alpha: 0.07),
+                    blurRadius: 14,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: ListTile(
+                contentPadding: const EdgeInsets.all(16),
+                leading: ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: SizedBox(
+                    width: 60,
+                    height: 60,
+                    child: _scanImage(product.photoPath),
+                  ),
+                ),
+                title: Text(
+                  product.name,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: MyApp.textBrown,
+                    fontSize: 17,
+                  ),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (product.brand.isNotEmpty)
+                      Text(
+                        product.brand,
+                        style: TextStyle(
+                          color: MyApp.textBrown.withValues(alpha: 0.8),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    Text(
+                      'Started: ${product.startDate.toString().split(' ')[0]}',
+                      style: TextStyle(
+                        color: MyApp.textBrown.withValues(alpha: 0.62),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+                trailing: Icon(
+                  Icons.chevron_right,
+                  color: MyApp.goldShimmer,
+                  size: 28,
+                ),
+                onTap: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          ActiveSkincareDetailsScreen(product: product),
+                    ),
+                  );
+                  await _loadProcedures();
+                },
+              ),
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  // ignore: unused_element
+  Widget _buildImageCard(String label) {
+    return _buildBeforeAfterCard(label, null);
+  }
+
+  Widget _buildBeforeAfterCard(String label, ScanHistoryEntry? scan) {
+    final hasScan = scan != null;
+    final dateLabel = hasScan
+        ? scan.timestamp.toLocal().toString().split(' ')[0]
+        : null;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: MyApp.goldShimmer.withValues(alpha: 0.22)),
+        boxShadow: [
+          BoxShadow(
+            color: MyApp.roseGold.withValues(alpha: 0.08),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Stack(
+            children: [
+              SizedBox(
+                height: 170,
+                width: double.infinity,
+                child: _scanImage(scan?.imagePath),
+              ),
+              Positioned(
+                top: 10,
+                left: 10,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    label.toUpperCase(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.all(10),
+            child: Text(
+              dateLabel ?? 'Awaiting scan',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 12.5,
+                color: MyApp.textBrown.withValues(alpha: hasScan ? 0.85 : 0.5),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionHeader(IconData icon, String title, {String? eyebrow}) {
+    return ClinicalSectionHeader(
+      icon: icon,
+      title: title,
+      eyebrow: eyebrow,
+      textColor: MyApp.textBrown,
+    );
+  }
+
+  Widget _tipRow(IconData icon, String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: MyApp.roseGold.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: MyApp.roseGold, size: 15),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+                color: MyApp.textBrown.withValues(alpha: 0.85),
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _scanImage(String? path) {
+    if (path == null || path.isEmpty) {
+      return Container(
+        color: Colors.grey[300],
+        child: const Center(
+          child: Icon(Icons.image, size: 60, color: Colors.grey),
+        ),
+      );
+    }
+    if (kIsWeb ||
+        path.startsWith('http') ||
+        path.startsWith('blob:') ||
+        path.startsWith('data:')) {
+      return Image.network(
+        path,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Container(
+          color: Colors.grey[300],
+          child: const Center(
+            child: Icon(Icons.broken_image, size: 48, color: Colors.grey),
+          ),
+        ),
+      );
+    }
+    return Image.file(
+      File(path),
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => Container(
+        color: Colors.grey[300],
+        child: const Center(
+          child: Icon(Icons.broken_image, size: 48, color: Colors.grey),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final showingScans = widget.viewMode == ProgressReportViewMode.scans;
+    return Scaffold(
+      appBar: AppBar(
+        title: ClinicalAppBarTitle(
+          title: showingScans ? 'Scans' : 'Progress Reports',
+          eyebrow: showingScans ? 'Scan archive' : 'Progress journal',
+        ),
+        centerTitle: true,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        foregroundColor: MyApp.textBrown,
+        bottom: showingScans
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(64),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: AppColors.cardBackground.withValues(alpha: 0.92),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: MyApp.goldShimmer.withValues(alpha: 0.25),
+                      ),
+                    ),
+                    child: TabBar(
+                      controller: _tabController,
+                      isScrollable: true,
+                      indicator: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [MyApp.goldShimmer, AppColors.champagneGold],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(10),
+                        boxShadow: [
+                          BoxShadow(
+                            color: MyApp.roseGold.withValues(alpha: 0.25),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      indicatorSize: TabBarIndicatorSize.tab,
+                      dividerColor: Colors.transparent,
+                      labelColor: Colors.white,
+                      unselectedLabelColor: MyApp.textBrown.withValues(
+                        alpha: 0.72,
+                      ),
+                      labelStyle: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.1,
+                      ),
+                      unselectedLabelStyle: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      tabs: const [
+                        Tab(text: 'All'),
+                        Tab(text: 'Procedure Scans'),
+                        Tab(text: 'Skincare Logs'),
+                        Tab(text: 'AI Deep Analysis'),
+                      ],
+                    ),
+                  ),
+                ),
+              )
+            : null,
+      ),
+      backgroundColor: AppColors.canvas,
+      body: showingScans
+          ? TabBarView(
+              controller: _tabController,
+              children: [
+                _buildScanRepositorySection(null),
+                _buildScanRepositorySection(ScanHistoryEntry.scanTypeProcedure),
+                _buildScanRepositorySection(ScanHistoryEntry.scanTypeSkincare),
+                _buildScanRepositorySection(
+                  ScanHistoryEntry.scanTypeAiAnalysis,
+                ),
+              ],
+            )
+          : _buildReportsLanding(),
+      floatingActionButton: showingScans
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: () {
+                final random = [
+                  "You are radiant and beautiful.",
+                  "Your skin glows with health.",
+                  "You are worthy of self-care.",
+                ].first;
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(random)));
+              },
+              backgroundColor: MyApp.goldShimmer,
+              label: const Text("Affirmation"),
+              icon: const Icon(Icons.favorite),
+            ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+}
+
+class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
+  final _ProcedureScanGroup group;
+
+  const _ProcedureScanComparisonDetailScreen({required this.group});
+
+  @override
+  Widget build(BuildContext context) {
+    final baseline = group.baseline;
+    final latest = group.latest;
+    final focus = group.focus;
+    final deltas = _metricDeltas(baseline, latest);
+    final improvedCount = deltas.where((delta) => delta.improved).length;
+    final worsenedCount = deltas.length - improvedCount;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: ClinicalAppBarTitle(
+          title: group.title,
+          eyebrow: 'Procedure comparison',
+        ),
+        centerTitle: true,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        foregroundColor: AppColors.refinedSlate,
+      ),
+      backgroundColor: AppColors.canvas,
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 32),
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: _photoPanel(
+                  'Baseline',
+                  baseline.imagePath,
+                  baseline.timestamp,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _photoPanel(
+                  'Most Recent',
+                  latest.imagePath,
+                  latest.timestamp,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: _detailDecoration(AppColors.refinedSlate),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    _badge(
+                      Icons.medical_services_outlined,
+                      'Procedure Progress',
+                      AppColors.refinedSlate,
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${group.count} upload${group.count == 1 ? '' : 's'}',
+                      style: TextStyle(
+                        color: AppColors.refinedSlate.withValues(alpha: 0.62),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  group.title,
+                  style: const TextStyle(
+                    color: AppColors.refinedSlate,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                if (focus.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    focus,
+                    style: TextStyle(
+                      color: AppColors.refinedSlate.withValues(alpha: 0.72),
+                      fontSize: 13.4,
+                      fontWeight: FontWeight.w700,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _infoPill(
+                      Icons.flag_rounded,
+                      'Baseline ${_shortDate(baseline.timestamp)}',
+                      AppColors.champagneGold,
+                    ),
+                    _infoPill(
+                      Icons.photo_camera_rounded,
+                      'Latest ${_shortDate(latest.timestamp)}',
+                      AppColors.refinedSlate,
+                    ),
+                    if (improvedCount > 0)
+                      _infoPill(
+                        Icons.trending_up_rounded,
+                        '$improvedCount improved',
+                        AppColors.mutedSage,
+                      ),
+                    if (worsenedCount > 0)
+                      _infoPill(
+                        Icons.trending_down_rounded,
+                        '$worsenedCount worsened',
+                        AppColors.softTerracotta,
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          const ClinicalSectionHeader(
+            icon: Icons.insights_rounded,
+            title: 'Metric Changes',
+            textColor: AppColors.refinedSlate,
+          ),
+          const SizedBox(height: 10),
+          if (deltas.isEmpty)
+            _emptyMetricsCard()
+          else
+            ...deltas.map(_metricDeltaRow),
+        ],
+      ),
+    );
+  }
+
+  Widget _photoPanel(String label, String? imagePath, DateTime timestamp) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: AspectRatio(
+        aspectRatio: 0.82,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            _scanImage(imagePath),
+            Positioned(
+              left: 10,
+              right: 10,
+              bottom: 10,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.refinedSlate.withValues(alpha: 0.76),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _shortDate(timestamp),
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.78),
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _metricDeltaRow(_MetricDelta delta) {
+    final color = delta.improved
+        ? AppColors.mutedSage
+        : AppColors.softTerracotta;
+    final directionIcon = delta.delta > 0
+        ? Icons.arrow_upward_rounded
+        : Icons.arrow_downward_rounded;
+    final deltaPrefix = delta.delta > 0 ? '+' : '';
+    final trendLabel = delta.improved ? 'Improved' : 'Worsened';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.cardBackground,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withValues(alpha: 0.2)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    delta.label,
+                    style: const TextStyle(
+                      color: AppColors.refinedSlate,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.11),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(directionIcon, color: color, size: 13),
+                      const SizedBox(width: 4),
+                      Text(
+                        '$trendLabel $deltaPrefix${delta.delta.toStringAsFixed(1)}',
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(child: _valueColumn('Baseline', delta.baselineValue)),
+                const SizedBox(width: 10),
+                Expanded(child: _valueColumn('Latest', delta.latestValue)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                minHeight: 7,
+                value: ScanDetailScreen._metricProgressValue(delta.latestValue),
+                backgroundColor: AppColors.borders.withValues(alpha: 0.65),
+                valueColor: AlwaysStoppedAnimation<Color>(color),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _valueColumn(String label, double value) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.warmAlabaster,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.borders),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            value > 10 ? value.toStringAsFixed(0) : value.toStringAsFixed(1),
+            style: const TextStyle(
+              color: AppColors.refinedSlate,
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            label,
+            style: TextStyle(
+              color: AppColors.refinedSlate.withValues(alpha: 0.62),
+              fontSize: 10.8,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoPill(IconData icon, String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.24)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 15),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.refinedSlate,
+              fontSize: 11.8,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _badge(IconData icon, String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 13),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 10.8,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyMetricsCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.borders),
+      ),
+      child: Text(
+        'No shared metric changes were saved between the baseline and latest upload yet.',
+        style: TextStyle(
+          color: AppColors.refinedSlate.withValues(alpha: 0.66),
+          fontWeight: FontWeight.w700,
+          height: 1.35,
+        ),
+      ),
+    );
+  }
+
+  BoxDecoration _detailDecoration(Color accent) {
+    return BoxDecoration(
+      color: AppColors.cardBackground,
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: accent.withValues(alpha: 0.24)),
+      boxShadow: [
+        BoxShadow(
+          color: accent.withValues(alpha: 0.08),
+          blurRadius: 16,
+          offset: const Offset(0, 5),
+        ),
+      ],
+    );
+  }
+
+  Widget _scanImage(String? path) {
+    final cleanPath = path?.trim() ?? '';
+    if (cleanPath.isEmpty) return _emptyImage(Icons.image);
+    if (cleanPath.startsWith('data:image')) {
+      final comma = cleanPath.indexOf(',');
+      if (comma == -1) return _emptyImage(Icons.broken_image);
+      try {
+        return Image.memory(
+          base64Decode(cleanPath.substring(comma + 1)),
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _emptyImage(Icons.broken_image),
+        );
+      } catch (_) {
+        return _emptyImage(Icons.broken_image);
+      }
+    }
+    if (cleanPath.startsWith('http') || cleanPath.startsWith('blob:')) {
+      return Image.network(
+        cleanPath,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _emptyImage(Icons.broken_image),
+      );
+    }
+    if (kIsWeb) return _emptyImage(Icons.broken_image);
+    return Image.file(
+      File(cleanPath),
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => _emptyImage(Icons.broken_image),
+    );
+  }
+
+  Widget _emptyImage(IconData icon) {
+    return Container(
+      color: AppColors.borders,
+      child: Center(
+        child: Icon(
+          icon,
+          size: 52,
+          color: AppColors.refinedSlate.withValues(alpha: 0.36),
+        ),
+      ),
+    );
+  }
+
+  static List<_MetricDelta> _metricDeltas(
+    ScanHistoryEntry baseline,
+    ScanHistoryEntry latest,
+  ) {
+    final rows = <_MetricDelta>[];
+    final baselineRows = ScanDetailScreen.displayMetricsFor(baseline);
+    final latestRows = ScanDetailScreen.displayMetricsFor(latest);
+    for (final latestRow in latestRows) {
+      final baselineMatches = baselineRows.where(
+        (row) => row.key == latestRow.key || row.label == latestRow.label,
+      );
+      if (baselineMatches.isEmpty) continue;
+      final baselineRow = baselineMatches.first;
+      final baselineValue = baselineRow.value;
+      final latestValue = latestRow.value;
+      final delta = latestValue - baselineValue;
+      if (delta.abs() < 0.05) continue;
+      final higherIsBetter = ScanDetailScreen._higherIsBetterMetric(
+        latestRow.key,
+      );
+      rows.add(
+        _MetricDelta(
+          key: latestRow.key,
+          label: latestRow.label,
+          baselineValue: baselineValue,
+          latestValue: latestValue,
+          improved: higherIsBetter ? delta > 0 : delta < 0,
+        ),
+      );
+    }
+    rows.sort((a, b) => b.magnitude.compareTo(a.magnitude));
+    return rows;
+  }
+
+  static String _shortDate(DateTime timestamp) {
+    final date = timestamp.toLocal();
+    return '${date.month}/${date.day}/${date.year}';
+  }
+}
+
+class ScanDetailScreen extends StatelessWidget {
+  final ScanHistoryEntry scan;
+
+  const ScanDetailScreen({super.key, required this.scan});
+
+  ({IconData icon, String label, Color color}) get _meta {
+    switch (scan.resolvedScanType) {
+      case ScanHistoryEntry.scanTypeAiAnalysis:
+        return (
+          icon: Icons.auto_awesome_rounded,
+          label: 'AI Deep Analysis',
+          color: AppColors.champagneGold,
+        );
+      case ScanHistoryEntry.scanTypeSkincare:
+        return (
+          icon: Icons.spa_rounded,
+          label: 'Skincare Log',
+          color: AppColors.mutedSage,
+        );
+      default:
+        return (
+          icon: Icons.medical_services_outlined,
+          label: 'Procedure Scan',
+          color: AppColors.refinedSlate,
+        );
+    }
+  }
+
+  String get _title {
+    if (scan.isAiAnalysisScan) return 'AI Deep Analysis';
+    if (scan.isSkincareScan) {
+      return scan.productName?.trim().isNotEmpty == true
+          ? scan.productName!.trim()
+          : 'Skincare Log';
+    }
+    return scan.procedure?.trim().isNotEmpty == true
+        ? scan.procedure!.trim()
+        : 'Procedure Scan';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final meta = _meta;
+    final focus = (scan.focusArea ?? scan.customDescription ?? '').trim();
+    final metrics = _displayMetrics;
+    final insightRows = _insightRows(metrics);
+    final qualityRows = <({String label, String value})>[
+      if (scan.estimatedSkinAge > 0)
+        (
+          label: 'Estimated Skin Age',
+          value: scan.estimatedSkinAge.toStringAsFixed(0),
+        ),
+      if (scan.lightingConfidence != null)
+        (
+          label: 'Lighting Confidence',
+          value: _percent(scan.lightingConfidence!),
+        ),
+      if (scan.distanceEstimate != null)
+        (label: 'Framing Quality', value: _percent(scan.distanceEstimate!)),
+      if (scan.expressionConfidence != null)
+        (
+          label: 'Expression Confidence',
+          value: _percent(scan.expressionConfidence!),
+        ),
+      if (scan.headTiltAngle != null)
+        (
+          label: 'Head Tilt',
+          value: '${scan.headTiltAngle!.toStringAsFixed(1)} deg',
+        ),
+    ];
+
+    return Scaffold(
+      appBar: AppBar(
+        title: ClinicalAppBarTitle(title: _title, eyebrow: meta.label),
+        centerTitle: true,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        foregroundColor: AppColors.refinedSlate,
+      ),
+      backgroundColor: AppColors.canvas,
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 32),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: AppColors.cardBackground,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: meta.color.withValues(alpha: 0.18)),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.refinedSlate.withValues(alpha: 0.07),
+                  blurRadius: 18,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(15),
+              child: AspectRatio(
+                aspectRatio: 1,
+                child: _scanImage(scan.imagePath),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: _detailDecoration(meta.color),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    _badge(meta.icon, meta.label, meta.color),
+                    const Spacer(),
+                    Text(
+                      scan.timestamp.toLocal().toString().split('.').first,
+                      style: TextStyle(
+                        color: AppColors.refinedSlate.withValues(alpha: 0.62),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _title,
+                  style: const TextStyle(
+                    color: AppColors.refinedSlate,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                if (focus.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    focus,
+                    style: TextStyle(
+                      color: AppColors.refinedSlate.withValues(alpha: 0.72),
+                      fontSize: 13.4,
+                      fontWeight: FontWeight.w700,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (scan.isBaseline)
+                      _noticeChip(
+                        Icons.flag_rounded,
+                        'Baseline reference',
+                        AppColors.champagneGold,
+                      ),
+                    if (scan.preferredReference)
+                      _noticeChip(
+                        Icons.star_rounded,
+                        'Preferred reference',
+                        AppColors.mutedSage,
+                      ),
+                    if (scan.makeupPresent)
+                      _noticeChip(
+                        Icons.info_outline_rounded,
+                        'Makeup/product noted',
+                        AppColors.softTerracotta,
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (insightRows.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            _sectionTitle(Icons.auto_awesome_rounded, 'AI Insights & Notes'),
+            const SizedBox(height: 10),
+            _insightsCard(insightRows, meta.color),
+          ],
+          if (qualityRows.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            _sectionTitle(Icons.tune_rounded, 'Capture Quality'),
+            const SizedBox(height: 10),
+            _qualityGrid(qualityRows),
+          ],
+          const SizedBox(height: 18),
+          if (scan.isAiAnalysisScan) ...[
+            _sectionTitle(Icons.insights_rounded, 'AI Deep Analysis Metrics'),
+            const SizedBox(height: 10),
+            LuxeReportLayout(rawPayload: _buildLuxePayloadForAiScan()),
+          ] else ...[
+            _sectionTitle(Icons.insights_rounded, 'Metrics'),
+            const SizedBox(height: 10),
+            ..._buildMetricRows(meta.color),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Map<String, dynamic> _buildLuxePayloadForAiScan() {
+    final source = scan.metrics;
+
+    double? valueFor(List<String> keys) {
+      for (final key in keys) {
+        final value = source[key];
+        if (value != null && value.isFinite) return value;
+      }
+      return null;
+    }
+
+    final trend = <String, dynamic>{};
+    for (final entry in source.entries) {
+      final key = entry.key;
+      if (!key.startsWith('trend_delta_') || !key.endsWith('_pct')) continue;
+      if (!entry.value.isFinite) continue;
+      final metricKey = key
+          .replaceFirst('trend_delta_', '')
+          .replaceFirst('_pct', '');
+      trend[metricKey] = entry.value;
+    }
+
+    double? scaled0to100(double? value, {bool invertTenScale = false}) {
+      if (value == null || !value.isFinite) return null;
+      if (value <= 10.0) {
+        final normalized = invertTenScale ? (10.0 - value) : value;
+        return (normalized * 10.0).clamp(0.0, 100.0);
+      }
+      return value.clamp(0.0, 100.0);
+    }
+
+    final matrix = <String, dynamic>{};
+
+    final localizedRedness = scaled0to100(
+      valueFor(const ['localized_redness', 'redness', 'erythema']),
+    );
+    if (localizedRedness != null) {
+      matrix['localized_redness'] = localizedRedness;
+    }
+
+    final textureSmoothness = scaled0to100(
+      valueFor(const ['texture_smoothness', 'texture', 'roughness']),
+      invertTenScale: true,
+    );
+    if (textureSmoothness != null) {
+      matrix['texture_smoothness'] = textureSmoothness;
+    }
+
+    final poreVisibility = scaled0to100(
+      valueFor(const ['pore_visibility', 'pores', 'pore']),
+    );
+    if (poreVisibility != null) {
+      matrix['pore_visibility'] = poreVisibility;
+    }
+
+    final breakoutActivity = scaled0to100(
+      valueFor(const ['breakout_activity', 'acne_severity', 'acneSeverity']),
+    );
+    if (breakoutActivity != null) {
+      matrix['breakout_activity'] = breakoutActivity;
+    }
+
+    final pigmentLoad = scaled0to100(
+      valueFor(const ['pigment_load', 'pigment', 'pigmentation', 'darkSpots']),
+    );
+    if (pigmentLoad != null) {
+      matrix['pigment_load'] = pigmentLoad;
+    }
+
+    final wrinkleLoad = scaled0to100(
+      valueFor(const ['wrinkle_load', 'wrinkle', 'wrinkles', 'rhytids']),
+    );
+    if (wrinkleLoad != null) {
+      matrix['wrinkle_load'] = wrinkleLoad;
+    }
+
+    final sebumGloss = scaled0to100(
+      valueFor(const ['sebum_excess_oil_gloss']),
+    );
+    if (sebumGloss != null) {
+      matrix['sebum_excess_oil_gloss'] = sebumGloss;
+    }
+
+    final flushing = scaled0to100(
+      valueFor(const ['diffuse_flushing_erythema']),
+    );
+    if (flushing != null) {
+      matrix['diffuse_flushing_erythema'] = flushing;
+    }
+
+    final radiance = scaled0to100(
+      valueFor(const ['skin_tone_radiance_evenness']),
+    );
+    if (radiance != null) {
+      matrix['skin_tone_radiance_evenness'] = radiance;
+    }
+
+    final glabellar = scaled0to100(
+      valueFor(const ['glabellar_wrinkle_depth']),
+    );
+    if (glabellar != null) {
+      matrix['glabellar_wrinkle_depth'] = glabellar;
+    }
+
+    final poreContraction = scaled0to100(
+      valueFor(const ['pore_contraction_index']),
+    );
+    if (poreContraction != null) {
+      matrix['pore_contraction_index'] = poreContraction;
+    }
+
+    final firmness = scaled0to100(
+      valueFor(const ['structural_firmness_elasticity']),
+    );
+    if (firmness != null) {
+      matrix['structural_firmness_elasticity'] = firmness;
+    }
+
+    return {
+      'metric_matrix': matrix,
+      'trend_deltas': trend,
+      'metrics': {
+        'metric_matrix': matrix,
+        'trend_deltas': trend,
+      },
+    };
+  }
+
+  List<Widget> _buildMetricRows(Color accent) {
+    final metrics = _displayMetrics;
+    if (metrics.isEmpty) return [_emptyMetricsCard()];
+    return metrics
+        .map((entry) => _metricRow(entry.label, entry.value, accent))
+        .toList();
+  }
+
+  List<({String key, String label, double value})> get _displayMetrics =>
+      displayMetricsFor(scan);
+
+  static List<({String key, String label, double value})> displayMetricsFor(
+    ScanHistoryEntry scan,
+  ) {
+    final source = scan.metrics;
+    double? firstValue(List<String> keys) {
+      for (final key in keys) {
+        final value = source[key];
+        if (value != null && value.isFinite) return value;
+      }
+      return null;
+    }
+
+    final isBodyProcedure = _isBodyProcedureScan(scan);
+    final preferred = scan.isAiAnalysisScan
+        ? <({String key, String label, List<String> keys})>[
+            (
+              key: 'pigment',
+              label: 'Pigment',
+              keys: ['pigment', 'pigmentation'],
+            ),
+            (key: 'redness', label: 'Redness', keys: ['redness', 'erythema']),
+            (key: 'texture', label: 'Texture', keys: ['texture', 'roughness']),
+            (
+              key: 'wrinkle',
+              label: 'Wrinkle',
+              keys: ['wrinkle', 'wrinkles', 'rhytids'],
+            ),
+            (
+              key: 'acne_severity',
+              label: 'Acne Severity',
+              keys: ['acne_severity', 'acneSeverity'],
+            ),
+            (
+              key: 'rosacea_intensity',
+              label: 'Rosacea Intensity',
+              keys: ['rosacea_intensity', 'rosaceaSeverity'],
+            ),
+            (key: 'swelling', label: 'Swelling', keys: ['swelling', 'edema']),
+            (
+              key: 'firmness',
+              label: 'Firmness',
+              keys: ['firmness', 'bodyFirmness', 'skinLaxityFirmness'],
+            ),
+            (
+              key: 'textureSmoothness',
+              label: 'Texture Smoothness',
+              keys: ['textureSmoothness', 'bodySmoothness'],
+            ),
+            (
+              key: 'hyperpigmentation',
+              label: 'Hyperpigmentation',
+              keys: ['hyperpigmentation', 'darkSpots'],
+            ),
+            (
+              key: 'overallHealingScore',
+              label: 'Overall Healing',
+              keys: [
+                'overallHealingScore',
+                'overall_healing_score',
+                'bodyHealingScore',
+              ],
+            ),
+          ]
+        : isBodyProcedure
+        ? <({String key, String label, List<String> keys})>[
+            (
+              key: 'fatRetention',
+              label: 'Fat Retention',
+              keys: [
+                'fatRetention',
+                'fat_retention',
+                'fatRetentionPct',
+                'fatRetentionPercent',
+              ],
+            ),
+            (
+              key: 'swelling',
+              label: 'Swelling',
+              keys: [
+                'swelling',
+                'edema',
+                'postOpSwelling',
+                'swellingLevel',
+                'swellingIndex',
+                'redness',
+                'erythema',
+              ],
+            ),
+            (
+              key: 'firmness',
+              label: 'Firmness',
+              keys: [
+                'firmness',
+                'bodyFirmness',
+                'skinFirmness',
+                'fibrosisFirmness',
+                'pores',
+                'pore',
+              ],
+            ),
+            (
+              key: 'skinLaxityFirmness',
+              label: 'Skin Laxity / Firmness',
+              keys: ['skinLaxityFirmness', 'elasticity'],
+            ),
+            (
+              key: 'skinLaxity',
+              label: 'Skin Laxity',
+              keys: ['skinLaxity', 'laxity'],
+            ),
+            (
+              key: 'contourSmoothness',
+              label: 'Contour Smoothness',
+              keys: [
+                'contourSmoothness',
+                'contourEvenness',
+                'bodySmoothness',
+                'textureSmoothness',
+                'smoothness',
+                'texture',
+                'roughness',
+              ],
+            ),
+            (
+              key: 'skinRetraction',
+              label: 'Skin Retraction',
+              keys: [
+                'skinRetraction',
+                'skin_retraction',
+                'retraction',
+                'wrinkles',
+                'wrinkle',
+                'rhytids',
+              ],
+            ),
+            (
+              key: 'bruising',
+              label: 'Bruising',
+              keys: ['bruising', 'bruise', 'ecchymosis', 'darkSpots'],
+            ),
+            (
+              key: 'fibrosisLevel',
+              label: 'Fibrosis Level',
+              keys: ['fibrosisLevel', 'fibrosis', 'fibrosisScore'],
+            ),
+            (
+              key: 'scarringBruising',
+              label: 'Scarring / Bruising',
+              keys: ['scarringBruising', 'scarring_bruising', 'scarring'],
+            ),
+            (
+              key: 'hyperpigmentation',
+              label: 'Hyperpigmentation',
+              keys: ['hyperpigmentation', 'pigment', 'pigmentation'],
+            ),
+            (
+              key: 'volumeSatisfaction',
+              label: 'Volume Satisfaction',
+              keys: ['volumeSatisfaction', 'volume_satisfaction'],
+            ),
+            (
+              key: 'overallHealingScore',
+              label: 'Overall Healing',
+              keys: [
+                'overallHealingScore',
+                'overall_healing_score',
+                'bodyHealingScore',
+              ],
+            ),
+          ]
+        : <({String key, String label, List<String> keys})>[
+            (key: 'redness', label: 'Redness', keys: ['redness', 'erythema']),
+            (key: 'texture', label: 'Texture', keys: ['texture', 'roughness']),
+            (
+              key: 'wrinkle',
+              label: 'Wrinkles',
+              keys: ['wrinkles', 'wrinkle', 'rhytids'],
+            ),
+            (key: 'pores', label: 'Pores', keys: ['pores', 'pore']),
+            (
+              key: 'darkSpots',
+              label: 'Dark Spots',
+              keys: ['darkSpots', 'pigment', 'pigmentation'],
+            ),
+            (key: 'elasticity', label: 'Elasticity', keys: ['elasticity']),
+            (
+              key: 'fatRetention',
+              label: 'Fat Retention',
+              keys: ['fatRetention', 'fat_retention'],
+            ),
+            (key: 'swelling', label: 'Swelling', keys: ['swelling', 'edema']),
+            (
+              key: 'firmness',
+              label: 'Firmness',
+              keys: ['firmness', 'bodyFirmness', 'skinLaxityFirmness'],
+            ),
+            (
+              key: 'overallHealingScore',
+              label: 'Overall Healing',
+              keys: [
+                'overallHealingScore',
+                'overall_healing_score',
+                'bodyHealingScore',
+              ],
+            ),
+          ];
+
+    final rows = <({String key, String label, double value})>[];
+    final consumedKeys = <String>{};
+    final consumedLabels = <String>{};
+    for (final spec in preferred) {
+      final value = firstValue(spec.keys);
+      if (value == null) continue;
+      rows.add((key: spec.key, label: spec.label, value: value));
+      consumedKeys.addAll(spec.keys.where((key) => source.containsKey(key)));
+      consumedLabels.add(spec.label.toLowerCase());
+    }
+
+    final extras =
+        source.entries.where((entry) {
+          final key = entry.key;
+          if (!entry.value.isFinite || consumedKeys.contains(key)) return false;
+          if (key.startsWith('source') || key.startsWith('capture_')) {
+            return false;
+          }
+          if (_isMetricAlias(key)) return false;
+          final label = _metricLabel(key).toLowerCase();
+          return !consumedLabels.contains(label);
+        }).toList()..sort(
+          (a, b) => _metricLabel(a.key).compareTo(_metricLabel(b.key)),
+        );
+
+    rows.addAll(
+      extras.map(
+        (entry) => (
+          key: entry.key,
+          label: _metricLabel(entry.key),
+          value: entry.value,
+        ),
+      ),
+    );
+    return rows;
+  }
+
+  List<String> _insightRows(
+    List<({String key, String label, double value})> metrics,
+  ) {
+    final notes = <String>[];
+    final customNote = scan.customDescription?.trim();
+    if (customNote != null && customNote.isNotEmpty) notes.add(customNote);
+    if (scan.isAiAnalysisScan && metrics.isNotEmpty) {
+      final concernMetrics =
+          metrics.where((metric) => !_higherIsBetterMetric(metric.key)).toList()
+            ..sort((a, b) => b.value.compareTo(a.value));
+      final top = concernMetrics.isNotEmpty
+          ? concernMetrics.first
+          : metrics.first;
+      notes.add(
+        '${top.label} is the most elevated saved AI signal for this analysis.',
+      );
+      notes.add(
+        'Use this scan as a cosmetic tracking reference alongside consistent lighting and angle.',
+      );
+    }
+    return notes;
+  }
+
+  Widget _insightsCard(List<String> rows, Color accent) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _detailDecoration(accent),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: rows
+            .map(
+              (row) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.auto_awesome_rounded, color: accent, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        row,
+                        style: TextStyle(
+                          color: AppColors.refinedSlate.withValues(alpha: 0.82),
+                          fontSize: 12.6,
+                          fontWeight: FontWeight.w700,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+            .toList(),
+      ),
+    );
+  }
+
+  BoxDecoration _detailDecoration(Color accent) {
+    return BoxDecoration(
+      color: AppColors.cardBackground,
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: accent.withValues(alpha: 0.24)),
+      boxShadow: [
+        BoxShadow(
+          color: accent.withValues(alpha: 0.08),
+          blurRadius: 16,
+          offset: const Offset(0, 5),
+        ),
+      ],
+    );
+  }
+
+  Widget _sectionTitle(IconData icon, String title) {
+    return ClinicalSectionHeader(
+      icon: icon,
+      title: title,
+      textColor: AppColors.refinedSlate,
+    );
+  }
+
+  Widget _qualityGrid(List<({String label, String value})> rows) {
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: rows
+          .map(
+            (row) => Container(
+              width: 150,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.cardBackground,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.borders),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    row.value,
+                    style: const TextStyle(
+                      color: AppColors.refinedSlate,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    row.label,
+                    style: TextStyle(
+                      color: AppColors.refinedSlate.withValues(alpha: 0.62),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  Widget _metricRow(String label, double value, Color accent) {
+    final normalized = _metricProgressValue(value);
+    final displayValue = value > 10
+        ? value.toStringAsFixed(0)
+        : value.toStringAsFixed(1);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 11),
+      child: Container(
+        padding: const EdgeInsets.all(15),
+        decoration: BoxDecoration(
+          color: AppColors.cardBackground,
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: accent.withValues(alpha: 0.18)),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.refinedSlate.withValues(alpha: 0.035),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    label,
+                    style: const TextStyle(
+                      color: AppColors.refinedSlate,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                Text(
+                  displayValue,
+                  style: TextStyle(
+                    color: accent,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 9),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                minHeight: 7,
+                value: normalized,
+                backgroundColor: AppColors.borders.withValues(alpha: 0.65),
+                valueColor: AlwaysStoppedAnimation<Color>(accent),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyMetricsCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.borders),
+      ),
+      child: Text(
+        'No numeric metrics were saved for this scan.',
+        style: TextStyle(
+          color: AppColors.refinedSlate.withValues(alpha: 0.66),
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _badge(IconData icon, String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 13),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 10.8,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _noticeChip(IconData icon, String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.24)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 15),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.refinedSlate,
+              fontSize: 11.8,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _scanImage(String? path) {
+    final cleanPath = path?.trim() ?? '';
+    if (cleanPath.isEmpty) return _emptyImage(Icons.image);
+    if (cleanPath.startsWith('data:image')) {
+      final comma = cleanPath.indexOf(',');
+      if (comma == -1) return _emptyImage(Icons.broken_image);
+      try {
+        return Image.memory(
+          base64Decode(cleanPath.substring(comma + 1)),
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _emptyImage(Icons.broken_image),
+        );
+      } catch (_) {
+        return _emptyImage(Icons.broken_image);
+      }
+    }
+    if (cleanPath.startsWith('http') || cleanPath.startsWith('blob:')) {
+      return Image.network(
+        cleanPath,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _emptyImage(Icons.broken_image),
+      );
+    }
+    if (kIsWeb) return _emptyImage(Icons.broken_image);
+    return Image.file(
+      File(cleanPath),
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => _emptyImage(Icons.broken_image),
+    );
+  }
+
+  Widget _emptyImage(IconData icon) {
+    return Container(
+      color: AppColors.borders,
+      child: Center(
+        child: Icon(
+          icon,
+          size: 52,
+          color: AppColors.refinedSlate.withValues(alpha: 0.36),
+        ),
+      ),
+    );
+  }
+
+  static String _percent(double value) {
+    return '${(value.clamp(0, 1) * 100).round()}%';
+  }
+
+  static String _metricLabel(String key) {
+    final spaced = key
+        .replaceAll('_', ' ')
+        .replaceAllMapped(
+          RegExp(r'([a-z])([A-Z])'),
+          (match) => '${match.group(1)} ${match.group(2)}',
+        );
+    return spaced
+        .split(' ')
+        .where((part) => part.isNotEmpty)
+        .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+        .join(' ');
+  }
+
+  static double _metricProgressValue(double value) {
+    if (value <= 1) return value.clamp(0.0, 1.0).toDouble();
+    if (value > 10) return (value.clamp(0, 100) / 100).toDouble();
+    return (value.clamp(0, 10) / 10).toDouble();
+  }
+
+  static bool _higherIsBetterMetric(String key) {
+    return const {
+      'elasticity',
+      'firmness',
+      'bodyFirmness',
+      'skinFirmness',
+      'skinLaxityFirmness',
+      'fibrosisFirmness',
+      'fatRetention',
+      'fat_retention',
+      'fatRetentionPct',
+      'fatRetentionPercent',
+      'overallHealingScore',
+      'overall_healing_score',
+      'bodyHealingScore',
+      'textureSmoothness',
+      'bodySmoothness',
+      'smoothness',
+      'contourSmoothness',
+      'contourEvenness',
+      'volumeSatisfaction',
+      'volume_satisfaction',
+      'skinRetraction',
+      'skin_retraction',
+      'retraction',
+    }.contains(key);
+  }
+
+  static bool _isBodyProcedureScan(ScanHistoryEntry scan) {
+    final metricKeys = scan.metrics.keys
+        .map((key) => key.toLowerCase().replaceAll('_', ''))
+        .toSet();
+    const bodyMetricSignals = {
+      'fatretention',
+      'fatretentionpct',
+      'fatretentionpercent',
+      'postopswelling',
+      'swellingindex',
+      'swellinglevel',
+      'bodyfirmness',
+      'skinfirmness',
+      'skinlaxityfirmness',
+      'fibrosisfirmness',
+      'skinlaxity',
+      'fibrosislevel',
+      'fibrosisscore',
+      'contoursmoothness',
+      'contourevenness',
+      'bodysmoothness',
+      'skinretraction',
+      'volumesatisfaction',
+      'bodyhealingscore',
+      'scarringbruising',
+    };
+    if (metricKeys.any(bodyMetricSignals.contains)) return true;
+
+    final combined = [
+      scan.procedure,
+      scan.customDescription,
+      scan.focusArea,
+    ].whereType<String>().join(' ').toLowerCase();
+    const bodyTextSignals = [
+      'bbl',
+      'brazilian butt',
+      'tummy tuck',
+      'abdominoplasty',
+      'mini tummy',
+      'liposuction',
+      'lipo',
+      'body contour',
+      'body sculpt',
+      'abdomen',
+      'abdominal',
+      'waist',
+      'flank',
+      'buttock',
+      'thigh',
+      'arm contour',
+      'brachioplasty',
+    ];
+    if (bodyTextSignals.any(combined.contains)) return true;
+
+    if (!scan.isProcedureScan) return false;
+    return usesBodyContouringContext(
+      procedureType: scan.procedure,
+      customDescription: scan.customDescription,
+      focusArea: scan.focusArea,
+    );
+  }
+
+  static bool _isMetricAlias(String key) {
+    return const {
+      'pigmentation',
+      'erythema',
+      'roughness',
+      'rhytids',
+      'acneSeverity',
+      'rosaceaSeverity',
+      'edema',
+      'bodyFirmness',
+      'skinLaxityFirmness',
+      'bodySmoothness',
+      'overall_healing_score',
+      'bodyHealingScore',
+    }.contains(key);
+  }
+}

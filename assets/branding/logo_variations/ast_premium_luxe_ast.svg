@@ -1,0 +1,32 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" rx="248" fill="#FFFCFA"/>
+  <defs>
+    <linearGradient id="m1" x1="270" y1="238" x2="744" y2="787" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EABEC3"/>
+      <stop offset="0.54" stop-color="#E0AD90"/>
+      <stop offset="1" stop-color="#D8B86E"/>
+    </linearGradient>
+    <linearGradient id="m2" x1="541" y1="254" x2="756" y2="486" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C1D1BE"/>
+      <stop offset="1" stop-color="#8AA48C"/>
+    </linearGradient>
+    <radialGradient id="m3" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(512 432) rotate(90) scale(250)">
+      <stop stop-color="#F9EAE7"/>
+      <stop offset="1" stop-color="#FFFCFA" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <circle cx="512" cy="512" r="322" fill="#FFFFFF"/>
+  <circle cx="512" cy="512" r="321" stroke="#F2DEDA" stroke-width="2"/>
+  <circle cx="512" cy="432" r="250" fill="url(#m3)"/>
+
+  <path d="M458 250C410 297 378 357 370 436C362 526 395 594 462 649" stroke="url(#m1)" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M540 252C618 258 681 292 729 359C648 362 586 336 536 277C532 270 536 252 540 252Z" fill="url(#m2)"/>
+  <path d="M546 281C620 291 676 323 715 379" stroke="#88A48B" stroke-width="12" stroke-linecap="round"/>
+
+  <text x="512" y="504" text-anchor="middle" fill="#4A3838" font-family="Avenir Next, Avenir, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="196" font-weight="600" letter-spacing="8">AST</text>
+  <path d="M335 570H689" stroke="#EBDDD7" stroke-width="1.5"/>
+  <text x="512" y="630" text-anchor="middle" fill="#9C877F" font-family="Avenir Next, Avenir, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="34" font-weight="500" letter-spacing="10">AESTHETIC RECOVERY</text>
+  <circle cx="719" cy="335" r="15" fill="#E6C78A"/>
+  <circle cx="749" cy="306" r="6" fill="#EBBDC3" opacity="0.82"/>
+</svg>

@@ -1,0 +1,37 @@
+<svg width="1600" height="520" viewBox="0 0 1600 520" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1600" height="520" rx="40" fill="#FFFCFA"/>
+  <defs>
+    <linearGradient id="g1" x1="118" y1="98" x2="410" y2="402" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EBC0C4"/>
+      <stop offset="0.58" stop-color="#DFA98F"/>
+      <stop offset="1" stop-color="#D5B66F"/>
+    </linearGradient>
+    <linearGradient id="g2" x1="170" y1="130" x2="320" y2="310" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#BFD0BC"/>
+      <stop offset="1" stop-color="#8EA88F"/>
+    </linearGradient>
+    <radialGradient id="g3" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(255 250) rotate(90) scale(205)">
+      <stop stop-color="#FAECE9"/>
+      <stop offset="1" stop-color="#FFFCFA" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect x="86" y="82" width="338" height="338" rx="104" fill="#FFFFFF"/>
+  <rect x="86.75" y="82.75" width="336.5" height="336.5" rx="103.25" stroke="#F1DEDA" stroke-width="1.5"/>
+  <circle cx="255" cy="252" r="168" fill="url(#g3)"/>
+
+  <path d="M232 140C197 176 175 223 175 274C175 349 225 398 301 398C259 363 235 321 235 269C235 220 251 179 284 145" stroke="url(#g1)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M282 142C326 150 358 174 381 218" stroke="#E5C78B" stroke-width="8" stroke-linecap="round"/>
+  <path d="M273 129C318 130 358 151 388 192C343 195 303 178 270 143C267 139 268 129 273 129Z" fill="url(#g2)"/>
+  <path d="M231 214C246 204 260 198 275 197" stroke="#D9AA9A" stroke-width="6" stroke-linecap="round" opacity="0.7"/>
+  <path d="M221 298C244 294 265 300 286 314" stroke="#E5C78B" stroke-width="6" stroke-linecap="round" opacity="0.92"/>
+  <circle cx="336" cy="179" r="10" fill="#E5C78B"/>
+  <circle cx="353" cy="160" r="4.5" fill="#EBC0C4"/>
+
+  <text x="500" y="210" fill="#4A3838" font-family="Avenir Next, Avenir, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="68" font-weight="600">AestheticSkinTracker</text>
+  <text x="503" y="270" fill="#A08882" font-family="Avenir Next, Avenir, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="25" font-weight="500" letter-spacing="3">CALM, TRUSTED BEAUTY TECH FOR SKINCARE AND RECOVERY</text>
+
+  <path d="M503 325H1112" stroke="#EEDFD8" stroke-width="1.5"/>
+  <circle cx="1163" cy="325" r="6" fill="#B9C9B5"/>
+  <text x="503" y="378" fill="#7B6A64" font-family="Avenir Next, Avenir, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="29" font-weight="500">Minimal face silhouette, healing leaf energy, and a subtle transformation glow.</text>
+</svg>
