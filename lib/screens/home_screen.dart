@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -13,14 +13,13 @@ import '../models/product_tracker.dart';
 import '../models/procedure_log.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
 import 'active_skincare_details_screen.dart';
-import 'acne_rosacea_tracker_screen.dart';
 import '../models/procedure.dart' as models;
 import '../main.dart';
-import '../widgets/polished_card.dart';
 import 'log_skincare_product_screen.dart';
 import 'at_home_procedure_log_screen.dart';
 import '../models/journal_entry.dart';
 import 'skin_journey_journal_screen.dart';
+import 'package:aesthetic_skin_tracker/features/ai_coach/presentation/screens/premium_recovery_hub_screen.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import '../utils/premium_access.dart';
 import '../utils/ai_intelligence_engine.dart';
@@ -503,82 +502,6 @@ class _HomePageState extends State<HomePage>
         .length;
   }
 
-  void _openCameraForNewScan() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: MyApp.goldShimmer.withValues(alpha: 0.13),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'What are you scanning for?',
-                  style: TextStyle(
-                    color: MyApp.textBrown,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 24),
-                PolishedCard(
-                  child: ListTile(
-                    leading: Icon(
-                      Icons.medical_services,
-                      color: MyApp.goldShimmer,
-                      size: 32,
-                    ),
-                    title: Text(
-                      'Scan for Procedure',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: MyApp.textBrown,
-                        fontSize: 17,
-                      ),
-                    ),
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      _openCameraWithProcedurePicker(context);
-                    },
-                  ),
-                ),
-                const SizedBox(height: 24),
-                PolishedCard(
-                  child: ListTile(
-                    leading: Icon(
-                      Icons.spa,
-                      color: MyApp.goldShimmer,
-                      size: 32,
-                    ),
-                    title: Text(
-                      'Scan for Skincare Product',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: MyApp.textBrown,
-                        fontSize: 17,
-                      ),
-                    ),
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      _openCameraForSkincareProduct(context);
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
   Future<void> _openPremiumRecoveryHub() async {
     final isPremium = await PremiumAccess.isPremiumUser();
     if (!mounted) return;
@@ -587,6 +510,25 @@ class _HomePageState extends State<HomePage>
     }
     if (!mounted) return;
     await Navigator.of(context).pushNamed('/premium-recovery');
+    await _refreshData();
+  }
+
+  Future<void> _openPremiumHubModal() async {
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return const FractionallySizedBox(
+          heightFactor: 0.94,
+          child: ClipRRect(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+            child: PremiumRecoveryHubScreen(),
+          ),
+        );
+      },
+    );
     await _refreshData();
   }
 
@@ -615,6 +557,7 @@ class _HomePageState extends State<HomePage>
     await _refreshData();
   }
 
+  // ignore: unused_element
   void _openCameraForSkincareProduct(BuildContext context) async {
     final products = await AppPrefs.getTrackedProducts();
     if (!context.mounted) return;
@@ -769,6 +712,7 @@ class _HomePageState extends State<HomePage>
     );
   }
 
+  // ignore: unused_element
   Future<void> _openCameraWithProcedurePicker(BuildContext context) async {
     final entries = await AppPrefs.getProcedureEntries();
     if (!context.mounted) return;
@@ -947,7 +891,7 @@ class _HomePageState extends State<HomePage>
       ),
     );
     // At-Home photos are stored as a ProcedureLog, which is shown in Procedure
-    // History — NOT in the per-procedure detail/record screen (that reads
+    // History ΓÇö NOT in the per-procedure detail/record screen (that reads
     // scan-history entries and would show an empty "add a progress scan" prompt).
     // Send the user to History so they immediately see the procedure they just
     // logged with its photos.
@@ -1357,7 +1301,7 @@ class _HomePageState extends State<HomePage>
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  hasCurrentValue ? currentValue.toStringAsFixed(1) : '—',
+                  hasCurrentValue ? currentValue.toStringAsFixed(1) : 'ΓÇö',
                   style: TextStyle(
                     fontSize: 25,
                     fontWeight: FontWeight.w800,
@@ -1384,7 +1328,7 @@ class _HomePageState extends State<HomePage>
                     ),
                   ),
                   child: Text(
-                    signedDelta ?? '—',
+                    signedDelta ?? 'ΓÇö',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w800,
@@ -1774,12 +1718,12 @@ class _HomePageState extends State<HomePage>
 
   Widget _buildNoScansCard() {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 46, horizontal: 28),
+      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
       decoration: _homePremiumCardDecoration(),
       child: Column(
         children: [
           Container(
-            padding: const EdgeInsets.all(22),
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: MyApp.goldShimmer.withValues(alpha: 0.11),
               shape: BoxShape.circle,
@@ -1790,11 +1734,11 @@ class _HomePageState extends State<HomePage>
             ),
             child: Icon(
               Icons.photo_library_outlined,
-              size: 44,
+              size: 34,
               color: MyApp.goldShimmer,
             ),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
           Text(
             'No recent scans',
             style: TextStyle(
@@ -1803,7 +1747,7 @@ class _HomePageState extends State<HomePage>
               color: MyApp.textBrown,
             ),
           ),
-          const SizedBox(height: 7),
+          const SizedBox(height: 6),
           const Text(
             'Start with a new analysis to unlock live metrics,\nrecommendations, and before/after tracking.',
             textAlign: TextAlign.center,
@@ -1883,7 +1827,7 @@ class _HomePageState extends State<HomePage>
                   ),
                   SizedBox(height: 4),
                   Text(
-                    'AI coach · Recovery timeline · Deep insights',
+                    'AI coach ┬╖ Recovery timeline ┬╖ Deep insights',
                     style: TextStyle(
                       fontSize: 12,
                       color: Colors.black,
@@ -1963,6 +1907,36 @@ class _HomePageState extends State<HomePage>
         const SizedBox(width: 10),
         Expanded(
           child: Text(title, style: MyApp.sectionTitleStyle(color: textColor)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSectionHeaderWithAction({
+    required IconData icon,
+    required String title,
+    required Color textColor,
+    required String actionLabel,
+    required Future<void> Function() onActionTap,
+  }) {
+    return Row(
+      children: [
+        Expanded(child: _buildSectionHeader(icon, title, textColor)),
+        TextButton(
+          onPressed: () async {
+            await onActionTap();
+          },
+          style: TextButton.styleFrom(
+            foregroundColor: AppColors.champagneGold,
+            textStyle: const TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w800,
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: Text(actionLabel),
         ),
       ],
     );
@@ -2241,7 +2215,7 @@ class _HomePageState extends State<HomePage>
                                         ),
                                         latestEstimatedAge == null
                                             ? Text(
-                                                '—',
+                                                'ΓÇö',
                                                 style: TextStyle(
                                                   fontSize: 28,
                                                   fontWeight: FontWeight.bold,
@@ -2564,24 +2538,12 @@ class _HomePageState extends State<HomePage>
 
                 const SizedBox(height: 36),
 
-                _buildSectionHeader(
-                  Icons.medical_services_outlined,
-                  'Procedures',
-                  textColor,
-                ),
-                const SizedBox(height: 14),
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    await Navigator.of(context).pushNamed('/create-procedure');
-                    await _refreshData();
-                  },
-                  icon: const Icon(Icons.medical_services),
-                  label: const Text('Track Procedure'),
-                  style: MyApp.primaryGoldButton,
-                ),
-                const SizedBox(height: 12),
-                ElevatedButton.icon(
-                  onPressed: () async {
+                _buildSectionHeaderWithAction(
+                  icon: Icons.medical_services_outlined,
+                  title: 'Procedures',
+                  textColor: textColor,
+                  actionLabel: 'View All ->',
+                  onActionTap: () async {
                     await Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => const ProgressReportScreen(),
@@ -2589,15 +2551,34 @@ class _HomePageState extends State<HomePage>
                     );
                     await _refreshData();
                   },
-                  icon: Icon(Icons.analytics, color: MyApp.goldShimmer),
-                  label: Text(
-                    'View All Procedure Reports',
+                ),
+                const SizedBox(height: 14),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    await Navigator.of(context).pushNamed('/create-procedure');
+                    await _refreshData();
+                  },
+                  icon: const Icon(
+                    Icons.medical_services,
+                    color: Color(0xFFD4AF37),
+                  ),
+                  label: const Text(
+                    'Track Procedure',
                     style: TextStyle(
-                      color: MyApp.textBrown,
-                      fontWeight: FontWeight.bold,
+                      color: Color(0xFFD4AF37),
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
-                  style: MyApp.secondaryOutlineButton(),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF121212),
+                    foregroundColor: const Color(0xFFD4AF37),
+                    side: const BorderSide(color: Color(0xFFD4AF37), width: 1),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
                 ),
                 const SizedBox(height: 24),
                 _buildActiveSectionHeader('Your Active Procedures', textColor),
@@ -2651,18 +2632,12 @@ class _HomePageState extends State<HomePage>
                   }),
                 const SizedBox(height: 28),
 
-                _buildSectionHeader(Icons.spa_outlined, 'Skincare', textColor),
-                const SizedBox(height: 14),
-
-                ElevatedButton.icon(
-                  onPressed: _logNewSkincareProduct,
-                  icon: const Icon(Icons.add_shopping_cart),
-                  label: const Text('Track Skincare Product'),
-                  style: MyApp.primaryGoldButton,
-                ),
-                const SizedBox(height: 12),
-                ElevatedButton.icon(
-                  onPressed: () async {
+                _buildSectionHeaderWithAction(
+                  icon: Icons.spa_outlined,
+                  title: 'Skincare',
+                  textColor: textColor,
+                  actionLabel: 'View All ->',
+                  onActionTap: () async {
                     await Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => const ProgressReportScreen(),
@@ -2670,15 +2645,32 @@ class _HomePageState extends State<HomePage>
                     );
                     await _refreshData();
                   },
-                  icon: Icon(Icons.analytics, color: MyApp.goldShimmer),
-                  label: Text(
-                    'View All Skincare Reports',
+                ),
+                const SizedBox(height: 14),
+
+                ElevatedButton.icon(
+                  onPressed: _logNewSkincareProduct,
+                  icon: const Icon(
+                    Icons.add_shopping_cart,
+                    color: Color(0xFFD4AF37),
+                  ),
+                  label: const Text(
+                    'Track Skincare Product',
                     style: TextStyle(
-                      color: MyApp.textBrown,
-                      fontWeight: FontWeight.bold,
+                      color: Color(0xFFD4AF37),
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
-                  style: MyApp.secondaryOutlineButton(),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF121212),
+                    foregroundColor: const Color(0xFFD4AF37),
+                    side: const BorderSide(color: Color(0xFFD4AF37), width: 1),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
                 ),
                 const SizedBox(height: 22),
                 _buildActiveSectionHeader('Your Active Skincare', textColor),
@@ -2722,16 +2714,28 @@ class _HomePageState extends State<HomePage>
                     );
                     await _refreshData();
                   },
-                  icon: const Icon(Icons.book, color: Colors.black),
+                  icon: const Icon(Icons.book, color: Color(0xFFD4AF37)),
                   label: const Text(
                     'Your Skin Journey Journal',
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
-                      color: Colors.black,
+                      color: Color(0xFFD4AF37),
                     ),
                   ),
-                  style: MyApp.primaryGoldButton,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF121212),
+                    foregroundColor: const Color(0xFFD4AF37),
+                    side: const BorderSide(color: Color(0xFFD4AF37), width: 1),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 14,
+                      horizontal: 16,
+                    ),
+                  ),
                 ),
 
                 const SizedBox(height: 36),
@@ -3265,15 +3269,19 @@ class _HomePageState extends State<HomePage>
                                   vertical: 10,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: AppColors.champagneGold,
+                                  color: const Color(0xFF121212),
                                   borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: const Color(0xFFD4AF37),
+                                    width: 1,
+                                  ),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: AppColors.champagneGold.withValues(
-                                        alpha: 0.36,
+                                      color: const Color(0xFFD4AF37).withValues(
+                                        alpha: 0.24,
                                       ),
-                                      blurRadius: 14,
-                                      offset: const Offset(0, 5),
+                                      blurRadius: 12,
+                                      offset: const Offset(0, 4),
                                     ),
                                   ],
                                 ),
@@ -3285,14 +3293,14 @@ class _HomePageState extends State<HomePage>
                                       style: TextStyle(
                                         fontSize: 13.5,
                                         fontWeight: FontWeight.w800,
-                                        color: AppColors.onChampagneGold,
+                                        color: Color(0xFFD4AF37),
                                       ),
                                     ),
                                     SizedBox(width: 6),
                                     Icon(
                                       Icons.arrow_forward_rounded,
                                       size: 17,
-                                      color: AppColors.onChampagneGold,
+                                      color: Color(0xFFD4AF37),
                                     ),
                                   ],
                                 ),
@@ -3469,15 +3477,19 @@ class _HomePageState extends State<HomePage>
                                   vertical: 10,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: AppColors.champagneGold,
+                                  color: const Color(0xFF121212),
                                   borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: const Color(0xFFD4AF37),
+                                    width: 1,
+                                  ),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: AppColors.champagneGold.withValues(
-                                        alpha: 0.32,
+                                      color: const Color(0xFFD4AF37).withValues(
+                                        alpha: 0.22,
                                       ),
-                                      blurRadius: 14,
-                                      offset: const Offset(0, 5),
+                                      blurRadius: 12,
+                                      offset: const Offset(0, 4),
                                     ),
                                   ],
                                 ),
@@ -3489,7 +3501,7 @@ class _HomePageState extends State<HomePage>
                                       style: const TextStyle(
                                         fontSize: 13.5,
                                         fontWeight: FontWeight.w800,
-                                        color: AppColors.onChampagneGold,
+                                        color: Color(0xFFD4AF37),
                                       ),
                                     ),
                                     const SizedBox(width: 6),
@@ -3498,7 +3510,7 @@ class _HomePageState extends State<HomePage>
                                           ? Icons.workspace_premium_rounded
                                           : Icons.arrow_forward_rounded,
                                       size: 17,
-                                      color: AppColors.onChampagneGold,
+                                      color: const Color(0xFFD4AF37),
                                     ),
                                   ],
                                 ),
@@ -3574,8 +3586,27 @@ class _HomePageState extends State<HomePage>
           })
         >[
           (
+            icon: Icons.edit_note_rounded,
+            label: 'Log Note',
+            color: AppColors.champagneGold,
+            hero: false,
+            onTap: () {
+              Navigator.of(context)
+                  .push(
+                    MaterialPageRoute(
+                      builder: (_) => SkinJourneyJournalScreen(
+                        skincareJournals: _skincareJournals,
+                        trackedProducts: _trackedProducts,
+                        activeProcedures: _activeProcedureModels,
+                      ),
+                    ),
+                  )
+                  .then((_) => _refreshData());
+            },
+          ),
+          (
             icon: Icons.medical_services_rounded,
-            label: 'New Procedure',
+            label: 'Track Procedure',
             color: AppColors.champagneGold,
             hero: false,
             onTap: () {
@@ -3585,110 +3616,21 @@ class _HomePageState extends State<HomePage>
             },
           ),
           (
-            icon: Icons.timeline_rounded,
-            label: 'History',
-            color: AppColors.champagneGold,
-            hero: false,
-            onTap: () {
-              Navigator.of(
-                context,
-              ).pushNamed('/procedure-history').then((_) => _refreshData());
-            },
-          ),
-          (
             icon: Icons.photo_camera_rounded,
-            label: 'Scan Skin',
-            color: AppColors.champagneGold,
-            hero: false,
-            onTap: _openCameraForNewScan,
-          ),
-          (
-            icon: Icons.auto_awesome_rounded,
-            label: 'AI Chat',
+            label: 'Snap Shelf',
             color: AppColors.champagneGold,
             hero: false,
             onTap: () {
-              Navigator.of(context)
-                  .push(
-                    MaterialPageRoute(
-                      builder: (_) => const SkinAiAnalysisScreen(),
-                    ),
-                  )
-                  .then((_) => _refreshData());
+              Navigator.of(context).pushNamed('/ai-coach').then((_) => _refreshData());
             },
           ),
           (
-            icon: Icons.add_shopping_cart_rounded,
-            label: 'Log Product',
-            color: AppColors.champagneGold,
-            hero: false,
-            onTap: _logNewSkincareProduct,
-          ),
-          (
-            icon: Icons.medical_information_rounded,
-            label: 'Acne / Rosacea',
-            color: AppColors.champagneGold,
-            hero: false,
-            onTap: () {
-              Navigator.of(context)
-                  .push(
-                    MaterialPageRoute(
-                      builder: (_) => const AcneRosaceaTrackerScreen(),
-                    ),
-                  )
-                  .then((_) => _refreshData());
-            },
-          ),
-          (
-            icon: Icons.photo_library_rounded,
-            label: 'Scans',
-            color: AppColors.champagneGold,
-            hero: false,
-            onTap: () {
-              Navigator.of(context)
-                  .push(
-                    MaterialPageRoute(
-                      builder: (_) => const ProgressReportScreen(
-                        viewMode: ProgressReportViewMode.scans,
-                      ),
-                    ),
-                  )
-                  .then((_) => _refreshData());
-            },
-          ),
-          (
-            icon: Icons.analytics_rounded,
-            label: 'View Reports',
-            color: AppColors.champagneGold,
-            hero: false,
-            onTap: () {
-              Navigator.of(context)
-                  .push(
-                    MaterialPageRoute(
-                      builder: (_) => const ProgressReportScreen(
-                        viewMode: ProgressReportViewMode.reports,
-                      ),
-                    ),
-                  )
-                  .then((_) => _refreshData());
-            },
-          ),
-          (
-            icon: Icons.workspace_premium_rounded,
+            icon: Icons.workspace_premium,
             label: 'Premium Hub',
-            color: AppColors.champagneGold,
-            hero: false,
-            onTap: _openPremiumRecoveryHub,
-          ),
-          (
-            icon: Icons.biotech_rounded,
-            label: 'Peptide Dash',
-            color: AppColors.champagneGold,
+            color: const Color(0xFFD4AF37),
             hero: false,
             onTap: () {
-              Navigator.of(
-                context,
-              ).pushNamed('/peptide-dashboard').then((_) => _refreshData());
+              _openPremiumHubModal();
             },
           ),
         ];
@@ -3721,10 +3663,10 @@ class _HomePageState extends State<HomePage>
               ? AppColors.champagneGold.withValues(alpha: 0.55)
               : darkObsidian.withValues(alpha: 0.20);
             final iconColor = isPremiumHub
-              ? AppColors.champagneGold
+              ? darkObsidian
               : darkObsidian;
             final labelColor = isPremiumHub
-              ? AppColors.champagneGold
+              ? darkObsidian
               : darkObsidian;
           return Material(
             color: Colors.transparent,
@@ -3738,11 +3680,20 @@ class _HomePageState extends State<HomePage>
                   vertical: 12,
                 ),
                 decoration: BoxDecoration(
-                  color: cardBackground,
+                  color: isPremiumHub ? null : cardBackground,
+                  gradient: isPremiumHub
+                      ? const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFFD4AF37), Color(0xFFFFF1B8)],
+                        )
+                      : null,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(
-                    color: cardBorder,
-                    width: isPremiumHub ? 1.1 : 1.0,
+                    color: isPremiumHub
+                        ? const Color(0xFFE7CC73)
+                        : cardBorder,
+                    width: isPremiumHub ? 1.2 : 1.0,
                   ),
                   boxShadow: [
                     BoxShadow(
@@ -3752,9 +3703,9 @@ class _HomePageState extends State<HomePage>
                     ),
                     if (isPremiumHub)
                       BoxShadow(
-                        color: AppColors.champagneGold.withValues(alpha: 0.24),
-                        blurRadius: 20,
-                        spreadRadius: 1,
+                        color: const Color(0xFFD4AF37).withValues(alpha: 0.35),
+                        blurRadius: 22,
+                        spreadRadius: 1.2,
                         offset: const Offset(0, 10),
                       ),
                   ],
@@ -4259,9 +4210,10 @@ class _HomePageState extends State<HomePage>
     IconData? icon,
     Color? accent,
   }) {
+    final compactEmptyState = onTap == null && statusLabel == null;
     final cardAccent = accent ?? MyApp.goldShimmer;
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 5),
+      margin: EdgeInsets.symmetric(vertical: compactEmptyState ? 3 : 5),
       decoration: BoxDecoration(
         color: MyApp.surface,
         borderRadius: BorderRadius.circular(18),
@@ -4281,12 +4233,15 @@ class _HomePageState extends State<HomePage>
           borderRadius: BorderRadius.circular(18),
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            padding: EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: compactEmptyState ? 10 : 14,
+            ),
             child: Row(
               children: [
                 Container(
                   width: icon == null ? 4 : 38,
-                  height: 40,
+                  height: compactEmptyState ? 28 : 40,
                   decoration: BoxDecoration(
                     color: cardAccent.withValues(
                       alpha: icon == null ? 1 : 0.10,
@@ -4316,7 +4271,7 @@ class _HomePageState extends State<HomePage>
                         when,
                         style: const TextStyle(
                           color: Colors.black,
-                          fontSize: 12,
+                          fontSize: 11.5,
                           fontWeight: FontWeight.w500,
                         ),
                         maxLines: 1,
@@ -4598,7 +4553,7 @@ class SingleJournalEntryScreen extends StatelessWidget {
                     Row(
                       children: [
                         Text(
-                          ['😞', '😐', '🙂', '😊', '🥰'][entry.moodRating - 1],
+                          ['≡ƒÿ₧', '≡ƒÿÉ', '≡ƒÖé', '≡ƒÿè', '≡ƒÑ░'][entry.moodRating - 1],
                           style: const TextStyle(fontSize: 32),
                         ),
                       ],
