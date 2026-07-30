@@ -6,7 +6,7 @@ import '../models/procedure.dart';
 import '../widgets/adaptive_camera_guide_visuals.dart';
 import '../widgets/app_brand_title.dart';
 import '../widgets/clinical_section_header.dart';
-import 'camera_screen.dart';
+import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
 
 class ProcedureCameraGuideScreen extends StatelessWidget {
   const ProcedureCameraGuideScreen({

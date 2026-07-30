@@ -6,7 +6,7 @@ import '../models/procedure.dart';
 import '../models/provider_directory.dart';
 import '../utils/app_prefs.dart';
 import '../utils/procedure_focus_area.dart';
-import 'procedure_profiles_screen.dart';
+import 'package:aesthetic_skin_tracker/features/procedures/presentation/procedure_profiles_screen.dart';
 import 'provider_directory_screen.dart';
 
 /// Curated suggestions for the Provider / Clinic autocomplete.

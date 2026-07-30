@@ -17,7 +17,7 @@ import '../utils/metric_trend.dart';
 import '../utils/peptide_service.dart';
 import '../utils/report_flow.dart';
 import '../widgets/clinical_section_header.dart';
-import 'camera_screen.dart';
+import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Body-composition detection

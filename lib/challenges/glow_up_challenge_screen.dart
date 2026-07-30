@@ -9,7 +9,7 @@ import '../app_theme.dart';
 import '../models/procedure.dart';
 import '../utils/app_prefs.dart';
 import '../utils/procedure_intelligence.dart';
-import '../screens/camera_screen.dart';
+import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
 import '../screens/ai_recovery_coach_screen.dart';
 import '../screens/progress_report_screen.dart';
 

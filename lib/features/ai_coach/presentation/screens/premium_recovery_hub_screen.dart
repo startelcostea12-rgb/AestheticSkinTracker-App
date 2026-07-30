@@ -3,11 +3,11 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import '../models/premium_recovery_models.dart';
-import '../models/procedure.dart';
-import '../app_theme.dart';
-import '../widgets/clinical_section_header.dart';
-import '../utils/app_prefs.dart';
+import 'package:aesthetic_skin_tracker/models/premium_recovery_models.dart';
+import 'package:aesthetic_skin_tracker/models/procedure.dart';
+import 'package:aesthetic_skin_tracker/app_theme.dart';
+import 'package:aesthetic_skin_tracker/widgets/clinical_section_header.dart';
+import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hub Feature Model and Builder

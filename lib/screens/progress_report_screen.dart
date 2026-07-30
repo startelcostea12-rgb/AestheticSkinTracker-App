@@ -9,7 +9,7 @@ import '../models/procedure.dart';
 import '../models/product_tracker.dart';
 import '../models/scan_history.dart';
 import 'active_skincare_details_screen.dart';
-import 'procedure_profiles_screen.dart';
+import 'package:aesthetic_skin_tracker/features/procedures/presentation/procedure_profiles_screen.dart';
 import '../widgets/clinical_section_header.dart';
 import '../widgets/luxe_report_layout.dart';
 import '../utils/ai_product_recommendation_engine.dart';

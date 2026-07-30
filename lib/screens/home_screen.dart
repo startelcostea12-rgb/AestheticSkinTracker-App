@@ -11,18 +11,18 @@ import '../utils/metric_trend.dart';
 import 'progress_report_screen.dart';
 import '../models/product_tracker.dart';
 import '../models/procedure_log.dart';
-import 'camera_screen.dart';
+import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
 import 'active_skincare_details_screen.dart';
 import 'acne_rosacea_tracker_screen.dart';
 import '../models/procedure.dart' as models;
 import '../main.dart';
 import '../widgets/polished_card.dart';
-import 'skincare_routine_screen.dart'; // ← Fixed import
+import 'package:aesthetic_skin_tracker/features/products_routine/presentation/skincare_routine_screen.dart'; // ← Fixed import
 import 'log_skincare_product_screen.dart';
 import 'at_home_procedure_log_screen.dart';
 import '../models/journal_entry.dart';
 import 'skin_journey_journal_screen.dart';
-import 'skin_ai_analysis_screen.dart';
+import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import '../utils/premium_access.dart';
 import '../utils/ai_intelligence_engine.dart';
 import '../utils/ai_product_recommendation_engine.dart';

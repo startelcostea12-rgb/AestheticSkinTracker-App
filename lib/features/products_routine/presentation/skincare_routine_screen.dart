@@ -6,12 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../app_theme.dart';
-import '../models/product_tracker.dart';
-import '../utils/app_logger.dart';
-import '../utils/app_prefs.dart';
-import '../widgets/clinical_section_header.dart';
-import 'log_skincare_product_screen.dart';
+import 'package:aesthetic_skin_tracker/app_theme.dart';
+import 'package:aesthetic_skin_tracker/models/product_tracker.dart';
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
+import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
+import 'package:aesthetic_skin_tracker/widgets/clinical_section_header.dart';
+import 'package:aesthetic_skin_tracker/screens/log_skincare_product_screen.dart';
 
 const String _geminiApiKey = String.fromEnvironment(
   'GEMINI_API_KEY',

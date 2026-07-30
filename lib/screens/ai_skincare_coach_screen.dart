@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:aesthetic_skin_tracker/features/ai_coach/data/ai_context_repository.dart';
 
 import '../app_theme.dart';
 import '../models/procedure_log.dart';
@@ -52,6 +53,7 @@ class _AISkincareCoachScreenState extends State<AISkincareCoachScreen> {
   final ImagePicker _picker = ImagePicker();
   final AiService _coachService = const AiService();
   final SkincareRepositoryImpl _skincareRepository = SkincareRepositoryImpl();
+  final AiContextRepository _aiContextRepository = AiContextRepository();
 
   /// Maximum number of automatic "continue where you left off" calls made when
   /// a coach reply is detected as truncated, so long routines finish fully.
@@ -641,6 +643,8 @@ class _AISkincareCoachScreenState extends State<AISkincareCoachScreen> {
           : 'Coach is preparing your personalized guidance...';
     });
 
+    final coachPayloadJson = await _buildCoachPayloadJson();
+
     // If image is provided, use vision analysis
     if (chatImage != null && !kIsWeb) {
       try {
@@ -657,6 +661,9 @@ $procedureBlock${procedureBlock.isNotEmpty ? '''When the goal references a speci
                       '''SPECIFIC PROCEDURE LOG details above and treat the uploaded photo '''
                       '''as belonging to that exact log.\n\n''' : ''}User Skin Profile:
 ${jsonEncode(_userSkinProfile?.toJson() ?? {})}
+
+Structured Local Coach Payload JSON:
+$coachPayloadJson
 
 ---
 
@@ -740,6 +747,8 @@ Analyze the uploaded skin photo following the structured format. Reference the u
       photoAnalysis: _latestPhotoSummary,
       userGoal: effectiveGoal,
     );
+    final userPromptWithPayload =
+        '$userPrompt\n\nStructured Local Coach Payload JSON:\n$coachPayloadJson';
 
     if (!_coachService.isConfigured) {
       if (!mounted) return;
@@ -755,7 +764,7 @@ Analyze the uploaded skin photo following the structured format. Reference the u
     try {
       final expectsMetricJson = scanIdForMetricUpdate != null;
       final analysisReply = await generateCoachAnalysis(
-        userPrompt: userPrompt,
+        userPrompt: userPromptWithPayload,
         expectsMetricJson: expectsMetricJson,
       );
 
@@ -769,7 +778,7 @@ Analyze the uploaded skin photo following the structured format. Reference the u
       _scrollToBottom();
 
       final routinesReply = await generateCoachRoutines(
-        coachContextPrompt: userPrompt,
+        coachContextPrompt: userPromptWithPayload,
         analysisSummary: visibleAnalysisReply.isEmpty
             ? analysisReply
             : visibleAnalysisReply,
@@ -826,6 +835,21 @@ Analyze the uploaded skin photo following the structured format. Reference the u
             'Live AI could not respond: ${_shortAiError(error.toString())}';
       });
       _scrollToBottom();
+    }
+  }
+
+  Future<String> _buildCoachPayloadJson() async {
+    try {
+      final payload = await _aiContextRepository.buildCoachPayload(
+        maxScans: 12,
+        maxProducts: 12,
+        maxProcedureLogs: 12,
+        maxJournalEntries: 40,
+        maxProviderNotes: 20,
+      );
+      return jsonEncode(payload);
+    } catch (_) {
+      return '{}';
     }
   }
 

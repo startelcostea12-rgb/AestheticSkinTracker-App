@@ -309,10 +309,13 @@ class MediaPipeFaceDetector {
     final right = (xMax * sourceWidth).ceil();
     final bottom = (yMax * sourceHeight).ceil();
 
-    final clampedLeft = left.clamp(0, math.max(0, sourceWidth - 1));
-    final clampedTop = top.clamp(0, math.max(0, sourceHeight - 1));
-    final clampedRight = right.clamp(clampedLeft + 1, sourceWidth);
-    final clampedBottom = bottom.clamp(clampedTop + 1, sourceHeight);
+    final clampedLeft =
+      left.clamp(0, math.max(0, sourceWidth - 1)).toInt();
+    final clampedTop =
+      top.clamp(0, math.max(0, sourceHeight - 1)).toInt();
+    final clampedRight = right.clamp(clampedLeft + 1, sourceWidth).toInt();
+    final clampedBottom =
+      bottom.clamp(clampedTop + 1, sourceHeight).toInt();
 
     final width = clampedRight - clampedLeft;
     final height = clampedBottom - clampedTop;

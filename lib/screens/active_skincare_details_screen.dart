@@ -13,7 +13,7 @@ import '../utils/app_prefs.dart';
 import '../utils/metric_trend.dart';
 import '../models/scan_history.dart';
 import '../models/journal_entry.dart';
-import 'camera_screen.dart';
+import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
 import '../widgets/app_brand_title.dart';
 
 class ActiveSkincareDetailsScreen extends StatefulWidget {
