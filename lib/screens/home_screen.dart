@@ -1814,16 +1814,6 @@ class _HomePageState extends State<HomePage>
               fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(height: 18),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _openCameraForNewScan,
-              style: MyApp.primaryGoldButton,
-              icon: const Icon(Icons.camera_alt_outlined),
-              label: const Text('Start New Analysis'),
-            ),
-          ),
         ],
       ),
     );
@@ -2572,15 +2562,6 @@ class _HomePageState extends State<HomePage>
                     },
                   ),
 
-                const SizedBox(height: 32),
-                ElevatedButton(
-                  onPressed: _openCameraForNewScan,
-                  style: MyApp.primaryGoldButton,
-                  child: const Text(
-                    'New Progress Scan',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                ),
                 const SizedBox(height: 36),
 
                 _buildSectionHeader(
