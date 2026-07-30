@@ -17,7 +17,6 @@ import 'acne_rosacea_tracker_screen.dart';
 import '../models/procedure.dart' as models;
 import '../main.dart';
 import '../widgets/polished_card.dart';
-import 'package:aesthetic_skin_tracker/features/products_routine/presentation/skincare_routine_screen.dart'; // ← Fixed import
 import 'log_skincare_product_screen.dart';
 import 'at_home_procedure_log_screen.dart';
 import '../models/journal_entry.dart';
@@ -2731,12 +2730,9 @@ class _HomePageState extends State<HomePage>
                 // Primary gold buttons
                 ElevatedButton.icon(
                   onPressed: () {
-                    Navigator.push(
+                    Navigator.of(
                       context,
-                      MaterialPageRoute(
-                        builder: (_) => const SkincareRoutineScreen(),
-                      ),
-                    ).then((_) => _refreshData());
+                    ).pushNamed('/store').then((_) => _refreshData());
                   },
                   icon: const Icon(Icons.auto_awesome, color: Colors.black),
                   label: const Text(
