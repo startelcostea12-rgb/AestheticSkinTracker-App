@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:aesthetic_skin_tracker/features/ai_coach/data/ai_context_repository.dart';
+import 'package:aesthetic_skin_tracker/features/ai_coach/presentation/widgets/shelf_scanner_modal.dart';
 
 import '../app_theme.dart';
 import '../models/procedure_log.dart';
@@ -578,39 +579,38 @@ class _AISkincareCoachScreenState extends State<AISkincareCoachScreen> {
     );
   }
 
-  Future<void> _pickChatImage(ImageSource source) async {
-    try {
-      final picked = await _picker.pickImage(
-        source: source,
-        maxWidth: 1200,
-        maxHeight: 1200,
-        imageQuality: 85,
-      );
-
-      if (picked == null) return;
-
-      if (kIsWeb) {
-        // Web: use XFile directly
-        setState(() => _chatImage = File(picked.path));
-      } else {
-        // Native: persist to app directory
-        final bytes = await picked.readAsBytes();
-        final dir = await getApplicationDocumentsDirectory();
-        final timestamp = DateTime.now().millisecondsSinceEpoch;
-        final localFile = File('${dir.path}/chat_image_$timestamp.jpg');
-        await localFile.writeAsBytes(bytes);
-        setState(() => _chatImage = localFile);
-      }
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to pick image: $error')));
-    }
-  }
-
   void _removeChatImage() {
     setState(() => _chatImage = null);
+  }
+
+  Future<void> _openShelfScanner() async {
+    if (_sending) return;
+    final picked = await showShelfScannerModal(context);
+    if (picked == null || !mounted) return;
+
+    try {
+      final bytes = await picked.readAsBytes();
+      final dir = await getApplicationDocumentsDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final localFile = File('${dir.path}/shelf_scan_$timestamp.jpg');
+      await localFile.writeAsBytes(bytes);
+
+      setState(() {
+        _chatImage = localFile;
+      });
+
+      await _requestCoachAdvice(
+        'Analyze my skincare shelf photo against my latest scan metrics and coach payload. '
+        'Identify likely products/actives from visible packaging, flag potential routine conflicts, '
+        'and produce a personalized morning/evening routine that matches my profile and current concerns.',
+        chatImage: localFile,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to process shelf photo: $error')),
+      );
+    }
   }
 
   Future<void> _getTodaysAdvice() async {
@@ -2409,36 +2409,31 @@ Requirements:
               ),
             Row(
               children: [
-                // Camera/Gallery button
-                PopupMenuButton<ImageSource>(
-                  icon: const Icon(
-                    Icons.add_photo_alternate_rounded,
-                    color: AppColors.champagneGold,
+                FilledButton.tonalIcon(
+                  onPressed: _sending ? null : _openShelfScanner,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.champagneGold.withValues(
+                      alpha: 0.16,
+                    ),
+                    foregroundColor: AppColors.champagneGold,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 10,
+                    ),
+                    minimumSize: const Size(0, 44),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(
+                        color: AppColors.champagneGold.withValues(alpha: 0.34),
+                      ),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                  tooltip: 'Add photo',
-                  onSelected: _pickChatImage,
-                  itemBuilder: (context) => [
-                    const PopupMenuItem(
-                      value: ImageSource.camera,
-                      child: Row(
-                        children: [
-                          Icon(Icons.camera_alt),
-                          SizedBox(width: 12),
-                          Text('Take Photo'),
-                        ],
-                      ),
-                    ),
-                    const PopupMenuItem(
-                      value: ImageSource.gallery,
-                      child: Row(
-                        children: [
-                          Icon(Icons.photo_library),
-                          SizedBox(width: 12),
-                          Text('Choose from Gallery'),
-                        ],
-                      ),
-                    ),
-                  ],
+                  icon: const Icon(Icons.camera_alt_outlined, size: 16),
+                  label: const Text('Snap My Shelf'),
                 ),
                 const SizedBox(width: 4),
                 Expanded(
