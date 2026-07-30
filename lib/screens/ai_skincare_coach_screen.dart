@@ -28,13 +28,21 @@ import '../widgets/luxe_loading_view.dart';
 /// [AiService]. Local guidance is reserved only for the missing-key
 /// configuration fallback.
 class AISkincareCoachScreen extends StatefulWidget {
-  const AISkincareCoachScreen({super.key, this.initialLog});
+  const AISkincareCoachScreen({
+    super.key,
+    this.initialLog,
+    this.initialGoal,
+  });
 
   /// When provided, the coach is seeded with this specific procedure's
   /// context and its own attached photo (Before/After/Progress) instead of
   /// falling back to the most recent global scan photo. This keeps every
   /// procedure's photos and details isolated from one another.
   final ProcedureLog? initialLog;
+
+  /// Optional one-shot goal passed from another surface (for example, baseline
+  /// scan handoff) to immediately synthesize a tailored routine.
+  final String? initialGoal;
 
   @override
   State<AISkincareCoachScreen> createState() => _AISkincareCoachScreenState();
@@ -88,6 +96,7 @@ class _AISkincareCoachScreenState extends State<AISkincareCoachScreen> {
   /// All context and photos come from THIS log only — never another one.
   ProcedureLog? _seededLog;
   bool _autoAnalysisTriggered = false;
+  bool _autoGoalTriggered = false;
 
   @override
   void initState() {
@@ -205,6 +214,17 @@ class _AISkincareCoachScreenState extends State<AISkincareCoachScreen> {
         _autoAnalysisTriggered = true;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _requestInitialProcedureAdvice(seedLog);
+        });
+      }
+
+      final initialGoal = widget.initialGoal?.trim();
+      if (initialGoal != null &&
+          initialGoal.isNotEmpty &&
+          !_autoGoalTriggered &&
+          seedLog == null) {
+        _autoGoalTriggered = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _requestCoachAdvice(initialGoal);
         });
       }
     } catch (_) {

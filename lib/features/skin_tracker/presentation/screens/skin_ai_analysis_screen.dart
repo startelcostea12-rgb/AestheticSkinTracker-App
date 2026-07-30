@@ -48,7 +48,9 @@ import 'package:aesthetic_skin_tracker/widgets/image_crop_dialog.dart';
 import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 import 'package:aesthetic_skin_tracker/widgets/skin_heatmap_overlay.dart';
 import 'package:aesthetic_skin_tracker/widgets/smart_narrative_container.dart';
+import 'package:aesthetic_skin_tracker/features/ai_coach/data/ai_context_repository.dart';
 import 'package:aesthetic_skin_tracker/screens/ai_recovery_coach_screen.dart';
+import 'package:aesthetic_skin_tracker/screens/ai_skincare_coach_screen.dart';
 
 class SkinAiAnalysisScreen extends StatefulWidget {
   const SkinAiAnalysisScreen({super.key});
@@ -128,6 +130,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   Map<String, dynamic>? _latestBackendAnalysisPayload;
   Map<String, double>? _manualBaselineMetricMatrix;
   bool _awaitingBaselineOnboarding = true;
+  final AiContextRepository _aiContextRepository = AiContextRepository();
 
   @override
   void initState() {
@@ -2738,12 +2741,23 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       backendResponse: _latestBackendAnalysisPayload,
     );
     if (!isFollowUpPhase) {
-      return ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+      return Column(
         children: [
-          _resultHeroCard(r),
-          const SizedBox(height: 18),
-          _baselinePhaseSummaryCard(),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+              children: [
+                _compactBaselinePhotoHeader(r),
+                const SizedBox(height: 14),
+                _compactBaselineDiagnosticGrid(r),
+                const SizedBox(height: 14),
+                _baselinePhaseSummaryCard(),
+                const SizedBox(height: 14),
+                _disclaimerFootnote(),
+              ],
+            ),
+          ),
+          _baselineStickyActionDock(r),
         ],
       );
     }
@@ -2888,6 +2902,463 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         ],
       ),
     );
+  }
+
+  Widget _compactBaselinePhotoHeader(PhotoAnalysisResult r) {
+    final image = _imageProviderForPath(r.input.imagePath);
+    const obsidian = Color(0xFF121212);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: obsidian, width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 252, minHeight: 220),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (image != null)
+                Image(image: image, fit: BoxFit.cover)
+              else
+                Container(
+                  color: const Color(0xFF141821),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    Icons.image_not_supported_outlined,
+                    size: 34,
+                    color: Colors.white.withValues(alpha: 0.32),
+                  ),
+                ),
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.black.withValues(alpha: 0.16),
+                        Colors.transparent,
+                        Colors.black.withValues(alpha: 0.52),
+                      ],
+                      stops: const [0.0, 0.50, 1.0],
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 12,
+                right: 12,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF121212).withValues(alpha: 0.84),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: AppColors.champagneGold.withValues(alpha: 0.70),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.champagneGold.withValues(alpha: 0.22),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: const Text(
+                    'Baseline Scan Captured • Day 0',
+                    style: TextStyle(
+                      color: Color(0xFFD4AF37),
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _compactBaselineDiagnosticGrid(PhotoAnalysisResult r) {
+    final metrics = _singleScanMetricMap();
+    final redness = (metrics['redness'] ?? 0).clamp(0, 100).toDouble();
+    final textureRaw = _fullMetrics.isNotEmpty
+        ? ((_fullMetrics['texture'] ?? 0) * 100)
+        : ((_timelineMetricsFor(r)['texture'] ?? 0) * 10);
+    final texture = textureRaw.clamp(0, 100).toDouble();
+    final severity = r.severityIndex.clamp(0, 10).toDouble();
+    final diagnosis = r.severityBandLabel.trim().isEmpty
+        ? 'Monitor'
+        : r.severityBandLabel.trim();
+
+    final cards = <({String label, String value, IconData icon})>[
+      (
+        label: 'Severity Score',
+        value: severity.toStringAsFixed(1),
+        icon: Icons.analytics_outlined,
+      ),
+      (
+        label: 'Primary Diagnosis Tag',
+        value: diagnosis,
+        icon: Icons.label_important_outline_rounded,
+      ),
+      (
+        label: 'Redness %',
+        value: '${redness.toStringAsFixed(1)}%',
+        icon: Icons.water_drop_outlined,
+      ),
+      (
+        label: 'Texture Index',
+        value: '${texture.toStringAsFixed(1)}%',
+        icon: Icons.grain_rounded,
+      ),
+    ];
+
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: cards.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+        childAspectRatio: 2.05,
+      ),
+      itemBuilder: (context, index) {
+        final card = cards[index];
+        return Container(
+          padding: const EdgeInsets.fromLTRB(11, 9, 11, 9),
+          decoration: BoxDecoration(
+            color: AppColors.cardBackground,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: AppColors.champagneGold.withValues(alpha: 0.24),
+              width: 0.8,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Row(
+                children: [
+                  Icon(card.icon, size: 13, color: AppColors.champagneGold),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      card.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10.2,
+                        fontWeight: FontWeight.w800,
+                        color: MyApp.clinicalSlate,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                card.value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 14.2,
+                  fontWeight: FontWeight.w900,
+                  color: MyApp.clinicalNavy,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _baselineStickyActionDock(PhotoAnalysisResult r) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+        decoration: BoxDecoration(
+          color: AppColors.cardBackground,
+          border: Border(
+            top: BorderSide(
+              color: AppColors.champagneGold.withValues(alpha: 0.28),
+              width: 0.9,
+            ),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.08),
+              blurRadius: 16,
+              offset: const Offset(0, -4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: () => _openAiCoachRoutineHandoff(r),
+                icon: const Icon(Icons.auto_awesome_rounded, size: 17),
+                label: const Text('Generate Routine with AI Coach ->'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF121212),
+                  foregroundColor: const Color(0xFFD4AF37),
+                  side: const BorderSide(color: Color(0xFFD4AF37), width: 1),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 13,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 12.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: () => _openQuickJournalNoteSheet(r),
+              icon: const Icon(Icons.note_add_outlined, size: 16),
+              label: const Text('+ Add Journal Note'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: MyApp.clinicalNavy,
+                side: BorderSide(
+                  color: AppColors.champagneGold.withValues(alpha: 0.45),
+                  width: 1,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 13,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                textStyle: const TextStyle(
+                  fontSize: 11.8,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              tooltip: 'Retake Scan',
+              onPressed: _startOver,
+              icon: const Icon(Icons.replay_circle_filled_rounded),
+              style: IconButton.styleFrom(
+                foregroundColor: const Color(0xFFD4AF37),
+                backgroundColor: const Color(0xFF121212),
+                side: const BorderSide(color: Color(0xFFD4AF37), width: 1),
+                minimumSize: const Size(46, 46),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(13),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openAiCoachRoutineHandoff(PhotoAnalysisResult r) async {
+    final metrics = _singleScanMetricMap();
+    final payload = await _aiContextRepository.buildCoachPayload(
+      maxScans: 12,
+      maxProducts: 12,
+      maxProcedureLogs: 12,
+      maxJournalEntries: 40,
+      maxProviderNotes: 20,
+    );
+    final payloadJson = jsonEncode(payload);
+    final handoffGoal =
+      'Generate a personalized morning and evening routine immediately using this baseline scan and payload context. '
+        'Prioritize barrier stability, inflammation control, and realistic progression over 7 days.\n\n'
+        'Baseline snapshot:\n'
+        '- Severity Score: ${r.severityIndex.toStringAsFixed(1)}\n'
+        '- Primary Diagnosis Tag: ${r.severityBandLabel}\n'
+        '- Redness: ${(metrics['redness'] ?? 0).toStringAsFixed(1)}%\n'
+        '- Texture Index: ${((_fullMetrics['texture'] ?? 0) * 100).clamp(0, 100).toStringAsFixed(1)}%\n\n'
+        'Structured Coach Payload JSON:\n$payloadJson';
+
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AISkincareCoachScreen(initialGoal: handoffGoal),
+      ),
+    );
+  }
+
+  Future<void> _openQuickJournalNoteSheet(PhotoAnalysisResult r) async {
+    final noteController = TextEditingController();
+    String selectedFocus = _resolvedFocusArea().trim().isEmpty
+        ? 'Full Face'
+        : _resolvedFocusArea().trim();
+    const focusOptions = <String>[
+      'Full Face',
+      'Forehead',
+      'Cheeks',
+      'Chin & Jawline',
+      'Under Eyes',
+    ];
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.cardBackground,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.fromLTRB(
+                16,
+                14,
+                16,
+                MediaQuery.of(context).viewInsets.bottom + 16,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Quick Journal Note',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                      color: MyApp.clinicalNavy,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final option in focusOptions)
+                        ChoiceChip(
+                          label: Text(option),
+                          selected: selectedFocus == option,
+                          onSelected: (_) =>
+                              setModalState(() => selectedFocus = option),
+                          selectedColor: AppColors.champagneGold,
+                          labelStyle: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                            color: selectedFocus == option
+                                ? AppColors.onChampagneGold
+                                : MyApp.clinicalNavy,
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: noteController,
+                    minLines: 2,
+                    maxLines: 4,
+                    decoration: InputDecoration(
+                      hintText: 'How does your skin feel today?',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () async {
+                        final note = noteController.text.trim();
+                        if (note.isEmpty) {
+                          Navigator.of(sheetContext).pop();
+                          return;
+                        }
+                        final prefs = await SharedPreferences.getInstance();
+                        const key = 'skin_ai_quick_journal_notes_v1';
+                        final raw = prefs.getString(key)?.trim();
+                        final List<Map<String, dynamic>> records = [];
+                        if (raw != null && raw.isNotEmpty) {
+                          try {
+                            final decoded = jsonDecode(raw);
+                            if (decoded is List) {
+                              records.addAll(
+                                decoded
+                                    .whereType<Map>()
+                                    .map((e) => Map<String, dynamic>.from(e)),
+                              );
+                            }
+                          } catch (_) {
+                            // Keep non-blocking if prior note payload is malformed.
+                          }
+                        }
+
+                        final metrics = _singleScanMetricMap();
+                        records.add({
+                          'created_at': DateTime.now().toIso8601String(),
+                          'focus_area': selectedFocus,
+                          'note': note,
+                          'severity_score': r.severityIndex,
+                          'redness_pct': metrics['redness'] ?? 0,
+                          'texture_index_pct':
+                              ((_fullMetrics['texture'] ?? 0) * 100)
+                                  .clamp(0, 100)
+                                  .toDouble(),
+                        });
+                        await prefs.setString(key, jsonEncode(records));
+                        if (!mounted) return;
+                        Navigator.of(sheetContext).pop();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Journal note saved.'),
+                          ),
+                        );
+                      },
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF121212),
+                        foregroundColor: const Color(0xFFD4AF37),
+                        side: const BorderSide(
+                          color: Color(0xFFD4AF37),
+                          width: 1,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text('Save Note'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+    noteController.dispose();
   }
 
   Widget _followUpActionsCard() {
