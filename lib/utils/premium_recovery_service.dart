@@ -1,6 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
-import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:intl/intl.dart';
+import 'package:http/http.dart' as http;
 
 import '../models/premium_recovery_models.dart';
 import '../models/procedure.dart';
@@ -8,14 +9,9 @@ import '../models/scan_history.dart';
 import 'app_prefs.dart';
 import 'app_logger.dart';
 import 'ai_intelligence_engine.dart';
+import 'backend_config.dart';
 import 'procedure_intelligence.dart';
 import 'report_service.dart';
-
-const String _geminiApiKey = String.fromEnvironment(
-  'GEMINI_API_KEY',
-  defaultValue: '',
-);
-const String _geminiModelName = 'gemini-1.5-flash';
 // --- Storage keys for AppPrefs ---
 const String _reportRecordsKey = 'premium_report_records';
 const String _coachMessagesKey = 'premium_coach_messages';
@@ -253,11 +249,16 @@ class PremiumRecoveryService {
     if (sortedHistory.length < 2) {
       return null;
     }
-    final latest = sortedHistory[0];
-    final previous = sortedHistory[1];
+    final chronological = List<ScanHistoryEntry>.from(sortedHistory)
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final baseline = chronological.first;
+    final latest = chronological.last;
+    if (baseline.id == latest.id) {
+      return null;
+    }
     final insight = _buildProgressInsight(
       latest: latest,
-      previous: previous,
+      baseline: baseline,
       procedureType: latest.procedure,
       productName: latest.productName,
     );
@@ -270,12 +271,12 @@ class PremiumRecoveryService {
 
   static ProgressPhotoInsight _buildProgressInsight({
     required ScanHistoryEntry latest,
-    required ScanHistoryEntry previous,
+    required ScanHistoryEntry baseline,
     String? procedureType,
     String? productName,
   }) {
     final latestMetrics = latest.toSkinMetrics();
-    final previousMetrics = previous.toSkinMetrics();
+    final baselineMetrics = baseline.toSkinMetrics();
 
     double pctChangeLowIsBetter(double oldV, double newV) {
       if (oldV.abs() < 0.01) return 0;
@@ -288,19 +289,19 @@ class PremiumRecoveryService {
     }
 
     final swellingDelta = pctChangeLowIsBetter(
-      previousMetrics.redness,
+      baselineMetrics.redness,
       latestMetrics.redness,
     );
     final textureDelta = pctChangeLowIsBetter(
-      previousMetrics.texture,
+      baselineMetrics.texture,
       latestMetrics.texture,
     );
     final wrinkleDelta = pctChangeLowIsBetter(
-      previousMetrics.wrinkle,
+      baselineMetrics.wrinkle,
       latestMetrics.wrinkle,
     );
     final contourDelta = pctChangeHighIsBetter(
-      previousMetrics.elasticity,
+      baselineMetrics.elasticity,
       latestMetrics.elasticity,
     );
 
@@ -331,13 +332,14 @@ class PremiumRecoveryService {
     return ProgressPhotoInsight(
       id: premiumEntityId('insight'),
       summary:
-          '$scope appears $direction by about $pct% vs your previous photo.',
+          '$scope appears $direction by about $pct% vs your baseline photo.',
       highlights: highlights,
       createdAt: DateTime.now(),
       procedureType: procedureType,
       productName: productName,
       latestScanId: latest.id,
-      previousScanId: previous.id,
+      // Backward-compatible field used as baseline anchor.
+      previousScanId: baseline.id,
     );
   }
 
@@ -533,80 +535,108 @@ class PremiumRecoveryService {
       procedures: procedures,
       skincareJournalRaw: journalsRaw,
     );
-    final affect = _inferUserAffect(question);
+    final day = procedure?.startDate == null
+        ? 0
+        : (DateTime.now()
+                  .difference(
+                    DateTime(
+                      procedure!.startDate.year,
+                      procedure.startDate.month,
+                      procedure.startDate.day,
+                    ),
+                  )
+                  .inDays +
+              1)
+              .clamp(1, 999);
+    final scanData = scans.take(5).map((scan) {
+      final metrics = scan.toSkinMetrics();
+      return <String, dynamic>{
+        'id': scan.id,
+        'timestamp': scan.timestamp.toIso8601String(),
+        'procedure': (scan.procedure ?? '').trim(),
+        'procedureId': (scan.procedureId ?? '').trim(),
+        'scanType': scan.resolvedScanType,
+        'metrics': {
+          'redness': metrics.redness,
+          'texture': metrics.texture,
+          'wrinkle': metrics.wrinkle,
+          'pore': metrics.pore,
+          'darkSpots': metrics.darkSpots,
+          'elasticity': metrics.elasticity,
+        },
+      };
+    }).toList();
 
-    final fallback = _fallbackCoachReply(
-      question: question,
-      context: context,
-      affect: affect,
-    );
+    final requestBody = <String, dynamic>{
+      'prompt': question,
+      'procedure': procedureType,
+      'day': day,
+      'scanData': scanData,
+      'hasImageAttachment': hasImageAttachment,
+      'context': '${procedureType.trim()} - Day $day',
+      'userName': userName,
+      'contextSummary': context.summaryForPrompt,
+    };
 
-    if (_geminiApiKey.isEmpty) {
-      return _ensureSafetyDisclaimer(
-        'Live AI is not configured yet because GEMINI_API_KEY is missing at runtime.\n\n'
-        'Add the key using --dart-define and relaunch the app, then I can answer with full AI context.\n\n'
-        '$fallback',
-      );
-    }
+    final endpoints = <Uri>[
+      BackendConfig.buildUri('/api/ai-coach'),
+      BackendConfig.aiCoachUri,
+    ];
 
+    final client = http.Client();
     try {
-      final model = GenerativeModel(
-        model: _geminiModelName,
-        apiKey: _geminiApiKey,
-      );
-      final procIntelContext = ProcedureIntelligence.aiCoachContext(
-        procedureType,
-      );
-      final prompt =
-          '''
-You are an experienced aesthetic recovery nurse coach with a warm, polished bedside manner.
-User: $userName
-Procedure focus: $procedureType
+      String? lastError;
 
-Procedure-specific clinical context:
-$procIntelContext
+      for (final endpoint in endpoints) {
+        try {
+          final response = await client
+              .post(
+                endpoint,
+                headers: const {'Content-Type': 'application/json'},
+                body: jsonEncode(requestBody),
+              )
+              .timeout(const Duration(seconds: 25));
 
-Context snapshot:
-${context.summaryForPrompt}
-Detected emotional tone: ${affect.label}
-Photo attachment in this message: ${hasImageAttachment ? 'Yes' : 'No'}
+          Map<String, dynamic> body = const <String, dynamic>{};
+          if (response.body.trim().isNotEmpty) {
+            final decoded = jsonDecode(response.body);
+            if (decoded is Map<String, dynamic>) {
+              body = decoded;
+            }
+          }
 
-Question: $question
+          if (response.statusCode < 200 || response.statusCode >= 300) {
+            final message =
+                body['error']?.toString() ??
+                body['message']?.toString() ??
+                'Backend request failed with HTTP ${response.statusCode}.';
+            lastError = message;
+            continue;
+          }
 
-Requirements:
-- Sound conversational, empathetic, and clinically grounded.
-- Personalize naturally using recovery day, procedure type, timeline stage, swelling trend, and recent journal themes.
-- Always include a short reassurance line.
-- Give practical advice in clear language (no alarmist tone).
-- Match tone to emotional signal:
-  - anxious: extra reassurance and calm pacing
-  - practical: concise, direct, action-oriented
-  - frustrated: validating and solution-focused
-  - positive: encouraging while still safety-aware
-- Reference at least two concrete context details (for example: recovery day/week, swelling trend, timeline stage, scan consistency, or recent journal note).
-- If normal healing vs concern is asked, explicitly reference swelling trend + stage and mention what is expected.
-- If asymmetry is mentioned, acknowledge one-sided swelling can be common early, then provide concrete monitoring steps.
-- If makeup timing is asked, prioritize provider protocol first and avoid rigid timelines.
-- If scar itching is asked, include gentle skin-care guidance plus red-flag symptoms.
-- Use this exact structure with short labels:
-  1) Reassurance
-  2) What this likely means
-  3) What to do today
-  4) When to contact your surgeon
-- Keep each section concise (1-3 short sentences).
-- End with: "This is general guidance, not a diagnosis. Please follow your surgeon's instructions first."
-- Do not diagnose; stay supportive and conservative.
-''';
-      final response = await model.generateContent([Content.text(prompt)]);
-      final text = response.text?.trim();
-      if (text == null || text.isEmpty) {
-        return _ensureSafetyDisclaimer(fallback);
+          final reply =
+              body['reply']?.toString().trim() ??
+              body['message']?.toString().trim() ??
+              body['text']?.toString().trim() ??
+              '';
+          if (reply.isEmpty) {
+            lastError = 'Backend returned an empty coach reply.';
+            continue;
+          }
+
+          return _ensureSafetyDisclaimer(reply);
+        } on TimeoutException {
+          lastError = 'AI Recovery Coach request timed out.';
+        } catch (e) {
+          lastError = e.toString();
+        }
       }
-      return _ensureSafetyDisclaimer(text);
-    } catch (_) {
-      return _ensureSafetyDisclaimer(
-        'Live AI could not be reached right now (key restriction, quota, or network issue).\n\n$fallback',
+
+      throw Exception(
+        lastError ?? 'Unable to reach AI Recovery Coach backend endpoint.',
       );
+    } finally {
+      client.close();
     }
   }
 

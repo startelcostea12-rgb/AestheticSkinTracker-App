@@ -15,8 +15,6 @@ import '../models/scan_history.dart';
 import '../models/journal_entry.dart';
 import 'camera_screen.dart';
 import '../widgets/app_brand_title.dart';
-import '../services/ai_llm_service.dart';
-import '../utils/ai_skin_advisor_prompt.dart';
 
 class ActiveSkincareDetailsScreen extends StatefulWidget {
   final TrackedProduct product;
@@ -41,7 +39,6 @@ class _ActiveSkincareDetailsScreenState
   String? _geminiVisionAnalysis;
   bool _isAnalyzingWithGemini = false;
   bool _geminiVisionUsed = false;
-  final AiService _aiService = const AiService();
 
   @override
   void initState() {
@@ -104,57 +101,12 @@ class _ActiveSkincareDetailsScreenState
   }
 
   Future<void> _tryGeminiVisionAnalysis() async {
-    if (scans.length < 2 || kIsWeb) return;
-
-    // Check if Gemini API key is available
-    const apiKey = String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
-    if (apiKey.isEmpty) return;
-
-    final beforeScan = scans.first;
-    final afterScan = scans.last;
-
-    if (beforeScan.imagePath == null || afterScan.imagePath == null) return;
-    if (beforeScan.imagePath!.isEmpty || afterScan.imagePath!.isEmpty) return;
-
-    setState(() {
-      _isAnalyzingWithGemini = true;
-      _geminiVisionUsed = true;
-    });
-
-    try {
-      // For now, analyze the latest photo (after)
-      // TODO: Support true before/after comparison with geminiVisionComparisonPrompt
-      final afterFile = File(afterScan.imagePath!);
-
-      final userPrompt =
-          '''Compare this after photo to the baseline.
-
-Product being tracked: ${widget.product.name}
-Days of use: ${scans.length}
-Baseline date: ${beforeScan.timestamp.toLocal().toString().split(' ')[0]}
-Current date: ${afterScan.timestamp.toLocal().toString().split(' ')[0]}
-
-Analyze visible changes in skin quality following the structured format.''';
-
-      final analysis = await _aiService.analyzeSkinWithImage(
-        imageFile: afterFile,
-        systemPrompt: geminiVisionComparisonPrompt,
-        userPrompt: userPrompt,
-      );
-
-      if (mounted) {
-        setState(() {
-          _geminiVisionAnalysis = analysis;
-          _isAnalyzingWithGemini = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isAnalyzingWithGemini = false;
-          _geminiVisionUsed = false; // Failed, fall back to rule engine
-        });
-      }
+    if (mounted) {
+      setState(() {
+        _isAnalyzingWithGemini = false;
+        _geminiVisionUsed = false;
+        _geminiVisionAnalysis = null;
+      });
     }
   }
 

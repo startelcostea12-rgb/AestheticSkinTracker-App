@@ -9,9 +9,14 @@ import '../widgets/clinical_section_header.dart';
 import 'camera_screen.dart';
 
 class ProcedureCameraGuideScreen extends StatelessWidget {
-  const ProcedureCameraGuideScreen({super.key, required this.procedure});
+  const ProcedureCameraGuideScreen({
+    super.key,
+    required this.procedure,
+    this.initialTrackProcedureBaselineRecord,
+  });
 
   final Procedure procedure;
+  final Map<String, dynamic>? initialTrackProcedureBaselineRecord;
 
   ProcedureCameraGuideType get _guideType =>
       procedureCameraGuideType(procedure.type);
@@ -120,7 +125,13 @@ class ProcedureCameraGuideScreen extends StatelessWidget {
   Future<void> _continueToCamera(BuildContext context) async {
     final didCapture = await Navigator.push<bool>(
       context,
-      MaterialPageRoute(builder: (_) => CameraScreen(procedure: procedure)),
+      MaterialPageRoute(
+        builder: (_) => CameraScreen(
+          procedure: procedure,
+          initialTrackProcedureBaselineRecord:
+              initialTrackProcedureBaselineRecord,
+        ),
+      ),
     );
     if (!context.mounted) return;
     if (didCapture == true) {
@@ -131,7 +142,11 @@ class ProcedureCameraGuideScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (kIsWeb) {
-      return CameraScreen(procedure: procedure);
+      return CameraScreen(
+        procedure: procedure,
+        initialTrackProcedureBaselineRecord:
+            initialTrackProcedureBaselineRecord,
+      );
     }
 
     final textColor = MyApp.textBrown;

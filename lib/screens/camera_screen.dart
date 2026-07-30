@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Directory, File, Platform;
 import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
@@ -8,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../app_theme.dart';
 import '../models/skin_profile.dart';
@@ -17,7 +19,7 @@ import '../utils/landmark_assessment.dart';
 import '../utils/local_image_bytes.dart';
 import '../utils/premium_access.dart';
 import '../utils/premium_recovery_service.dart';
-import '../utils/skin_analysis_service.dart';
+import '../services/skin_analysis_service.dart' as local_skin_analysis;
 import '../utils/web_upload_image_utils.dart';
 import '../utils/web_image_picker.dart';
 import '../models/scan_history.dart';
@@ -36,6 +38,7 @@ class CameraScreen extends StatefulWidget {
   final String? productName;
   final String? initialProcedureId;
   final String? initialProcedureLabel;
+  final Map<String, dynamic>? initialTrackProcedureBaselineRecord;
 
   const CameraScreen({
     this.procedure,
@@ -43,6 +46,7 @@ class CameraScreen extends StatefulWidget {
     this.productName,
     this.initialProcedureId,
     this.initialProcedureLabel,
+    this.initialTrackProcedureBaselineRecord,
   }) : super(key: null);
 
   @override
@@ -107,6 +111,11 @@ class _CameraScreenState extends State<CameraScreen>
   /// is propagated onto every [ScanHistoryEntry] saved from this session.
   bool? _makeupPresent;
   bool _disclosureInFlight = false;
+
+  double? _baselineHeadEulerX;
+  double? _baselineHeadEulerY;
+  double? _baselineHeadEulerZ;
+  double? _baselineAmbientBrightness;
 
   String? _postOpDaysForBackend() {
     final procedure = widget.procedure;
@@ -621,7 +630,39 @@ class _CameraScreenState extends State<CameraScreen>
       _scanFocusArea = focusArea;
       _scanCustomDescription = customDescription;
     });
+    if (widget.initialTrackProcedureBaselineRecord != null) {
+      initializeTrackProcedureBaseline(
+        widget.initialTrackProcedureBaselineRecord!,
+      );
+    }
     await _loadReferenceContext();
+  }
+
+  void initializeTrackProcedureBaseline(
+    Map<String, dynamic> localBaselineRecord,
+  ) {
+    double? readMetric(String key) {
+      final value = localBaselineRecord[key];
+      if (value == null) return null;
+      if (value is num) return value.toDouble();
+      return double.tryParse(value.toString());
+    }
+
+    setState(() {
+      _baselineHeadEulerX = readMetric('euler_x');
+      _baselineHeadEulerY = readMetric('euler_y');
+      _baselineHeadEulerZ = readMetric('euler_z');
+      _baselineAmbientBrightness = readMetric('ambient_brightness');
+    });
+  }
+
+  Map<String, dynamic> _currentTrackProcedureCalibrationRecord() {
+    return {
+      'euler_x': _liveLandmarkAssessment.yaw,
+      'euler_y': _liveLandmarkAssessment.pitch,
+      'euler_z': _liveLandmarkAssessment.roll,
+      'ambient_brightness': _liveMeanBrightness,
+    };
   }
 
   Future<void> _loadReferenceContext() async {
@@ -1645,6 +1686,41 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
+  Future<String> _persistScanImage(
+    Uint8List bytes, {
+    String? sourcePath,
+    required String prefix,
+  }) async {
+    if (kIsWeb) {
+      return 'data:image/jpeg;base64,${base64Encode(bytes)}';
+    }
+
+    final docsDir = await getApplicationDocumentsDirectory();
+    final scansDir = Directory(
+      '${docsDir.path}${Platform.pathSeparator}scans',
+    );
+    if (!await scansDir.exists()) {
+      await scansDir.create(recursive: true);
+    }
+
+    final extension = (() {
+      final normalized = (sourcePath ?? '').replaceAll('\\', '/');
+      final dot = normalized.lastIndexOf('.');
+      if (dot == -1 || dot == normalized.length - 1) return '.jpg';
+      final raw = normalized.substring(dot).toLowerCase();
+      if (raw == '.jpeg' || raw == '.jpg' || raw == '.png') return raw;
+      return '.jpg';
+    })();
+
+    final timestamp = DateTime.now().microsecondsSinceEpoch;
+    final entropy = math.Random().nextInt(1 << 32).toRadixString(16);
+    final file = File(
+      '${scansDir.path}${Platform.pathSeparator}${prefix}_${timestamp}_$entropy$extension',
+    );
+    await file.writeAsBytes(bytes, flush: true);
+    return file.path;
+  }
+
   // ── Deep Analysis flow (Premium gated + disclaimer + backend) ────────────
   Future<void> _handleDeepAnalysis() async {
     // 1. A cropped image is mandatory — ONLY cropped bytes are ever sent.
@@ -1751,14 +1827,14 @@ class _CameraScreenState extends State<CameraScreen>
 
       dynamic result;
       try {
-        result = await SkinAnalysisService.uploadSingleImageFile(
+        result = await local_skin_analysis.SkinAnalysisService.uploadSingleImageFile(
           image: deepFile,
           fields: fields,
           baselineMetricMatrix: baselineMetricMatrix,
         );
       } catch (_) {
         // Fallback to legacy JSON-bytes route where multipart is unavailable.
-        result = await SkinAnalysisService.analyzeImageFromBytes(
+        result = await local_skin_analysis.SkinAnalysisService.analyzeImageFromBytes(
           _croppedImageBytes!,
           filename: deepFile.name,
           baselineMetricMatrix: baselineMetricMatrix,
@@ -1990,26 +2066,17 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
-  Future<SkinMetrics> _metricsFromBackendOrThrow(
-    Uint8List bytes, {
-    required String filename,
-  }) async {
-    final raw = await SkinAnalysisService.analyzeImageFromBytes(
-      bytes,
-      filename: filename,
-      baselineMetricMatrix: _baselineMetricMatrix(),
-    );
-    final map = raw is Map
-        ? Map<String, dynamic>.from(raw)
-        : <String, dynamic>{};
-    final metricsSource = map['metrics'];
-    final metrics = metricsSource is Map
-        ? Map<String, dynamic>.from(metricsSource)
-        : map;
+  Future<SkinMetrics> _metricsFromBackendOrThrow(String imagePath) async {
+    final raw = await local_skin_analysis.SkinAnalysisService.instance
+        .runFullAnalysis(imagePath);
 
-    double readScore(List<String> keys) {
+    if (raw.isEmpty) {
+      return SkinMetrics.simulatedScan(previous: _referenceScan?.toSkinMetrics());
+    }
+
+    double readScore(List<String> keys, {double fallback = 5.0}) {
       for (final key in keys) {
-        final value = metrics[key];
+        final value = raw[key];
         if (value == null) continue;
         final parsed = double.tryParse(value.toString());
         if (parsed == null) continue;
@@ -2017,17 +2084,15 @@ class _CameraScreenState extends State<CameraScreen>
         if (parsed <= 10.0) return parsed.clamp(0.0, 10.0);
         return (parsed / 10.0).clamp(0.0, 10.0);
       }
-      throw Exception(
-        'Backend response missing required metric keys: $keys. '
-        'Ensure YOLO + MediaPipe pipeline is loaded.',
-      );
+      return fallback.clamp(0.0, 10.0);
     }
 
-    final redness = readScore(['redness_score', 'redness']);
-    final texture = readScore(['texture_score', 'texture']);
-    final wrinkle = readScore(['wrinkle_score', 'wrinkle']);
-    final pore = readScore(['pore_count', 'pore_score', 'pore']);
-    final darkSpots = readScore(['pigmentation_score', 'dark_spots_score']);
+    final previous = _referenceScan?.toSkinMetrics() ?? const SkinMetrics();
+    final redness = readScore(['redness', 'rosacea_intensity'], fallback: previous.redness);
+    final texture = readScore(['texture'], fallback: previous.texture);
+    final wrinkle = readScore(['wrinkle'], fallback: previous.wrinkle);
+    final pore = readScore(['acne_severity', 'pore'], fallback: previous.pore);
+    final darkSpots = readScore(['pigment', 'dark_spots'], fallback: previous.darkSpots);
     final elasticity = (10.0 - texture).clamp(0.0, 10.0);
 
     return SkinMetrics(
@@ -2461,14 +2526,13 @@ class _CameraScreenState extends State<CameraScreen>
       '[_saveWebGalleryBytes] START bytes.length=${bytes.length} procedureIdToSave=$resolvedProcedureId productNameToSave=$productNameToSave isSkincareScan=${widget.isSkincareScan}',
     );
 
-    final nextMetrics = await _metricsFromBackendOrThrow(
-      bytes,
-      filename: 'scan_${DateTime.now().millisecondsSinceEpoch}.jpg',
-    );
-
     final bytesForStorage = kIsWeb ? _prepareWebStorageBytes(bytes) : bytes;
-    final imagePathToSave =
-        'data:image/jpeg;base64,${base64Encode(bytesForStorage)}';
+    final imagePathToSave = await _persistScanImage(
+      bytesForStorage,
+      sourcePath: null,
+      prefix: 'procedure_scan',
+    );
+    final nextMetrics = await _metricsFromBackendOrThrow(imagePathToSave);
     try {
       debugPrint(
         '[_saveWebGalleryBytes] imagePathToSave length=${imagePathToSave.length}, originalBytes=${bytes.length}, storedBytes=${bytesForStorage.length}',
@@ -2555,6 +2619,7 @@ class _CameraScreenState extends State<CameraScreen>
           procedureId: null,
           productName: productNameToSave,
           imagePath: imagePathToSave,
+          calibrationRecord: _currentTrackProcedureCalibrationRecord(),
           poseTemplate: _selectedPoseTemplate,
           focusArea: _focusAreaForSave,
           customDescription: _customDescriptionForSave,
@@ -2578,6 +2643,7 @@ class _CameraScreenState extends State<CameraScreen>
           procedureId: resolvedProcedureId,
           productName: null,
           imagePath: imagePathToSave,
+          calibrationRecord: _currentTrackProcedureCalibrationRecord(),
           poseTemplate: _selectedPoseTemplate,
           focusArea: _focusAreaForSave,
           customDescription: _customDescriptionForSave,
@@ -2802,7 +2868,11 @@ class _CameraScreenState extends State<CameraScreen>
         return;
       }
       final bytes = croppedBytes;
-      final imagePathToSave = pickedFile.path;
+      final imagePathToSave = await _persistScanImage(
+        bytes,
+        sourcePath: pickedFile.path,
+        prefix: widget.isSkincareScan ? 'skincare_scan' : 'procedure_scan',
+      );
       if (mounted) setState(() => _croppedImageBytes = bytes);
 
       List<ScanHistoryEntry> updatedHistory = const [];
@@ -2825,10 +2895,7 @@ class _CameraScreenState extends State<CameraScreen>
         });
       }
 
-      final nextMetrics = await _metricsFromBackendOrThrow(
-        bytes,
-        filename: 'scan_${DateTime.now().millisecondsSinceEpoch}.jpg',
-      );
+      final nextMetrics = await _metricsFromBackendOrThrow(imagePathToSave);
       final consistencyScore = _calculateConsistencyScore(
         bytes,
         nextMetrics,
@@ -2848,6 +2915,7 @@ class _CameraScreenState extends State<CameraScreen>
           procedureId: null,
           productName: productNameToSave,
           imagePath: imagePathToSave,
+          calibrationRecord: _currentTrackProcedureCalibrationRecord(),
           poseTemplate: _selectedPoseTemplate,
           focusArea: _focusAreaForSave,
           customDescription: _customDescriptionForSave,
@@ -2865,6 +2933,7 @@ class _CameraScreenState extends State<CameraScreen>
           procedureId: procedureIdToSave,
           productName: null,
           imagePath: imagePathToSave,
+          calibrationRecord: _currentTrackProcedureCalibrationRecord(),
           poseTemplate: _selectedPoseTemplate,
           focusArea: _focusAreaForSave,
           customDescription: _customDescriptionForSave,

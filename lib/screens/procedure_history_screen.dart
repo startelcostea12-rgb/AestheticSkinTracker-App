@@ -5,7 +5,6 @@ import 'package:intl/intl.dart';
 import '../app_theme.dart';
 import '../models/procedure_log.dart';
 import '../providers/procedure_logs_provider.dart';
-import '../services/ai_llm_service.dart';
 import '../widgets/local_image_preview.dart';
 import 'at_home_procedure_log_screen.dart';
 
@@ -87,11 +86,6 @@ class _ProcedureHistoryScreenState
   }
 
   Future<String> _generateTrendAnalysis(List<ProcedureLog> logs) async {
-    const service = AiService();
-    if (!service.isConfigured) {
-      throw Exception('AI service not configured');
-    }
-
     // Build summary statistics
     final totalProcedures = logs.length;
     final procedureTypes = <String, int>{};
@@ -124,44 +118,47 @@ class _ProcedureHistoryScreenState
     // the trend (calmer skin over time vs. more reactive).
     final chronological = [...logs]
       ..sort((a, b) => a.dateTime.compareTo(b.dateTime));
+    final reactionHistory = chronological
+      .where((l) => l.reactionScore != null)
+      .toList();
     final reactionTrend = chronological
         .where((l) => l.reactionScore != null)
         .map((l) => l.reactionScore)
         .join(' → ');
-    const systemPrompt = '''
-You are an elite aesthetic procedure trend analyst and personal progress coach. Analyze the user's procedure history and write a warm, specific, encouraging reflection that makes them feel genuinely seen and proud of their consistency.
+    final firstReaction = reactionHistory.isNotEmpty
+      ? reactionHistory.first.reactionScore
+      : null;
+    final lastReaction = reactionHistory.isNotEmpty
+      ? reactionHistory.last.reactionScore
+      : null;
 
-CRITICAL RULES:
-- Keep response under 100 words (2-3 flowing sentences)
-- Warm, refined, luxurious, and personal — like a private aesthetician celebrating their journey
-- Name the user's actual procedures and cadence specifically (e.g. "your consistency with SkinPen sessions") rather than generic praise
-- Recognize a concrete pattern or milestone: frequency, variety, a steady/improving reaction trend, or a well-paced routine
-- If reaction scores are trending calmer/lower over time, affirm that their skin is tolerating treatments beautifully; if higher, gently encourage recovery-first spacing without alarming them
-- For injectables (Botox, Dysport, fillers), reference typical maintenance windows so they can plan their next visit
-- Close with one forward-looking, motivating line
-- DO NOT diagnose medical conditions or recommend specific new treatments
+    String trendSentence() {
+      if (firstReaction == null || lastReaction == null) {
+        return 'Your reaction pattern looks steady, which suggests a well-paced routine.';
+      }
+      final delta = lastReaction - firstReaction;
+      if (delta <= -2) {
+        return 'Your reactions have eased over time, which suggests your skin is tolerating treatments beautifully.';
+      }
+      if (delta >= 2) {
+        return 'Your reactions have become a bit more reactive over time, so a gentler recovery-first cadence may be worth keeping in mind.';
+      }
+      return 'Your reaction pattern looks steady, which suggests a well-paced routine.';
+    }
 
-OUTPUT FORMAT:
-A single polished paragraph of 2-3 sentences that is specific to this exact history and ends on an inspiring note.
-''';
+    final recentProcedures = logs
+        .take(3)
+        .map((l) => '${l.procedureType} on ${DateFormat('MMM dd').format(l.dateTime)}')
+        .join(', ');
 
-    final userPrompt =
-        '''
-Procedure History Summary:
-- Total procedures logged: $totalProcedures
-- Most common procedure: $mostCommon (${procedureTypes[mostCommon]} times)
-${avgReaction != null ? '- Average reaction score: $avgReaction/10' : ''}
-${reactionTrend.isNotEmpty ? '- Reaction scores over time (oldest → newest): $reactionTrend' : ''}
-- Categories: ${categories.entries.map((e) => '${e.key} (${e.value})').join(', ')}
-- Recent procedures: ${logs.take(3).map((l) => '${l.procedureType} on ${DateFormat('MMM dd').format(l.dateTime)}').join(', ')}
-
-Provide a brief, encouraging, specific trend analysis.
-''';
-
-    return await service.completeCoachResponse(
-      systemPrompt: systemPrompt,
-      userPrompt: userPrompt,
-    );
+    return [
+      'Your history shows $totalProcedures procedures, led by $mostCommon (${procedureTypes[mostCommon]} times).',
+      if (avgReaction != null)
+        'Average reaction score: $avgReaction/10. ${trendSentence()}',
+      if (reactionTrend.isNotEmpty)
+        'Recent reaction sequence: $reactionTrend.',
+      'Recent procedures: $recentProcedures.',
+    ].join(' ');
   }
 
   /// Returns a filtered + sorted copy of [logs] based on current state.

@@ -586,6 +586,19 @@
 			],
 			"isBackground": false,
 			"group": "build"
+		},
+		{
+			"label": "backend smoke test analyze-skin",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"tool/smoke_test_analyze_skin.py",
+				"--image",
+				"tmp_lena.jpg",
+				"--download-if-missing"
+			],
+			"isBackground": false,
+			"group": "test"
 		}
 	]
 }

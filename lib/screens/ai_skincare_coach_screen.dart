@@ -918,6 +918,7 @@ Analyze the uploaded skin photo following the structured format. Reference the u
     final chunks = await _coachService.streamCoachResponse(
       systemPrompt: systemPrompt,
       userPrompt: userPrompt,
+      allowBackend: true,
       onRetry: (info) {
         if (!mounted) return;
         final currentReply = buffer.toString().trimRight();

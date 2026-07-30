@@ -57,6 +57,10 @@ class ProcedureLog extends HiveObject {
   @HiveField(15)
   List<String> photoLabels;
 
+  /// Per-photo capture calibration metadata keyed by stored photo path.
+  @HiveField(16)
+  Map<String, Map<String, dynamic>> photoCalibrationByPath;
+
   ProcedureLog({
     String? id,
     required this.procedureType,
@@ -74,11 +78,15 @@ class ProcedureLog extends HiveObject {
     this.nextReminderDate,
     bool? reminderEnabled,
     List<String> photoLabels = const [],
+    Map<String, Map<String, dynamic>> photoCalibrationByPath = const {},
   }) : id = id ?? const Uuid().v4(),
        // Copy incoming lists so different logs never share the same
        // backing list instance (prevents cross-contamination of photos).
        photoPaths = List<String>.from(photoPaths),
        photoLabels = List<String>.from(photoLabels),
+       photoCalibrationByPath = Map<String, Map<String, dynamic>>.from(
+         photoCalibrationByPath,
+       ),
        createdAt = createdAt ?? DateTime.now(),
        reminderEnabled =
            reminderEnabled ?? _isInjectableProcedureType(procedureType);
@@ -109,6 +117,35 @@ class ProcedureLog extends HiveObject {
     return null;
   }
 
+  Map<String, dynamic>? calibrationForPhoto(String photoPath) {
+    final key = photoPath.trim();
+    if (key.isEmpty) return null;
+    final record = photoCalibrationByPath[key];
+    if (record == null) return null;
+    return Map<String, dynamic>.from(record);
+  }
+
+  static Map<String, Map<String, dynamic>> _calibrationMapFromHive(
+    dynamic value,
+  ) {
+    if (value is! Map) return const {};
+    final out = <String, Map<String, dynamic>>{};
+    value.forEach((key, rawRecord) {
+      if (rawRecord is Map) {
+        out[key.toString()] = Map<String, dynamic>.from(rawRecord);
+      }
+    });
+    return out;
+  }
+
+  Map<String, dynamic>? latestTrackProcedureBaselineRecord() {
+    for (final photo in labeledPhotos) {
+      final record = calibrationForPhoto(photo.path);
+      if (record != null && record.isNotEmpty) return record;
+    }
+    return null;
+  }
+
   ProcedureLog copyWith({
     String? id,
     String? procedureType,
@@ -126,6 +163,7 @@ class ProcedureLog extends HiveObject {
     DateTime? nextReminderDate,
     bool? reminderEnabled,
     List<String>? photoLabels,
+    Map<String, Map<String, dynamic>>? photoCalibrationByPath,
   }) {
     return ProcedureLog(
       id: id ?? this.id,
@@ -144,6 +182,8 @@ class ProcedureLog extends HiveObject {
       nextReminderDate: nextReminderDate ?? this.nextReminderDate,
       reminderEnabled: reminderEnabled ?? this.reminderEnabled,
       photoLabels: photoLabels ?? this.photoLabels,
+      photoCalibrationByPath:
+          photoCalibrationByPath ?? this.photoCalibrationByPath,
     );
   }
 
@@ -164,6 +204,7 @@ class ProcedureLog extends HiveObject {
     'nextReminderDate': nextReminderDate?.toIso8601String(),
     'reminderEnabled': reminderEnabled,
     'photoLabels': photoLabels,
+    'photoCalibrationByPath': photoCalibrationByPath,
   };
 
   factory ProcedureLog.fromJson(Map<String, dynamic> json) {
@@ -187,6 +228,9 @@ class ProcedureLog extends HiveObject {
           ? json['reminderEnabled'] as bool
           : _isInjectableProcedureType(procedureType),
       photoLabels: _stringListFromJson(json['photoLabels']),
+      photoCalibrationByPath: _calibrationMapFromJson(
+        json['photoCalibrationByPath'],
+      ),
     );
   }
 
@@ -228,5 +272,11 @@ class ProcedureLog extends HiveObject {
   static List<String> _stringListFromJson(dynamic value) {
     if (value is List) return value.map((item) => item.toString()).toList();
     return const [];
+  }
+
+  static Map<String, Map<String, dynamic>> _calibrationMapFromJson(
+    dynamic value,
+  ) {
+    return _calibrationMapFromHive(value);
   }
 }

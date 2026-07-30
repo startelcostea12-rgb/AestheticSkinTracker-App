@@ -44,7 +44,19 @@ class BeforeAfterCaptureState extends ChangeNotifier {
 
 class SkinAnalysisService {
   // Backend host is centralized in BackendConfig.
-  static const Duration _requestTimeout = Duration(seconds: 25);
+  static const Duration _requestTimeout = Duration(seconds: 60);
+
+  static const String _backendUnavailableMessage =
+      'Please start the AestheticSkin backend to enable AI analysis.';
+
+  static void _ensureBackendAllowed(bool allowBackend) {
+    if (!allowBackend) {
+      throw Exception(
+        'Backend access is disabled for this flow. '
+        'Only the AI Skin Analysis screen may send photos to the backend.',
+      );
+    }
+  }
 
   static Map<String, dynamic> _normalizeResponsePayload(
     Map<String, dynamic> responseData,
@@ -74,7 +86,9 @@ class SkinAnalysisService {
     Uint8List bytes, {
     String? filename,
     Map<String, dynamic>? baselineMetricMatrix,
+    bool allowBackend = false,
   }) async {
+    _ensureBackendAllowed(allowBackend);
     final uri = BackendConfig.analyzeSkinUri;
 
     debugPrint('[SkinAnalysisService] POST $uri');
@@ -113,7 +127,7 @@ class SkinAnalysisService {
       return decoded;
     } on TimeoutException {
       throw Exception(
-        'Skin analysis timed out. Please check your connection and try again.',
+        'Skin analysis timed out after 60 seconds. Please check your connection and try again.',
       );
     } catch (e) {
       debugPrint('❌ [SkinAnalysisService] Request failed: $e');
@@ -122,9 +136,7 @@ class SkinAnalysisService {
           lower.contains('clientexception') ||
           lower.contains('socketexception') ||
           lower.contains('connection refused')) {
-        throw Exception(
-          'Could not reach the analysis server. Start backend at ${BackendConfig.baseUrl} and retry.',
-        );
+        throw Exception(_backendUnavailableMessage);
       }
       rethrow;
     }
@@ -135,7 +147,9 @@ class SkinAnalysisService {
     Uri? uri,
     Map<String, String> fields = const {},
     Map<String, dynamic>? baselineMetricMatrix,
+    bool allowBackend = false,
   }) async {
+    _ensureBackendAllowed(allowBackend);
     if (image == null) {
       throw ImageCaptureStateWarning(
         'Upload blocked: image cannot be null.',
@@ -173,31 +187,47 @@ class SkinAnalysisService {
       ),
     );
 
-    final streamed = await request.send().timeout(_requestTimeout);
-    final response = await http.Response.fromStream(streamed);
+    try {
+      final streamed = await request.send().timeout(_requestTimeout);
+      final response = await http.Response.fromStream(streamed);
 
-    debugPrint('[SkinAnalysisService] Multipart status: ${response.statusCode}');
+      debugPrint('[SkinAnalysisService] Multipart status: ${response.statusCode}');
 
-    if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception(
+          'Single-image upload failed with HTTP ${response.statusCode}: ${response.body}',
+        );
+      }
+
+      final body = response.body.trim();
+      if (body.isEmpty) {
+        return <String, dynamic>{};
+      }
+
+      final decoded = jsonDecode(body);
+      if (decoded is Map<String, dynamic>) {
+        return _normalizeResponsePayload(decoded);
+      }
+      if (decoded is Map) {
+        return _normalizeResponsePayload(Map<String, dynamic>.from(decoded));
+      }
+
+      throw Exception('Unexpected response format from single-image analysis.');
+    } on TimeoutException {
       throw Exception(
-        'Single-image upload failed with HTTP ${response.statusCode}: ${response.body}',
+        'Skin analysis upload timed out after 60 seconds. Please check your connection and try again.',
       );
+    } catch (e) {
+      debugPrint('❌ [SkinAnalysisService] Multipart request failed: $e');
+      final lower = e.toString().toLowerCase();
+      if (lower.contains('failed to fetch') ||
+          lower.contains('clientexception') ||
+          lower.contains('socketexception') ||
+          lower.contains('connection refused')) {
+        throw Exception(_backendUnavailableMessage);
+      }
+      rethrow;
     }
-
-    final body = response.body.trim();
-    if (body.isEmpty) {
-      return <String, dynamic>{};
-    }
-
-    final decoded = jsonDecode(body);
-    if (decoded is Map<String, dynamic>) {
-      return _normalizeResponsePayload(decoded);
-    }
-    if (decoded is Map) {
-      return _normalizeResponsePayload(Map<String, dynamic>.from(decoded));
-    }
-
-    throw Exception('Unexpected response format from single-image analysis.');
   }
 
   static String _filenameFromPath(String path) {

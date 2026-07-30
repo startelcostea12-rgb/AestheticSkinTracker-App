@@ -17,6 +17,7 @@
 
 import '../models/scan_history.dart';
 import '../utils/app_prefs.dart';
+import 'package:flutter/foundation.dart';
 
 /// Repository for reading and writing AI skin-analysis scans, including
 /// the two specialist metrics (`acne_severity`, `rosacea_intensity`).
@@ -44,6 +45,24 @@ class SkinHistoryRepository {
     kRosaceaIntensity,
   ];
 
+  static const Set<String> _clinicalMetricKeys = {
+    'localized_redness',
+    'texture_smoothness',
+    'pore_visibility',
+    'wrinkle_load',
+    'pigment_load',
+    'breakout_activity',
+    'diffuse_flushing_erythema',
+    'sebum_excess_oil_gloss',
+    'skin_tone_radiance_evenness',
+    'glabellar_wrinkle_depth',
+    'under_eye_texture_density',
+    'under_eye_dark_circle_density',
+    'rosacea_severity',
+    'structural_firmness_elasticity',
+    'pore_contraction_index',
+  };
+
   // ── Writes ────────────────────────────────────────────────────────
 
   /// Persists a single scan with all six metrics and returns the stored
@@ -63,19 +82,72 @@ class SkinHistoryRepository {
     String? focusArea,
     String? customDescription,
     double estimatedSkinAge = 0,
+    Map<String, dynamic>? rawPayload,
   }) async {
     final ts = timestamp ?? DateTime.now();
 
-    // Normalise the six known columns, preserving any extra keys.
-    final stored = <String, double>{
-      ...metrics,
-      kPigment: metrics[kPigment] ?? 0.0,
-      kRedness: metrics[kRedness] ?? 0.0,
-      kTexture: metrics[kTexture] ?? 0.0,
-      kWrinkle: metrics[kWrinkle] ?? 0.0,
-      kAcneSeverity: metrics[kAcneSeverity] ?? 0.0,
-      kRosaceaIntensity: metrics[kRosaceaIntensity] ?? 0.0,
-    };
+    Map<String, dynamic> asMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return <String, dynamic>{};
+    }
+
+    bool isFinitePositive(dynamic value) =>
+        value is num && value.isFinite && value > 0;
+
+    void absorbClinicalMetrics(
+      Map<String, double> target,
+      Map<String, dynamic> source,
+    ) {
+      for (final entry in source.entries) {
+        final key = entry.key;
+        final value = entry.value;
+        if (!_clinicalMetricKeys.contains(key) || !isFinitePositive(value)) {
+          continue;
+        }
+        target[key] = (value as num).toDouble();
+      }
+    }
+
+    double? extractBackendMetricMatrixPore(Map<String, dynamic> data) {
+      final metricMatrix = asMap(data['metric_matrix']);
+      final direct = metricMatrix['pore_visibility'];
+      if (direct is num && direct.isFinite && direct > 0) {
+        return direct.toDouble();
+      }
+
+      final metricsNode = asMap(data['metrics']);
+      final nestedMatrix = asMap(metricsNode['metric_matrix']);
+      final nested = nestedMatrix['pore_visibility'];
+      if (nested is num && nested.isFinite && nested > 0) {
+        return nested.toDouble();
+      }
+
+      return null;
+    }
+
+    final payloadMap = asMap(rawPayload);
+
+    final stored = <String, double>{...metrics};
+
+    // Merge canonical clinical metrics from backend payload nodes so the
+    // persisted ScanHistoryEntry.metrics map always carries the same keys
+    // used by baseline candidate selection and Luxe rendering.
+    final payloadMetricMatrix = asMap(payloadMap['metric_matrix']);
+    absorbClinicalMetrics(stored, payloadMetricMatrix);
+
+    final payloadMetrics = asMap(payloadMap['metrics']);
+    absorbClinicalMetrics(stored, payloadMetrics);
+
+    final nestedMetricMatrix = asMap(payloadMetrics['metric_matrix']);
+    absorbClinicalMetrics(stored, nestedMetricMatrix);
+
+    final backendMatrixPore = extractBackendMetricMatrixPore(payloadMap);
+    if (backendMatrixPore != null) {
+      stored['pore_visibility'] = backendMatrixPore;
+    } else {
+      stored.remove('pore_visibility');
+    }
     final computedSkinAge = estimateVisualSkinAgeFromAiMetrics(stored);
 
     final entry = ScanHistoryEntry(
@@ -95,9 +167,27 @@ class SkinHistoryRepository {
           ? estimatedSkinAge
           : computedSkinAge ?? 0,
       metrics: stored,
+      rawPayload: rawPayload,
     );
 
-    await AppPrefs.addScanEntry(entry);
+    final hasProcedureId =
+        (entry.procedureId?.trim().isNotEmpty ?? false);
+    debugPrint(
+      '[BASELINE_WRITE] saveScan entryId=${entry.id} procedureId=${entry.procedureId ?? 'null'} '
+      'willSyncProcedureComparison=$hasProcedureId',
+    );
+
+    final history = await AppPrefs.addScanEntry(entry);
+    debugPrint(
+      '[BASELINE_WRITE] addScanEntry complete entryId=${entry.id} historyCount=${history.length}',
+    );
+    await AppPrefs.syncProcedurePhotoComparisonForEntry(
+      entry,
+      history: history,
+    );
+    debugPrint(
+      '[BASELINE_WRITE] syncProcedurePhotoComparisonForEntry complete entryId=${entry.id}',
+    );
     return entry;
   }
 

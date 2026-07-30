@@ -72,6 +72,7 @@ const Map<String, MetricDirectionality> _metricDirectionality = {
   'skin tone uniformity': MetricDirectionality.higherIsBetter,
   'skin hydration level': MetricDirectionality.higherIsBetter,
   'inflammatory response': MetricDirectionality.lowerIsBetter,
+  'rosacea severity': MetricDirectionality.lowerIsBetter,
   'global skin quality score': MetricDirectionality.higherIsBetter,
 };
 

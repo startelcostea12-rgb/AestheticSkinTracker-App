@@ -18,6 +18,7 @@
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
 
 import '../app_theme.dart';
@@ -74,6 +75,14 @@ class _PaywallScreenState extends State<PaywallScreen> {
           _errorMessage = null;
         });
       }
+    } on MissingPluginException catch (e) {
+      // Desktop may not register purchases plugin; do not block upgrade flow.
+      debugPrint('[Paywall] Missing plugin on this platform: $e');
+      if (!mounted) return;
+      setState(() {
+        _offerings = null;
+        _errorMessage = null;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() {

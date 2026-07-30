@@ -27,6 +27,10 @@ import 'skin_analysis_backend.dart';
 import 'skin_analysis_service_web.dart'
     if (dart.library.io) 'skin_analysis_service_io.dart';
 
+import 'dart:typed_data';
+
+import 'package:image_picker/image_picker.dart';
+
 export 'skin_analysis_backend.dart' show SkinAnalysisException;
 
 /// Runs the bundled TFLite skin-analysis models and merges their
@@ -85,6 +89,74 @@ class SkinAnalysisService {
   ///    errors (missing/undecodable image).
   Future<Map<String, double>> runFullAnalysis(String imagePath) =>
       _backend.runFullAnalysis(imagePath);
+
+  /// Compatibility helper used by UI flows that expect a backend-shaped
+  /// analysis payload. Keeps those flows offline by mapping the local
+  /// analysis output into the same structure.
+  static Future<Map<String, dynamic>> uploadSingleImageFile({
+    required XFile? image,
+    Uri? uri,
+    Map<String, String> fields = const {},
+    Map<String, dynamic>? baselineMetricMatrix,
+  }) async {
+    if (image == null) {
+      throw SkinAnalysisException('Image is required for analysis.');
+    }
+
+    final metrics = await instance.runFullAnalysis(image.path);
+    return _toBackendShape(metrics);
+  }
+
+  /// Byte-based compatibility wrapper for the same backend-shaped payload.
+  static Future<Map<String, dynamic>> analyzeImageFromBytes(
+    Uint8List bytes, {
+    String? filename,
+    Map<String, dynamic>? baselineMetricMatrix,
+  }) async {
+    final image = XFile.fromData(
+      bytes,
+      name: filename ?? 'analysis.jpg',
+      mimeType: 'image/jpeg',
+    );
+    return uploadSingleImageFile(image: image, baselineMetricMatrix: baselineMetricMatrix);
+  }
+
+  static Map<String, dynamic> _toBackendShape(Map<String, double> metrics) {
+    double pctFromConcern(double value) => (value.clamp(0.0, 1.0) * 100.0);
+
+    final metricMatrix = <String, dynamic>{
+      if (metrics['redness'] != null)
+        'localized_redness': pctFromConcern(metrics['redness']!),
+      if (metrics['texture'] != null)
+        'texture_smoothness': (100.0 - pctFromConcern(metrics['texture']!)).clamp(0.0, 100.0),
+      if (metrics['pore'] != null)
+        'pore_visibility': pctFromConcern(metrics['pore']!),
+      if (metrics['acne_severity'] != null)
+        'breakout_activity': pctFromConcern(metrics['acne_severity']!),
+      if (metrics['pigment'] != null)
+        'pigment_load': pctFromConcern(metrics['pigment']!),
+      if (metrics['wrinkle'] != null)
+        'wrinkle_load': pctFromConcern(metrics['wrinkle']!),
+    };
+
+    return <String, dynamic>{
+      'status': 'success',
+      'success': true,
+      'modelUsed': 'local-tflite',
+      'metrics': <String, dynamic>{
+        if (metrics['redness'] != null)
+          'calibrated_redness_score': (100.0 - pctFromConcern(metrics['redness']!)).clamp(0.0, 100.0),
+        if (metrics['texture'] != null)
+          'calibrated_smoothness_score': (100.0 - pctFromConcern(metrics['texture']!)).clamp(0.0, 100.0),
+        'metric_matrix': metricMatrix,
+        'trend_deltas': <String, double>{},
+      },
+      'metric_matrix': metricMatrix,
+      'trend_deltas': <String, double>{},
+      'serverTrendDeltas': <String, double>{},
+      'fullMetrics': metrics,
+    };
+  }
 
   /// Closes the underlying interpreters and resets state. Safe to call
   /// multiple times; after disposal, [init] will reload on next use.

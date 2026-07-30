@@ -63,6 +63,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
   List<ScanHistoryEntry> _allScans = const [];
   Map<String, String> _procedureNameById = const {};
   Map<String, String> _peptideNameById = const {};
+  Map<String, Map<String, String?>> _procedurePhotoComparisonById = const {};
   _GalleryFilter _filter = _GalleryFilter.all;
 
   @override
@@ -97,11 +98,28 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
         scans.where((s) => (s.imagePath ?? '').isNotEmpty).toList()
           ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
+    final procedureIds = withImages
+        .map((scan) => (scan.procedureId ?? '').trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+
+    final comparisonRows = await Future.wait(
+      procedureIds.map((procedureId) async {
+        final comparison = await AppPrefs.getProcedurePhotoComparison(procedureId);
+        return MapEntry(procedureId, comparison);
+      }),
+    );
+    final comparisonByProcedure = <String, Map<String, String?>>{
+      for (final row in comparisonRows) row.key: row.value,
+    };
+
     if (!mounted) return;
     setState(() {
       _allScans = withImages;
       _procedureNameById = procNames;
       _peptideNameById = pepNames;
+      _procedurePhotoComparisonById = comparisonByProcedure;
       _loading = false;
     });
   }
@@ -195,8 +213,33 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
           scans: scans,
           initialIndex: initialIndex,
           sourceResolver: _sourceFor,
+          procedurePhotoComparisonById: _procedurePhotoComparisonById,
         ),
       ),
+    );
+  }
+
+  _TimelineBadgeData? _timelineBadgeFor(ScanHistoryEntry scan) {
+    final procedureId = (scan.procedureId ?? '').trim();
+    if (procedureId.isEmpty) return null;
+
+    if (scan.isBaseline) {
+      return const _TimelineBadgeData(
+        label: 'BASELINE',
+        backgroundColor: Color(0xFF2E7D32),
+        foregroundColor: Color(0xFFFFF8E1),
+      );
+    }
+
+    final comparison = _procedurePhotoComparisonById[procedureId];
+    final baselineScanId = comparison?['baselineScanId']?.trim();
+    final hasBaseline = baselineScanId != null && baselineScanId.isNotEmpty;
+    if (!hasBaseline || baselineScanId == scan.id) return null;
+
+    return const _TimelineBadgeData(
+      label: 'FOLLOW-UP',
+      backgroundColor: Color(0xFF244A73),
+      foregroundColor: Colors.white,
     );
   }
 
@@ -350,6 +393,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
     ];
     final d = scan.timestamp;
     final dateLabel = '${months[d.month - 1]} ${d.day}, ${d.year}';
+    final timelineBadge = _timelineBadgeFor(scan);
     return GestureDetector(
       onTap: () => _openPreview(index, scans),
       child: ClipRRect(
@@ -420,20 +464,20 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
                           ),
                         ),
                       ),
-                      if (scan.isBaseline)
+                      if (timelineBadge != null)
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 6,
                             vertical: 2,
                           ),
                           decoration: BoxDecoration(
-                            color: AppColors.champagneGold,
+                            color: timelineBadge.backgroundColor,
                             borderRadius: BorderRadius.circular(6),
                           ),
-                          child: const Text(
-                            'BASELINE',
+                          child: Text(
+                            timelineBadge.label,
                             style: TextStyle(
-                              color: Colors.white,
+                              color: timelineBadge.foregroundColor,
                               fontSize: 8.5,
                               fontWeight: FontWeight.w700,
                               letterSpacing: 0.6,
@@ -595,15 +639,39 @@ class _SourceBadge extends StatelessWidget {
   }
 }
 
+class _TimelineBadgeData {
+  const _TimelineBadgeData({
+    required this.label,
+    required this.backgroundColor,
+    required this.foregroundColor,
+  });
+
+  final String label;
+  final Color backgroundColor;
+  final Color foregroundColor;
+}
+
+class _ComparisonPair {
+  const _ComparisonPair({
+    required this.baselineScanId,
+    required this.followUpScanId,
+  });
+
+  final String baselineScanId;
+  final String followUpScanId;
+}
+
 class _PhotoPreviewScreen extends StatefulWidget {
   final List<ScanHistoryEntry> scans;
   final int initialIndex;
   final _PhotoSource Function(ScanHistoryEntry) sourceResolver;
+  final Map<String, Map<String, String?>> procedurePhotoComparisonById;
 
   const _PhotoPreviewScreen({
     required this.scans,
     required this.initialIndex,
     required this.sourceResolver,
+    required this.procedurePhotoComparisonById,
   });
 
   @override
@@ -626,6 +694,7 @@ class _PhotoPreviewScreenState extends State<_PhotoPreviewScreen> {
   Widget build(BuildContext context) {
     final scan = widget.scans[_current];
     final source = widget.sourceResolver(scan);
+    final comparisonPair = _comparisonPairForScan(scan);
     const months = [
       'Jan',
       'Feb',
@@ -649,6 +718,36 @@ class _PhotoPreviewScreenState extends State<_PhotoPreviewScreen> {
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
         elevation: 0,
+        actions: [
+          if (comparisonPair != null)
+            TextButton.icon(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => _BaselineComparisonViewer(
+                      scans: widget.scans,
+                      baselineScanId: comparisonPair.baselineScanId,
+                      followUpScanId: comparisonPair.followUpScanId,
+                      sourceResolver: widget.sourceResolver,
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(
+                Icons.compare_arrows_rounded,
+                color: Colors.white,
+                size: 16,
+              ),
+              label: const Text(
+                'Compare to Baseline',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+        ],
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -690,6 +789,175 @@ class _PhotoPreviewScreenState extends State<_PhotoPreviewScreen> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  _ComparisonPair? _comparisonPairForScan(ScanHistoryEntry scan) {
+    final procedureId = (scan.procedureId ?? '').trim();
+    if (procedureId.isEmpty || scan.isBaseline) return null;
+
+    final procedureScans = widget.scans
+        .where((item) => (item.procedureId ?? '').trim() == procedureId)
+        .toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    if (procedureScans.isEmpty) return null;
+
+    final comparison = widget.procedurePhotoComparisonById[procedureId];
+    String? baselineScanId = comparison?['baselineScanId']?.trim();
+    if (baselineScanId == null ||
+        baselineScanId.isEmpty ||
+        !procedureScans.any((entry) => entry.id == baselineScanId)) {
+      final flaggedBaseline = procedureScans
+          .where((entry) => entry.isBaseline)
+          .toList()
+        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      baselineScanId =
+          flaggedBaseline.isNotEmpty ? flaggedBaseline.first.id : procedureScans.first.id;
+    }
+
+    final followUpScanId = scan.id;
+    if (followUpScanId == baselineScanId) return null;
+
+    return _ComparisonPair(
+      baselineScanId: baselineScanId,
+      followUpScanId: followUpScanId,
+    );
+  }
+}
+
+class _BaselineComparisonViewer extends StatelessWidget {
+  const _BaselineComparisonViewer({
+    required this.scans,
+    required this.baselineScanId,
+    required this.followUpScanId,
+    required this.sourceResolver,
+  });
+
+  final List<ScanHistoryEntry> scans;
+  final String baselineScanId;
+  final String followUpScanId;
+  final _PhotoSource Function(ScanHistoryEntry) sourceResolver;
+
+  @override
+  Widget build(BuildContext context) {
+    ScanHistoryEntry? findById(String id) {
+      for (final scan in scans) {
+        if (scan.id == id) return scan;
+      }
+      return null;
+    }
+
+    final baseline = findById(baselineScanId);
+    final followUp = findById(followUpScanId);
+
+    if (baseline == null || followUp == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Compare to Baseline')),
+        body: const Center(
+          child: Text('Unable to load baseline/follow-up pair.'),
+        ),
+      );
+    }
+
+    Widget imagePanel({
+      required ScanHistoryEntry entry,
+      required String label,
+      required Color badgeColor,
+    }) {
+      final bytes = _PhotoGalleryScreenState._decodeImagePath(entry.imagePath);
+      final source = sourceResolver(entry);
+      return Expanded(
+        child: Container(
+          margin: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.borders),
+          ),
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: badgeColor.withValues(alpha: 0.14),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(14),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: badgeColor,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        label,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        source.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.refinedSlate,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: bytes != null
+                    ? Image.memory(bytes, fit: BoxFit.contain)
+                    : const Center(
+                        child: Icon(
+                          Icons.broken_image_outlined,
+                          size: 40,
+                          color: AppColors.refinedSlate,
+                        ),
+                      ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F2EC),
+      appBar: AppBar(
+        title: const Text('Compare to Baseline'),
+        backgroundColor: Colors.white,
+        foregroundColor: AppColors.refinedSlate,
+      ),
+      body: Row(
+        children: [
+          imagePanel(
+            entry: baseline,
+            label: 'BASELINE',
+            badgeColor: const Color(0xFF2E7D32),
+          ),
+          imagePanel(
+            entry: followUp,
+            label: 'FOLLOW-UP',
+            badgeColor: const Color(0xFF244A73),
+          ),
+        ],
       ),
     );
   }

@@ -64,22 +64,35 @@ void main() {
       () async {
         const procedureId = 'proc_baseline_test';
 
-        await AppPrefs.addScanMetric(
-          const SkinMetrics(redness: 4.0),
-          procedureId: procedureId,
-          imagePath: 'data:image/jpeg;base64,first',
+        await AppPrefs.addScanEntry(
+          ScanHistoryEntry(
+            id: 'scan_first',
+            timestamp: DateTime.parse('2026-05-01T00:00:00.000Z'),
+            procedureId: procedureId,
+            imagePath: 'data:image/jpeg;base64,first',
+            estimatedSkinAge: 30,
+            metrics: const {'redness': 4.0},
+          ),
         );
-        await Future<void>.delayed(const Duration(milliseconds: 2));
-        await AppPrefs.addScanMetric(
-          const SkinMetrics(redness: 3.0),
-          procedureId: procedureId,
-          imagePath: 'data:image/jpeg;base64,second',
+        await AppPrefs.addScanEntry(
+          ScanHistoryEntry(
+            id: 'scan_second',
+            timestamp: DateTime.parse('2026-05-02T00:00:00.000Z'),
+            procedureId: procedureId,
+            imagePath: 'data:image/jpeg;base64,second',
+            estimatedSkinAge: 30,
+            metrics: const {'redness': 3.0},
+          ),
         );
-        await Future<void>.delayed(const Duration(milliseconds: 2));
-        await AppPrefs.addScanMetric(
-          const SkinMetrics(redness: 2.0),
-          procedureId: procedureId,
-          imagePath: 'data:image/jpeg;base64,third',
+        await AppPrefs.addScanEntry(
+          ScanHistoryEntry(
+            id: 'scan_third',
+            timestamp: DateTime.parse('2026-05-03T00:00:00.000Z'),
+            procedureId: procedureId,
+            imagePath: 'data:image/jpeg;base64,third',
+            estimatedSkinAge: 30,
+            metrics: const {'redness': 2.0},
+          ),
         );
 
         final procedureScans = (await AppPrefs.getScanEntries())
@@ -104,7 +117,7 @@ void main() {
     );
 
     test(
-      'legacy procedure scans are normalized so the oldest photo becomes baseline',
+      'legacy procedure scans normalize baseline to absolute oldest scan',
       () async {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString(
@@ -154,6 +167,176 @@ void main() {
         );
         expect(comparison['baselineImagePath'], 'first');
         expect(comparison['latestImagePath'], 'third');
+      },
+    );
+
+    test(
+      'addScanEntry keeps oldest baseline while latest stays newest scan',
+      () async {
+        const procedureId = 'proc_add_scan_entry_pin_baseline';
+        final t0 = DateTime.parse('2026-06-01T10:00:00.000Z');
+        final t0b = DateTime.parse('2026-06-01T10:00:01.000Z');
+        final t1 = DateTime.parse('2026-06-02T10:00:00.000Z');
+
+        final baselineEntry = ScanHistoryEntry(
+          id: 'scan_b',
+          timestamp: t0,
+          procedureId: procedureId,
+          imagePath: 'baseline.jpg',
+          estimatedSkinAge: 30,
+          metrics: const {'redness': 5.0},
+          isBaseline: false,
+        );
+        final firstHistory = await AppPrefs.addScanEntry(baselineEntry);
+        expect(firstHistory.length, 1);
+
+        final firstComparison = await AppPrefs.getProcedurePhotoComparison(
+          procedureId,
+        );
+        expect(firstComparison['baselineScanId'], 'scan_b');
+        expect(firstComparison['latestScanId'], 'scan_b');
+
+        final sameDayFollowUp = ScanHistoryEntry(
+          id: 'scan_a',
+          timestamp: t0b,
+          procedureId: procedureId,
+          imagePath: 'followup_same_day.jpg',
+          estimatedSkinAge: 30,
+          metrics: const {'redness': 4.0},
+          isBaseline: true,
+        );
+        await AppPrefs.addScanEntry(sameDayFollowUp);
+
+        final secondComparison = await AppPrefs.getProcedurePhotoComparison(
+          procedureId,
+        );
+        expect(secondComparison['baselineScanId'], 'scan_b');
+        expect(secondComparison['latestScanId'], 'scan_a');
+
+        final newestFollowUp = ScanHistoryEntry(
+          id: 'scan_z',
+          timestamp: t1,
+          procedureId: procedureId,
+          imagePath: 'followup_newest.jpg',
+          estimatedSkinAge: 29,
+          metrics: const {'redness': 3.0},
+          isBaseline: true,
+        );
+        await AppPrefs.addScanEntry(newestFollowUp);
+
+        final thirdComparison = await AppPrefs.getProcedurePhotoComparison(
+          procedureId,
+        );
+        expect(thirdComparison['baselineScanId'], 'scan_b');
+        expect(thirdComparison['latestScanId'], 'scan_z');
+
+        final intermediateUploadedLater = ScanHistoryEntry(
+          id: 'scan_m',
+          timestamp: DateTime.parse('2026-06-01T15:00:00.000Z'),
+          procedureId: procedureId,
+          imagePath: 'intermediate.jpg',
+          estimatedSkinAge: 29,
+          metrics: const {'redness': 3.5},
+          isBaseline: true,
+        );
+        await AppPrefs.addScanEntry(intermediateUploadedLater);
+
+        final fourthComparison = await AppPrefs.getProcedurePhotoComparison(
+          procedureId,
+        );
+        expect(fourthComparison['baselineScanId'], 'scan_b');
+        expect(fourthComparison['latestScanId'], 'scan_z');
+
+        final procedureScans = (await AppPrefs.getScanEntries())
+            .where((entry) => entry.procedureId == procedureId)
+            .toList();
+        expect(procedureScans.length, 4);
+        expect(procedureScans.where((entry) => entry.isBaseline).length, 1);
+        expect(
+          procedureScans.singleWhere((entry) => entry.isBaseline).id,
+          'scan_b',
+        );
+      },
+    );
+
+    test(
+      'addScanEntry follow-ups keep parentBaselineId and never flip baseline',
+      () async {
+        const procedureId = 'proc_followup_parent_link';
+        final t0 = DateTime.parse('2026-06-10T10:00:00.000Z');
+        final t1 = DateTime.parse('2026-06-11T10:00:00.000Z');
+        final t2 = DateTime.parse('2026-06-12T10:00:00.000Z');
+
+        await AppPrefs.addScanEntry(
+          ScanHistoryEntry(
+            id: 'baseline_scan',
+            timestamp: t0,
+            procedureId: procedureId,
+            imagePath: 'baseline.jpg',
+            estimatedSkinAge: 30,
+            metrics: const {'redness': 5.0},
+            isBaseline: false,
+          ),
+        );
+
+        await AppPrefs.addScanEntry(
+          ScanHistoryEntry(
+            id: 'followup_second',
+            timestamp: t1,
+            procedureId: procedureId,
+            imagePath: 'followup_second.jpg',
+            estimatedSkinAge: 29,
+            metrics: const {'redness': 4.0},
+            isBaseline: true,
+          ),
+        );
+
+        await AppPrefs.addScanEntry(
+          ScanHistoryEntry(
+            id: 'followup_third',
+            timestamp: t2,
+            procedureId: procedureId,
+            imagePath: 'followup_third.jpg',
+            estimatedSkinAge: 28,
+            metrics: const {'redness': 3.0},
+            isBaseline: true,
+          ),
+        );
+
+        final procedureScans = (await AppPrefs.getScanEntries())
+            .where((entry) => entry.procedureId == procedureId)
+            .toList();
+
+        final baseline = procedureScans.singleWhere(
+          (entry) => entry.id == 'baseline_scan',
+        );
+        final second = procedureScans.singleWhere(
+          (entry) => entry.id == 'followup_second',
+        );
+        final third = procedureScans.singleWhere(
+          (entry) => entry.id == 'followup_third',
+        );
+
+        expect(baseline.isBaseline, isTrue);
+        expect(baseline.parentBaselineId, isNull);
+
+        expect(second.isBaseline, isFalse);
+        expect(second.parentBaselineId, 'baseline_scan');
+
+        expect(third.isBaseline, isFalse);
+        expect(third.parentBaselineId, 'baseline_scan');
+
+        expect(procedureScans.where((entry) => entry.isBaseline).length, 1);
+        expect(
+          procedureScans.singleWhere((entry) => entry.isBaseline).id,
+          'baseline_scan',
+        );
+
+        final comparison = await AppPrefs.getProcedurePhotoComparison(
+          procedureId,
+        );
+        expect(comparison['baselineScanId'], 'baseline_scan');
+        expect(comparison['latestScanId'], 'followup_third');
       },
     );
   });

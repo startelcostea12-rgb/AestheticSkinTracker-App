@@ -1522,47 +1522,49 @@ class AiIntelligenceEngine {
       final sortedScans = List<ScanHistoryEntry>.from(scans)
         ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
       final latest = sortedScans.first;
-      final previous = sortedScans[1];
+      final baseline = sortedScans.last;
 
-      final latestMetrics = latest.toSkinMetrics();
-      final prevMetrics = previous.toSkinMetrics();
-      if (isBodyProcedure) {
-        final bodyMetricSet = getMetricsForProcedure(
-          procedureMetricContextType(
-            procedureType: procedures.first.type,
-            customDescription: procedures.first.customDescription,
-            focusArea: procedures.first.focusArea,
-          ),
-        );
-        for (final metric in bodyMetricSet.additional.take(3)) {
-          final trendInsight = _generateTrendInsight(
-            metricLabel: metric.label,
-            latest: metric.valueFor(latestMetrics, rawMetrics: latest.metrics),
-            previous: metric.valueFor(
-              prevMetrics,
-              rawMetrics: previous.metrics,
+      if (baseline.id != latest.id) {
+        final latestMetrics = latest.toSkinMetrics();
+        final baselineMetrics = baseline.toSkinMetrics();
+        if (isBodyProcedure) {
+          final bodyMetricSet = getMetricsForProcedure(
+            procedureMetricContextType(
+              procedureType: procedures.first.type,
+              customDescription: procedures.first.customDescription,
+              focusArea: procedures.first.focusArea,
             ),
-            lowerIsBetter: metric.lowerIsBetter,
-            bodyRecoveryLanguage: true,
           );
-          if (trendInsight != null) insights.add(trendInsight);
-        }
-      } else {
-        final rednessInsight = _generateTrendInsight(
-          metricLabel: 'Erythema',
-          latest: latestMetrics.redness,
-          previous: prevMetrics.redness,
-          lowerIsBetter: true,
-        );
-        if (rednessInsight != null) insights.add(rednessInsight);
+          for (final metric in bodyMetricSet.additional.take(3)) {
+            final trendInsight = _generateTrendInsight(
+              metricLabel: metric.label,
+              latest: metric.valueFor(latestMetrics, rawMetrics: latest.metrics),
+              baseline: metric.valueFor(
+                baselineMetrics,
+                rawMetrics: baseline.metrics,
+              ),
+              lowerIsBetter: metric.lowerIsBetter,
+              bodyRecoveryLanguage: true,
+            );
+            if (trendInsight != null) insights.add(trendInsight);
+          }
+        } else {
+          final rednessInsight = _generateTrendInsight(
+            metricLabel: 'Erythema',
+            latest: latestMetrics.redness,
+            baseline: baselineMetrics.redness,
+            lowerIsBetter: true,
+          );
+          if (rednessInsight != null) insights.add(rednessInsight);
 
-        final textureInsight = _generateTrendInsight(
-          metricLabel: 'Skin Texture Quality',
-          latest: latestMetrics.texture,
-          previous: prevMetrics.texture,
-          lowerIsBetter: true,
-        );
-        if (textureInsight != null) insights.add(textureInsight);
+          final textureInsight = _generateTrendInsight(
+            metricLabel: 'Skin Texture Quality',
+            latest: latestMetrics.texture,
+            baseline: baselineMetrics.texture,
+            lowerIsBetter: true,
+          );
+          if (textureInsight != null) insights.add(textureInsight);
+        }
       }
 
       // Days since last scan
@@ -1968,11 +1970,11 @@ class AiIntelligenceEngine {
   static BriefingInsight? _generateTrendInsight({
     required String metricLabel,
     required double latest,
-    required double previous,
+    required double baseline,
     required bool lowerIsBetter,
     bool bodyRecoveryLanguage = false,
   }) {
-    final delta = latest - previous;
+    final delta = latest - baseline;
     final improved = lowerIsBetter ? delta < -0.3 : delta > 0.3;
     final worsened = lowerIsBetter ? delta > 0.5 : delta < -0.5;
 
@@ -1980,7 +1982,7 @@ class AiIntelligenceEngine {
 
     if (improved) {
       final fromTo =
-          '${previous.toStringAsFixed(1)} → ${latest.toStringAsFixed(1)}';
+          '${baseline.toStringAsFixed(1)} → ${latest.toStringAsFixed(1)}';
       final magnitude = delta.abs();
       final clinicalContext = bodyRecoveryLanguage
           ? (magnitude >= 1.0
@@ -1996,13 +1998,13 @@ class AiIntelligenceEngine {
         icon: Icons.trending_down_outlined,
         title: '$metricLabel Improving',
         body:
-            '$metricLabel has moved from $fromTo — a ${magnitude.toStringAsFixed(1)}-point improvement since your last scan. $clinicalContext $nextStep',
+            '$metricLabel has moved from $fromTo — a ${magnitude.toStringAsFixed(1)}-point improvement versus baseline. $clinicalContext $nextStep',
         priority: BriefingPriority.low,
         color: const Color(0xFF2E7D32),
       );
     } else {
       final fromTo =
-          '${previous.toStringAsFixed(1)} → ${latest.toStringAsFixed(1)}';
+          '${baseline.toStringAsFixed(1)} → ${latest.toStringAsFixed(1)}';
       final body = bodyRecoveryLanguage
           ? '$metricLabel has shifted from $fromTo (${delta.abs().toStringAsFixed(1)} points in the wrong direction). Review compression fit and wear time, lymphatic drainage cadence, positioning restrictions, hydration/protein intake, and recent activity level. Contact your surgical team if swelling, bruising, asymmetry, warmth, or pain is increasing.'
           : '$metricLabel has risen from $fromTo (+${delta.abs().toStringAsFixed(1)}). An upward shift of this size warrants a review of any recent product changes, environmental exposures (sun, heat, pollution), or disruptions to your routine that may have contributed. Catching this now gives you the best opportunity to course-correct before it becomes a trend.';

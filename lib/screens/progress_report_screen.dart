@@ -22,14 +22,27 @@ class _ProcedureScanGroup {
   _ProcedureScanGroup({
     required this.key,
     required List<ScanHistoryEntry> scans,
+    required this.baselineEntry,
+    required this.latestEntry,
   }) : scans = List<ScanHistoryEntry>.from(scans)
-         ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+         ..sort(_compareScansByTimestampAscThenId);
 
   final String key;
   final List<ScanHistoryEntry> scans;
+  final ScanHistoryEntry baselineEntry;
+  final ScanHistoryEntry latestEntry;
 
-  ScanHistoryEntry get baseline => scans.first;
-  ScanHistoryEntry get latest => scans.last;
+  static int _compareScansByTimestampAscThenId(
+    ScanHistoryEntry a,
+    ScanHistoryEntry b,
+  ) {
+    final ts = a.timestamp.compareTo(b.timestamp);
+    if (ts != 0) return ts;
+    return a.id.compareTo(b.id);
+  }
+
+  ScanHistoryEntry get baseline => baselineEntry;
+  ScanHistoryEntry get latest => latestEntry;
   int get count => scans.length;
 
   String get title {
@@ -57,6 +70,8 @@ class _MetricDelta {
     required this.baselineValue,
     required this.latestValue,
     required this.improved,
+    required this.hasValidComparison,
+    this.isInitialBaseline = false,
   });
 
   final String key;
@@ -64,6 +79,8 @@ class _MetricDelta {
   final double baselineValue;
   final double latestValue;
   final bool improved;
+  final bool hasValidComparison;
+  final bool isInitialBaseline;
 
   double get delta => latestValue - baselineValue;
   double get magnitude => delta.abs();
@@ -91,8 +108,50 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
   List<Procedure> _procedures = [];
   List<TrackedProduct> _trackedProducts = [];
   List<ScanHistoryEntry> _scanEntries = [];
+  Map<String, Map<String, String?>> _procedurePhotoComparisonById = const {};
   bool _isLoading = true;
   int? _latestSkinAge;
+
+  List<ScanHistoryEntry> _sanitizeScanEntries(List<ScanHistoryEntry> allScans) {
+    bool hasPositiveValueInMap(Map<String, dynamic> source) {
+      for (final value in source.values) {
+        if (value is num && value.toDouble() > 0.0) return true;
+      }
+      return false;
+    }
+
+    Map<String, dynamic> asMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return <String, dynamic>{};
+    }
+
+    bool hasDeepPositiveMetric(ScanHistoryEntry scan) {
+      final raw = asMap(scan.rawPayload);
+      if (raw.isEmpty) return false;
+      if (hasPositiveValueInMap(raw)) return true;
+      final matrix = asMap(raw['metric_matrix']);
+      if (hasPositiveValueInMap(matrix)) return true;
+      final opencv = asMap(raw['opencv_metrics']);
+      if (hasPositiveValueInMap(opencv)) return true;
+      final metrics = asMap(raw['metrics']);
+      if (hasPositiveValueInMap(metrics)) return true;
+      final nestedMatrix = asMap(metrics['metric_matrix']);
+      if (hasPositiveValueInMap(nestedMatrix)) return true;
+      final nestedOpencv = asMap(metrics['opencv_metrics']);
+      if (hasPositiveValueInMap(nestedOpencv)) return true;
+      return false;
+    }
+
+    final validScans = allScans.where((scan) {
+      final metrics = scan.metrics;
+      final hasFlattenedMetrics =
+          metrics.isNotEmpty && metrics.values.any((val) => val > 0.0);
+      return hasFlattenedMetrics || hasDeepPositiveMetric(scan);
+    }).toList();
+    validScans.sort(_ProcedureScanGroup._compareScansByTimestampAscThenId);
+    return validScans;
+  }
 
   @override
   void initState() {
@@ -104,7 +163,30 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
           ? 2
           : widget.initialTabIndex.clamp(0, 3),
     );
+    _loadScanHistory();
     _loadProcedures();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _loadScanHistory();
+  }
+
+  Future<void> _loadScanHistory() async {
+    try {
+      final allScans = await AppPrefs.getScanEntries();
+      final validScans = _sanitizeScanEntries(allScans);
+      for (final scan in validScans) {
+        print('DEBUG SCAN ENTRY METRICS: ${scan.metrics}');
+      }
+      if (!mounted) return;
+      setState(() {
+        _scanEntries = validScans;
+      });
+    } catch (_) {
+      // Ignore refresh errors here; full load path handles surface state.
+    }
   }
 
   Future<void> _loadProcedures() async {
@@ -121,9 +203,20 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
               .toList()
             ..sort((a, b) => b.startDate.compareTo(a.startDate));
 
-      final scans = results[1] as List<ScanHistoryEntry>;
+      final scans = _sanitizeScanEntries(results[1] as List<ScanHistoryEntry>);
       final products = (results[2] as List<TrackedProduct>)
         ..sort((a, b) => b.startDate.compareTo(a.startDate));
+      final comparisonMapByProcedure = <String, Map<String, String?>>{};
+      final procedureIds = scans
+          .map((scan) => (scan.procedureId ?? '').trim())
+          .where((id) => id.isNotEmpty)
+          .toSet();
+      for (final procedureId in procedureIds) {
+        final comparison = await AppPrefs.getProcedurePhotoComparison(
+          procedureId,
+        );
+        comparisonMapByProcedure[procedureId] = comparison;
+      }
       int? skinAge;
       if (scans.isNotEmpty) {
         final latest = scans.reduce(
@@ -138,8 +231,8 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
       setState(() {
         _procedures = procedures;
         _trackedProducts = products;
-        _scanEntries = List<ScanHistoryEntry>.from(scans)
-          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        _scanEntries = scans;
+        _procedurePhotoComparisonById = comparisonMapByProcedure;
         _latestSkinAge = skinAge;
         _isLoading = false;
       });
@@ -169,12 +262,55 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
 
     final groups =
         grouped.entries
-            .map(
-              (entry) =>
-                  _ProcedureScanGroup(key: entry.key, scans: entry.value),
-            )
+            .map((entry) {
+              final ordered = List<ScanHistoryEntry>.from(entry.value)
+                ..sort(_ProcedureScanGroup._compareScansByTimestampAscThenId);
+              final procedureId = ordered
+                  .map((scan) => (scan.procedureId ?? '').trim())
+                  .firstWhere((id) => id.isNotEmpty, orElse: () => '');
+              final comparison = procedureId.isNotEmpty
+                  ? _procedurePhotoComparisonById[procedureId]
+                  : null;
+
+              final baselineScanId =
+                  comparison?['baselineScanId']?.trim();
+              final latestScanId = comparison?['latestScanId']?.trim();
+
+              ScanHistoryEntry? baseline;
+              if (baselineScanId != null && baselineScanId.isNotEmpty) {
+                for (final scan in ordered) {
+                  if (scan.id == baselineScanId) {
+                    baseline = scan;
+                    break;
+                  }
+                }
+              }
+              baseline ??= ordered.first;
+
+              ScanHistoryEntry? latest;
+              if (latestScanId != null && latestScanId.isNotEmpty) {
+                for (final scan in ordered.reversed) {
+                  if (scan.id == latestScanId) {
+                    latest = scan;
+                    break;
+                  }
+                }
+              }
+              latest ??= ordered.last;
+
+              return _ProcedureScanGroup(
+                key: entry.key,
+                scans: ordered,
+                baselineEntry: baseline,
+                latestEntry: latest,
+              );
+            })
             .toList()
-          ..sort((a, b) => b.latest.timestamp.compareTo(a.latest.timestamp));
+          ..sort((a, b) {
+            final ts = b.latest.timestamp.compareTo(a.latest.timestamp);
+            if (ts != 0) return ts;
+            return a.latest.id.compareTo(b.latest.id);
+          });
     return groups;
   }
 
@@ -187,29 +323,86 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
     ScanHistoryEntry baseline,
     ScanHistoryEntry latest,
   ) {
+    print('DEBUG SCAN ENTRY METRICS: ${baseline.metrics}');
+    print('DEBUG SCAN ENTRY METRICS: ${latest.metrics}');
     final rows = <_MetricDelta>[];
     final baselineRows = ScanDetailScreen.displayMetricsFor(baseline);
     final latestRows = ScanDetailScreen.displayMetricsFor(latest);
+    final isSingleScan = baseline.id == latest.id;
+
+    if (isSingleScan) {
+      for (final latestRow in latestRows) {
+        final currentValue = ScanDetailScreen.normalizeMetricValueTo100(
+          latestRow.key,
+          ScanDetailScreen.extractBackendMetricValue(latest, latestRow.key),
+        );
+        if (!currentValue.isFinite || currentValue <= 0.0) {
+          continue;
+        }
+        rows.add(
+          _MetricDelta(
+            key: latestRow.key,
+            label: latestRow.label,
+            baselineValue: currentValue,
+            latestValue: currentValue,
+            improved: false,
+            hasValidComparison: true,
+            isInitialBaseline: true,
+          ),
+        );
+      }
+      rows.sort((a, b) => b.latestValue.compareTo(a.latestValue));
+      return rows;
+    }
+
     for (final latestRow in latestRows) {
       final baselineMatches = baselineRows.where(
         (row) => row.key == latestRow.key || row.label == latestRow.label,
       );
       if (baselineMatches.isEmpty) continue;
-      final baselineRow = baselineMatches.first;
-      final baselineValue = baselineRow.value;
-      final latestValue = latestRow.value;
+      final extractedBaseline = ScanDetailScreen.extractBackendMetricValue(
+        baseline,
+        latestRow.key,
+      );
+      final extractedCurrent = ScanDetailScreen.extractBackendMetricValue(
+        latest,
+        latestRow.key,
+      );
+      final normalizedBaselineValue = ScanDetailScreen.normalizeMetricValueTo100(
+        latestRow.key,
+        extractedBaseline,
+      );
+      final latestValue = ScanDetailScreen.normalizeMetricValueTo100(
+        latestRow.key,
+        extractedCurrent,
+      );
+      final baselineValue = ScanDetailScreen.normalizeLegacyBaselineForDelta(
+        latestRow.key,
+        normalizedBaselineValue,
+        latestValue,
+      );
+      final hasValidComparison =
+          baselineValue.isFinite &&
+          latestValue.isFinite &&
+          baselineValue > 0.0 &&
+          latestValue > 0.0;
       final delta = latestValue - baselineValue;
-      if (delta.abs() < 0.05) continue;
       final higherIsBetter = ScanDetailScreen._higherIsBetterMetric(
         latestRow.key,
       );
+
+      if (hasValidComparison && delta.abs() < 0.05) continue;
+
       rows.add(
         _MetricDelta(
           key: latestRow.key,
           label: latestRow.label,
           baselineValue: baselineValue,
           latestValue: latestValue,
-          improved: higherIsBetter ? delta > 0 : delta < 0,
+          improved: hasValidComparison
+              ? (higherIsBetter ? delta > 0 : delta < 0)
+              : false,
+          hasValidComparison: hasValidComparison,
         ),
       );
     }
@@ -264,21 +457,9 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
     } else {
       repositoryItems = scans;
     }
-    final title = switch (scanType) {
-      ScanHistoryEntry.scanTypeProcedure => 'No procedure scans yet',
-      ScanHistoryEntry.scanTypeSkincare => 'No skincare logs yet',
-      ScanHistoryEntry.scanTypeAiAnalysis => 'No AI analyses yet',
-      _ => 'No scans saved yet',
-    };
-    final subtitle = switch (scanType) {
-      ScanHistoryEntry.scanTypeProcedure =>
-        'Procedure progress captures will appear here after your next scan.',
-      ScanHistoryEntry.scanTypeSkincare =>
-        'Skincare product check-ins and face scans will appear here.',
-      ScanHistoryEntry.scanTypeAiAnalysis =>
-        'Run Skin AI Analysis to automatically save deep-analysis results here.',
-      _ => 'Procedure scans, skincare logs, and AI analyses will collect here.',
-    };
+    const title = 'No Scans Recorded Yet - Take Your First Scan';
+    const subtitle =
+        'Once you complete your first scan, your progress metrics will appear here.';
 
     if (scans.isEmpty) {
       return Center(
@@ -348,8 +529,15 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
       color: AppColors.refinedSlate,
     );
     final deltas = _metricDeltas(group.baseline, group.latest);
-    final improvedCount = deltas.where((delta) => delta.improved).length;
-    final worsenedCount = deltas.length - improvedCount;
+    final hasInitialBaseline = deltas.any((delta) => delta.isInitialBaseline);
+    final comparable = deltas.where((delta) => delta.hasValidComparison);
+    final improvedCount = hasInitialBaseline
+      ? 0
+      : comparable.where((delta) => delta.improved).length;
+    final worsenedCount = hasInitialBaseline
+      ? 0
+      : comparable.length - improvedCount;
+    final pendingCount = hasInitialBaseline ? 0 : deltas.length - comparable.length;
     final dateRange = group.count > 1
         ? '${_shortDate(group.baseline.timestamp)} -> ${_shortDate(group.latest.timestamp)}'
         : _shortDate(group.latest.timestamp);
@@ -472,7 +660,14 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
                                     AppColors.softTerracotta,
                                     Icons.trending_down_rounded,
                                   ),
-                                ...deltas.take(2).map(_deltaPreviewChip),
+                                if (pendingCount > 0)
+                                  _summaryChip(
+                                    '$pendingCount pending baseline',
+                                    AppColors.refinedSlate,
+                                    Icons.schedule_rounded,
+                                  ),
+                                if (!hasInitialBaseline)
+                                  ...deltas.take(2).map(_deltaPreviewChip),
                               ],
                       ),
                     ],
@@ -694,6 +889,53 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
 
   Widget _buildReportsLanding() {
     if (_isLoading) return const Center(child: CircularProgressIndicator());
+
+    if (_scanEntries.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
+            decoration: BoxDecoration(
+              color: AppColors.cardBackground,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: AppColors.borders),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.photo_library_outlined,
+                  color: AppColors.champagneGold,
+                  size: 40,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'No Scans Recorded Yet - Take Your First Scan',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: MyApp.textBrown,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Complete your first scan to unlock progress metrics and trend tracking.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: MyApp.textBrown.withValues(alpha: 0.66),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
 
     final procedureScans = _filteredScans(ScanHistoryEntry.scanTypeProcedure);
     final skincareScans = _filteredScans(ScanHistoryEntry.scanTypeSkincare);
@@ -1034,6 +1276,10 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
   }
 
   Widget _metricChip(String key, double value, Color color) {
+    final normalizedValue = ScanDetailScreen.normalizeMetricValueTo100(
+      key,
+      value,
+    );
     final label = key.replaceAll('_', ' ').replaceAllMapped(
       RegExp(r'([a-z])([A-Z])'),
       (match) {
@@ -1048,7 +1294,7 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
         border: Border.all(color: color.withValues(alpha: 0.18)),
       ),
       child: Text(
-        '${label.toUpperCase()} ${value.toStringAsFixed(1)}',
+        '${label.toUpperCase()} ${normalizedValue.toStringAsFixed(1)}',
         style: TextStyle(
           color: MyApp.textBrown.withValues(alpha: 0.72),
           fontSize: 9.8,
@@ -1323,7 +1569,7 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
                   Text(
                     _latestSkinAge != null
                         ? 'Based on your latest AI skin metrics'
-                        : 'No scans yet - take one to estimate',
+                        : 'No Scans Recorded Yet - Take Your First Scan',
                     style: TextStyle(
                       color: MyApp.textBrown.withValues(alpha: 0.65),
                       fontSize: 12.5,
@@ -2036,8 +2282,16 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
     final latest = group.latest;
     final focus = group.focus;
     final deltas = _metricDeltas(baseline, latest);
-    final improvedCount = deltas.where((delta) => delta.improved).length;
-    final worsenedCount = deltas.length - improvedCount;
+    final visibleDeltas = deltas.where((delta) => !delta.isInitialBaseline).toList();
+    final hasInitialBaseline = deltas.any((delta) => delta.isInitialBaseline);
+    final comparable = deltas.where((delta) => delta.hasValidComparison);
+    final improvedCount = hasInitialBaseline
+      ? 0
+      : comparable.where((delta) => delta.improved).length;
+    final worsenedCount = hasInitialBaseline
+      ? 0
+      : comparable.length - improvedCount;
+    final pendingCount = hasInitialBaseline ? 0 : deltas.length - comparable.length;
 
     return Scaffold(
       appBar: AppBar(
@@ -2146,6 +2400,12 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
                         '$worsenedCount worsened',
                         AppColors.softTerracotta,
                       ),
+                    if (pendingCount > 0)
+                      _infoPill(
+                        Icons.schedule_rounded,
+                        '$pendingCount pending baseline',
+                        AppColors.refinedSlate,
+                      ),
                   ],
                 ),
               ],
@@ -2158,10 +2418,10 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
             textColor: AppColors.refinedSlate,
           ),
           const SizedBox(height: 10),
-          if (deltas.isEmpty)
+          if (visibleDeltas.isEmpty)
             _emptyMetricsCard()
           else
-            ...deltas.map(_metricDeltaRow),
+            ...visibleDeltas.map(_metricDeltaRow),
         ],
       ),
     );
@@ -2221,14 +2481,47 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
   }
 
   Widget _metricDeltaRow(_MetricDelta delta) {
-    final color = delta.improved
-        ? AppColors.mutedSage
-        : AppColors.softTerracotta;
+    final baselineValue = delta.baselineValue;
+    final currentValue = delta.latestValue;
+    print('REPORT CARD [${delta.label}]: Baseline=$baselineValue -> Current=$currentValue');
+    final adjustedBaselineForDelta =
+        ScanDetailScreen.normalizeLegacyBaselineForDelta(
+      delta.key,
+      baselineValue,
+      currentValue,
+    );
+    final hasNonPositiveBaselineOrCurrent =
+      baselineValue <= 0.0 || currentValue <= 0.0;
+    final baselinePresent =
+        adjustedBaselineForDelta.isFinite && adjustedBaselineForDelta > 0.0;
+    final currentPresent = currentValue.isFinite && currentValue > 0.0;
+    final canShowPercentageBadge =
+      !hasNonPositiveBaselineOrCurrent && baselinePresent && currentPresent;
+    final color = canShowPercentageBadge
+      ? (delta.improved
+          ? AppColors.mutedSage
+          : AppColors.softTerracotta)
+      : AppColors.refinedSlate;
     final directionIcon = delta.delta > 0
-        ? Icons.arrow_upward_rounded
-        : Icons.arrow_downward_rounded;
-    final deltaPrefix = delta.delta > 0 ? '+' : '';
+      ? Icons.arrow_upward_rounded
+      : Icons.arrow_downward_rounded;
     final trendLabel = delta.improved ? 'Improved' : 'Worsened';
+    final percentDelta = canShowPercentageBadge
+      ? ((currentValue - adjustedBaselineForDelta) / adjustedBaselineForDelta) *
+          100.0
+      : 0.0;
+    double? badgePercent = canShowPercentageBadge ? percentDelta : null;
+    String subtext;
+    if (currentValue <= 0.0 || baselineValue <= 0.0) {
+      badgePercent = null;
+      subtext = 'Tracks visible appearance in key zones';
+    } else {
+      final percentPrefix = percentDelta > 0 ? '+' : '';
+      subtext = '$trendLabel $percentPrefix${percentDelta.toStringAsFixed(1)}%';
+    }
+    final deltaTextColor = (currentValue <= 0.0 || baselineValue <= 0.0)
+      ? AppColors.refinedSlate.withValues(alpha: 0.72)
+      : color;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Container(
@@ -2253,39 +2546,51 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.11),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(directionIcon, color: color, size: 13),
-                      const SizedBox(width: 4),
-                      Text(
-                        '$trendLabel $deltaPrefix${delta.delta.toStringAsFixed(1)}',
-                        style: TextStyle(
-                          color: color,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w900,
+                if (badgePercent != null && currentValue > 0.0 && baselineValue > 0.0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.11),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(directionIcon, color: color, size: 13),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$trendLabel ${badgePercent > 0 ? '+' : ''}${badgePercent.toStringAsFixed(1)}%',
+                          style: TextStyle(
+                            color: color,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                ),
+                      ],
+                    ),
+                  )
+                else
+                  const SizedBox.shrink(),
               ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              subtext,
+              style: TextStyle(
+                color: deltaTextColor,
+                fontSize: 11.2,
+                fontWeight: FontWeight.w800,
+              ),
             ),
             const SizedBox(height: 10),
             Row(
               children: [
-                Expanded(child: _valueColumn('Baseline', delta.baselineValue)),
+                Expanded(child: _valueColumn('Baseline', baselineValue)),
                 const SizedBox(width: 10),
-                Expanded(child: _valueColumn('Latest', delta.latestValue)),
+                Expanded(child: _valueColumn('Latest', currentValue)),
               ],
             ),
             const SizedBox(height: 10),
@@ -2293,7 +2598,7 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
               borderRadius: BorderRadius.circular(999),
               child: LinearProgressIndicator(
                 minHeight: 7,
-                value: ScanDetailScreen._metricProgressValue(delta.latestValue),
+                value: ScanDetailScreen._metricProgressValue(currentValue),
                 backgroundColor: AppColors.borders.withValues(alpha: 0.65),
                 valueColor: AlwaysStoppedAnimation<Color>(color),
               ),
@@ -2305,6 +2610,7 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
   }
 
   Widget _valueColumn(String label, double value) {
+    final normalized = ScanDetailScreen.normalizeMetricValueTo100(label, value);
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
@@ -2316,7 +2622,7 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            value > 10 ? value.toStringAsFixed(0) : value.toStringAsFixed(1),
+            normalized.toStringAsFixed(1),
             style: const TextStyle(
               color: AppColors.refinedSlate,
               fontSize: 15,
@@ -2471,29 +2777,84 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
     ScanHistoryEntry baseline,
     ScanHistoryEntry latest,
   ) {
+    print('DEBUG SCAN ENTRY METRICS: ${baseline.metrics}');
+    print('DEBUG SCAN ENTRY METRICS: ${latest.metrics}');
     final rows = <_MetricDelta>[];
     final baselineRows = ScanDetailScreen.displayMetricsFor(baseline);
     final latestRows = ScanDetailScreen.displayMetricsFor(latest);
+    final isSingleScan = baseline.id == latest.id;
+
+    if (isSingleScan) {
+      for (final latestRow in latestRows) {
+        final currentValue = ScanDetailScreen.normalizeMetricValueTo100(
+          latestRow.key,
+          ScanDetailScreen.extractBackendMetricValue(latest, latestRow.key),
+        );
+        if (!currentValue.isFinite || currentValue <= 0.0) continue;
+        rows.add(
+          _MetricDelta(
+            key: latestRow.key,
+            label: latestRow.label,
+            baselineValue: currentValue,
+            latestValue: currentValue,
+            improved: false,
+            hasValidComparison: true,
+            isInitialBaseline: true,
+          ),
+        );
+      }
+      rows.sort((a, b) => b.latestValue.compareTo(a.latestValue));
+      return rows;
+    }
+
     for (final latestRow in latestRows) {
       final baselineMatches = baselineRows.where(
         (row) => row.key == latestRow.key || row.label == latestRow.label,
       );
       if (baselineMatches.isEmpty) continue;
-      final baselineRow = baselineMatches.first;
-      final baselineValue = baselineRow.value;
-      final latestValue = latestRow.value;
+      final extractedBaseline = ScanDetailScreen.extractBackendMetricValue(
+        baseline,
+        latestRow.key,
+      );
+      final extractedCurrent = ScanDetailScreen.extractBackendMetricValue(
+        latest,
+        latestRow.key,
+      );
+      final normalizedBaselineValue = ScanDetailScreen.normalizeMetricValueTo100(
+        latestRow.key,
+        extractedBaseline,
+      );
+      final latestValue = ScanDetailScreen.normalizeMetricValueTo100(
+        latestRow.key,
+        extractedCurrent,
+      );
+      final baselineValue = ScanDetailScreen.normalizeLegacyBaselineForDelta(
+        latestRow.key,
+        normalizedBaselineValue,
+        latestValue,
+      );
+      final hasValidComparison =
+          baselineValue.isFinite &&
+          latestValue.isFinite &&
+          baselineValue > 0.0 &&
+          latestValue > 0.0;
       final delta = latestValue - baselineValue;
-      if (delta.abs() < 0.05) continue;
       final higherIsBetter = ScanDetailScreen._higherIsBetterMetric(
         latestRow.key,
       );
+
+      if (hasValidComparison && delta.abs() < 0.05) continue;
+
       rows.add(
         _MetricDelta(
           key: latestRow.key,
           label: latestRow.label,
           baselineValue: baselineValue,
           latestValue: latestValue,
-          improved: higherIsBetter ? delta > 0 : delta < 0,
+          improved: hasValidComparison
+              ? (higherIsBetter ? delta > 0 : delta < 0)
+              : false,
+          hasValidComparison: hasValidComparison,
         ),
       );
     }
@@ -2695,7 +3056,11 @@ class ScanDetailScreen extends StatelessWidget {
             _qualityGrid(qualityRows),
           ],
           const SizedBox(height: 18),
-          if (scan.isAiAnalysisScan) ...[
+          if (scan.isAiAnalysisScan && scan.isBaseline) ...[
+            _sectionTitle(Icons.flag_rounded, 'Baseline Captured'),
+            const SizedBox(height: 10),
+            _baselineComparisonPendingCard(),
+          ] else if (scan.isAiAnalysisScan) ...[
             _sectionTitle(Icons.insights_rounded, 'AI Deep Analysis Metrics'),
             const SizedBox(height: 10),
             LuxeReportLayout(rawPayload: _buildLuxePayloadForAiScan()),
@@ -2710,129 +3075,137 @@ class ScanDetailScreen extends StatelessWidget {
   }
 
   Map<String, dynamic> _buildLuxePayloadForAiScan() {
-    final source = scan.metrics;
+    Map<String, dynamic> asMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return <String, dynamic>{};
+    }
 
-    double? valueFor(List<String> keys) {
-      for (final key in keys) {
-        final value = source[key];
-        if (value != null && value.isFinite) return value;
-      }
+    double? readMetricMatrixValue(Map<String, dynamic> data, String key) {
+      final metricMatrix = asMap(data['metric_matrix']);
+      final raw = metricMatrix[key];
+      if (raw is num && raw.isFinite) return raw.toDouble();
+
+      final nestedMetrics = asMap(data['metrics']);
+      final nestedMetricMatrix = asMap(nestedMetrics['metric_matrix']);
+      final nestedRaw = nestedMetricMatrix[key];
+      if (nestedRaw is num && nestedRaw.isFinite) return nestedRaw.toDouble();
+
       return null;
     }
 
-    final trend = <String, dynamic>{};
-    for (final entry in source.entries) {
-      final key = entry.key;
-      if (!key.startsWith('trend_delta_') || !key.endsWith('_pct')) continue;
-      if (!entry.value.isFinite) continue;
-      final metricKey = key
-          .replaceFirst('trend_delta_', '')
-          .replaceFirst('_pct', '');
-      trend[metricKey] = entry.value;
+    final rawPayloadMap = asMap(scan.rawPayload);
+    final mergedPayload = <String, dynamic>{...rawPayloadMap};
+
+    final liveLuxePayload = asMap(rawPayloadMap['luxePayload']);
+    if (liveLuxePayload.isNotEmpty) {
+      mergedPayload.addAll(liveLuxePayload);
+      mergedPayload['metrics'] = {
+        ...asMap(mergedPayload['metrics']),
+        ...asMap(liveLuxePayload['metrics']),
+      };
+      mergedPayload['metric_matrix'] = {
+        ...asMap(mergedPayload['metric_matrix']),
+        ...asMap(liveLuxePayload['metric_matrix']),
+      };
+      mergedPayload['trend_deltas'] = {
+        ...asMap(mergedPayload['trend_deltas']),
+        ...asMap(liveLuxePayload['trend_deltas']),
+      };
     }
 
-    double? scaled0to100(double? value, {bool invertTenScale = false}) {
-      if (value == null || !value.isFinite) return null;
-      if (value <= 10.0) {
-        final normalized = invertTenScale ? (10.0 - value) : value;
-        return (normalized * 10.0).clamp(0.0, 100.0);
+    if (scan.metrics.isNotEmpty) {
+      final metricsMap = Map<String, dynamic>.from(scan.metrics);
+      final nestedMetrics = asMap(mergedPayload['metrics']);
+      mergedPayload['metrics'] = {
+        ...metricsMap,
+        ...nestedMetrics,
+      };
+    }
+
+    DateTime? parseTimestamp(dynamic input) {
+      if (input is DateTime) return input;
+      final raw = input?.toString();
+      if (raw == null || raw.isEmpty) return null;
+      return DateTime.tryParse(raw);
+    }
+
+    final scansNode = mergedPayload['_scans'];
+    final payloadScans = <Map<String, dynamic>>[];
+    if (scansNode is List) {
+      for (final item in scansNode) {
+        final map = asMap(item);
+        if (map.isNotEmpty) payloadScans.add(map);
       }
-      return value.clamp(0.0, 100.0);
+      payloadScans.sort((a, b) {
+        final aTime = parseTimestamp(a['timestamp']);
+        final bTime = parseTimestamp(b['timestamp']);
+        if (aTime == null && bTime == null) return 0;
+        if (aTime == null) return -1;
+        if (bTime == null) return 1;
+        return aTime.compareTo(bTime);
+      });
     }
 
+    final Map<String, dynamic> baselineMap;
+    if (payloadScans.length >= 2) {
+      baselineMap = payloadScans.first;
+    } else if (payloadScans.length == 1) {
+      baselineMap = payloadScans.first;
+    } else {
+      baselineMap = asMap(mergedPayload['baseline']);
+    }
+
+    final source = ScanDetailScreen.backendMetricSource(scan.metrics);
     final matrix = <String, dynamic>{};
-
-    final localizedRedness = scaled0to100(
-      valueFor(const ['localized_redness', 'redness', 'erythema']),
-    );
-    if (localizedRedness != null) {
-      matrix['localized_redness'] = localizedRedness;
+    for (final entry in source.entries) {
+      final normalized = entry.value.clamp(0.0, 100.0).toDouble();
+      if (!normalized.isFinite || normalized <= 0.0) continue;
+      matrix[entry.key] = normalized;
     }
 
-    final textureSmoothness = scaled0to100(
-      valueFor(const ['texture_smoothness', 'texture', 'roughness']),
-      invertTenScale: true,
-    );
-    if (textureSmoothness != null) {
-      matrix['texture_smoothness'] = textureSmoothness;
+    final baselineMatrix = <String, dynamic>{};
+    final currentMatrix = <String, dynamic>{};
+    for (final entry in matrix.entries) {
+      final key = entry.key;
+      final currentValue = (entry.value as num).toDouble();
+      if (!currentValue.isFinite || currentValue <= 0.0) continue;
+
+      currentMatrix[key] = currentValue;
+
+      final baselineFromScan = readMetricMatrixValue(baselineMap, key);
+      final baselineFromMerged = readMetricMatrixValue(mergedPayload, key);
+      final baselineValue = baselineFromScan ?? baselineFromMerged;
+      if (baselineValue == null || !baselineValue.isFinite || baselineValue <= 0.0) {
+        continue;
+      }
+      baselineMatrix[key] = baselineValue.clamp(0.0, 100.0).toDouble();
     }
 
-    final poreVisibility = scaled0to100(
-      valueFor(const ['pore_visibility', 'pores', 'pore']),
-    );
-    if (poreVisibility != null) {
-      matrix['pore_visibility'] = poreVisibility;
-    }
+    final initialBaseline = payloadScans.length == 1;
 
-    final breakoutActivity = scaled0to100(
-      valueFor(const ['breakout_activity', 'acne_severity', 'acneSeverity']),
-    );
-    if (breakoutActivity != null) {
-      matrix['breakout_activity'] = breakoutActivity;
-    }
-
-    final pigmentLoad = scaled0to100(
-      valueFor(const ['pigment_load', 'pigment', 'pigmentation', 'darkSpots']),
-    );
-    if (pigmentLoad != null) {
-      matrix['pigment_load'] = pigmentLoad;
-    }
-
-    final wrinkleLoad = scaled0to100(
-      valueFor(const ['wrinkle_load', 'wrinkle', 'wrinkles', 'rhytids']),
-    );
-    if (wrinkleLoad != null) {
-      matrix['wrinkle_load'] = wrinkleLoad;
-    }
-
-    final sebumGloss = scaled0to100(
-      valueFor(const ['sebum_excess_oil_gloss']),
-    );
-    if (sebumGloss != null) {
-      matrix['sebum_excess_oil_gloss'] = sebumGloss;
-    }
-
-    final flushing = scaled0to100(
-      valueFor(const ['diffuse_flushing_erythema']),
-    );
-    if (flushing != null) {
-      matrix['diffuse_flushing_erythema'] = flushing;
-    }
-
-    final radiance = scaled0to100(
-      valueFor(const ['skin_tone_radiance_evenness']),
-    );
-    if (radiance != null) {
-      matrix['skin_tone_radiance_evenness'] = radiance;
-    }
-
-    final glabellar = scaled0to100(
-      valueFor(const ['glabellar_wrinkle_depth']),
-    );
-    if (glabellar != null) {
-      matrix['glabellar_wrinkle_depth'] = glabellar;
-    }
-
-    final poreContraction = scaled0to100(
-      valueFor(const ['pore_contraction_index']),
-    );
-    if (poreContraction != null) {
-      matrix['pore_contraction_index'] = poreContraction;
-    }
-
-    final firmness = scaled0to100(
-      valueFor(const ['structural_firmness_elasticity']),
-    );
-    if (firmness != null) {
-      matrix['structural_firmness_elasticity'] = firmness;
+    final trendDeltas = <String, dynamic>{};
+    for (final key in currentMatrix.keys) {
+      final baselineValue = (baselineMatrix[key] as num?)?.toDouble();
+      final currentValue = (currentMatrix[key] as num?)?.toDouble();
+      if (initialBaseline || baselineValue == null || currentValue == null) continue;
+      if (baselineValue <= 0.0 || currentValue <= 0.0) continue;
+      final raw = ((currentValue - baselineValue) / baselineValue) * 100.0;
+      if (raw.isFinite) {
+        trendDeltas[key] = raw;
+      }
     }
 
     return {
       'metric_matrix': matrix,
-      'trend_deltas': trend,
+      'trend_deltas': trendDeltas,
+      'baseline': {'metric_matrix': baselineMatrix},
+      'current': {'metric_matrix': currentMatrix},
+      'initial_baseline': initialBaseline,
+      '_scans': payloadScans,
       'metrics': {
         'metric_matrix': matrix,
-        'trend_deltas': trend,
+        'trend_deltas': trendDeltas,
       },
     };
   }
@@ -2851,9 +3224,29 @@ class ScanDetailScreen extends StatelessWidget {
   static List<({String key, String label, double value})> displayMetricsFor(
     ScanHistoryEntry scan,
   ) {
-    final source = scan.metrics;
+    final source = backendMetricSource(scan.metrics);
+    if (source.isEmpty) return const [];
+
+    if (scan.isAiAnalysisScan) {
+      final rows = <({String key, String label, double value})>[];
+      final entries = source.entries.toList()
+        ..sort((a, b) => _metricLabel(a.key).compareTo(_metricLabel(b.key)));
+      for (final entry in entries) {
+        if (entry.key.toLowerCase().endsWith('_detected')) continue;
+        final normalized = normalizeMetricValueTo100(entry.key, entry.value);
+        if (!normalized.isFinite || normalized <= 0.0) continue;
+        rows.add((
+          key: entry.key,
+          label: _metricLabel(entry.key),
+          value: normalized,
+        ));
+      }
+      return rows;
+    }
+
     double? firstValue(List<String> keys) {
-      for (final key in keys) {
+      final lookupKeys = scan.isAiAnalysisScan ? <String>[keys.first] : keys;
+      for (final key in lookupKeys) {
         final value = source[key];
         if (value != null && value.isFinite) return value;
       }
@@ -2861,57 +3254,7 @@ class ScanDetailScreen extends StatelessWidget {
     }
 
     final isBodyProcedure = _isBodyProcedureScan(scan);
-    final preferred = scan.isAiAnalysisScan
-        ? <({String key, String label, List<String> keys})>[
-            (
-              key: 'pigment',
-              label: 'Pigment',
-              keys: ['pigment', 'pigmentation'],
-            ),
-            (key: 'redness', label: 'Redness', keys: ['redness', 'erythema']),
-            (key: 'texture', label: 'Texture', keys: ['texture', 'roughness']),
-            (
-              key: 'wrinkle',
-              label: 'Wrinkle',
-              keys: ['wrinkle', 'wrinkles', 'rhytids'],
-            ),
-            (
-              key: 'acne_severity',
-              label: 'Acne Severity',
-              keys: ['acne_severity', 'acneSeverity'],
-            ),
-            (
-              key: 'rosacea_intensity',
-              label: 'Rosacea Intensity',
-              keys: ['rosacea_intensity', 'rosaceaSeverity'],
-            ),
-            (key: 'swelling', label: 'Swelling', keys: ['swelling', 'edema']),
-            (
-              key: 'firmness',
-              label: 'Firmness',
-              keys: ['firmness', 'bodyFirmness', 'skinLaxityFirmness'],
-            ),
-            (
-              key: 'textureSmoothness',
-              label: 'Texture Smoothness',
-              keys: ['textureSmoothness', 'bodySmoothness'],
-            ),
-            (
-              key: 'hyperpigmentation',
-              label: 'Hyperpigmentation',
-              keys: ['hyperpigmentation', 'darkSpots'],
-            ),
-            (
-              key: 'overallHealingScore',
-              label: 'Overall Healing',
-              keys: [
-                'overallHealingScore',
-                'overall_healing_score',
-                'bodyHealingScore',
-              ],
-            ),
-          ]
-        : isBodyProcedure
+    final preferred = isBodyProcedure
         ? <({String key, String label, List<String> keys})>[
             (
               key: 'fatRetention',
@@ -3061,7 +3404,15 @@ class ScanDetailScreen extends StatelessWidget {
     for (final spec in preferred) {
       final value = firstValue(spec.keys);
       if (value == null) continue;
-      rows.add((key: spec.key, label: spec.label, value: value));
+      final normalized = normalizeMetricValueTo100(spec.key, value);
+      if (!normalized.isFinite || normalized <= 0.0) continue;
+      rows.add(
+        (
+          key: spec.key,
+          label: spec.label,
+          value: normalized,
+        ),
+      );
       consumedKeys.addAll(spec.keys.where((key) => source.containsKey(key)));
       consumedLabels.add(spec.label.toLowerCase());
     }
@@ -3070,6 +3421,7 @@ class ScanDetailScreen extends StatelessWidget {
         source.entries.where((entry) {
           final key = entry.key;
           if (!entry.value.isFinite || consumedKeys.contains(key)) return false;
+          if (_isDerivedTrendOrPercentKey(key)) return false;
           if (key.startsWith('source') || key.startsWith('capture_')) {
             return false;
           }
@@ -3080,15 +3432,16 @@ class ScanDetailScreen extends StatelessWidget {
           (a, b) => _metricLabel(a.key).compareTo(_metricLabel(b.key)),
         );
 
-    rows.addAll(
-      extras.map(
-        (entry) => (
-          key: entry.key,
-          label: _metricLabel(entry.key),
-          value: entry.value,
-        ),
-      ),
-    );
+    for (final entry in extras) {
+      final normalized = normalizeMetricValueTo100(entry.key, entry.value);
+      if (!normalized.isFinite || normalized <= 0.0) continue;
+      rows.add((
+        key: entry.key,
+        label: _metricLabel(entry.key),
+        value: normalized,
+      ));
+    }
+
     return rows;
   }
 
@@ -3216,10 +3569,9 @@ class ScanDetailScreen extends StatelessWidget {
   }
 
   Widget _metricRow(String label, double value, Color accent) {
-    final normalized = _metricProgressValue(value);
-    final displayValue = value > 10
-        ? value.toStringAsFixed(0)
-        : value.toStringAsFixed(1);
+    final normalizedValue = normalizeMetricValueTo100(label, value);
+    final normalized = _metricProgressValue(normalizedValue);
+    final displayValue = normalizedValue.toStringAsFixed(1);
     return Padding(
       padding: const EdgeInsets.only(bottom: 11),
       child: Container(
@@ -3291,6 +3643,47 @@ class ScanDetailScreen extends StatelessWidget {
           color: AppColors.refinedSlate.withValues(alpha: 0.66),
           fontWeight: FontWeight.w700,
         ),
+      ),
+    );
+  }
+
+  Widget _baselineComparisonPendingCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.borders),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.history_rounded, size: 16, color: AppColors.champagneGold),
+              SizedBox(width: 8),
+              Text(
+                'Baseline scan captured',
+                style: TextStyle(
+                  color: AppColors.refinedSlate,
+                  fontSize: 13.2,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          Text(
+            'Comparison metrics unlock after a second scan is recorded. '
+            'Take another scan in 2-4 weeks to view before/after cards and progress summary.',
+            style: TextStyle(
+              color: AppColors.refinedSlate.withValues(alpha: 0.74),
+              fontSize: 11.8,
+              fontWeight: FontWeight.w700,
+              height: 1.4,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -3410,9 +3803,243 @@ class ScanDetailScreen extends StatelessWidget {
   }
 
   static double _metricProgressValue(double value) {
-    if (value <= 1) return value.clamp(0.0, 1.0).toDouble();
-    if (value > 10) return (value.clamp(0, 100) / 100).toDouble();
-    return (value.clamp(0, 10) / 10).toDouble();
+    return (value.clamp(0.0, 100.0) / 100.0).toDouble();
+  }
+
+  static double normalizeMetricValueTo100(String key, double value) {
+    if (!value.isFinite) return 0.0;
+
+    var normalized = value;
+    final normalizedKey = key.toLowerCase().replaceAll('_', '');
+    const tenPointScaleKeys = {
+      'redness',
+      'texture',
+      'wrinkle',
+      'wrinkles',
+      'pores',
+      'pore',
+      'darkspots',
+      'elasticity',
+      'acneseverity',
+      'rosaceaseverity',
+      'swelling',
+      'firmness',
+      'fatretention',
+      'overallhealingscore',
+      'rhytids',
+      'roughness',
+      'pigmentation',
+      'bodyfirmness',
+      'skinlaxityfirmness',
+      'bodysmoothness',
+      'bodyhealingscore',
+      'contoursmoothness',
+      'skinretraction',
+      'volumesatisfaction',
+      'hyperpigmentation',
+      'fibrosislevel',
+    };
+
+    if (tenPointScaleKeys.contains(normalizedKey) &&
+        normalized >= 0.0 &&
+        normalized <= 10.0) {
+      normalized *= 10.0;
+    }
+
+    return (normalized.clamp(0.0, 100.0) as num).toDouble();
+  }
+
+  static double extractBackendMetricValue(dynamic scan, String metricKeyOrTitle) {
+    if (scan == null) return 0.0;
+
+    const canonicalKeys = <String>{
+      'localized_redness',
+      'texture_smoothness',
+      'pigment_load',
+      'wrinkle_load',
+      'pore_visibility',
+      'breakout_activity',
+      'sebum_excess_oil_gloss',
+      'diffuse_flushing_erythema',
+      'skin_tone_radiance_evenness',
+      'glabellar_wrinkle_depth',
+      'under_eye_texture_density',
+      'under_eye_dark_circle_density',
+      'rosacea_severity',
+      'structural_firmness_elasticity',
+      'pore_contraction_index',
+    };
+    if (!canonicalKeys.contains(metricKeyOrTitle)) return 0.0;
+
+    double? parseNumber(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value == null) return null;
+      return double.tryParse(value.toString());
+    }
+
+    Map<String, dynamic> asMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return <String, dynamic>{};
+    }
+
+    double? searchCanonicalKeyInMap(Map<String, dynamic> source, String key) {
+      if (source.isEmpty) return null;
+      final matrix = asMap(source['metric_matrix']);
+      final opencv = asMap(source['opencv_metrics']);
+
+      final direct = parseNumber(source[key]);
+      if (direct != null && direct.isFinite) return direct;
+
+      final matrixValue = parseNumber(matrix[key]);
+      if (matrixValue != null && matrixValue.isFinite) return matrixValue;
+
+      final opencvValue = parseNumber(opencv[key]);
+      if (opencvValue != null && opencvValue.isFinite) return opencvValue;
+
+      final flat1 = parseNumber(source['metric_matrix.$key']);
+      if (flat1 != null && flat1.isFinite) return flat1;
+
+      final flat2 = parseNumber(source['metric_matrix_$key']);
+      if (flat2 != null && flat2.isFinite) return flat2;
+
+      final flat3 = parseNumber(source['opencv_metrics.$key']);
+      if (flat3 != null && flat3.isFinite) return flat3;
+
+      final flat4 = parseNumber(source['opencv_metrics_$key']);
+      if (flat4 != null && flat4.isFinite) return flat4;
+
+      return null;
+    }
+
+    dynamic rawPayload;
+    dynamic extraMetrics;
+    dynamic metrics;
+    dynamic serializedScan;
+    dynamic mappedScan;
+
+    if (scan is ScanHistoryEntry) {
+      rawPayload = scan.rawPayload;
+      metrics = scan.metrics;
+      serializedScan = scan.toJson();
+      mappedScan = scan.toJson();
+    } else if (scan is Map) {
+      rawPayload = scan['rawPayload'];
+      extraMetrics = scan['extraMetrics'];
+      metrics = scan['metrics'] ?? scan;
+      serializedScan = scan;
+      mappedScan = scan;
+    } else {
+      try {
+        rawPayload = scan.rawPayload;
+      } catch (_) {}
+      try {
+        extraMetrics = scan.extraMetrics;
+      } catch (_) {}
+      try {
+        metrics = scan.metrics;
+      } catch (_) {}
+      try {
+        serializedScan = scan.toJson();
+      } catch (_) {}
+      try {
+        mappedScan = scan.toMap();
+      } catch (_) {}
+    }
+
+    final metricsMap = asMap(metrics);
+    final rawPayloadMap = asMap(rawPayload);
+    final toMap = asMap(mappedScan).isNotEmpty
+        ? asMap(mappedScan)
+        : asMap(serializedScan);
+
+    final extraMetricsMap = asMap(extraMetrics);
+    final val =
+      searchCanonicalKeyInMap(metricsMap, metricKeyOrTitle) ??
+      searchCanonicalKeyInMap(rawPayloadMap, metricKeyOrTitle) ??
+      searchCanonicalKeyInMap(toMap, metricKeyOrTitle) ??
+      searchCanonicalKeyInMap(extraMetricsMap, metricKeyOrTitle);
+
+    if (val == null || !val.isFinite) {
+      final metricsKeys = metricsMap.keys.toList();
+      print(
+        'EXTRACTOR FAIL for [$metricKeyOrTitle] -> Available keys in metrics: $metricsKeys',
+      );
+      return 0.0;
+    }
+    return val;
+  }
+
+  static Map<String, double> backendMetricSource(Map<String, double> metrics) {
+    const backendKeys = {
+      'texture_smoothness',
+      'localized_redness',
+      'pore_visibility',
+      'breakout_activity',
+      'pigment_load',
+      'wrinkle_load',
+      'sebum_excess_oil_gloss',
+      'diffuse_flushing_erythema',
+      'skin_tone_radiance_evenness',
+      'glabellar_wrinkle_depth',
+      'pore_contraction_index',
+      'structural_firmness_elasticity',
+      'under_eye_texture_density',
+      'under_eye_dark_circle_density',
+      'rosacea_severity',
+    };
+
+    double? readBackendValue(String key) {
+      final prefixedCandidates = <String>[
+        'metric_matrix.$key',
+        'metric_matrix_$key',
+      ];
+      for (final candidate in prefixedCandidates) {
+        final value = metrics[candidate];
+        if (value != null && value.isFinite) return value;
+      }
+      final direct = metrics[key];
+      if (direct != null && direct.isFinite) return direct;
+      return null;
+    }
+
+    final out = <String, double>{};
+    for (final key in backendKeys) {
+      final value = readBackendValue(key);
+      if (value == null) continue;
+      final normalized = normalizeMetricValueTo100(key, value);
+      if (!normalized.isFinite || normalized <= 0.0) continue;
+      out[key] = normalized;
+    }
+    return out;
+  }
+
+  static double normalizeLegacyBaselineForDelta(
+    String key,
+    double baselineValue,
+    double currentValue,
+  ) {
+    final normalizedBaseline = normalizeMetricValueTo100(key, baselineValue);
+    final normalizedCurrent = normalizeMetricValueTo100(key, currentValue);
+
+    if (normalizedBaseline <= 10.0 && normalizedCurrent > 10.0) {
+      return (normalizedBaseline * 10.0).clamp(0.0, 100.0).toDouble();
+    }
+    return normalizedBaseline;
+  }
+
+  static bool _isDerivedTrendOrPercentKey(String key) {
+    final normalized = key.toLowerCase();
+    if (normalized.startsWith('trend_delta_')) return true;
+    if (normalized.startsWith('delta_')) return true;
+    if (normalized.startsWith('percent_')) return true;
+    if (normalized.contains('trend_delta')) return true;
+    if (normalized.contains('percent_change')) return true;
+    if (normalized.contains('change_pct')) return true;
+    return normalized == 'percent' ||
+        normalized == 'percentage' ||
+        normalized == 'trend_percent' ||
+        normalized == 'trend_percentage';
   }
 
   static bool _higherIsBetterMetric(String key) {

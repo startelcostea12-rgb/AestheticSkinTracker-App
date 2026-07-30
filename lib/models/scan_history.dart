@@ -56,6 +56,7 @@ class ScanHistoryEntry {
   final DateTime timestamp;
   final String? imagePath;
   final String? procedureId;
+  final String? parentBaselineId;
   final String? scanType;
 
   /// The specific [PeptideEntry.id] this scan was taken for.
@@ -63,6 +64,7 @@ class ScanHistoryEntry {
   final String? peptideId;
   final double estimatedSkinAge;
   final Map<String, double> metrics;
+  final Map<String, dynamic>? rawPayload;
   final String? procedure;
   final String? productName;
   final String? poseTemplate;
@@ -95,10 +97,12 @@ class ScanHistoryEntry {
     required this.timestamp,
     this.imagePath,
     this.procedureId,
+    this.parentBaselineId,
     this.scanType,
     this.peptideId,
     required this.estimatedSkinAge,
     required this.metrics,
+    this.rawPayload,
     this.procedure,
     this.productName,
     this.poseTemplate,
@@ -114,15 +118,47 @@ class ScanHistoryEntry {
   });
 
   factory ScanHistoryEntry.fromJson(Map<String, dynamic> json) {
+    Map<String, dynamic>? asDynamicMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return null;
+    }
+
+    final metricSource =
+        asDynamicMap(json['metrics']) ??
+        asDynamicMap(json['metric_matrix']) ??
+        asDynamicMap(json['opencv_metrics']) ??
+        Map<String, dynamic>.from(json);
+
+    final numericMetrics = <String, double>{};
+    for (final entry in metricSource.entries) {
+      final value = entry.value;
+      double? parsed;
+      if (value is num) {
+        parsed = value.toDouble();
+      } else if (value != null) {
+        parsed = double.tryParse(value.toString());
+      }
+      if (parsed == null || !parsed.isFinite) continue;
+      numericMetrics[entry.key] = parsed;
+    }
+
+    final payload =
+        asDynamicMap(json['rawPayload']) ??
+        asDynamicMap(json['extraMetrics']) ??
+        Map<String, dynamic>.from(json);
+
     return ScanHistoryEntry(
       id: json['id'] as String,
       timestamp: DateTime.parse(json['timestamp'] as String),
       imagePath: json['imagePath'] as String?,
       procedureId: json['procedureId'] as String?,
+      parentBaselineId: json['parentBaselineId'] as String?,
       scanType: _normalizeScanType(json['scanType'] as String?),
       peptideId: json['peptideId'] as String?,
       estimatedSkinAge: (json['estimatedSkinAge'] as num).toDouble(),
-      metrics: Map<String, double>.from(json['metrics'] as Map),
+      metrics: numericMetrics,
+      rawPayload: payload,
       procedure: json['procedure'] as String?,
       productName: json['productName'] as String?,
       poseTemplate: json['poseTemplate'] as String?,
@@ -147,10 +183,12 @@ class ScanHistoryEntry {
       'timestamp': timestamp.toIso8601String(),
       'imagePath': imagePath,
       'procedureId': procedureId,
+      'parentBaselineId': parentBaselineId,
       'scanType': resolvedScanType,
       'peptideId': peptideId,
       'estimatedSkinAge': estimatedSkinAge,
       'metrics': metrics,
+      'rawPayload': rawPayload,
       'procedure': procedure,
       'productName': productName,
       'poseTemplate': poseTemplate,
@@ -208,6 +246,9 @@ class ScanHistoryEntry {
     bool close(double a, double b) => (a - b).abs() < 0.0001;
     if (id != other.id) return false;
     if ((procedureId ?? '') != (other.procedureId ?? '')) return false;
+    if ((parentBaselineId ?? '') != (other.parentBaselineId ?? '')) {
+      return false;
+    }
     if (resolvedScanType != other.resolvedScanType) return false;
     if ((peptideId ?? '') != (other.peptideId ?? '')) return false;
     if ((imagePath ?? '') != (other.imagePath ?? '')) return false;

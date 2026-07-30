@@ -23,6 +23,9 @@ class AiService {
 
   final http.Client? _client;
 
+  static const String _backendUnavailableMessage =
+      'Please start the AestheticSkin backend to enable AI analysis.';
+
   bool get isConfigured => BackendConfig.baseUrl.trim().isNotEmpty;
 
   /// Keeps the existing streaming UI contract, but returns the backend response
@@ -31,10 +34,12 @@ class AiService {
     required String systemPrompt,
     required String userPrompt,
     AiRetryCallback? onRetry,
+    bool allowBackend = false,
   }) async {
     final text = await completeCoachResponse(
       systemPrompt: systemPrompt,
       userPrompt: userPrompt,
+      allowBackend: allowBackend,
     );
     return Stream<String>.value(text);
   }
@@ -42,7 +47,14 @@ class AiService {
   Future<String> completeCoachResponse({
     required String systemPrompt,
     required String userPrompt,
+    bool allowBackend = false,
   }) async {
+    if (!allowBackend) {
+      throw AiLlmException(
+        'Backend access is disabled for this flow. Only the AI Skincare Coach may use the backend.',
+      );
+    }
+
     final client = _client ?? http.Client();
     final shouldCloseClient = _client == null;
 
@@ -95,6 +107,13 @@ class AiService {
     } on AiLlmException {
       rethrow;
     } catch (error) {
+      final errorText = error.toString().toLowerCase();
+      if (errorText.contains('failed to fetch') ||
+          errorText.contains('clientexception') ||
+          errorText.contains('socketexception') ||
+          errorText.contains('connection refused')) {
+        throw const AiLlmException(_backendUnavailableMessage);
+      }
       throw AiLlmException(
         'Could not reach backend AI coach at ${BackendConfig.aiCoachUri}. '
         'Use ${BackendConfig.baseUrl} or override AI_BACKEND_BASE_URL as needed. '

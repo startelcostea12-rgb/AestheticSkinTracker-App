@@ -397,17 +397,12 @@ class _AIRecoveryCoachScreenState extends State<AIRecoveryCoachScreen> {
     _scrollToBottomSoon();
 
     try {
-      final reply =
-          await PremiumRecoveryService.generateRecoveryCoachReply(
-            question: enrichedQuestion,
-            hasImageAttachment: attached != null && attached.trim().isNotEmpty,
-            activeProcedure: _activeProcedure,
-            scopedScans: _scopedScans,
-          ).timeout(
-            const Duration(seconds: 20),
-            onTimeout: () =>
-                'I am still loading your recovery context. For now: monitor symptoms, follow your surgeon\'s plan, and contact your surgeon urgently for severe pain, fever, spreading redness, drainage, or sudden worsening swelling. This is general guidance, not a diagnosis. Please follow your surgeon\'s instructions first.',
-          );
+      final reply = await PremiumRecoveryService.generateRecoveryCoachReply(
+        question: enrichedQuestion,
+        hasImageAttachment: attached != null && attached.trim().isNotEmpty,
+        activeProcedure: _activeProcedure,
+        scopedScans: _scopedScans,
+      );
 
       final assistant = RecoveryCoachMessage(
         id: premiumEntityId('coach_ai'),
@@ -433,23 +428,27 @@ class _AIRecoveryCoachScreenState extends State<AIRecoveryCoachScreen> {
       });
       _stopTypingPulse();
       _scrollToBottomSoon();
-    } catch (_) {
-      final fallbackAssistant = RecoveryCoachMessage(
-        id: premiumEntityId('coach_ai_fallback'),
+    } catch (e) {
+      final raw = e.toString().trim();
+      final cleaned = raw.startsWith('Exception:')
+          ? raw.replaceFirst('Exception:', '').trim()
+          : raw;
+      final errorAssistant = RecoveryCoachMessage(
+        id: premiumEntityId('coach_ai_error'),
         role: 'assistant',
         text:
-            'I could not reach the live coach service just now. Based on standard recovery safety: keep following your surgeon\'s protocol, monitor symptoms closely, and contact your surgeon urgently for fever, spreading redness, drainage, severe pain, or sudden worsening swelling. This is general guidance, not a diagnosis. Please follow your surgeon\'s instructions first.',
+            'I could not reach the AI Recovery Coach backend right now. ${cleaned.isEmpty ? 'Please try again in a moment.' : cleaned}',
         createdAt: DateTime.now(),
       );
 
-      final updated = [..._messages, fallbackAssistant];
+      final updated = [..._messages, errorAssistant];
       try {
         await PremiumRecoveryService.saveCoachMessages(
           updated,
           procedureId: _activeProcedure?.id,
         );
       } catch (_) {
-        // Ignore persistence issues; still show fallback in UI.
+        // Ignore persistence issues; still show backend error in UI.
       }
 
       if (!mounted) return;

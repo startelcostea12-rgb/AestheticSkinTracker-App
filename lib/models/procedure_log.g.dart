@@ -33,13 +33,15 @@ class ProcedureLogAdapter extends TypeAdapter<ProcedureLog> {
       nextReminderDate: fields[13] as DateTime?,
       reminderEnabled: fields[14] as bool?,
       photoLabels: (fields[15] as List?)?.cast<String>() ?? const <String>[],
+        photoCalibrationByPath:
+          ProcedureLog._calibrationMapFromHive(fields[16]),
     );
   }
 
   @override
   void write(BinaryWriter writer, ProcedureLog obj) {
     writer
-      ..writeByte(16)
+      ..writeByte(17)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -71,7 +73,9 @@ class ProcedureLogAdapter extends TypeAdapter<ProcedureLog> {
       ..writeByte(14)
       ..write(obj.reminderEnabled)
       ..writeByte(15)
-      ..write(obj.photoLabels);
+        ..write(obj.photoLabels)
+        ..writeByte(16)
+        ..write(obj.photoCalibrationByPath);
   }
 
   @override

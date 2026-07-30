@@ -2,5 +2,18 @@
     "cmake.sourceDirectory": "C:/Users/Admin/Downloads/flutter_windows_3.41.2-stable/flutter/bin/aestheticskintracker/linux",
     "workbench.colorCustomizations": {
         "terminal.foreground": "#FFFFFF"
-    }
+    },
+    "files.exclude": {
+        "**/.plugin_symlinks/**": true,
+        "**/.plugin_symlinks/**/example/**": true
+    },
+    "search.exclude": {
+        "**/.plugin_symlinks/**": true,
+        "**/.plugin_symlinks/**/example/**": true
+    },
+    "files.watcherExclude": {
+        "**/.plugin_symlinks/**": true,
+        "**/.plugin_symlinks/**/example/**": true
+    },
+    "python-envs.defaultEnvManager": "ms-python.python:system"
 }

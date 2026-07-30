@@ -48,6 +48,7 @@ import '../widgets/image_crop_dialog.dart';
 import '../widgets/luxe_report_layout.dart';
 import '../widgets/skin_heatmap_overlay.dart';
 import '../widgets/smart_narrative_container.dart';
+import 'ai_recovery_coach_screen.dart';
 
 class SkinAiAnalysisScreen extends StatefulWidget {
   const SkinAiAnalysisScreen({super.key});
@@ -76,7 +77,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// "Run AI Analysis" button unlocks. This is a hard gate, not a checkbox
   /// that can be skipped.
   bool _consentAccepted = false;
-  FacialRegion? _region;
+  FacialRegion? _region = FacialRegion.fullFace;
   bool _cycleRelated = false;
   bool _adultOnset = false;
 
@@ -99,8 +100,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   ScanHistoryEntry? _latestScan;
   ScanHistoryEntry? _ghostReferenceScan;
   bool _loadingLatest = true;
-  bool _saved = false;
-  bool? _timelineSaved = false;
   bool _ghostOverlayEnabled = true;
   String? _selectedProcedureId;
   String? _selectedProcedureType;
@@ -120,9 +119,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   Map<String, double> _previousMetrics = const {};
   ScanHistoryEntry? _previousFocusAreaScan;
   ScanHistoryEntry? _baselineFocusAreaScan;
+  List<ScanHistoryEntry> _priorFocusAreaScans = const [];
   bool _hasPriorFocusAreaScan = false;
+  int _localHistoryCountForFocusArea = 1;
+  bool _explicitLocalFollowUpFlag = false;
   bool _explicitBaselineSelection = false;
   Map<String, double> _serverTrendDeltas = const {};
+  Map<String, dynamic>? _latestBackendAnalysisPayload;
   Map<String, double>? _manualBaselineMetricMatrix;
   bool _awaitingBaselineOnboarding = true;
 
@@ -142,8 +145,28 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       final hasAny = scans.any((scan) {
         final scanFocus = _normalizeFocus(scan.focusArea);
         if (focus.isNotEmpty && scanFocus != focus) return false;
+        if (scan.isAiAnalysisScan && (scan.imagePath ?? '').trim().isNotEmpty) {
+          return true;
+        }
         final raw = scan.metrics;
         return SkinHistoryRepository.allMetricKeys.any(raw.containsKey) ||
+            const [
+              'localized_redness',
+              'texture_smoothness',
+              'pore_visibility',
+              'wrinkle_load',
+              'pigment_load',
+              'breakout_activity',
+              'diffuse_flushing_erythema',
+              'sebum_excess_oil_gloss',
+              'skin_tone_radiance_evenness',
+              'glabellar_wrinkle_depth',
+              'under_eye_texture_density',
+              'under_eye_dark_circle_density',
+              'rosacea_severity',
+              'structural_firmness_elasticity',
+              'pore_contraction_index',
+            ].any(raw.containsKey) ||
             const [
               'fatRetention',
               'swelling',
@@ -189,8 +212,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       final matrix = <String, double>{};
       decoded.forEach((key, value) {
         final parsed = _safeToDouble(value);
-        if (parsed == null) return;
-        matrix[key.toString()] = parsed;
+        if (parsed == null || !parsed.isFinite || parsed <= 0.0) return;
+        matrix[key.toString()] = parsed.clamp(0.0, 100.0).toDouble();
       });
 
       if (!mounted) return;
@@ -619,11 +642,27 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             baselineMetricMatrix:
                 _manualBaselineMetricMatrix ??
                 _baselineMetricMatrixForBackend(previousMetrics),
+            allowBackend: true,
           );
       final parsedBackend = _parseBackendAnalysisPayload(backendResponse);
       final Map<String, double> fullMetrics = parsedBackend.fullMetrics;
       final Map<String, double> serverTrendDeltas =
           parsedBackend.serverTrendDeltas;
+      final luxePayload = _buildLuxeResultsPayload(
+        report,
+        backendResponse: backendResponse,
+      );
+      final persistencePayload = _mergePayloadForPersistence(
+        backendResponse: backendResponse,
+        luxePayload: luxePayload,
+      );
+      final Map<String, double> rawMetricScores =
+          _rawMetricScoresForStorage(persistencePayload);
+      final persistedMetricsNode =
+          _asDynamicMap(persistencePayload['metrics']) ?? <String, dynamic>{};
+      persistencePayload['metrics'] = {
+        ...persistedMetricsNode,
+      };
 
       if (_awaitingBaselineOnboarding || _manualBaselineMetricMatrix == null) {
         final seed = _extractBackendMetricMatrixSeed(backendResponse);
@@ -646,21 +685,61 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       // rule-engine detections when the TFLite models produced nothing.
       bool savedToHistory = false;
       try {
+        final resolvedProcedureId =
+            (_selectedProcedureId?.trim().isNotEmpty == true)
+            ? _selectedProcedureId!.trim()
+            : (await AppPrefs.getSelectedProcedureIdOrNull())?.trim();
+        debugPrint(
+          '[BASELINE_WRITE] ai_save selectedProcedureId=${_selectedProcedureId ?? 'null'} '
+          'resolvedProcedureId=${resolvedProcedureId ?? 'null'}',
+        );
         await SkinHistoryRepository.instance.saveScan(
-          metrics: timelineMetrics,
+          metrics: rawMetricScores,
           imagePath: path,
           timestamp: input.capturedAt,
-          procedureId: _selectedProcedureId,
+          procedureId: resolvedProcedureId,
           procedure: _selectedProcedureType ?? 'AI Skin Analysis',
           scanType: ScanHistoryEntry.scanTypeAiAnalysis,
           focusArea: _resolvedFocusArea(),
           customDescription: _selectedProcedureCustomDescription,
           estimatedSkinAge:
               estimateVisualSkinAgeFromAiMetrics(timelineMetrics) ?? 0,
+          rawPayload: persistencePayload,
         );
         savedToHistory = true;
       } catch (_) {
-        // Non-fatal — the analysis still surfaces to the user.
+        // Fallback: persist at least one AI scan entry with the image path,
+        // even if metric_matrix is empty or repository sync fails.
+        try {
+          final fallbackEntry = ScanHistoryEntry(
+            id: ScanHistoryEntry.generateId(input.capturedAt, path),
+            timestamp: input.capturedAt,
+            imagePath: path,
+            procedureId: (_selectedProcedureId?.trim().isNotEmpty == true)
+                ? _selectedProcedureId!.trim()
+                : (await AppPrefs.getSelectedProcedureIdOrNull())?.trim(),
+            scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+            procedure: _selectedProcedureType ?? 'AI Skin Analysis',
+            focusArea: _resolvedFocusArea(),
+            customDescription: _selectedProcedureCustomDescription,
+            estimatedSkinAge:
+                estimateVisualSkinAgeFromAiMetrics(timelineMetrics) ?? 0,
+            metrics: rawMetricScores,
+            rawPayload: persistencePayload,
+          );
+          final existing = await AppPrefs.getScanEntries();
+          final alreadyExists = existing.any((s) => s.id == fallbackEntry.id);
+          if (!alreadyExists) {
+            final history = await AppPrefs.addScanEntry(fallbackEntry);
+            await AppPrefs.syncProcedurePhotoComparisonForEntry(
+              fallbackEntry,
+              history: history,
+            );
+          }
+          savedToHistory = true;
+        } catch (_) {
+          // Non-fatal — the analysis still surfaces to the user.
+        }
       }
 
       if (!mounted) return;
@@ -668,6 +747,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         _fullMetrics = fullMetrics;
         _previousMetrics = previousMetrics;
         _serverTrendDeltas = serverTrendDeltas;
+        _latestBackendAnalysisPayload = backendResponse;
         _result = report;
         _modelInfo = modelInfo;
         _modelConfidence = modelConf;
@@ -679,7 +759,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         _detections = aug.detections;
         _efficientNetUsed = aug.efficientNetUsed;
         _qualityScores = aug.qualityScores;
-        _timelineSaved = savedToHistory;
         _stage = _Stage.results;
       });
 
@@ -703,93 +782,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       setState(() {
         _stage = _Stage.capture;
         _analysisError = 'Analysis failed: $e';
+        _latestBackendAnalysisPayload = null;
       });
     }
-  }
-
-  // ── Save results to Acne & Rosacea Tracker ────────────────────────
-
-  Future<void> _saveToTracker() async {
-    final r = _result;
-    if (r == null) return;
-    final detected = r.detected;
-    final imagePath = r.input.imagePath;
-    final saveTrackerMetrics = !_saved;
-    int saved = 0;
-    bool addedToTimeline = false;
-    if (saveTrackerMetrics) {
-      for (final key in detected.keys) {
-        final value = detected[key];
-        if (value <= 0) continue;
-        try {
-          // Only attach the photo to the dominant (highest) metric so we
-          // don't bloat storage with N copies of the same image path.
-          final dominantKey = detected.values.entries
-              .reduce((a, b) => a.value >= b.value ? a : b)
-              .key;
-          await AppPrefs.addAcneRosaceaLog(
-            key,
-            value,
-            note: 'Saved from Skin AI Analysis',
-            imagePath: key == dominantKey ? imagePath : '',
-          );
-          saved++;
-        } catch (_) {}
-      }
-    }
-    if (_timelineSaved != true) {
-      try {
-        // Recovery Timeline reads ScanHistoryEntry records. Skin AI Analysis
-        // is not launched from a procedure flow, so we tag every saved scan
-        // with a consistent, dedicated source id/label. The timeline's AI
-        // Skin Analysis section keys off this id (and the legacy
-        // `sourceSkinAiAnalysis` metric flag) so scans reliably appear after
-        // pull-to-refresh via AppPrefs.getScanEntries().
-        final timelineMetrics = _timelineMetricsFor(r);
-        await AppPrefs.addScanEntry(
-          ScanHistoryEntry(
-            id: 'skinai_timeline_${DateTime.now().millisecondsSinceEpoch}',
-            timestamp: r.input.capturedAt,
-            imagePath: imagePath,
-            procedureId: _selectedProcedureId,
-            scanType: ScanHistoryEntry.scanTypeAiAnalysis,
-            procedure: _selectedProcedureType ?? 'AI Skin Analysis',
-            focusArea: _resolvedFocusArea(),
-            customDescription: _selectedProcedureCustomDescription,
-            estimatedSkinAge:
-                estimateVisualSkinAgeFromAiMetrics(timelineMetrics) ?? 0,
-            metrics: timelineMetrics,
-          ),
-        );
-        addedToTimeline = true;
-      } catch (_) {
-        // Non-fatal: tracker save should still succeed even if timeline sync
-        // cannot resolve a procedure target.
-      }
-    }
-    if (!mounted) return;
-    final storageWarning = await AppPrefs.consumeScanStorageWarning();
-    if (!mounted) return;
-    setState(() {
-      _saved = true;
-      _timelineSaved = (_timelineSaved ?? false) || addedToTimeline;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: storageWarning == null
-            ? MyApp.clinicalTeal
-            : const Color(0xFFBF8A30),
-        content: Text(
-          storageWarning ??
-              (addedToTimeline
-                  ? 'Saved to My Skin Tracker. Added to Recovery Timeline.'
-                  : saved == 0
-                  ? 'No detected metrics to save.'
-                  : 'Saved $saved metric${saved == 1 ? '' : 's'} to My Skin Tracker.'),
-          style: const TextStyle(fontWeight: FontWeight.w800),
-        ),
-      ),
-    );
   }
 
   Map<String, double> _timelineMetricsFor(
@@ -1027,6 +1022,59 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     return null;
   }
 
+  bool _hasExplicitNullPoreInPayload(Map<String, dynamic> payload) {
+    bool hasNullPore(Map<String, dynamic>? source) {
+      if (source == null) return false;
+      if (!source.containsKey('pore_visibility')) return false;
+      return source['pore_visibility'] == null;
+    }
+
+    final metricsNode = _asDynamicMap(payload['metrics']);
+    final matrixNode = _asDynamicMap(payload['metric_matrix']);
+    final nestedMatrix = _asDynamicMap(metricsNode?['metric_matrix']);
+    final luxeNode = _asDynamicMap(payload['luxePayload']);
+    final luxeMetricsNode = _asDynamicMap(luxeNode?['metrics']);
+    final luxeMatrixNode = _asDynamicMap(luxeNode?['metric_matrix']);
+
+    return hasNullPore(payload) ||
+        hasNullPore(metricsNode) ||
+        hasNullPore(matrixNode) ||
+        hasNullPore(nestedMatrix) ||
+        hasNullPore(luxeNode) ||
+        hasNullPore(luxeMetricsNode) ||
+        hasNullPore(luxeMatrixNode);
+  }
+
+  bool _hasNumericPoreInPayload(Map<String, dynamic> payload) {
+    bool hasNumericPore(Map<String, dynamic>? source) {
+      if (source == null) return false;
+      if (!source.containsKey('pore_visibility')) return false;
+      final raw = source['pore_visibility'];
+      final parsed = _safeToDouble(raw);
+      return parsed != null && parsed.isFinite;
+    }
+
+    final metricsNode = _asDynamicMap(payload['metrics']);
+    final matrixNode = _asDynamicMap(payload['metric_matrix']);
+    final nestedMatrix = _asDynamicMap(metricsNode?['metric_matrix']);
+    final luxeNode = _asDynamicMap(payload['luxePayload']);
+    final luxeMetricsNode = _asDynamicMap(luxeNode?['metrics']);
+    final luxeMatrixNode = _asDynamicMap(luxeNode?['metric_matrix']);
+
+    return hasNumericPore(payload) ||
+        hasNumericPore(metricsNode) ||
+        hasNumericPore(matrixNode) ||
+        hasNumericPore(nestedMatrix) ||
+        hasNumericPore(luxeNode) ||
+        hasNumericPore(luxeMetricsNode) ||
+        hasNumericPore(luxeMatrixNode);
+  }
+
+  bool _shouldPersistPoreMetric(Map<String, dynamic> payload) {
+    if (_hasExplicitNullPoreInPayload(payload)) return false;
+    return _hasNumericPoreInPayload(payload);
+  }
+
   Map<String, double> _extractBackendMetricMatrixSeed(
     Map<String, dynamic> payload,
   ) {
@@ -1042,9 +1090,138 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     for (final entry in metricMatrix.entries) {
       final parsed = _safeToDouble(entry.value);
       if (parsed == null || parsed.isNaN || parsed.isInfinite) continue;
-      out[entry.key] = parsed.clamp(0.0, 100.0).toDouble();
+      final clamped = parsed.clamp(0.0, 100.0).toDouble();
+      if (clamped <= 0.0) continue;
+      out[entry.key] = clamped;
     }
     return out;
+  }
+
+  Map<String, double> _rawMetricScoresForStorage(
+    Map<String, dynamic> responseMap,
+  ) {
+    final rawScores = <String, double>{};
+    final shouldPersistPore = _shouldPersistPoreMetric(responseMap);
+
+    void collectNumerics(Map<String, dynamic> source) {
+      source.forEach((k, v) {
+        final key = k.toString();
+        final lower = key.toLowerCase();
+        if (lower.endsWith('_detected')) return;
+        final parsed = _safeToDouble(v);
+        if (parsed == null || parsed.isNaN || parsed.isInfinite) return;
+        final clamped = parsed.clamp(0.0, 100.0).toDouble();
+        if (clamped <= 0.0) return;
+        rawScores[key] = clamped;
+      });
+    }
+
+    final metricsNode = _asDynamicMap(responseMap['metrics']) ?? const {};
+    final metricMatrixNode = _asDynamicMap(responseMap['metric_matrix']) ?? const {};
+    final nestedMetricMatrixNode = _asDynamicMap(metricsNode['metric_matrix']) ?? const {};
+    final luxeNode = _asDynamicMap(responseMap['luxePayload']) ?? const {};
+    final luxeMetricMatrixNode = _asDynamicMap(luxeNode['metric_matrix']) ?? const {};
+
+    collectNumerics(metricsNode);
+    collectNumerics(metricMatrixNode);
+    collectNumerics(nestedMetricMatrixNode);
+    collectNumerics(luxeMetricMatrixNode);
+
+    if (!shouldPersistPore) {
+      rawScores.remove('pore_visibility');
+    }
+
+    return rawScores;
+  }
+
+  Map<String, dynamic> _mergePayloadForPersistence({
+    required Map<String, dynamic> backendResponse,
+    required Map<String, dynamic> luxePayload,
+  }) {
+    final shouldPersistPore = _shouldPersistPoreMetric(backendResponse);
+
+    Map<String, dynamic> sanitizeUiMetricMap(Map<String, dynamic> source) {
+      final out = <String, dynamic>{};
+      for (final entry in source.entries) {
+        final key = entry.key.toString();
+        final lower = key.toLowerCase();
+        if (lower.endsWith('_detected')) continue;
+
+        final parsed = _safeToDouble(entry.value);
+        if (parsed == null || parsed.isNaN || parsed.isInfinite) continue;
+        final clamped = parsed.clamp(0.0, 100.0).toDouble();
+        if (clamped <= 0.0) continue;
+        out[key] = clamped;
+      }
+      return out;
+    }
+
+    final merged = <String, dynamic>{
+      ...backendResponse,
+      'luxePayload': luxePayload,
+    };
+
+    final backendMetrics = _asDynamicMap(backendResponse['metrics']) ?? const {};
+    final luxeMetrics = _asDynamicMap(luxePayload['metrics']) ?? const {};
+    const backendFirstCoreKeys = <String>{
+      'localized_redness',
+      'texture_smoothness',
+      'pigment_load',
+      'pore_visibility',
+      'wrinkle_load',
+      'breakout_activity',
+    };
+
+    final mergedMetrics = <String, dynamic>{
+      ...backendMetrics,
+      ...luxeMetrics,
+    };
+    for (final key in backendFirstCoreKeys) {
+      if (backendMetrics.containsKey(key)) {
+        // Preserve backend canonical value, including explicit nulls.
+        mergedMetrics[key] = backendMetrics[key];
+      }
+    }
+    merged['metrics'] = sanitizeUiMetricMap(mergedMetrics);
+
+    final backendMatrix =
+        _asDynamicMap(backendResponse['metric_matrix']) ?? const {};
+    final luxeMatrix = _asDynamicMap(luxePayload['metric_matrix']) ?? const {};
+    final mergedMatrix = <String, dynamic>{
+      ...backendMatrix,
+      ...luxeMatrix,
+    };
+    for (final key in backendFirstCoreKeys) {
+      if (backendMatrix.containsKey(key)) {
+        // Preserve backend canonical value, including explicit nulls.
+        mergedMatrix[key] = backendMatrix[key];
+      }
+    }
+    merged['metric_matrix'] = sanitizeUiMetricMap(mergedMatrix);
+
+    final backendTrend =
+        _asDynamicMap(backendResponse['trend_deltas']) ?? const {};
+    final luxeTrend = _asDynamicMap(luxePayload['trend_deltas']) ?? const {};
+    merged['trend_deltas'] = {
+      ...backendTrend,
+      ...luxeTrend,
+    };
+
+    if (!shouldPersistPore) {
+      final mergedMetrics =
+          _asDynamicMap(merged['metrics']) ?? <String, dynamic>{};
+      mergedMetrics.remove('pore_visibility');
+      merged['metrics'] = mergedMetrics;
+
+      final mergedMatrix =
+          _asDynamicMap(merged['metric_matrix']) ?? <String, dynamic>{};
+      mergedMatrix.remove('pore_visibility');
+      merged['metric_matrix'] = mergedMatrix;
+
+      merged.remove('pore_visibility');
+    }
+
+    return merged;
   }
 
   ({Map<String, double> fullMetrics, Map<String, double> serverTrendDeltas})
@@ -1070,10 +1247,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final rednessConcern = (() {
       final fromMatrix = number(metricMatrix['localized_redness']);
       if (fromMatrix != null) return (fromMatrix / 100).clamp(0.0, 1.0);
-      final calibrated = number(metricsNode['calibrated_redness_score']);
-      if (calibrated != null) {
-        return ((100.0 - calibrated) / 100.0).clamp(0.0, 1.0);
-      }
       return null;
     })();
     if (rednessConcern != null) {
@@ -1084,10 +1257,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       final smoothness = number(metricMatrix['texture_smoothness']);
       if (smoothness != null) {
         return ((100.0 - smoothness) / 100.0).clamp(0.0, 1.0);
-      }
-      final calibrated = number(metricsNode['calibrated_smoothness_score']);
-      if (calibrated != null) {
-        return ((100.0 - calibrated) / 100.0).clamp(0.0, 1.0);
       }
       return null;
     })();
@@ -1133,27 +1302,33 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final out = <String, dynamic>{};
     final redness = previous['redness'];
     if (redness != null) {
-      out['localized_redness'] = (redness * 10).clamp(0.0, 100.0);
+      final normalized = (redness * 10).clamp(0.0, 100.0).toDouble();
+      if (normalized > 0.0) out['localized_redness'] = normalized;
     }
     final texture = previous['texture'];
     if (texture != null) {
-      out['texture_smoothness'] = ((10 - texture) * 10).clamp(0.0, 100.0);
+      final normalized = ((10 - texture) * 10).clamp(0.0, 100.0).toDouble();
+      if (normalized > 0.0) out['texture_smoothness'] = normalized;
     }
     final pore = previous['pore'];
     if (pore != null) {
-      out['pore_visibility'] = (pore * 10).clamp(0.0, 100.0);
+      final normalized = (pore * 10).clamp(0.0, 100.0).toDouble();
+      if (normalized > 0.0) out['pore_visibility'] = normalized;
     }
     final acne = previous['acne_severity'];
     if (acne != null) {
-      out['breakout_activity'] = (acne * 10).clamp(0.0, 100.0);
+      final normalized = (acne * 10).clamp(0.0, 100.0).toDouble();
+      if (normalized > 0.0) out['breakout_activity'] = normalized;
     }
     final pigment = previous['pigment'];
     if (pigment != null) {
-      out['pigment_load'] = (pigment * 10).clamp(0.0, 100.0);
+      final normalized = (pigment * 10).clamp(0.0, 100.0).toDouble();
+      if (normalized > 0.0) out['pigment_load'] = normalized;
     }
     final wrinkle = previous['wrinkle'];
     if (wrinkle != null) {
-      out['wrinkle_load'] = (wrinkle * 10).clamp(0.0, 100.0);
+      final normalized = (wrinkle * 10).clamp(0.0, 100.0).toDouble();
+      if (normalized > 0.0) out['wrinkle_load'] = normalized;
     }
     return out.isEmpty ? null : out;
   }
@@ -1236,14 +1411,14 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       _imagePath = null;
       _croppedBytes = null;
       _result = null;
-      _saved = false;
-      _timelineSaved = false;
       _analysisError = null;
       _fullMetrics = const {};
       _previousMetrics = const {};
       _previousFocusAreaScan = null;
       _baselineFocusAreaScan = null;
+      _priorFocusAreaScans = const [];
       _explicitBaselineSelection = false;
+      _latestBackendAnalysisPayload = null;
     });
     _refreshFocusAreaPhaseHint();
   }
@@ -1385,11 +1560,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   }
 
   String _capturePrimaryActionLabel() {
-    final isBaselineMode =
-        _explicitBaselineSelection ||
-        _awaitingBaselineOnboarding ||
-        !_hasPriorFocusAreaScan;
-    return isBaselineMode ? 'Save as Baseline' : 'Generate Progress Report';
+    // Label should match tracking state, not onboarding flags.
+    // First scan in this focus/procedure path establishes baseline.
+    // Any later scan is a comparison/follow-up capture.
+    final hasBaseline = _hasPriorFocusAreaScan || _explicitBaselineSelection;
+    return hasBaseline ? 'Add Comparison Photo' : 'Save Baseline';
   }
 
   Widget _heroIntro() {
@@ -2548,8 +2723,31 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
   Widget _buildResultsStage() {
     final r = _result!;
-    final isFollowUpPhase = _previousMetrics.isNotEmpty;
-    final luxePayload = _buildLuxeResultsPayload(r);
+    final isFollowUpPhase =
+        _explicitLocalFollowUpFlag || _localHistoryCountForFocusArea >= 2;
+    final gateReason = isFollowUpPhase
+        ? (_explicitLocalFollowUpFlag
+              ? 'explicit isFollowUp flag from local scan records'
+              : 'localHistoryCount >= 2')
+        : 'missing prior local baseline scan in history';
+    debugPrint(
+      'LUXE GATE: localHistoryCount=$_localHistoryCountForFocusArea isFollowUp=$isFollowUpPhase willRenderCards=$isFollowUpPhase reason=$gateReason',
+    );
+    final luxePayload = _buildLuxeResultsPayload(
+      r,
+      backendResponse: _latestBackendAnalysisPayload,
+    );
+    if (!isFollowUpPhase) {
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: [
+          _resultHeroCard(r),
+          const SizedBox(height: 18),
+          _baselinePhaseSummaryCard(),
+        ],
+      );
+    }
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       children: [
@@ -2557,35 +2755,27 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         const SizedBox(height: 14),
         _resultHeroCard(r),
         const SizedBox(height: 18),
-        if (isFollowUpPhase) ...[
-          ClinicalSectionHeader(
-            icon: Icons.analytics_rounded,
-            eyebrow: 'PROGRESS TRACKING',
-            title: _isBodyProcedure
-                ? 'Body recovery tracking dashboard'
-                : _showCoreFaceMetricSetOnly
-                ? 'Core skin-quality progress dashboard'
-                : 'Skin progress dashboard',
-          ),
-          const SizedBox(height: 10),
-          LuxeReportLayout(
-            rawPayload: luxePayload,
-            baselineImageProvider: _resultsBaselineImageProvider(r),
-            currentImageProvider: _imageProviderForPath(r.input.imagePath),
-            baselineLabel: 'Before Baseline',
-            currentLabel: 'Current Follow-Up',
-          ),
-          const SizedBox(height: 18),
-        ] else ...[
-          const ClinicalSectionHeader(
-            icon: Icons.flag_rounded,
-            eyebrow: 'BASELINE SCAN',
-            title: 'Clinical Baseline Summary',
-          ),
-          const SizedBox(height: 10),
-          _baselinePhaseSummaryCard(),
-          const SizedBox(height: 18),
-        ],
+        ClinicalSectionHeader(
+          icon: Icons.analytics_rounded,
+          eyebrow: 'PROGRESS TRACKING',
+          title: _isBodyProcedure
+              ? 'Body recovery tracking dashboard'
+              : _showCoreFaceMetricSetOnly
+              ? 'Core skin-quality progress dashboard'
+              : 'Skin progress dashboard',
+        ),
+        const SizedBox(height: 10),
+        LuxeReportLayout(
+          rawPayload: luxePayload,
+          baselineImageProvider: _resultsBaselineImageProvider(r),
+          currentImageProvider: _imageProviderForPath(r.input.imagePath),
+          baselineLabel: 'Before Baseline',
+          currentLabel: 'Current Follow-Up',
+          localHistoryCount: _localHistoryCountForFocusArea,
+          isFollowUp: isFollowUpPhase,
+          gateReason: gateReason,
+        ),
+        const SizedBox(height: 18),
         SmartNarrativeContainer(narrativeText: r.detectionSummary),
         const SizedBox(height: 18),
         if (r.isClear) ...[_clearStateCard(r), const SizedBox(height: 18)],
@@ -2652,7 +2842,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _productCuesCard(r),
           const SizedBox(height: 18),
         ],
-        if (isFollowUpPhase) _followUpActionsCard() else _baselineSaveCtaCard(),
+        _followUpActionsCard(),
         const SizedBox(height: 14),
         _disclaimerFootnote(),
       ],
@@ -2695,68 +2885,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 12),
-          _fullMetricsCard(),
-        ],
-      ),
-    );
-  }
-
-  Widget _baselineSaveCtaCard() {
-    final saved = _saved && (_timelineSaved ?? false);
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: _cardDecoration(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SizedBox(
-            height: 46,
-            child: ElevatedButton.icon(
-              onPressed: saved ? null : _saveToTracker,
-              icon: Icon(
-                saved ? Icons.check_circle_rounded : Icons.bookmark_add_rounded,
-                size: 17,
-              ),
-              label: Text(
-                saved ? 'Baseline Saved' : 'Save as Baseline',
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: saved
-                    ? AppColors.mutedSage
-                    : AppColors.champagneGold,
-                foregroundColor: saved
-                    ? Colors.white
-                    : AppColors.onChampagneGold,
-                disabledBackgroundColor: AppColors.mutedSage.withValues(
-                  alpha: 0.75,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'Take another photo in 2–4 weeks to unlock progress metrics, trend tracking, and before/after clinical comparison.',
-            style: TextStyle(
-              fontSize: 11.2,
-              fontWeight: FontWeight.w600,
-              height: 1.4,
-              color: MyApp.textBrown.withValues(alpha: 0.82),
-            ),
-          ),
         ],
       ),
     );
   }
 
   Widget _followUpActionsCard() {
-    final timelineSaved = _timelineSaved ?? false;
-    final canRetryTimelineSave = _saved && !timelineSaved;
-    final saveComplete = _saved && timelineSaved;
     final baselineDate = _baselineFocusAreaScan?.timestamp;
     final baselineLabel = baselineDate == null
         ? 'Baseline linked for this focus area.'
@@ -2768,64 +2902,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SizedBox(
-            height: 46,
-            child: ElevatedButton.icon(
-              onPressed: saveComplete ? null : _saveToTracker,
-              icon: Icon(
-                saveComplete
-                    ? Icons.check_circle_rounded
-                    : Icons.update_rounded,
-                size: 17,
-              ),
-              label: Text(
-                saveComplete
-                    ? 'Updated Scan Saved'
-                    : canRetryTimelineSave
-                    ? 'Save Updated Scan to Timeline'
-                    : 'Save Updated Scan',
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: saveComplete
-                    ? AppColors.mutedSage
-                    : AppColors.champagneGold,
-                foregroundColor: saveComplete
-                    ? Colors.white
-                    : AppColors.onChampagneGold,
-                disabledBackgroundColor: AppColors.mutedSage.withValues(
-                  alpha: 0.75,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Before/After comparison above is linked to your baseline scan.',
-                  ),
-                ),
-              );
-            },
-            icon: const Icon(Icons.compare_arrows_rounded, size: 16),
-            label: const Text(
-              'Compare to Baseline',
-              style: TextStyle(fontWeight: FontWeight.w800),
-            ),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: MyApp.clinicalNavy,
-              side: BorderSide(
-                color: AppColors.champagneGold.withValues(alpha: 0.45),
-                width: 0.9,
-              ),
-            ),
-          ),
+          _resultActionButtonRow(),
           const SizedBox(height: 10),
           Text(
             baselineLabel,
@@ -2867,23 +2944,440 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     return null;
   }
 
-  Map<String, dynamic> _buildLuxeResultsPayload(PhotoAnalysisResult r) {
-    final timeline = _timelineMetricsFor(r);
+  static const double _baselineUsableFloor = 0.5;
+  static const double _baselineUsableCeiling = 99.5;
 
-    double concern(String key) {
-      return ((timeline[key] ?? 0) * 10).clamp(0.0, 100.0).toDouble();
+  bool _isUsableBaselineCandidate(double? value) {
+    if (value == null || !value.isFinite) return false;
+    return value > _baselineUsableFloor && value < _baselineUsableCeiling;
+  }
+
+  String? _baselineRejectReason(double? value) {
+    if (value == null || !value.isFinite) return 'non_finite';
+    if (value <= _baselineUsableFloor) return 'floor';
+    if (value >= _baselineUsableCeiling) return 'ceiling';
+    return null;
+  }
+
+  void _logBaselineReject({
+    required String metricKey,
+    required double value,
+    required String reason,
+    String? source,
+  }) {
+    final sourceSuffix = (source == null || source.isEmpty)
+        ? ''
+        : ' source=$source';
+    debugPrint(
+      'BASELINE REJECT [$metricKey] value=${value.toStringAsFixed(1)} reason=$reason$sourceSuffix',
+    );
+  }
+
+  String? _normalizeConfidenceLabel(dynamic value) {
+    if (value == null) return null;
+    if (value is num) {
+      final numeric = value.toDouble();
+      if (!numeric.isFinite) return null;
+      if (numeric >= 0.75) return 'high';
+      if (numeric >= 0.50) return 'medium';
+      return 'low';
+    }
+    final text = value.toString().trim().toLowerCase();
+    if (text == 'high' || text == 'medium' || text == 'low') return text;
+    return null;
+  }
+
+  int _confidenceRank(String? label) {
+    switch ((label ?? '').toLowerCase()) {
+      case 'high':
+        return 3;
+      case 'medium':
+        return 2;
+      case 'low':
+        return 1;
+      default:
+        return 0;
+    }
+  }
+
+  String? _confidenceForMetricFromScan(ScanHistoryEntry scan, List<String> keys) {
+    final payload = scan.rawPayload ?? const <String, dynamic>{};
+    final metrics = _asDynamicMap(payload['metrics']) ?? const <String, dynamic>{};
+    final luxePayload =
+        _asDynamicMap(payload['luxePayload']) ?? const <String, dynamic>{};
+    final luxeMetrics =
+        _asDynamicMap(luxePayload['metrics']) ?? const <String, dynamic>{};
+
+    final confidenceMaps = <Map<String, dynamic>>[
+      _asDynamicMap(payload['metric_confidence']) ?? const <String, dynamic>{},
+      _asDynamicMap(metrics['metric_confidence']) ?? const <String, dynamic>{},
+      _asDynamicMap(luxePayload['metric_confidence']) ?? const <String, dynamic>{},
+      _asDynamicMap(luxeMetrics['metric_confidence']) ?? const <String, dynamic>{},
+    ];
+
+    for (final map in confidenceMaps) {
+      if (map.isEmpty) continue;
+      for (final key in keys) {
+        final direct = _normalizeConfidenceLabel(map[key]);
+        if (direct != null) return direct;
+      }
     }
 
-    final metricMatrix = <String, dynamic>{
-      'localized_redness': concern('redness'),
-      'texture_smoothness': (100 - concern('texture')).clamp(0.0, 100.0),
-      'pigment_load': concern('pigment'),
-      'wrinkle_load': concern('wrinkle'),
-      'pore_visibility': concern('pore'),
-      'breakout_activity': concern('acne_severity'),
+    return null;
+  }
+
+  ({double value, String sourceKey})? _firstUsableMetricFromMap(
+    Map<String, dynamic> map,
+    List<String> keys,
+    String sourceLabel,
+    String metricKey,
+  ) {
+    for (final key in keys) {
+      final raw = map[key];
+      final numeric = raw is num
+          ? raw.toDouble()
+          : double.tryParse(raw?.toString() ?? '');
+      if (numeric == null || !numeric.isFinite) continue;
+      if (_isUsableBaselineCandidate(numeric)) {
+        return (
+          value: numeric,
+          sourceKey: '$sourceLabel.$key',
+        );
+      }
+      final reason = _baselineRejectReason(numeric);
+      if (reason != null) {
+        _logBaselineReject(
+          metricKey: metricKey,
+          value: numeric,
+          reason: reason,
+          source: '$sourceLabel.$key',
+        );
+      }
+    }
+    return null;
+  }
+
+  ({
+    double value,
+    String sourceKey,
+    String confidenceLabel,
+    int confidenceRank,
+  })? _firstUsableMetricFromScan(
+    ScanHistoryEntry scan,
+    String metricKey,
+    List<String> orderedKeys,
+  ) {
+    final payload = scan.rawPayload ?? const <String, dynamic>{};
+    final metrics = _asDynamicMap(payload['metrics']) ?? const <String, dynamic>{};
+    final luxePayload =
+        _asDynamicMap(payload['luxePayload']) ?? const <String, dynamic>{};
+    final luxeMetrics =
+        _asDynamicMap(luxePayload['metrics']) ?? const <String, dynamic>{};
+
+    final sources = <({String label, Map<String, dynamic> map})>[
+      (label: 'scan.metrics', map: Map<String, dynamic>.from(scan.metrics)),
+      (
+        label: 'rawPayload.metric_matrix',
+        map: _asDynamicMap(payload['metric_matrix']) ?? const <String, dynamic>{},
+      ),
+      (
+        label: 'rawPayload.baseline_metric_matrix',
+        map: _asDynamicMap(payload['baseline_metric_matrix']) ??
+            const <String, dynamic>{},
+      ),
+      (
+        label: 'rawPayload.baseline',
+        map: _asDynamicMap(payload['baseline']) ?? const <String, dynamic>{},
+      ),
+      (
+        label: 'rawPayload.opencv_metrics',
+        map: _asDynamicMap(payload['opencv_metrics']) ?? const <String, dynamic>{},
+      ),
+      (label: 'rawPayload.metrics', map: metrics),
+      (
+        label: 'rawPayload.metrics.metric_matrix',
+        map: _asDynamicMap(metrics['metric_matrix']) ?? const <String, dynamic>{},
+      ),
+      (
+        label: 'rawPayload.metrics.baseline_metric_matrix',
+        map: _asDynamicMap(metrics['baseline_metric_matrix']) ??
+            const <String, dynamic>{},
+      ),
+      (
+        label: 'rawPayload.metrics.baseline',
+        map: _asDynamicMap(metrics['baseline']) ?? const <String, dynamic>{},
+      ),
+      (label: 'rawPayload.luxePayload', map: luxePayload),
+      (
+        label: 'rawPayload.luxePayload.metric_matrix',
+        map: _asDynamicMap(luxePayload['metric_matrix']) ??
+            const <String, dynamic>{},
+      ),
+      (
+        label: 'rawPayload.luxePayload.baseline_metric_matrix',
+        map: _asDynamicMap(luxePayload['baseline_metric_matrix']) ??
+            const <String, dynamic>{},
+      ),
+      (
+        label: 'rawPayload.luxePayload.baseline',
+        map: _asDynamicMap(luxePayload['baseline']) ?? const <String, dynamic>{},
+      ),
+      (label: 'rawPayload.luxePayload.metrics', map: luxeMetrics),
+      (
+        label: 'rawPayload.luxePayload.metrics.metric_matrix',
+        map: _asDynamicMap(luxeMetrics['metric_matrix']) ??
+            const <String, dynamic>{},
+      ),
+      (
+        label: 'rawPayload.luxePayload.metrics.baseline_metric_matrix',
+        map: _asDynamicMap(luxeMetrics['baseline_metric_matrix']) ??
+            const <String, dynamic>{},
+      ),
+      (
+        label: 'rawPayload.luxePayload.metrics.baseline',
+        map: _asDynamicMap(luxeMetrics['baseline']) ?? const <String, dynamic>{},
+      ),
+    ];
+
+    for (final source in sources) {
+      if (source.map.isEmpty) continue;
+      final hit = _firstUsableMetricFromMap(
+        source.map,
+        orderedKeys,
+        source.label,
+        metricKey,
+      );
+      if (hit == null) continue;
+      final confLabel = _confidenceForMetricFromScan(scan, orderedKeys) ?? 'unknown';
+      return (
+        value: hit.value,
+        sourceKey: hit.sourceKey,
+        confidenceLabel: confLabel,
+        confidenceRank: _confidenceRank(confLabel),
+      );
+    }
+
+    return null;
+  }
+
+  ({
+    double value,
+    String sourceKey,
+    String priorScanId,
+    int priorIndex,
+    String confidenceLabel,
+    int confidenceRank,
+  })?
+  _resolvePriorBaselineForMetric(
+    String metricKey,
+    List<String> aliases,
+  ) {
+    if (_priorFocusAreaScans.isEmpty) return null;
+    final orderedKeys = <String>[metricKey, ...aliases];
+    ({
+      double value,
+      String sourceKey,
+      String priorScanId,
+      int priorIndex,
+      String confidenceLabel,
+      int confidenceRank,
+    })? best;
+
+    for (var i = 0; i < _priorFocusAreaScans.length; i++) {
+      final scan = _priorFocusAreaScans[i];
+      final hit = _firstUsableMetricFromScan(scan, metricKey, orderedKeys);
+      if (hit == null) continue;
+
+      final candidate = (
+        value: hit.value,
+        sourceKey: hit.sourceKey,
+        priorScanId: scan.id,
+        priorIndex: i,
+        confidenceLabel: hit.confidenceLabel,
+        confidenceRank: hit.confidenceRank,
+      );
+
+      if (best == null) {
+        best = candidate;
+        continue;
+      }
+
+      final hasBetterConfidence =
+          candidate.confidenceRank > best.confidenceRank;
+      final sameConfidenceMoreRecent =
+          candidate.confidenceRank == best.confidenceRank &&
+          candidate.priorIndex < best.priorIndex;
+
+      if (hasBetterConfidence || sameConfidenceMoreRecent) {
+        best = candidate;
+      }
+    }
+
+    return best;
+  }
+
+  Map<String, dynamic> _buildLuxeBaselineMetricMatrix() {
+    final priorScan = _previousFocusAreaScan;
+    final isFollowUp =
+        _explicitLocalFollowUpFlag || _localHistoryCountForFocusArea >= 2;
+    if (!isFollowUp || priorScan == null) return const <String, dynamic>{};
+
+    // Backend-first baseline: only canonical keys from persisted history.
+    const canonicalKeys = <String>{
+      'localized_redness',
+      'texture_smoothness',
+      'pigment_load',
+      'wrinkle_load',
+      'pore_visibility',
+      'breakout_activity',
+      'sebum_excess_oil_gloss',
+      'diffuse_flushing_erythema',
+      'skin_tone_radiance_evenness',
+      'glabellar_wrinkle_depth',
+      'pore_contraction_index',
+      'structural_firmness_elasticity',
+      'rosacea_severity',
+    };
+    final canonicalBaseline = <String, dynamic>{};
+
+    void mergeSource(dynamic source) {
+      if (source is! Map) return;
+      final map = Map<String, dynamic>.from(source);
+      for (final entry in map.entries) {
+        final value = entry.value;
+        final numeric = value is num
+            ? value.toDouble()
+            : double.tryParse(value.toString());
+        if (numeric == null || !numeric.isFinite || numeric <= 0.0) continue;
+        final rawKey = entry.key.toString().trim().toLowerCase();
+        // Baseline must come from canonical backend-style keys only.
+        if (!canonicalKeys.contains(rawKey)) continue;
+        canonicalBaseline[rawKey] = numeric;
+      }
+    }
+
+    final rawPayload = priorScan.rawPayload ?? const <String, dynamic>{};
+    final nestedMetrics = rawPayload['metrics'];
+    final nestedLuxePayload = rawPayload['luxePayload'];
+
+    mergeSource(rawPayload['metric_matrix']);
+    mergeSource(rawPayload['baseline_metric_matrix']);
+    mergeSource(rawPayload['baseline']);
+    mergeSource(rawPayload['opencv_metrics']);
+    mergeSource(nestedMetrics);
+    if (nestedMetrics is Map) {
+      mergeSource(nestedMetrics['metric_matrix']);
+      mergeSource(nestedMetrics['baseline_metric_matrix']);
+      mergeSource(nestedMetrics['baseline']);
+      mergeSource(nestedMetrics['opencv_metrics']);
+    }
+    if (nestedLuxePayload is Map) {
+      mergeSource(nestedLuxePayload);
+      mergeSource(nestedLuxePayload['metric_matrix']);
+      mergeSource(nestedLuxePayload['baseline_metric_matrix']);
+      mergeSource(nestedLuxePayload['baseline']);
+      final luxeMetrics = nestedLuxePayload['metrics'];
+      mergeSource(luxeMetrics);
+      if (luxeMetrics is Map) {
+        mergeSource(luxeMetrics['metric_matrix']);
+        mergeSource(luxeMetrics['baseline_metric_matrix']);
+        mergeSource(luxeMetrics['baseline']);
+        mergeSource(luxeMetrics['opencv_metrics']);
+      }
+    }
+    mergeSource(priorScan.metrics);
+
+    final metricAliasFallbacks = <String, List<String>>{
+      // Keep empty alias lists to enforce canonical backend key-only baselines.
+      'localized_redness': const <String>[],
+      'texture_smoothness': const <String>[],
+      'pigment_load': const <String>[],
+      'wrinkle_load': const <String>[],
+      'pore_visibility': const <String>[],
+      'breakout_activity': const <String>[],
     };
 
-    final trendDeltas = <String, dynamic>{..._serverTrendDeltas};
+    for (final entry in metricAliasFallbacks.entries) {
+      final metricKey = entry.key;
+      final aliases = entry.value;
+      final existing = canonicalBaseline[metricKey];
+      final existingNumeric = existing is num
+          ? existing.toDouble()
+          : double.tryParse(existing?.toString() ?? '');
+      final hasUsableExisting = _isUsableBaselineCandidate(existingNumeric);
+      if (!hasUsableExisting && existingNumeric != null && existingNumeric.isFinite) {
+        final reason = _baselineRejectReason(existingNumeric);
+        if (reason != null) {
+          _logBaselineReject(
+            metricKey: metricKey,
+            value: existingNumeric,
+            reason: reason,
+            source: 'baseline_matrix.$metricKey',
+          );
+        }
+      }
+      if (hasUsableExisting) {
+        final immediateScanId = _priorFocusAreaScans.isNotEmpty
+            ? _priorFocusAreaScans.first.id
+            : priorScan.id;
+        debugPrint(
+          'BASELINE PRIOR SELECT [$metricKey] priorScanId=$immediateScanId priorIndex=0 nonImmediate=false source=baseline_matrix.$metricKey value=${existingNumeric!.toStringAsFixed(2)}',
+        );
+        continue;
+      }
+
+      final resolved = _resolvePriorBaselineForMetric(metricKey, aliases);
+      if (resolved == null) {
+        debugPrint(
+          'BASELINE PRIOR SELECT [$metricKey] priorScanId=none priorIndex=-1 nonImmediate=false source=none value=0.00',
+        );
+        continue;
+      }
+
+      canonicalBaseline[metricKey] = resolved.value;
+      debugPrint(
+        'BASELINE PRIOR SELECT [$metricKey] priorScanId=${resolved.priorScanId} priorIndex=${resolved.priorIndex} nonImmediate=${resolved.priorIndex > 0} confidence=${resolved.confidenceLabel} source=${resolved.sourceKey} value=${resolved.value.toStringAsFixed(2)}',
+      );
+    }
+
+    return canonicalBaseline;
+  }
+
+  Map<String, dynamic> _buildLuxeResultsPayload(
+    PhotoAnalysisResult r, {
+    Map<String, dynamic>? backendResponse,
+  }) {
+    final timeline = _timelineMetricsFor(r);
+    final isFollowUp =
+        _explicitLocalFollowUpFlag || _localHistoryCountForFocusArea >= 2;
+
+    final backendMetricsNode = _asDynamicMap(backendResponse?['metrics']) ??
+        const <String, dynamic>{};
+    final backendMetricMatrix =
+        _asDynamicMap(backendResponse?['metric_matrix']) ??
+        _asDynamicMap(backendMetricsNode['metric_matrix']) ??
+        const <String, dynamic>{};
+
+    final cleanedMetricMatrix = <String, dynamic>{};
+    for (final entry in backendMetricMatrix.entries) {
+      final parsed = _safeToDouble(entry.value);
+      if (parsed == null || parsed.isNaN || parsed.isInfinite) continue;
+      final clamped = parsed.clamp(0.0, 100.0).toDouble();
+      if (clamped <= 0.0) continue;
+      cleanedMetricMatrix[entry.key] = clamped;
+    }
+
+    final baselineMetricMatrix = _buildLuxeBaselineMetricMatrix();
+    final usedPriorScan = baselineMetricMatrix.isNotEmpty;
+    final priorScanId = usedPriorScan ? _previousFocusAreaScan?.id : null;
+    final baselineKeys = baselineMetricMatrix.keys.toList()..sort();
+    debugPrint(
+      'BASELINE SOURCE: localHistoryCount=$_localHistoryCountForFocusArea priorScanId=${priorScanId ?? 'none'} baselineKeys=$baselineKeys usedPriorScan=$usedPriorScan',
+    );
+
+    final trendDeltas = isFollowUp
+      ? <String, dynamic>{..._serverTrendDeltas}
+      : <String, dynamic>{};
 
     double? deltaPct(
       double current,
@@ -2895,7 +3389,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       return lowerIsBetter ? -raw : raw;
     }
 
-    if (trendDeltas.isEmpty && _previousMetrics.isNotEmpty) {
+    if (isFollowUp && trendDeltas.isEmpty && _previousMetrics.isNotEmpty) {
       final currRedness = _trendMetricValueFromMap(
         timeline,
         'localized_redness',
@@ -2950,9 +3444,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     }
 
     return <String, dynamic>{
-      'metric_matrix': metricMatrix,
+      'metric_matrix': cleanedMetricMatrix,
+      'baseline_metric_matrix': baselineMetricMatrix,
+      'baseline': baselineMetricMatrix,
       'trend_deltas': trendDeltas,
-      'metrics': metricMatrix,
+      'metrics': cleanedMetricMatrix,
+      'local_history_count': _localHistoryCountForFocusArea,
+      'is_follow_up': isFollowUp,
     };
   }
 
@@ -2976,7 +3474,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final wrinkle = to10('wrinkle');
     final acne = to10('acne_severity');
     final rosacea = to10('rosacea_intensity');
-    final bool showCoreOnly = _showCoreFaceMetricSetOnly;
     final double? pore = _qualityScores?.pores == null
         ? null
         : ((1 - _qualityScores!.pores!) * 10).clamp(0, 10).toDouble();
@@ -3032,7 +3529,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             ),
             const SizedBox(height: 14),
             _framingNote(
-              'Body recovery scores use a 0-10 scale with direction shown per metric. '
+              'Body recovery scores are displayed on a 0-100 scale with direction shown per metric. '
               'Higher is better for fat retention, firmness, smoothness, and overall healing; '
               'lower is better for swelling, bruising, and hyperpigmentation. Educational only - not a diagnosis.',
             ),
@@ -3045,10 +3542,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     // skin health is the inverse of their average (higher = healthier).
     final avgConcern = (pigment + redness + texture + wrinkle) / 4;
     final healthScore = (10 - avgConcern).clamp(0, 10).toDouble();
-
-    // Accent palette: calm teal for general quality, attention-grabbing
-    // coral/pink for inflammatory conditions.
-    const inflammatoryAccent = Color(0xFFD06B6B);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -3093,38 +3586,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 ),
             ],
           ),
-          if (!showCoreOnly) ...[
-            const SizedBox(height: 14),
-            // Group 2 — inflammatory conditions (red/pink accents).
-            _metricGroup(
-              icon: Icons.local_fire_department_rounded,
-              title: 'Inflammatory Conditions',
-              eyebrow: 'NEEDS ATTENTION',
-              accent: inflammatoryAccent,
-              rows: [
-                _buildMetricRowWithTrend(
-                  label: 'Acne Severity',
-                  metricKey: 'acne_severity',
-                  value: acne,
-                ),
-                _buildMetricRowWithTrend(
-                  label: 'Rosacea Intensity',
-                  metricKey: 'rosacea_intensity',
-                  value: rosacea,
-                ),
-              ],
-            ),
-          ],
           const SizedBox(height: 14),
           _framingNote(
-            showCoreOnly
-                ? 'Full-face view is focused on core skin-quality metrics '
-                      '(pigmentation, redness, texture, wrinkles, pores) for '
-                      'cleaner trend tracking. Educational only — not a diagnosis.'
-                : 'Scores use a 0–10 scale where higher = more pronounced. '
-                      'Trend arrows compare against your most recent previous scan. '
-                      'Overall skin health inverts the average of the four quality '
-                      'metrics. Educational only — not a diagnosis.',
+            'Full-face view is focused on core skin-quality metrics '
+            '(pigmentation, redness, texture, wrinkles, pores) for cleaner '
+            'trend tracking. Educational only — not a diagnosis.',
           ),
         ],
       ),
@@ -3132,18 +3598,19 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   }
 
   /// Prominent gradient header showing the overall skin-health score
-  /// (0–10, higher = healthier) with a circular gauge.
+  /// (0–100, higher = healthier) with a circular gauge.
   Widget _overallHealthHeader(
     double score, {
     String title = 'OVERALL SKIN HEALTH',
     String description = 'Averaged from the four general skin-quality metrics.',
   }) {
-    final pct = (score / 10).clamp(0.0, 1.0);
-    final label = score >= 8
+    final score100 = (score * 10).clamp(0.0, 100.0);
+    final pct = (score100 / 100.0).clamp(0.0, 1.0);
+    final label = score100 >= 80
         ? 'Excellent'
-        : score >= 6
+        : score100 >= 60
         ? 'Good'
-        : score >= 4
+        : score100 >= 40
         ? 'Fair'
         : 'Needs care';
     return Container(
@@ -3179,7 +3646,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                   ),
                 ),
                 Text(
-                  score.toStringAsFixed(1),
+                  score100.toStringAsFixed(1),
                   style: const TextStyle(
                     fontSize: 19,
                     fontWeight: FontWeight.w900,
@@ -3205,7 +3672,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '$label · ${score.toStringAsFixed(2)} / 10',
+                  '$label · ${score100.toStringAsFixed(1)} / 100',
                   style: const TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w900,
@@ -3299,7 +3766,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     );
   }
 
-  /// A single 0–10 metric row with an optional trend indicator: label +
+  /// A single 0–100 metric row with an optional trend indicator: label +
   /// trend chip, severity band, a 2-decimal value pill, and a
   /// colour-coded progress bar. Severity colours come from the shared
   /// [_valueColor] / [_severityBandForValue] helpers for consistency.
@@ -3312,6 +3779,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final color = _directedValueColor(value, lowerIsBetter: lowerIsBetter);
     final band = _directedSeverityBand(value, lowerIsBetter: lowerIsBetter);
     final trend = _trendFor(metricKey, value, lowerIsBetter: lowerIsBetter);
+    final value100 = (value * 10).clamp(0.0, 100.0);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -3354,7 +3822,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Text(
-                '${value.toStringAsFixed(2)} / 10',
+                '${value100.toStringAsFixed(1)} / 100',
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w900,
@@ -3368,7 +3836,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         ClipRRect(
           borderRadius: BorderRadius.circular(6),
           child: LinearProgressIndicator(
-            value: (value / 10).clamp(0.0, 1.0),
+            value: (value100 / 100).clamp(0.0, 1.0),
             minHeight: 7,
             backgroundColor: color.withValues(alpha: 0.12),
             valueColor: AlwaysStoppedAnimation(color),
@@ -3540,9 +4008,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     return 'Low';
   }
 
-  /// Reads the six metrics from the most recent PREVIOUS scan, normalised
-  /// to the 0–10 scale so they can be compared against the current scan.
-  /// Returns an empty map when no prior scan exists. Must be called
+  /// Reads the six metrics from the baseline scan (oldest Day 0 scan),
+  /// normalised to the 0–10 scale so they can be compared against the current
+  /// scan. Returns an empty map when no prior scan exists. Must be called
   /// BEFORE the current scan is persisted.
   /// The focus area persisted with the current scan. Prefers the active
   /// procedure's configured focus area, falling back to the region the user
@@ -3563,22 +4031,108 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     try {
       _previousFocusAreaScan = null;
       _baselineFocusAreaScan = null;
+      _priorFocusAreaScans = const [];
+      _localHistoryCountForFocusArea = 1;
+      _explicitLocalFollowUpFlag = false;
       final focus = _normalizeFocus(_resolvedFocusArea());
+      final isFullFaceFocus = focus == 'full face';
+      final selectedProcedureId = (_selectedProcedureId ?? '').trim();
       final scans = await SkinHistoryRepository.instance.getAllScans();
-      final candidates = <ScanHistoryEntry>[];
+      String? pinnedBaselineScanId;
+      String? pinnedLatestScanId;
+      if (selectedProcedureId.isNotEmpty) {
+        final comparison = await AppPrefs.getProcedurePhotoComparison(
+          selectedProcedureId,
+        );
+        final rawBaselineId = comparison['baselineScanId']?.trim();
+        if (rawBaselineId != null && rawBaselineId.isNotEmpty) {
+          pinnedBaselineScanId = rawBaselineId;
+        }
+        final rawLatestId = comparison['latestScanId']?.trim();
+        if (rawLatestId != null && rawLatestId.isNotEmpty) {
+          pinnedLatestScanId = rawLatestId;
+        }
+      }
+      const clinicalMetricKeys = <String>{
+        'localized_redness',
+        'texture_smoothness',
+        'pore_visibility',
+        'wrinkle_load',
+        'pigment_load',
+        'breakout_activity',
+        'diffuse_flushing_erythema',
+        'sebum_excess_oil_gloss',
+        'skin_tone_radiance_evenness',
+        'glabellar_wrinkle_depth',
+        'under_eye_texture_density',
+        'under_eye_dark_circle_density',
+        'rosacea_severity',
+        'structural_firmness_elasticity',
+        'pore_contraction_index',
+      };
+      int clinicalKeyCountFor(ScanHistoryEntry scan) {
+        bool validPositive(dynamic value) =>
+            value is num && value.isFinite && value > 0;
+        final keys = <String>{};
+
+        for (final entry in scan.metrics.entries) {
+          if (clinicalMetricKeys.contains(entry.key) && validPositive(entry.value)) {
+            keys.add(entry.key);
+          }
+        }
+
+        Map<String, dynamic> asDynamicMap(dynamic value) {
+          if (value is Map<String, dynamic>) return value;
+          if (value is Map) return Map<String, dynamic>.from(value);
+          return const <String, dynamic>{};
+        }
+
+        final payload = scan.rawPayload ?? const <String, dynamic>{};
+        final metricMatrix = asDynamicMap(payload['metric_matrix']);
+        for (final entry in metricMatrix.entries) {
+          if (clinicalMetricKeys.contains(entry.key) && validPositive(entry.value)) {
+            keys.add(entry.key);
+          }
+        }
+
+        final metricsNode = asDynamicMap(payload['metrics']);
+        for (final entry in metricsNode.entries) {
+          if (clinicalMetricKeys.contains(entry.key) && validPositive(entry.value)) {
+            keys.add(entry.key);
+          }
+        }
+
+        final nestedMatrix = asDynamicMap(metricsNode['metric_matrix']);
+        for (final entry in nestedMatrix.entries) {
+          if (clinicalMetricKeys.contains(entry.key) && validPositive(entry.value)) {
+            keys.add(entry.key);
+          }
+        }
+
+        return keys.length;
+      }
+
+      final strictCandidates = <ScanHistoryEntry>[];
+      final fallbackFullFaceCandidates = <ScanHistoryEntry>[];
       // getAllScans() is newest-first. We keep both edges:
       // - first: most recent prior scan (for trend deltas)
       // - last: earliest same-focus baseline (for before/after left frame)
       for (final scan in scans) {
+        final scanProcedureId = (scan.procedureId ?? '').trim();
         final scanFocus = _normalizeFocus(scan.focusArea);
-        if (focus.isNotEmpty && scanFocus != focus) {
-          continue;
-        }
+        final hasPhoto = (scan.imagePath ?? '').trim().isNotEmpty;
+        final clinicalKeyCount = clinicalKeyCountFor(scan);
+
+        final procedureMatches =
+            selectedProcedureId.isEmpty || scanProcedureId == selectedProcedureId;
+        final focusMatches = focus.isEmpty || scanFocus == focus;
+
         final raw = scan.metrics;
         final hasAny =
             SkinHistoryRepository.allMetricKeys.any(
               (k) => raw.containsKey(k),
             ) ||
+            clinicalKeyCount > 0 ||
             const [
               'fatRetention',
               'swelling',
@@ -3588,27 +4142,116 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               'hyperpigmentation',
               'overallHealingScore',
             ].any((k) => raw.containsKey(k));
-        if (!hasAny) {
-          continue;
+
+        final isFullFaceAiPhotoFallbackCandidate =
+            isFullFaceFocus &&
+            scan.isAiAnalysisScan &&
+            hasPhoto &&
+            (scanFocus.isEmpty || scanFocus == 'full face');
+
+        final strictMatch = procedureMatches && focusMatches && hasAny;
+        final fallbackMatch = !strictMatch && isFullFaceAiPhotoFallbackCandidate;
+
+        String exclusionReason = 'included_strict';
+        if (strictMatch) {
+          strictCandidates.add(scan);
+        } else if (fallbackMatch) {
+          exclusionReason = 'included_full_face_photo_fallback';
+          fallbackFullFaceCandidates.add(scan);
+        } else if (!procedureMatches) {
+          exclusionReason = 'procedure_mismatch';
+        } else if (!focusMatches) {
+          exclusionReason = 'focus_mismatch';
+        } else if (!hasAny) {
+          exclusionReason = 'no_supported_metrics';
+        } else if (!hasPhoto) {
+          exclusionReason = 'no_photo';
+        } else {
+          exclusionReason = 'filtered_out';
         }
-        candidates.add(scan);
+
+        debugPrint(
+          'BASELINE CANDIDATE SCAN: id=${scan.id} '
+          'focusArea=${scan.focusArea ?? 'none'} '
+          'imagePathNull=${hasPhoto ? 'false' : 'true'} '
+          'clinicalKeyCount=$clinicalKeyCount '
+          'reason=$exclusionReason',
+        );
       }
+
+      final seenIds = <String>{};
+      final candidates = <ScanHistoryEntry>[];
+      for (final scan in strictCandidates) {
+        if (seenIds.add(scan.id)) {
+          candidates.add(scan);
+        }
+      }
+      for (final scan in fallbackFullFaceCandidates) {
+        if (seenIds.add(scan.id)) {
+          candidates.add(scan);
+        }
+      }
+
+      bool readFollowUpFlagFromPayload(ScanHistoryEntry scan) {
+        final payload = scan.rawPayload ?? const <String, dynamic>{};
+        final raw =
+            payload['is_follow_up'] ??
+            payload['isFollowUp'] ??
+            payload['follow_up'] ??
+            payload['followUp'];
+        if (raw is bool) return raw;
+        if (raw is num) return raw != 0;
+        final normalized = raw?.toString().trim().toLowerCase();
+        return normalized == 'true' || normalized == '1' || normalized == 'yes';
+      }
+
+      _localHistoryCountForFocusArea = candidates.length + 1;
+      _explicitLocalFollowUpFlag = candidates.any(readFollowUpFlagFromPayload);
+
+      debugPrint(
+        'BASELINE CANDIDATES: procedureId=${selectedProcedureId.isEmpty ? 'none' : selectedProcedureId} '
+        'localHistoryCount=$_localHistoryCountForFocusArea globalCount=${scans.length} focus=$focus',
+      );
 
       if (candidates.isEmpty) return const {};
 
-      _previousFocusAreaScan = candidates.first;
-      _baselineFocusAreaScan = candidates.last;
+      _priorFocusAreaScans = List<ScanHistoryEntry>.from(candidates);
+
+      ScanHistoryEntry? pinnedLatest;
+      if (pinnedLatestScanId != null) {
+        for (final scan in candidates) {
+          if (scan.id == pinnedLatestScanId) {
+            pinnedLatest = scan;
+            break;
+          }
+        }
+      }
+      _previousFocusAreaScan = pinnedLatest ?? candidates.first;
+
+      ScanHistoryEntry? pinnedBaseline;
+      if (pinnedBaselineScanId != null) {
+        for (final scan in candidates) {
+          if (scan.id == pinnedBaselineScanId) {
+            pinnedBaseline = scan;
+            break;
+          }
+        }
+      }
+      _baselineFocusAreaScan = pinnedBaseline ?? candidates.last;
 
       // Scans persisted by this service store 0–1 values; legacy /
       // fallback scans may already be 0–10. Normalise either way.
       double norm(double v) => (v <= 1.0 ? v * 10 : v).clamp(0, 10).toDouble();
-      final raw = _previousFocusAreaScan!.metrics;
+      final raw = _baselineFocusAreaScan!.metrics;
       return {for (final entry in raw.entries) entry.key: norm(entry.value)};
     } catch (_) {
       // Non-fatal — simply show no trend indicators.
     }
     _previousFocusAreaScan = null;
     _baselineFocusAreaScan = null;
+    _priorFocusAreaScans = const [];
+    _localHistoryCountForFocusArea = 1;
+    _explicitLocalFollowUpFlag = false;
     return const {};
   }
 
@@ -4059,6 +4702,248 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     );
   }
 
+  Widget _resultActionButtonRow() {
+    final hasComparison = _hasBeforeAfterComparisonAvailable();
+    final addComparisonLabel = hasComparison
+        ? 'Add Another Comparison Photo'
+        : 'Add Comparison Photo';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _luxeActionButton(
+          icon: Icons.verified_rounded,
+          label: 'Save as Baseline',
+          onPressed: _onSaveAsBaselinePressed,
+        ),
+        const SizedBox(height: 10),
+        _luxeActionButton(
+          icon: Icons.compare_arrows_rounded,
+          label: 'Compare Before & After',
+          onPressed: hasComparison
+              ? _openBeforeAfterSplitView
+              : _showComparisonUnavailableToast,
+        ),
+        const SizedBox(height: 10),
+        _luxeActionButton(
+          icon: Icons.add_a_photo_outlined,
+          label: addComparisonLabel,
+          onPressed: _openComparisonCapture,
+        ),
+        const SizedBox(height: 10),
+        _luxeActionButton(
+          icon: Icons.psychology_alt_rounded,
+          label: 'AI Recovery Coach',
+          onPressed: _openAiRecoveryCoach,
+        ),
+        const SizedBox(height: 10),
+        _luxeActionButton(
+          icon: Icons.home_rounded,
+          label: 'Home',
+          onPressed: _goHome,
+        ),
+      ],
+    );
+  }
+
+  Widget _luxeActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    const goldButton = Color(0xFFC5A059);
+    const obsidian = Color(0xFF1A1A1A);
+
+    return SizedBox(
+      width: double.infinity,
+      height: 48,
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 16),
+        label: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.15,
+          ),
+        ),
+        style: ElevatedButton.styleFrom(
+          elevation: 0,
+          foregroundColor: obsidian,
+          side: BorderSide(
+            color: obsidian.withValues(alpha: 0.28),
+            width: 0.9,
+          ),
+          backgroundColor: goldButton,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<String?> _resolveCurrentScanIdForActions() async {
+    final report = _result;
+    if (report == null) return null;
+
+    final selectedProcedureId = (_selectedProcedureId ?? '').trim();
+    final currentPath = report.input.imagePath.trim();
+    final scans = await AppPrefs.getScanEntries();
+
+    final candidates = scans.where((scan) {
+      if ((scan.imagePath ?? '').trim() != currentPath) return false;
+      if (selectedProcedureId.isNotEmpty &&
+          (scan.procedureId ?? '').trim() != selectedProcedureId) {
+        return false;
+      }
+      return true;
+    }).toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+    if (candidates.isNotEmpty) return candidates.first.id;
+    return null;
+  }
+
+  Future<void> _onSaveAsBaselinePressed() async {
+    final currentScanId = await _resolveCurrentScanIdForActions();
+    if (!mounted) return;
+
+    if (currentScanId == null || currentScanId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Current scan is not saved yet. Save it first.'),
+        ),
+      );
+      return;
+    }
+
+    bool ok = await AppPrefs.setBaselineScanId(currentScanId);
+
+    // Fallback: if the scan was saved without a procedure id, attach it to
+    // the active/selected procedure and retry baseline pinning.
+    if (!ok) {
+      String selectedProcedureId =
+          (_selectedProcedureId ?? '').trim().isNotEmpty
+          ? (_selectedProcedureId ?? '').trim()
+          : (await AppPrefs.getSelectedProcedureIdOrNull())?.trim() ?? '';
+
+      // When launched outside a tracked procedure flow, scans can be saved
+      // without a procedure id. Create a stable AI focus bucket so baseline
+      // pinning still works for this focus area.
+      if (selectedProcedureId.isEmpty) {
+        final focus = _normalizeFocus(_resolvedFocusArea()).replaceAll(' ', '_');
+        selectedProcedureId = 'ai_focus_${focus.isEmpty ? 'full_face' : focus}';
+      }
+
+      if (selectedProcedureId.isNotEmpty) {
+        final patched = await AppPrefs.patchScanProcedureId(
+          currentScanId,
+          selectedProcedureId,
+        );
+        if (patched) {
+          ok = await AppPrefs.setBaselineScanId(currentScanId);
+        }
+      }
+    }
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: ok ? MyApp.clinicalTeal : const Color(0xFFBF8A30),
+        content: Text(
+          ok
+              ? 'Baseline updated successfully.'
+              : 'Unable to set baseline for this scan.',
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+      ),
+    );
+  }
+
+  void _openBeforeAfterSplitView() {
+    final report = _result;
+    if (report == null) return;
+
+    final baselineProvider = _resultsBaselineImageProvider(report);
+    final currentProvider = _imageProviderForPath(report.input.imagePath);
+
+    if (baselineProvider == null || currentProvider == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Need both baseline and current scan images to compare.'),
+        ),
+      );
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _SkinAiSplitComparisonScreen(
+          baselineImage: baselineProvider,
+          currentImage: currentProvider,
+        ),
+      ),
+    );
+  }
+
+  bool _hasBeforeAfterComparisonAvailable() {
+    final report = _result;
+    if (report == null) return false;
+
+    final baselineProvider = _resultsBaselineImageProvider(report);
+    final currentPath = report.input.imagePath.trim();
+    if (baselineProvider == null || currentPath.isEmpty) return false;
+
+    final candidatePaths = <String>[
+      (_baselineFocusAreaScan?.imagePath ?? '').trim(),
+      (_previousFocusAreaScan?.imagePath ?? '').trim(),
+      (_ghostReferenceScan?.imagePath ?? '').trim(),
+      (_latestScan?.imagePath ?? '').trim(),
+    ];
+
+    return candidatePaths.any(
+      (path) => path.isNotEmpty && path != currentPath,
+    );
+  }
+
+  void _showComparisonUnavailableToast() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Add a second photo first, then Compare Before & After will open.',
+        ),
+      ),
+    );
+  }
+
+  void _openComparisonCapture() {
+    _startOver();
+  }
+
+  void _openAiRecoveryCoach() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const AIRecoveryCoachScreen()),
+    );
+  }
+
+  void _goHome() {
+    final navigator = Navigator.of(context);
+    navigator.popUntil((route) => route.isFirst);
+
+    // In some web/navigation stacks this screen can be the first route,
+    // so popUntil will not leave the page. Ensure Home always lands on
+    // the app home route.
+    if (!mounted) return;
+    final routeName = ModalRoute.of(context)?.settings.name ?? '';
+    if (routeName != '/home') {
+      navigator.pushNamedAndRemoveUntil('/home', (_) => false);
+    }
+  }
+
   Map<String, double> _singleScanMetricMap() {
     if (_fullMetrics.isNotEmpty) {
       final redness = (_fullMetrics['redness'] ?? 0) * 100;
@@ -4167,14 +5052,17 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   }
 
   Widget _detectedMetricsCard(PhotoAnalysisResult r) {
-    final entries = r.detected.values.entries.where((e) => e.value > 0).toList()
+    final entries = r.detected.values.entries
+        .where((e) => e.value > 0)
+        .where((e) => !_isHiddenConditionMetricKey(e.key))
+        .toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     if (entries.isEmpty) {
       return Container(
         padding: const EdgeInsets.all(14),
         decoration: _cardDecoration(),
         child: Text(
-          'No metrics scored above zero in this photo.',
+          'No comparison-focused metrics scored above zero in this photo.',
           style: TextStyle(fontSize: 12, color: MyApp.clinicalSlate),
         ),
       );
@@ -4205,7 +5093,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           // or textural residue. Clarifies that the AI IS seeing
           // something — just classifying it as scarring rather than
           // active disease.
-          if ((r.derivations['postAcneScarring']?.score ?? 0) > 0) ...[
+          if ((r.derivations['postAcneScarring']?.score ?? 0) > 0 &&
+              !_isHiddenConditionMetricKey('postAcneScarring')) ...[
             Divider(
               height: 18,
               color: MyApp.clinicalSlate.withValues(alpha: 0.12),
@@ -4403,6 +5292,44 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         .map((e) => '${e.value} ${e.key}${e.value == 1 ? "" : "s"}')
         .toList();
     return parts.isEmpty ? '' : ' (${parts.join(", ")})';
+  }
+
+  bool _isHiddenConditionMetricKey(String key) {
+    final normalized = key
+        .trim()
+        .toLowerCase()
+        .replaceAll('-', '_')
+        .replaceAll(' ', '_');
+    const blocked = <String>{
+      'visible_blood_vessels',
+      'vessel_visibility',
+      'telangiectasia',
+      'rosacea_flushing_episodes',
+      'flushing_episodes',
+      'erythema',
+      'redness',
+      'diffuse_flushing_erythema',
+      'localized_redness',
+      'skin_sensitivity',
+      'sensitivity',
+      'rosacea_severity',
+      'rosacea_intensity',
+      'acne_severity',
+      'postacnescarring',
+      'post_acne_scarring',
+      'postacne_scarring',
+      'postacne_marks',
+    };
+    if (blocked.contains(normalized)) return true;
+    if (normalized.contains('erythema')) return true;
+    if (normalized.contains('flushing')) return true;
+    if (normalized.contains('rosacea')) return true;
+    if (normalized.contains('blood_vessel')) return true;
+    if (normalized.contains('vessel')) return true;
+    if (normalized.contains('sensitivity')) return true;
+    if (normalized.contains('acne_severity')) return true;
+    if (normalized.contains('post_acne')) return true;
+    return false;
   }
 
   String _qualitySummary(SkinQualityScores q) {
@@ -5842,6 +6769,85 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     if (v <= 5) return const Color(0xFFB89A6E);
     if (v <= 7) return const Color(0xFFD08A4A);
     return const Color(0xFFC76A55);
+  }
+}
+
+class _SkinAiSplitComparisonScreen extends StatelessWidget {
+  const _SkinAiSplitComparisonScreen({
+    required this.baselineImage,
+    required this.currentImage,
+  });
+
+  final ImageProvider<Object> baselineImage;
+  final ImageProvider<Object> currentImage;
+
+  Widget _panel({
+    required String label,
+    required ImageProvider<Object> image,
+    required Color accent,
+  }) {
+    return Expanded(
+      child: Container(
+        margin: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: const Color(0xFF11151F),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: accent.withValues(alpha: 0.4), width: 0.9),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.16),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(14),
+                ),
+              ),
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: accent,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.7,
+                ),
+              ),
+            ),
+            Expanded(child: Image(image: image, fit: BoxFit.cover)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0F1117),
+      appBar: AppBar(
+        title: const Text('Before & After Comparison'),
+        backgroundColor: const Color(0xFF0F1117),
+        foregroundColor: const Color(0xFFF3EBDD),
+      ),
+      body: SafeArea(
+        child: Row(
+          children: [
+            _panel(
+              label: 'BASELINE',
+              image: baselineImage,
+              accent: const Color(0xFFE5C287),
+            ),
+            _panel(
+              label: 'CURRENT',
+              image: currentImage,
+              accent: const Color(0xFF9BC9AE),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

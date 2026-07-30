@@ -107,7 +107,8 @@ class _ProcedureScanOptionTile extends StatelessWidget {
   }
 }
 
-class _HomePageState extends State<HomePage> with RouteAware {
+class _HomePageState extends State<HomePage>
+  with RouteAware, WidgetsBindingObserver {
   List<TrackedProduct> _trackedProducts = [];
   int _selectedIndex = 0;
   String _userName = '';
@@ -143,6 +144,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _startTipRotation();
     _loadTrackedProducts();
     _loadProfile();
@@ -160,9 +162,17 @@ class _HomePageState extends State<HomePage> with RouteAware {
   @override
   void dispose() {
     routeObserver.unsubscribe(this);
+    WidgetsBinding.instance.removeObserver(this);
     _tipRotationTimer?.cancel();
     _tipPageController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshData();
+    }
   }
 
   @override
@@ -1221,6 +1231,548 @@ class _HomePageState extends State<HomePage> with RouteAware {
     );
   }
 
+  Widget _buildFacialMetricGridCard(
+    String label,
+    double? value, {
+    double? baseline,
+    MetricDirectionality? directionalityOverride,
+  }) {
+    final hasCurrentValue = value != null;
+    final currentValue = value ?? 0.0;
+    final hasComparison = hasCurrentValue && baseline != null;
+    final trend = baseline == null
+        ? null
+        : resolveMetricTrend(
+            label,
+            baseline: baseline,
+            current: currentValue,
+            directionalityOverride: directionalityOverride,
+          );
+    final trendColor = trend == null || !hasComparison
+        ? null
+        : _homeTrendColor(
+            trend,
+            baseline: baseline,
+            current: currentValue,
+            directionalityOverride: directionalityOverride,
+          );
+    final hasTrend = hasComparison && trend != null && trend.hasMeaningfulChange;
+    final signedDelta = hasTrend
+      ? '${trend.change > 0 ? '+' : ''}${trend.change.toStringAsFixed(1)}'
+        : null;
+    final effectiveDirectionality =
+        directionalityOverride ??
+        (label.toLowerCase() == 'elasticity'
+            ? MetricDirectionality.higherIsBetter
+            : MetricDirectionality.lowerIsBetter);
+    final isImproved = !hasComparison
+        ? false
+        : effectiveDirectionality == MetricDirectionality.lowerIsBetter
+      ? currentValue < baseline
+      : currentValue > baseline;
+
+    String improvedStatus(String normalizedLabel) {
+      switch (normalizedLabel) {
+        case 'redness':
+          return 'Calming Down';
+        case 'texture':
+          return 'Smoother Texture';
+        case 'wrinkles':
+          return 'Lines Softening';
+        case 'pores':
+          return 'Pores Refining';
+        case 'dark spots':
+          return 'Tone Evening Out';
+        case 'elasticity':
+          return 'Firmness Improving';
+        default:
+          return 'Improving';
+      }
+    }
+
+    String worsenedStatus(String normalizedLabel) {
+      switch (normalizedLabel) {
+        case 'redness':
+          return 'Needs Attention';
+        case 'texture':
+          return 'Slightly Increased';
+        case 'wrinkles':
+          return 'Slightly Increased';
+        case 'pores':
+          return 'Needs Attention';
+        case 'dark spots':
+          return 'Pigment Increased';
+        case 'elasticity':
+          return 'Support Needed';
+        default:
+          return 'Needs Attention';
+      }
+    }
+
+    final normalizedLabel = label.trim().toLowerCase();
+    final statusText = !hasCurrentValue
+      ? 'No analysis yet'
+      : !hasComparison
+      ? 'Current value'
+      : !hasTrend
+        ? 'Stable / Maintained'
+        : isImproved
+        ? improvedStatus(normalizedLabel)
+        : worsenedStatus(normalizedLabel);
+    final statusColor = (!hasCurrentValue || !hasComparison || !hasTrend)
+        ? MyApp.clinicalSlate.withValues(alpha: 0.62)
+        : isImproved
+        ? AppColors.mutedSage.withValues(alpha: 0.9)
+        : AppColors.softTerracotta.withValues(alpha: 0.9);
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 102, maxHeight: 112),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE5E0D8)),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.refinedSlate.withValues(alpha: 0.03),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: MyApp.clinicalSlate.withValues(alpha: 0.9),
+                letterSpacing: 0.1,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  hasCurrentValue ? currentValue.toStringAsFixed(1) : '—',
+                  style: TextStyle(
+                    fontSize: 25,
+                    fontWeight: FontWeight.w800,
+                    color: MyApp.clinicalNavy,
+                    height: 1,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: (trendColor ?? AppColors.borders).withValues(
+                      alpha: hasTrend ? 0.14 : 0.2,
+                    ),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: (trendColor ?? AppColors.borders).withValues(
+                        alpha: hasTrend ? 0.28 : 0.45,
+                      ),
+                      width: 0.8,
+                    ),
+                  ),
+                  child: Text(
+                    signedDelta ?? '—',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: hasTrend
+                          ? (trendColor ?? MyApp.clinicalSlate)
+                          : MyApp.clinicalSlate.withValues(alpha: 0.7),
+                      height: 1.1,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 7),
+            Text(
+              statusText,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: statusColor,
+                height: 1.15,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  bool _isLowConfidence(dynamic confidenceValue) {
+    if (confidenceValue == null) return false;
+    if (confidenceValue is num) {
+      final v = confidenceValue.toDouble();
+      return v.isFinite && v < 0.65;
+    }
+    final text = confidenceValue.toString().trim().toLowerCase();
+    return text == 'low';
+  }
+
+  dynamic _confidenceForMetric(
+    ScanHistoryEntry scan,
+    List<String> keys,
+  ) {
+    final payload = scan.rawPayload ?? const <String, dynamic>{};
+    Map<String, dynamic> asMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return const <String, dynamic>{};
+    }
+
+    final metrics = asMap(payload['metrics']);
+    final luxePayload = asMap(payload['luxePayload']);
+    final luxeMetrics = asMap(luxePayload['metrics']);
+    final confidenceSources = <Map<String, dynamic>>[
+      asMap(payload['metric_confidence']),
+      asMap(metrics['metric_confidence']),
+      asMap(luxePayload['metric_confidence']),
+      asMap(luxeMetrics['metric_confidence']),
+    ];
+
+    for (final source in confidenceSources) {
+      if (source.isEmpty) continue;
+      for (final key in keys) {
+        if (source.containsKey(key)) return source[key];
+      }
+    }
+    return null;
+  }
+
+  double? _readCanonicalHomepageMetric(
+    ScanHistoryEntry scan,
+    String canonicalKey,
+    List<String> confidenceKeys,
+  ) {
+    double? parse(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value == null) return null;
+      return double.tryParse(value.toString());
+    }
+
+    Map<String, dynamic> asMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return const <String, dynamic>{};
+    }
+
+    double? readFromMap(Map<String, dynamic> source, List<String> keys) {
+      if (source.isEmpty) return null;
+      final metricMatrix = asMap(source['metric_matrix']);
+      final opencv = asMap(source['opencv_metrics']);
+      final nestedMetrics = asMap(source['metrics']);
+      final nestedMatrix = asMap(nestedMetrics['metric_matrix']);
+      final nestedOpencv = asMap(nestedMetrics['opencv_metrics']);
+
+      for (final key in keys) {
+        final candidates = <dynamic>[
+          source[key],
+          source['metric_matrix.$key'],
+          source['metric_matrix_$key'],
+          source['opencv_metrics.$key'],
+          source['opencv_metrics_$key'],
+          metricMatrix[key],
+          opencv[key],
+          nestedMetrics[key],
+          nestedMatrix[key],
+          nestedOpencv[key],
+        ];
+        for (final candidate in candidates) {
+          final parsed = parse(candidate);
+          if (parsed != null && parsed.isFinite) return parsed;
+        }
+      }
+      return null;
+    }
+
+    final canonical = ScanDetailScreen.backendMetricSource(scan.metrics);
+    double? value = canonical[canonicalKey];
+    if (value == null || !value.isFinite) {
+      value = readFromMap(scan.metrics, [canonicalKey]);
+      if (value == null || !value.isFinite) {
+        value = readFromMap(scan.rawPayload ?? const <String, dynamic>{}, [canonicalKey]);
+      }
+    }
+    if (value == null || !value.isFinite) return null;
+
+    final normalized = ScanDetailScreen.normalizeMetricValueTo100(
+      canonicalKey,
+      value,
+    );
+    if (!normalized.isFinite) return null;
+
+    if (normalized <= 0.0) {
+      final confidenceValue = _confidenceForMetric(scan, confidenceKeys);
+      if (_isLowConfidence(confidenceValue)) {
+        return null;
+      }
+    }
+
+    return normalized;
+  }
+
+  Map<String, double?> _facialMetricSnapshot(ScanHistoryEntry scan) {
+    return <String, double?>{
+      'localized_redness': _readCanonicalHomepageMetric(
+        scan,
+        'localized_redness',
+        const <String>['localized_redness'],
+      ),
+      'texture_smoothness': _readCanonicalHomepageMetric(
+        scan,
+        'texture_smoothness',
+        const <String>['texture_smoothness'],
+      ),
+      'wrinkle_load': _readCanonicalHomepageMetric(
+        scan,
+        'wrinkle_load',
+        const <String>['wrinkle_load'],
+      ),
+      'pore_visibility': _readCanonicalHomepageMetric(
+        scan,
+        'pore_visibility',
+        const <String>['pore_visibility'],
+      ),
+      'pigment_load': _readCanonicalHomepageMetric(
+        scan,
+        'pigment_load',
+        const <String>['pigment_load'],
+      ),
+      'structural_firmness_elasticity': _readCanonicalHomepageMetric(
+        scan,
+        'structural_firmness_elasticity',
+        const <String>['structural_firmness_elasticity'],
+      ),
+    };
+  }
+
+  double? _latestEstimatedSkinAgeFromCanonical(
+    ScanHistoryEntry latestScan,
+    Map<String, double?> latestValues,
+  ) {
+    double? parse(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value == null) return null;
+      return double.tryParse(value.toString());
+    }
+
+    Map<String, dynamic> asMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return const <String, dynamic>{};
+    }
+
+    double? readAgeFromMap(Map<String, dynamic> source) {
+      if (source.isEmpty) return null;
+      final Map<String, dynamic> metrics = asMap(source['metrics']);
+      const keys = <String>[
+        'estimatedSkinAge',
+        'estimated_skin_age',
+        'skin_age',
+        'biological_age',
+      ];
+      for (final key in keys) {
+        final value = parse(source[key]) ?? parse(metrics[key]);
+        if (value != null && value.isFinite && value > 0.0) return value;
+      }
+      return null;
+    }
+
+    if (latestScan.estimatedSkinAge > 0) {
+      return latestScan.estimatedSkinAge;
+    }
+
+    final payloadAge = readAgeFromMap(latestScan.rawPayload ?? const <String, dynamic>{});
+    if (payloadAge != null) return payloadAge;
+
+    final metricsAge = readAgeFromMap(latestScan.metrics);
+    if (metricsAge != null) return metricsAge;
+
+    final redness = latestValues['localized_redness'];
+    final texture = latestValues['texture_smoothness'];
+    final wrinkle = latestValues['wrinkle_load'];
+    final pore = latestValues['pore_visibility'];
+    final darkSpots = latestValues['pigment_load'];
+    final elasticity = latestValues['structural_firmness_elasticity'];
+    final allPresent =
+        redness != null &&
+        texture != null &&
+        wrinkle != null &&
+        pore != null &&
+        darkSpots != null &&
+        elasticity != null;
+    if (!allPresent) return null;
+
+    final skinMetrics = SkinMetrics(
+      redness: (redness / 10.0).clamp(0.0, 10.0),
+      texture: (texture / 10.0).clamp(0.0, 10.0),
+      wrinkle: (wrinkle / 10.0).clamp(0.0, 10.0),
+      pore: (pore / 10.0).clamp(0.0, 10.0),
+      darkSpots: (darkSpots / 10.0).clamp(0.0, 10.0),
+      elasticity: (elasticity / 10.0).clamp(0.0, 10.0),
+    );
+    return estimateVisualSkinAge(skinMetrics);
+  }
+
+  void _debugLatestScanKeyAuditIfNeeded(
+    ScanHistoryEntry scan,
+    Map<String, double?> latestValues,
+    double? latestEstimatedAge,
+  ) {
+    final poreMissing = latestValues['pore_visibility'] == null;
+    final ageMissing = latestEstimatedAge == null;
+    if (!poreMissing && !ageMissing) return;
+
+    Map<String, dynamic> asMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return const <String, dynamic>{};
+    }
+
+    final metricsMap = asMap(scan.metrics);
+    final payloadMap = asMap(scan.rawPayload);
+    final payloadMetrics = asMap(payloadMap['metrics']);
+    final payloadMatrix = asMap(payloadMap['metric_matrix']);
+    final payloadOpenCv = asMap(payloadMap['opencv_metrics']);
+    final payloadNestedMatrix = asMap(payloadMetrics['metric_matrix']);
+    final payloadNestedOpenCv = asMap(payloadMetrics['opencv_metrics']);
+
+    const poreCandidates = <String>[
+      'pore_visibility',
+    ];
+    const ageCandidates = <String>[
+      'estimatedSkinAge',
+      'estimated_skin_age',
+      'skin_age',
+      'biological_age',
+    ];
+
+    final foundPore = <String, dynamic>{};
+    final foundAge = <String, dynamic>{};
+
+    void probe(
+      String label,
+      Map<String, dynamic> source,
+      List<String> keys,
+      Map<String, dynamic> bucket,
+    ) {
+      if (source.isEmpty) return;
+      for (final key in keys) {
+        if (!source.containsKey(key)) continue;
+        bucket['$label.$key'] = source[key];
+      }
+    }
+
+    for (final source in <({String label, Map<String, dynamic> map})>[
+      (label: 'scan.metrics', map: metricsMap),
+      (label: 'scan.rawPayload', map: payloadMap),
+      (label: 'rawPayload.metrics', map: payloadMetrics),
+      (label: 'rawPayload.metric_matrix', map: payloadMatrix),
+      (label: 'rawPayload.opencv_metrics', map: payloadOpenCv),
+      (label: 'rawPayload.metrics.metric_matrix', map: payloadNestedMatrix),
+      (label: 'rawPayload.metrics.opencv_metrics', map: payloadNestedOpenCv),
+    ]) {
+      probe(source.label, source.map, poreCandidates, foundPore);
+      probe(source.label, source.map, ageCandidates, foundAge);
+    }
+
+    debugPrint(
+      'HOME KEY AUDIT | scan=${scan.id} | poreMissing=$poreMissing | ageMissing=$ageMissing | '
+      'foundPore=$foundPore | foundAge=$foundAge | '
+      'metricsKeys=${metricsMap.keys.toList()} | rawPayloadKeys=${payloadMap.keys.toList()}',
+    );
+  }
+
+  Widget _buildFacialMetricsGridFromCanonical({
+    required Map<String, double?> currentValues,
+    Map<String, double?>? previousValues,
+  }) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _buildFacialMetricGridCard(
+                'Redness',
+                currentValues['localized_redness'],
+                baseline: previousValues?['localized_redness'],
+                directionalityOverride: MetricDirectionality.lowerIsBetter,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _buildFacialMetricGridCard(
+                'Texture',
+                currentValues['texture_smoothness'],
+                baseline: previousValues?['texture_smoothness'],
+                directionalityOverride: MetricDirectionality.lowerIsBetter,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _buildFacialMetricGridCard(
+                'Wrinkles',
+                currentValues['wrinkle_load'],
+                baseline: previousValues?['wrinkle_load'],
+                directionalityOverride: MetricDirectionality.lowerIsBetter,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _buildFacialMetricGridCard(
+                'Pores',
+                currentValues['pore_visibility'],
+                baseline: previousValues?['pore_visibility'],
+                directionalityOverride: MetricDirectionality.lowerIsBetter,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _buildFacialMetricGridCard(
+                'Dark Spots',
+                currentValues['pigment_load'],
+                baseline: previousValues?['pigment_load'],
+                directionalityOverride: MetricDirectionality.lowerIsBetter,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _buildFacialMetricGridCard(
+                'Elasticity',
+                currentValues['structural_firmness_elasticity'],
+                baseline: previousValues?['structural_firmness_elasticity'],
+                directionalityOverride: MetricDirectionality.higherIsBetter,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   Widget _buildNoScansCard() {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 46, horizontal: 28),
@@ -1245,7 +1797,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
           ),
           const SizedBox(height: 18),
           Text(
-            'Start your skin journey',
+            'No recent scans',
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w800,
@@ -1254,7 +1806,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
           ),
           const SizedBox(height: 7),
           const Text(
-            'Take your first scan to unlock metrics,\nrecommendations, and before/after photos.',
+            'Start with a new analysis to unlock live metrics,\nrecommendations, and before/after tracking.',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 14,
@@ -1263,9 +1815,28 @@ class _HomePageState extends State<HomePage> with RouteAware {
               fontWeight: FontWeight.w500,
             ),
           ),
+          const SizedBox(height: 18),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _openCameraForNewScan,
+              style: MyApp.primaryGoldButton,
+              icon: const Icon(Icons.camera_alt_outlined),
+              label: const Text('Start New Analysis'),
+            ),
+          ),
         ],
       ),
     );
+  }
+
+  ScanHistoryEntry? _selectHomepageMetricsScan(List<ScanHistoryEntry> sorted) {
+    for (final scan in sorted) {
+      if (scan.resolvedScanType == ScanHistoryEntry.scanTypeAiAnalysis) {
+        return scan;
+      }
+    }
+    return sorted.isNotEmpty ? sorted.first : null;
   }
 
   Widget _buildPremiumRecoveryCard(Color textColor) {
@@ -1468,8 +2039,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
     const textColor = AppColors.refinedSlate;
     final sortedScans = List<ScanHistoryEntry>.from(_allScans)
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    final latestScan = sortedScans.isNotEmpty ? sortedScans.first : null;
-    final hasEnoughScansForAge = _allScans.length >= 2;
+    final latestScan = _selectHomepageMetricsScan(sortedScans);
 
     return Scaffold(
       backgroundColor: AppColors.warmAlabaster,
@@ -1563,55 +2133,14 @@ class _HomePageState extends State<HomePage> with RouteAware {
 
                 if (latestScan == null)
                   _buildNoScansCard()
-                else if (!hasEnoughScansForAge)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16.0,
-                      vertical: 8,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        ElevatedButton(
-                          style: MyApp.primaryGoldButton,
-                          onPressed: _logNewSkincareProduct,
-                          child: const Text(
-                            'Track Skincare Product',
-                            style: TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        ElevatedButton(
-                          style: MyApp.secondaryOutlineButton(
-                            accent: AppColors.champagneGold,
-                          ),
-                          onPressed: () async {
-                            await Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const ProgressReportScreen(),
-                              ),
-                            );
-                            await _refreshData();
-                          },
-                          child: const Text(
-                            'View All Skincare Reports',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
                 else
                   Builder(
                     builder: (context) {
                       final currentLatestScan = latestScan;
                       final latestMetrics = currentLatestScan.toSkinMetrics();
+                      final latestFacialValues = _facialMetricSnapshot(
+                        currentLatestScan,
+                      );
                       final procedureType = _getProcedureTypeForScan(
                         currentLatestScan,
                       );
@@ -1623,6 +2152,19 @@ class _HomePageState extends State<HomePage> with RouteAware {
                         currentLatestScan,
                       );
                       final previousMetrics = previousEntry?.toSkinMetrics();
+                      final previousFacialValues = previousEntry == null
+                          ? null
+                          : _facialMetricSnapshot(previousEntry);
+                      final latestEstimatedAge =
+                          _latestEstimatedSkinAgeFromCanonical(
+                            currentLatestScan,
+                            latestFacialValues,
+                          );
+                      _debugLatestScanKeyAuditIfNeeded(
+                        currentLatestScan,
+                        latestFacialValues,
+                        latestEstimatedAge,
+                      );
                       double resolveCurrentBodyMetric(
                         List<String> rawKeys,
                         List<String> nameHints,
@@ -1708,16 +2250,38 @@ class _HomePageState extends State<HomePage> with RouteAware {
                                           'Estimated Skin Age',
                                           style: TextStyle(fontSize: 16),
                                         ),
-                                        Text(
-                                          '${estimateVisualSkinAge(latestMetrics).round()} years',
-                                          style: const TextStyle(
-                                            fontSize: 28,
-                                            fontWeight: FontWeight.bold,
-                                            color: AppColors.mutedSage,
-                                          ),
-                                        ),
+                                        latestEstimatedAge == null
+                                            ? Text(
+                                                '—',
+                                                style: TextStyle(
+                                                  fontSize: 28,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: textColor.withValues(
+                                                    alpha: 0.45,
+                                                  ),
+                                                ),
+                                              )
+                                            : Text(
+                                                '${latestEstimatedAge.round()} years',
+                                                style: const TextStyle(
+                                                  fontSize: 28,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: AppColors.mutedSage,
+                                                ),
+                                              ),
                                       ],
                                     ),
+                                    if (latestEstimatedAge == null) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'No analysis yet',
+                                        style: TextStyle(
+                                          fontSize: 11.5,
+                                          color: textColor.withValues(alpha: 0.62),
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
                                     const SizedBox(height: 20),
                                     Container(
                                       width: double.infinity,
@@ -1937,35 +2501,9 @@ class _HomePageState extends State<HomePage> with RouteAware {
                                             MetricDirectionality.higherIsBetter,
                                       ),
                                     ] else ...[
-                                      _buildMetricRow(
-                                        'Redness',
-                                        latestMetrics.redness,
-                                        baseline: previousMetrics?.redness,
-                                      ),
-                                      _buildMetricRow(
-                                        'Texture',
-                                        latestMetrics.texture,
-                                        baseline: previousMetrics?.texture,
-                                      ),
-                                      _buildMetricRow(
-                                        'Wrinkles',
-                                        latestMetrics.wrinkle,
-                                        baseline: previousMetrics?.wrinkle,
-                                      ),
-                                      _buildMetricRow(
-                                        'Pores',
-                                        latestMetrics.pore,
-                                        baseline: previousMetrics?.pore,
-                                      ),
-                                      _buildMetricRow(
-                                        'Dark Spots',
-                                        latestMetrics.darkSpots,
-                                        baseline: previousMetrics?.darkSpots,
-                                      ),
-                                      _buildMetricRow(
-                                        'Elasticity',
-                                        latestMetrics.elasticity,
-                                        baseline: previousMetrics?.elasticity,
+                                      _buildFacialMetricsGridFromCanonical(
+                                        currentValues: latestFacialValues,
+                                        previousValues: previousFacialValues,
                                       ),
                                     ],
                                   ],
@@ -2873,8 +3411,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
                 end: Alignment.bottomRight,
                 colors: [
                   AppColors.cardBackground,
-                  AppColors.champagneGold.withValues(alpha: 0.20),
-                  AppColors.mutedSage.withValues(alpha: 0.10),
+                  AppColors.champagneGold.withValues(alpha: 0.26),
                 ],
               ),
               borderRadius: BorderRadius.circular(22),
@@ -2889,10 +3426,10 @@ class _HomePageState extends State<HomePage> with RouteAware {
                   offset: const Offset(0, 14),
                 ),
                 BoxShadow(
-                  color: AppColors.champagneGold.withValues(alpha: 0.28),
-                  blurRadius: 34,
-                  spreadRadius: 1,
-                  offset: const Offset(0, 15),
+                  color: AppColors.champagneGold.withValues(alpha: 0.32),
+                  blurRadius: 38,
+                  spreadRadius: 2,
+                  offset: const Offset(0, 16),
                 ),
               ],
             ),
@@ -2903,7 +3440,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
                   Positioned.fill(
                     child: CustomPaint(
                       painter: _HomeConcentricPainter(
-                        color: AppColors.goldHover.withValues(alpha: 0.10),
+                        color: AppColors.champagneGold.withValues(alpha: 0.10),
                       ),
                     ),
                   ),
@@ -2920,9 +3457,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
                           width: 62,
                           height: 62,
                           decoration: BoxDecoration(
-                            color: isLocked
-                                ? AppColors.refinedSlate
-                                : AppColors.champagneGold,
+                            color: AppColors.champagneGold,
                             borderRadius: BorderRadius.circular(18),
                             boxShadow: [
                               BoxShadow(
@@ -2939,9 +3474,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
                                 ? Icons.lock_rounded
                                 : Icons.psychology_alt_rounded,
                             size: 32,
-                            color: isLocked
-                                ? AppColors.champagneGold
-                                : AppColors.onChampagneGold,
+                            color: AppColors.onChampagneGold,
                           ),
                         ),
                         const SizedBox(width: 16),
@@ -2978,9 +3511,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
                                   vertical: 10,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: isLocked
-                                      ? AppColors.refinedSlate
-                                      : AppColors.champagneGold,
+                                  color: AppColors.champagneGold,
                                   borderRadius: BorderRadius.circular(14),
                                   boxShadow: [
                                     BoxShadow(
@@ -2997,12 +3528,10 @@ class _HomePageState extends State<HomePage> with RouteAware {
                                   children: [
                                     Text(
                                       isLocked ? 'Unlock Coach' : 'Open Coach',
-                                      style: TextStyle(
+                                      style: const TextStyle(
                                         fontSize: 13.5,
                                         fontWeight: FontWeight.w800,
-                                        color: isLocked
-                                            ? AppColors.champagneGold
-                                            : AppColors.onChampagneGold,
+                                        color: AppColors.onChampagneGold,
                                       ),
                                     ),
                                     const SizedBox(width: 6),
@@ -3011,9 +3540,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
                                           ? Icons.workspace_premium_rounded
                                           : Icons.arrow_forward_rounded,
                                       size: 17,
-                                      color: isLocked
-                                          ? AppColors.champagneGold
-                                          : AppColors.onChampagneGold,
+                                      color: AppColors.onChampagneGold,
                                     ),
                                   ],
                                 ),
@@ -3191,14 +3718,14 @@ class _HomePageState extends State<HomePage> with RouteAware {
           (
             icon: Icons.workspace_premium_rounded,
             label: 'Premium Hub',
-            color: AppColors.mutedSage,
+            color: AppColors.champagneGold,
             hero: false,
             onTap: _openPremiumRecoveryHub,
           ),
           (
             icon: Icons.biotech_rounded,
             label: 'Peptide Dash',
-            color: AppColors.softTerracotta,
+            color: AppColors.champagneGold,
             hero: false,
             onTap: () {
               Navigator.of(
@@ -3217,13 +3744,30 @@ class _HomePageState extends State<HomePage> with RouteAware {
         itemBuilder: (context, i) {
           final item = shortcuts[i];
           final isHero = item.hero;
-          final iconBackground = isHero
+          final isPremiumHub = item.label == 'Premium Hub';
+          const standardButtonBg = Color(0xFF1A1A1A);
+          const premiumHubBg = Color(0xFFF3EBDD);
+          const darkObsidian = Color(0xFF1A1A1A);
+
+            // Balanced palette:
+            // - Standard quick actions: cream background with dark text/icons.
+            // - Premium Hub: dark background with gold text/icons and gold glow.
+            final cardBackground = isPremiumHub ? standardButtonBg : premiumHubBg;
+            final cardBorder = isPremiumHub
+              ? AppColors.champagneGold.withValues(alpha: 0.90)
+              : darkObsidian.withValues(alpha: 0.20);
+            final iconBackground = isPremiumHub
+              ? AppColors.champagneGold.withValues(alpha: 0.12)
+              : darkObsidian.withValues(alpha: 0.06);
+            final iconBorder = isPremiumHub
+              ? AppColors.champagneGold.withValues(alpha: 0.55)
+              : darkObsidian.withValues(alpha: 0.20);
+            final iconColor = isPremiumHub
               ? AppColors.champagneGold
-              : item.color.withValues(alpha: 0.14);
-          final iconBorder = isHero
-              ? AppColors.goldHover.withValues(alpha: 0.72)
-              : item.color.withValues(alpha: 0.26);
-          final iconColor = isHero ? AppColors.onChampagneGold : item.color;
+              : darkObsidian;
+            final labelColor = isPremiumHub
+              ? AppColors.champagneGold
+              : darkObsidian;
           return Material(
             color: Colors.transparent,
             child: InkWell(
@@ -3236,25 +3780,11 @@ class _HomePageState extends State<HomePage> with RouteAware {
                   vertical: 12,
                 ),
                 decoration: BoxDecoration(
-                  color: isHero
-                      ? null
-                      : AppColors.cardBackground.withValues(alpha: 0.98),
-                  gradient: isHero
-                      ? LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            AppColors.cardBackground,
-                            AppColors.champagneGold.withValues(alpha: 0.14),
-                          ],
-                        )
-                      : null,
+                  color: cardBackground,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(
-                    color: isHero
-                        ? AppColors.champagneGold.withValues(alpha: 0.55)
-                        : AppColors.champagneGold.withValues(alpha: 0.24),
-                    width: isHero ? 1.4 : 0.9,
+                    color: cardBorder,
+                    width: isPremiumHub ? 1.1 : 1.0,
                   ),
                   boxShadow: [
                     BoxShadow(
@@ -3262,12 +3792,12 @@ class _HomePageState extends State<HomePage> with RouteAware {
                       blurRadius: 18,
                       offset: const Offset(0, 9),
                     ),
-                    if (isHero)
+                    if (isPremiumHub)
                       BoxShadow(
-                        color: AppColors.champagneGold.withValues(alpha: 0.28),
-                        blurRadius: 26,
+                        color: AppColors.champagneGold.withValues(alpha: 0.24),
+                        blurRadius: 20,
                         spreadRadius: 1,
-                        offset: const Offset(0, 12),
+                        offset: const Offset(0, 10),
                       ),
                   ],
                 ),
@@ -3356,7 +3886,7 @@ class _HomePageState extends State<HomePage> with RouteAware {
                       style: TextStyle(
                         fontSize: isHero ? 13 : 11.5,
                         fontWeight: FontWeight.w800,
-                        color: Colors.black,
+                        color: labelColor,
                         height: 1.2,
                       ),
                     ),
