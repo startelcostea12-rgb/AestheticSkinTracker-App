@@ -2727,25 +2727,6 @@ class _HomePageState extends State<HomePage>
 
                 const SizedBox(height: 36),
 
-                // Primary gold buttons
-                ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.of(
-                      context,
-                    ).pushNamed('/store').then((_) => _refreshData());
-                  },
-                  icon: const Icon(Icons.auto_awesome, color: Colors.black),
-                  label: const Text(
-                    'Your Skincare Routine',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black,
-                    ),
-                  ),
-                  style: MyApp.primaryGoldButton,
-                ),
-                const SizedBox(height: 16),
                 ElevatedButton.icon(
                   onPressed: () async {
                     await Navigator.push(

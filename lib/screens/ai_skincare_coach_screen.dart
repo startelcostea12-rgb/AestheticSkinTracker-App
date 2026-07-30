@@ -217,6 +217,7 @@ class _AISkincareCoachScreenState extends State<AISkincareCoachScreen> {
     }
   }
 
+  // ignore: unused_element
   Future<void> _pickProgressPhoto(ImageSource source) async {
     setState(() {
       _analyzingPhoto = true;
@@ -1991,7 +1992,6 @@ Requirements:
             child: _photoSourceButton(
               label: 'Take Photo',
               icon: Icons.photo_camera_rounded,
-              source: ImageSource.camera,
               prominent: false,
             ),
           ),
@@ -2000,7 +2000,6 @@ Requirements:
             child: _photoSourceButton(
               label: 'Choose from Gallery',
               icon: Icons.photo_library_rounded,
-              source: ImageSource.gallery,
               prominent: true,
             ),
           ),
@@ -2012,7 +2011,6 @@ Requirements:
   Widget _photoSourceButton({
     required String label,
     required IconData icon,
-    required ImageSource source,
     required bool prominent,
   }) {
     final childIcon = _analyzingPhoto
@@ -2023,7 +2021,7 @@ Requirements:
           )
         : Icon(icon);
     final childLabel = Text(_analyzingPhoto ? 'Analyzing...' : label);
-    final onPressed = _analyzingPhoto ? null : () => _pickProgressPhoto(source);
+    final onPressed = _analyzingPhoto ? null : _openShelfScanner;
     final shape = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(18),
     );
