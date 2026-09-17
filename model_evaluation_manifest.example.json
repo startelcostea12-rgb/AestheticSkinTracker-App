@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "heads": {
+    "roughness": {
+      "negative_labels": ["clean", "mild"],
+      "positive_labels": ["severe"]
+    },
+    "bumpiness": {
+      "negative_labels": ["clean"],
+      "positive_labels": ["bumpy", "severe"]
+    }
+  },
+  "cases": [
+    {
+      "photo": "reference_photos/clean_01.jpg",
+      "labels": {"roughness": "clean", "bumpiness": "clean"}
+    },
+    {
+      "photo": "reference_photos/mild_01.jpg",
+      "labels": {"roughness": "mild", "bumpiness": "bumpy"}
+    },
+    {
+      "photo": "reference_photos/severe_01.jpg",
+      "labels": {"roughness": "severe", "bumpiness": "severe"}
+    }
+  ]
+}
