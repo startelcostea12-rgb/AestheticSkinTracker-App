@@ -28,6 +28,25 @@ ScanHistoryEntry _scan({
 
 void main() {
   group('procedurePhotoComparisonEligibility', () {
+    test('poor face reference alignment makes the comparison non-comparable', () {
+      final baseline = _scan(
+        extractionPaths: const {'localized_redness': 'primary_roi'},
+      );
+      final latest = _scan(
+        extractionPaths: const {'localized_redness': 'primary_roi'},
+        metrics: const {'capture_reference_alignment_score': 45.0},
+      );
+
+      final result = procedurePhotoComparisonEligibility(
+        isBodyProcedure: false,
+        baseline: baseline,
+        latest: latest,
+      );
+
+      expect(result.isComparable, isFalse);
+      expect(result.caveat, contains('locked reference'));
+    });
+
     test('poor body reference alignment makes the comparison non-comparable', () {
       final baseline = _scan(
         captureQuality: 'normal',
@@ -57,6 +76,25 @@ void main() {
       );
       final latest = _scan(
         extractionPaths: const {'pigment_load': 'cheek_primary'},
+      );
+
+      final result = procedurePhotoComparisonEligibility(
+        isBodyProcedure: false,
+        baseline: baseline,
+        latest: latest,
+      );
+
+      expect(result.isComparable, isTrue);
+      expect(result.caveat, isNull);
+    });
+
+    test('allows a well-aligned face follow-up with matching provenance', () {
+      final baseline = _scan(
+        extractionPaths: const {'localized_redness': 'primary_roi'},
+      );
+      final latest = _scan(
+        extractionPaths: const {'localized_redness': 'primary_roi'},
+        metrics: const {'capture_reference_alignment_score': 90.0},
       );
 
       final result = procedurePhotoComparisonEligibility(

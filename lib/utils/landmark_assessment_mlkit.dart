@@ -275,7 +275,14 @@ Future<LandmarkAssessment> _assessFace(
   final leftEye = face.landmarks[FaceLandmarkType.leftEye]?.position;
   final rightEye = face.landmarks[FaceLandmarkType.rightEye]?.position;
   double eyeTilt = 0;
+  double eyeDistanceNorm = 0;
   if (leftEye != null && rightEye != null) {
+    final eyeDx = (rightEye.x - leftEye.x).toDouble();
+    final eyeDy = (rightEye.y - leftEye.y).toDouble();
+    eyeDistanceNorm =
+        (math.sqrt((eyeDx * eyeDx) + (eyeDy * eyeDy)) / imageWidth)
+            .clamp(0.0, 1.0)
+            .toDouble();
     eyeTilt =
         math.atan2(
           (rightEye.y - leftEye.y).toDouble(),
@@ -302,6 +309,15 @@ Future<LandmarkAssessment> _assessFace(
       (roll.abs() * 0.8) +
       (eyeTilt.abs() * 0.6);
   final quality = (100 - centerPenalty - posePenalty).clamp(0, 100).toDouble();
+    final faceWidthNorm = (face.boundingBox.width / imageWidth)
+      .clamp(0.0, 1.0)
+      .toDouble();
+    final faceHeightNorm = (face.boundingBox.height / imageHeight)
+      .clamp(0.0, 1.0)
+      .toDouble();
+    final faceAspectRatio = face.boundingBox.height > 0
+      ? face.boundingBox.width / face.boundingBox.height
+      : 0.0;
 
   print(
     '[MLKIT FACE POSE] poseTemplate=$poseTemplate yaw=${yaw.toStringAsFixed(2)}° pitch=${pitch.toStringAsFixed(2)}° roll=${roll.toStringAsFixed(2)}° eyeTilt=${eyeTilt.toStringAsFixed(2)}° centerOffsetX=${centerOffsetX.toStringAsFixed(3)} centerOffsetY=${centerOffsetY.toStringAsFixed(3)} faceFillRatio=${faceFillRatio.toStringAsFixed(3)} targetYaw=${targetYaw.toStringAsFixed(2)}° yawDelta=${yawDelta.toStringAsFixed(2)}°',
@@ -348,6 +364,14 @@ Future<LandmarkAssessment> _assessFace(
     rotationProxy: yaw,
     faceFillRatio: faceFillRatio,
     mode: 'face',
+    faceReferenceGeometry: {
+      'eyeDistanceNorm': eyeDistanceNorm,
+      'faceWidthNorm': faceWidthNorm,
+      'faceHeightNorm': faceHeightNorm,
+      'faceAspectRatio': faceAspectRatio,
+      'centerOffsetX': centerOffsetX,
+      'centerOffsetY': centerOffsetY,
+    },
   );
 }
 

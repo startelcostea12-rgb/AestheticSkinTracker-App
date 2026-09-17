@@ -23,6 +23,7 @@ class LandmarkAssessment {
     this.faceFillRatio = 0,
     this.mode = 'fallback',
     this.bodyReferenceGeometry,
+    this.faceReferenceGeometry,
   });
 
   final bool available;
@@ -41,6 +42,7 @@ class LandmarkAssessment {
   final double faceFillRatio;
   final String mode;
   final Map<String, double>? bodyReferenceGeometry;
+  final Map<String, double>? faceReferenceGeometry;
 
   Map<String, double> toMetricMap() {
     return {

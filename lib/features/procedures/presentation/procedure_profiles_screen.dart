@@ -241,6 +241,17 @@ ProcedurePhotoComparisonEligibility procedurePhotoComparisonEligibility({
     );
   }
 
+  final referenceAlignment =
+      latest.metrics['capture_reference_alignment_score'];
+  if (referenceAlignment != null &&
+      referenceAlignment < minimumComparableReferenceAlignmentScore) {
+    return const ProcedurePhotoComparisonEligibility(
+      isComparable: false,
+      caveat:
+          'Photos are shown separately because the follow-up pose did not match the locked reference closely enough.',
+    );
+  }
+
   if (!isBodyProcedure) {
     final baselinePaths = extractionPaths(baseline);
     final latestPaths = extractionPaths(latest);
@@ -258,17 +269,6 @@ ProcedurePhotoComparisonEligibility procedurePhotoComparisonEligibility({
       );
     }
     return const ProcedurePhotoComparisonEligibility(isComparable: true);
-  }
-
-  final referenceAlignment =
-      latest.metrics['capture_reference_alignment_score'];
-  if (referenceAlignment != null &&
-      referenceAlignment < minimumComparableReferenceAlignmentScore) {
-    return const ProcedurePhotoComparisonEligibility(
-      isComparable: false,
-      caveat:
-          'Photos are shown separately because the follow-up pose did not match the locked reference closely enough.',
-    );
   }
 
   final baselineMode = normalizedText(baseline.captureMode);

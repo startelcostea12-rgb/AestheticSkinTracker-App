@@ -192,6 +192,44 @@ double? bodyReferenceAlignmentScore(
       100.0;
 }
 
+double? faceReferenceAlignmentScore(
+  Map<String, double>? reference,
+  Map<String, double>? live,
+) {
+  if (reference == null || live == null || reference.isEmpty || live.isEmpty) {
+    return null;
+  }
+
+  double component(String key, double tolerance) {
+    final referenceValue = reference[key];
+    final liveValue = live[key];
+    if (referenceValue == null || liveValue == null) return 0.0;
+    final normalizedDelta = (liveValue - referenceValue).abs() / tolerance;
+    return (1.0 - normalizedDelta.clamp(0.0, 1.0)).clamp(0.0, 1.0);
+  }
+
+  final eyeDistance = component('eyeDistanceNorm', 0.06);
+  final faceWidth = component('faceWidthNorm', 0.10);
+  final faceHeight = component('faceHeightNorm', 0.12);
+  final faceAspect = component('faceAspectRatio', 0.18);
+  final centerDelta =
+      ((live['centerOffsetX'] ?? 0.0) -
+              (reference['centerOffsetX'] ?? 0.0))
+          .abs() +
+      ((live['centerOffsetY'] ?? 0.0) -
+              (reference['centerOffsetY'] ?? 0.0))
+          .abs();
+  final centerScore = (1.0 - (centerDelta / 0.16).clamp(0.0, 1.0))
+      .clamp(0.0, 1.0);
+
+  return ((eyeDistance * 0.35) +
+          (faceWidth * 0.20) +
+          (faceHeight * 0.20) +
+          (faceAspect * 0.15) +
+          (centerScore * 0.10)) *
+      100.0;
+}
+
 ScanHistoryEntry? lockedProcedureReference(
   List<ScanHistoryEntry> history,
   String? procedureId,
@@ -396,7 +434,7 @@ class _CameraScreenState extends State<CameraScreen>
   bool _showGhostOverlay = true;
   double _ghostOverlayOpacity = 0.20;
   bool _isGoodReferencePhoto = false;
-  double _liveBodyAlignmentScore = 0.0;
+  double _liveReferenceAlignmentScore = 0.0;
   String _selectedPoseTemplate = 'Front';
   _LightingGuidance _lightingGuidance = const _LightingGuidance.unknown();
   LandmarkAssessment _liveLandmarkAssessment = LandmarkAssessment.unsupported;
@@ -1275,25 +1313,39 @@ class _CameraScreenState extends State<CameraScreen>
     if (score == null) {
       return 0.0;
     }
-    _liveBodyAlignmentScore = score / 100.0;
-    return _liveBodyAlignmentScore;
+    _liveReferenceAlignmentScore = score / 100.0;
+    return _liveReferenceAlignmentScore;
   }
 
-  String get _bodyAlignmentStatusLabel {
-    if (!_isBodyGuide || !_isTrackProcedureFlow) return 'Body alignment';
-    final score = _liveBodyAlignmentScore > 0.0
-        ? _liveBodyAlignmentScore
-        : _bodyAlignmentScoreFromReference();
+  double _faceAlignmentScoreFromReference() {
+    if (!_isTrackProcedureFlow || _isBodyGuide) return 0.0;
+    final score = faceReferenceAlignmentScore(
+      _referenceScan?.faceReferenceGeometry,
+      _liveLandmarkAssessment.faceReferenceGeometry,
+    );
+    if (score == null) return 0.0;
+    _liveReferenceAlignmentScore = score / 100.0;
+    return _liveReferenceAlignmentScore;
+  }
+
+  double get _activeReferenceAlignmentScore =>
+      _liveReferenceAlignmentScore > 0.0
+      ? _liveReferenceAlignmentScore
+      : (_isBodyGuide
+            ? _bodyAlignmentScoreFromReference()
+            : _faceAlignmentScoreFromReference());
+
+  String get _referenceAlignmentStatusLabel {
+    if (!_isTrackProcedureFlow) return 'Reference alignment';
+    final score = _activeReferenceAlignmentScore;
     if (score >= 0.82) return 'Aligned';
     if (score >= 0.60) return 'Adjust position';
     return 'Re-align';
   }
 
-  Color get _bodyAlignmentStatusColor {
-    if (!_isBodyGuide || !_isTrackProcedureFlow) return Colors.transparent;
-    final score = _liveBodyAlignmentScore > 0.0
-        ? _liveBodyAlignmentScore
-        : _bodyAlignmentScoreFromReference();
+  Color get _referenceAlignmentStatusColor {
+    if (!_isTrackProcedureFlow) return Colors.transparent;
+    final score = _activeReferenceAlignmentScore;
     if (score >= 0.82) return AppColors.mutedSage;
     if (score >= 0.60) return AppColors.champagneGold;
     return AppColors.softTerracotta;
@@ -1572,6 +1624,14 @@ class _CameraScreenState extends State<CameraScreen>
       if (score != null) {
         metrics['capture_reference_alignment_score'] = score;
       }
+    } else if (_isTrackProcedureFlow) {
+      final score = faceReferenceAlignmentScore(
+        _referenceScan?.faceReferenceGeometry,
+        assessment.faceReferenceGeometry,
+      );
+      if (score != null) {
+        metrics['capture_reference_alignment_score'] = score;
+      }
     }
     return metrics;
   }
@@ -1722,6 +1782,8 @@ class _CameraScreenState extends State<CameraScreen>
       rotationProxy: rotationProxy,
       faceFillRatio: faceFillRatio,
       mode: next.mode,
+      bodyReferenceGeometry: next.bodyReferenceGeometry,
+      faceReferenceGeometry: next.faceReferenceGeometry,
     );
   }
 
@@ -3412,6 +3474,9 @@ class _CameraScreenState extends State<CameraScreen>
             bodyReferenceGeometry: _isTrackProcedureFlow
               ? capturedLandmarks.bodyReferenceGeometry
               : null,
+              faceReferenceGeometry: _isTrackProcedureFlow
+                ? capturedLandmarks.faceReferenceGeometry
+                : null,
           makeupPresent: _makeupPresent ?? false,
           distanceEstimate: _distanceEstimate(),
           headTiltAngle: _isBodyGuide ? _bodyTiltAngle() : _headTiltAngle(),
@@ -3445,6 +3510,9 @@ class _CameraScreenState extends State<CameraScreen>
             bodyReferenceGeometry: _isTrackProcedureFlow
               ? capturedLandmarks.bodyReferenceGeometry
               : null,
+              faceReferenceGeometry: _isTrackProcedureFlow
+                ? capturedLandmarks.faceReferenceGeometry
+                : null,
           makeupPresent: _makeupPresent ?? false,
           distanceEstimate: _distanceEstimate(),
           headTiltAngle: _isBodyGuide ? _bodyTiltAngle() : _headTiltAngle(),
@@ -3751,6 +3819,9 @@ class _CameraScreenState extends State<CameraScreen>
             bodyReferenceGeometry: _isTrackProcedureFlow
               ? capturedLandmarks.bodyReferenceGeometry
               : null,
+              faceReferenceGeometry: _isTrackProcedureFlow
+                ? capturedLandmarks.faceReferenceGeometry
+                : null,
           makeupPresent: _makeupPresent ?? false,
           distanceEstimate: _distanceEstimate(),
           headTiltAngle: _isBodyGuide ? _bodyTiltAngle() : _headTiltAngle(),
@@ -3779,6 +3850,9 @@ class _CameraScreenState extends State<CameraScreen>
             bodyReferenceGeometry: _isTrackProcedureFlow
               ? capturedLandmarks.bodyReferenceGeometry
               : null,
+              faceReferenceGeometry: _isTrackProcedureFlow
+                ? capturedLandmarks.faceReferenceGeometry
+                : null,
           makeupPresent: _makeupPresent ?? false,
           distanceEstimate: _distanceEstimate(),
           headTiltAngle: _isBodyGuide ? _bodyTiltAngle() : _headTiltAngle(),
@@ -5385,9 +5459,10 @@ class _CameraScreenState extends State<CameraScreen>
                 ),
                 if (_showGhostOverlay && _referenceImagePath != null)
                   _buildGhostReferenceOverlay(),
-                if (_isBodyGuide &&
-                  _isTrackProcedureFlow &&
-                  _referenceScan?.bodyReferenceGeometry != null)
+                if (_isTrackProcedureFlow &&
+                  (_isBodyGuide
+                    ? _referenceScan?.bodyReferenceGeometry != null
+                    : _referenceScan?.faceReferenceGeometry != null))
                   Positioned.fill(
                     child: IgnorePointer(
                       child: AnimatedContainer(
@@ -5395,12 +5470,12 @@ class _CameraScreenState extends State<CameraScreen>
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(28),
                           border: Border.all(
-                            color: _bodyAlignmentStatusColor,
+                            color: _referenceAlignmentStatusColor,
                             width: 2.2,
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: _bodyAlignmentStatusColor.withValues(alpha: 0.22),
+                              color: _referenceAlignmentStatusColor.withValues(alpha: 0.22),
                               blurRadius: 12,
                               offset: const Offset(0, 0),
                             ),
@@ -5413,16 +5488,16 @@ class _CameraScreenState extends State<CameraScreen>
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                               decoration: BoxDecoration(
-                                color: _bodyAlignmentStatusColor.withValues(alpha: 0.10),
+                                color: _referenceAlignmentStatusColor.withValues(alpha: 0.10),
                                 borderRadius: BorderRadius.circular(999),
                                 border: Border.all(
-                                  color: _bodyAlignmentStatusColor.withValues(alpha: 0.35),
+                                  color: _referenceAlignmentStatusColor.withValues(alpha: 0.35),
                                 ),
                               ),
                               child: Text(
-                                _bodyAlignmentStatusLabel,
+                                _referenceAlignmentStatusLabel,
                                 style: TextStyle(
-                                  color: _bodyAlignmentStatusColor,
+                                  color: _referenceAlignmentStatusColor,
                                   fontSize: 10.5,
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: 0.12,

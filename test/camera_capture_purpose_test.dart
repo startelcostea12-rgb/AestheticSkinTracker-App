@@ -162,4 +162,38 @@ void main() {
     );
     expect(bodyReferenceAlignmentScore(null, matched), isNull);
   });
+
+  test('face reference score separates matched and poorly aligned geometry', () {
+    const reference = {
+      'eyeDistanceNorm': 0.22,
+      'faceWidthNorm': 0.48,
+      'faceHeightNorm': 0.62,
+      'faceAspectRatio': 0.77,
+      'centerOffsetX': 0.0,
+      'centerOffsetY': 0.0,
+    };
+    const matched = {
+      'eyeDistanceNorm': 0.225,
+      'faceWidthNorm': 0.49,
+      'faceHeightNorm': 0.61,
+      'faceAspectRatio': 0.78,
+      'centerOffsetX': 0.01,
+      'centerOffsetY': -0.01,
+    };
+    const poor = {
+      'eyeDistanceNorm': 0.08,
+      'faceWidthNorm': 0.25,
+      'faceHeightNorm': 0.30,
+      'faceAspectRatio': 1.30,
+      'centerOffsetX': 0.30,
+      'centerOffsetY': 0.25,
+    };
+
+    expect(faceReferenceAlignmentScore(reference, matched), greaterThan(82));
+    expect(
+      faceReferenceAlignmentScore(reference, poor),
+      lessThan(minimumComparableReferenceAlignmentScore),
+    );
+    expect(faceReferenceAlignmentScore(null, matched), isNull);
+  });
 }

@@ -487,5 +487,89 @@ void main() {
       expect(eligibility.isComparable, isFalse);
       expect(eligibility.caveat, contains('locked reference'));
     });
+
+    test('poor face follow-up alignment survives storage and gates comparison', () async {
+      const procedureId = 'proc_face_alignment_gate';
+      const baselineGeometry = <String, double>{
+        'eyeDistanceNorm': 0.22,
+        'faceWidthNorm': 0.48,
+        'faceHeightNorm': 0.62,
+        'faceAspectRatio': 0.77,
+        'centerOffsetX': 0.0,
+        'centerOffsetY': 0.0,
+      };
+      const poorGeometry = <String, double>{
+        'eyeDistanceNorm': 0.08,
+        'faceWidthNorm': 0.25,
+        'faceHeightNorm': 0.30,
+        'faceAspectRatio': 1.30,
+        'centerOffsetX': 0.30,
+        'centerOffsetY': 0.25,
+      };
+      final poorScore = faceReferenceAlignmentScore(
+        baselineGeometry,
+        poorGeometry,
+      )!;
+      const extractionPaths = <String, dynamic>{
+        'metric_extraction_paths': {
+          'localized_redness': 'primary_roi',
+        },
+      };
+
+      await AppPrefs.addScanEntry(
+        ScanHistoryEntry(
+          id: 'face_gate_baseline',
+          timestamp: DateTime.parse('2026-07-10T10:00:00.000Z'),
+          procedureId: procedureId,
+          imagePath: 'face_baseline.jpg',
+          estimatedSkinAge: 0,
+          metrics: const {},
+          faceReferenceGeometry: baselineGeometry,
+          captureQuality: 'normal',
+          rawPayload: extractionPaths,
+        ),
+      );
+      await AppPrefs.addScanEntry(
+        ScanHistoryEntry(
+          id: 'face_gate_followup',
+          timestamp: DateTime.parse('2026-07-11T10:00:00.000Z'),
+          procedureId: procedureId,
+          imagePath: 'face_followup.jpg',
+          estimatedSkinAge: 0,
+          metrics: {'capture_reference_alignment_score': poorScore},
+          faceReferenceGeometry: poorGeometry,
+          captureQuality: 'normal',
+          rawPayload: extractionPaths,
+        ),
+      );
+      await AppPrefs.patchScanMetrics(
+        'face_gate_baseline',
+        const {'provider_note_count': 1.0},
+      );
+
+      final scans = (await AppPrefs.getScanEntries())
+          .where((entry) => entry.procedureId == procedureId)
+          .toList();
+      final baseline = lockedProcedureReference(scans, procedureId);
+      final followup = scans.singleWhere(
+        (entry) => entry.id == 'face_gate_followup',
+      );
+      final eligibility = procedurePhotoComparisonEligibility(
+        isBodyProcedure: false,
+        baseline: baseline,
+        latest: followup,
+      );
+
+      expect(baseline?.id, 'face_gate_baseline');
+      expect(baseline?.faceReferenceGeometry, baselineGeometry);
+      expect(baseline?.metrics['provider_note_count'], 1.0);
+      expect(poorScore, lessThan(minimumComparableReferenceAlignmentScore));
+      expect(
+        followup.metrics['capture_reference_alignment_score'],
+        poorScore,
+      );
+      expect(eligibility.isComparable, isFalse);
+      expect(eligibility.caveat, contains('locked reference'));
+    });
   });
 }

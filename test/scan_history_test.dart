@@ -107,6 +107,33 @@ void main() {
       expect(roundTrip.bodyReferenceGeometry, geometry);
       expect(roundTrip.isEquivalentTo(entry), true);
     });
+
+    test('faceReferenceGeometry round-trips through JSON', () {
+      final geometry = {
+        'eyeDistanceNorm': 0.22,
+        'faceWidthNorm': 0.48,
+        'faceHeightNorm': 0.62,
+        'faceAspectRatio': 0.77,
+        'centerOffsetX': 0.01,
+        'centerOffsetY': -0.02,
+      };
+      final entry = ScanHistoryEntry(
+        id: 'face_ref_geo',
+        timestamp: DateTime.parse('2024-05-02T12:00:00Z'),
+        procedureId: 'face_proc',
+        imagePath: 'face_reference.png',
+        metrics: {'redness': 2.0},
+        estimatedSkinAge: 29.0,
+        faceReferenceGeometry: geometry,
+      );
+
+      final json = entry.toJson();
+      expect(json['faceReferenceGeometry'], geometry);
+
+      final roundTrip = ScanHistoryEntry.fromJson(json);
+      expect(roundTrip.faceReferenceGeometry, geometry);
+      expect(roundTrip.isEquivalentTo(entry), true);
+    });
   });
 
   group('ScanHistoryEntry.scanEngine', () {

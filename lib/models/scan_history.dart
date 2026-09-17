@@ -109,6 +109,7 @@ class ScanHistoryEntry {
   final bool preferredReference;
   final bool isBaseline; // TRUE if this is the first photo for a procedure
   final Map<String, double>? bodyReferenceGeometry;
+  final Map<String, double>? faceReferenceGeometry;
 
   /// True if the user disclosed that they were wearing makeup, sunscreen, or
   /// active skincare products at capture time. Clinical accuracy is reduced
@@ -178,6 +179,7 @@ class ScanHistoryEntry {
     this.preferredReference = false,
     this.isBaseline = false,
     this.bodyReferenceGeometry,
+    this.faceReferenceGeometry,
     this.makeupPresent = false,
     this.distanceEstimate,
     this.headTiltAngle,
@@ -237,6 +239,23 @@ class ScanHistoryEntry {
       }
       return null;
     })();
+    final faceReferenceGeometry = (() {
+      final raw = json['faceReferenceGeometry'] ?? json['face_reference_geometry'];
+      if (raw is Map) {
+        final out = <String, double>{};
+        for (final entry in raw.entries) {
+          final value = entry.value;
+          if (value is num) {
+            out[entry.key.toString()] = value.toDouble();
+          } else if (value is String) {
+            final parsed = double.tryParse(value);
+            if (parsed != null) out[entry.key.toString()] = parsed;
+          }
+        }
+        return out.isEmpty ? null : out;
+      }
+      return null;
+    })();
 
     return ScanHistoryEntry(
       id: json['id'] as String,
@@ -261,6 +280,7 @@ class ScanHistoryEntry {
       preferredReference: json['preferredReference'] as bool? ?? false,
       isBaseline: json['isBaseline'] as bool? ?? false,
       bodyReferenceGeometry: bodyReferenceGeometry,
+      faceReferenceGeometry: faceReferenceGeometry,
       makeupPresent: json['makeupPresent'] as bool? ?? false,
       distanceEstimate: (json['distanceEstimate'] as num?)?.toDouble(),
       headTiltAngle: (json['headTiltAngle'] as num?)?.toDouble(),
@@ -384,6 +404,8 @@ class ScanHistoryEntry {
       'isBaseline': isBaseline,
       'bodyReferenceGeometry': bodyReferenceGeometry,
       'body_reference_geometry': bodyReferenceGeometry,
+      'faceReferenceGeometry': faceReferenceGeometry,
+      'face_reference_geometry': faceReferenceGeometry,
       'makeupPresent': makeupPresent,
       'distanceEstimate': distanceEstimate,
       'headTiltAngle': headTiltAngle,
@@ -554,6 +576,12 @@ class ScanHistoryEntry {
     final geoKeys = {...refGeo.keys, ...otherGeo.keys};
     for (final key in geoKeys) {
       if (!close(refGeo[key] ?? 0, otherGeo[key] ?? 0)) return false;
+    }
+    final faceGeo = faceReferenceGeometry ?? const <String, double>{};
+    final otherFaceGeo = other.faceReferenceGeometry ?? const <String, double>{};
+    final faceGeoKeys = {...faceGeo.keys, ...otherFaceGeo.keys};
+    for (final key in faceGeoKeys) {
+      if (!close(faceGeo[key] ?? 0, otherFaceGeo[key] ?? 0)) return false;
     }
     if (makeupPresent != other.makeupPresent) return false;
     if (!close(estimatedSkinAge, other.estimatedSkinAge)) return false;
