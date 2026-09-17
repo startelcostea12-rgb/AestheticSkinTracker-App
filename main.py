@@ -86,6 +86,17 @@ _BODY_SEGMENTATION_MODEL_KIND = "none"
 _BODY_PIPELINE_READY = False
 _BODY_PIPELINE_ERROR = ""
 
+# Body segmentation quality thresholds derived from the real validation set:
+# valid legacy masks had ROI coverage >= 43.2% and centered foreground; the
+# hard-negative candidate_body_7 mask had 38.5% coverage and foreground center
+# x=70.5%. The uncertainty threshold is deliberately rounded below the
+# custom-model hard-negative observation (10.83%) while leaving the legacy
+# references, which had no material ROI uncertainty, unaffected.
+BODY_SEGMENTATION_MIN_ROI_COVERAGE = 0.40
+BODY_SEGMENTATION_MIN_FOREGROUND_CENTER_X = 0.35
+BODY_SEGMENTATION_MAX_FOREGROUND_CENTER_X = 0.65
+BODY_SEGMENTATION_MAX_UNCERTAINTY_FRACTION = 0.10
+
 
 class ModelAssetManager:
     def __init__(self, models_dir: str, server_root: str):
@@ -291,23 +302,7 @@ def ensure_body_pipeline_ready() -> Dict[str, str]:
             )
             _BODY_POSE_LANDMARKER = None
 
-        segmentation_candidates = [
-            "selfie_segmenter.tflite",
-            "selfie_segmenter_v2.tflite",
-        ]
-        segmentation_model_path = None
-        for candidate in segmentation_candidates:
-            try:
-                segmentation_model_path = _MODEL_PATH_RESOLVER.resolve(
-                    env_var="SELFIE_SEGMENTER_MODEL_PATH",
-                    candidate_filenames=[candidate],
-                    purpose="MediaPipe selfie segmentation model",
-                )
-                break
-            except FileNotFoundError:
-                continue
-
-        segmentation_mode = os.getenv("BODY_SEGMENTATION_MODEL_MODE", "custom").strip().lower()
+        segmentation_mode = os.getenv("BODY_SEGMENTATION_MODEL_MODE", "legacy").strip().lower()
         if segmentation_mode == "legacy":
             _BODY_SEGMENTATION_MODEL = mp.solutions.selfie_segmentation.SelfieSegmentation(
                 model_selection=1,
@@ -317,7 +312,28 @@ def ensure_body_pipeline_ready() -> Dict[str, str]:
                 "Initialized legacy built-in MediaPipe selfie segmentation "
                 "(model_selection=1) for comparison mode."
             )
-        elif segmentation_model_path is not None:
+        else:
+            segmentation_candidates = [
+                "selfie_segmenter.tflite",
+                "selfie_segmenter_v2.tflite",
+            ]
+            segmentation_model_path = None
+            for candidate in segmentation_candidates:
+                try:
+                    segmentation_model_path = _MODEL_PATH_RESOLVER.resolve(
+                        env_var="SELFIE_SEGMENTER_MODEL_PATH",
+                        candidate_filenames=[candidate],
+                        purpose="MediaPipe selfie segmentation model",
+                    )
+                    break
+                except FileNotFoundError:
+                    continue
+
+            if segmentation_model_path is None:
+                raise FileNotFoundError(
+                    "No custom selfie segmentation model found. "
+                    "Set SELFIE_SEGMENTER_MODEL_PATH or provide backend/models/selfie_segmenter.tflite."
+                )
             segmenter_options = mp_vision.ImageSegmenterOptions(
                 base_options=mp_python.BaseOptions(
                     model_asset_path=segmentation_model_path,
@@ -334,12 +350,6 @@ def ensure_body_pipeline_ready() -> Dict[str, str]:
                 "Loaded custom MediaPipe selfie segmenter through Tasks API: %s",
                 segmentation_model_path,
             )
-        else:
-            raise FileNotFoundError(
-                "No custom selfie segmentation model found. "
-                "Set SELFIE_SEGMENTER_MODEL_PATH or provide backend/models/selfie_segmenter.tflite."
-            )
-
         logger.info(
             "Initialized MediaPipe selfie segmentation for body silhouette masking kind=%s.",
             _BODY_SEGMENTATION_MODEL_KIND,
@@ -500,26 +510,71 @@ def _body_pose_landmarks_for_image(rgb_image: np.ndarray):
         return None
 
 
-def _silhouette_mask_from_image(rgb_image: np.ndarray) -> np.ndarray:
+def _silhouette_mask_from_image(
+    rgb_image: np.ndarray,
+    *,
+    return_confidence: bool = False,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     if _BODY_SEGMENTATION_MODEL is None:
-        return np.zeros(rgb_image.shape[:2], dtype=np.uint8)
+        empty = np.zeros(rgb_image.shape[:2], dtype=np.float32)
+        return (empty.astype(np.uint8), empty) if return_confidence else empty.astype(np.uint8)
 
     try:
         if _BODY_SEGMENTATION_MODEL_KIND == "custom_asset":
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
             result = _BODY_SEGMENTATION_MODEL.segment(mp_image)
             if not result.confidence_masks:
-                return np.zeros(rgb_image.shape[:2], dtype=np.uint8)
+                empty = np.zeros(rgb_image.shape[:2], dtype=np.float32)
+                return (empty.astype(np.uint8), empty) if return_confidence else empty.astype(np.uint8)
             mask = result.confidence_masks[0].numpy_view().astype(np.float32)
         else:
             result = _BODY_SEGMENTATION_MODEL.process(rgb_image)
             if result.segmentation_mask is None:
-                return np.zeros(rgb_image.shape[:2], dtype=np.uint8)
+                empty = np.zeros(rgb_image.shape[:2], dtype=np.float32)
+                return (empty.astype(np.uint8), empty) if return_confidence else empty.astype(np.uint8)
             mask = result.segmentation_mask.astype(np.float32)
-        return (mask > 0.5).astype(np.uint8)
+        thresholded = (mask > 0.5).astype(np.uint8)
+        return (thresholded, mask) if return_confidence else thresholded
     except Exception:
         logger.exception("Selfie segmentation failed for body silhouette analysis")
-        return np.zeros(rgb_image.shape[:2], dtype=np.uint8)
+        empty = np.zeros(rgb_image.shape[:2], dtype=np.float32)
+        return (empty.astype(np.uint8), empty) if return_confidence else empty.astype(np.uint8)
+
+
+def _body_segmentation_quality_gate(
+    mask: np.ndarray,
+    confidence: np.ndarray,
+    roi_bounds: tuple[int, int, int, int],
+) -> tuple[bool, str, Dict[str, float]]:
+    x0, y0, x1, y1 = roi_bounds
+    roi_mask = mask[y0:y1, x0:x1] > 0
+    roi_confidence = confidence[y0:y1, x0:x1]
+    roi_area = max(int(roi_mask.size), 1)
+    coverage = float(np.mean(roi_mask))
+    uncertainty_fraction = float(
+        np.mean((roi_confidence >= 0.4) & (roi_confidence <= 0.6))
+    )
+    ys, xs = np.where(roi_mask)
+    foreground_center_x = 0.5
+    if len(xs) > 0:
+        foreground_center_x = float((xs.min() + xs.max()) / (2.0 * max(roi_mask.shape[1], 1)))
+
+    stats = {
+        "roi_coverage": coverage,
+        "uncertainty_fraction": uncertainty_fraction,
+        "foreground_center_x": foreground_center_x,
+        "roi_pixels": float(roi_area),
+    }
+    reasons: list[str] = []
+    if uncertainty_fraction > BODY_SEGMENTATION_MAX_UNCERTAINTY_FRACTION:
+        reasons.append("segmentation confidence was ambiguous")
+    if coverage < BODY_SEGMENTATION_MIN_ROI_COVERAGE:
+        reasons.append("segmented foreground did not cover a plausible body region")
+    if not BODY_SEGMENTATION_MIN_FOREGROUND_CENTER_X <= foreground_center_x <= BODY_SEGMENTATION_MAX_FOREGROUND_CENTER_X:
+        reasons.append("segmented foreground was not centered in the body framing")
+    if reasons:
+        return False, "; ".join(reasons), stats
+    return True, "", stats
 
 
 def analyze_body_silhouette(image_bgr: np.ndarray, *, roi_name: str = "hip_buttock") -> Dict[str, Any]:
@@ -560,7 +615,23 @@ def analyze_body_silhouette(image_bgr: np.ndarray, *, roi_name: str = "hip_butto
     if roi_y1 <= roi_y0 or roi_x1 <= roi_x0:
         raise ValueError("Body silhouette ROI could not be derived from detected pose landmarks.")
 
-    silhouette_mask = _silhouette_mask_from_image(rgb)
+    silhouette_mask, silhouette_confidence = _silhouette_mask_from_image(
+        rgb,
+        return_confidence=True,
+    )
+    gate_passed, gate_reason, gate_stats = _body_segmentation_quality_gate(
+        silhouette_mask,
+        silhouette_confidence,
+        (roi_x0, roi_y0, roi_x1, roi_y1),
+    )
+    if not gate_passed:
+        raise ValueError(
+            "Unable to confirm full-body framing: "
+            f"{gate_reason}. "
+            f"roi_coverage={gate_stats['roi_coverage']:.3f}, "
+            f"uncertainty_fraction={gate_stats['uncertainty_fraction']:.3f}, "
+            f"foreground_center_x={gate_stats['foreground_center_x']:.3f}"
+        )
     roi_mask = silhouette_mask[roi_y0:roi_y1, roi_x0:roi_x1]
     roi_pixel_count = int(np.count_nonzero(roi_mask > 0.5))
     normalized_area_index = float(roi_pixel_count / max(scale_reference_pixels, 1.0))
@@ -594,6 +665,7 @@ def analyze_body_silhouette(image_bgr: np.ndarray, *, roi_name: str = "hip_butto
         "confidence": round(confidence, 6),
         "body_pose_detected": True,
         "landmark_count": int(len(pose_landmarks)),
+        "segmentation_quality": gate_stats,
     }
 
 

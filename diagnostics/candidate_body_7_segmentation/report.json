@@ -1,0 +1,52 @@
+{
+  "custom_bundled_model": {
+    "max": 1.0,
+    "mean": 0.16885732114315033,
+    "min": 0.0,
+    "near_threshold_0_4_0_6_fraction": 0.108296875,
+    "p01": 0.0,
+    "p05": 0.0,
+    "p25": 7.013493343276505e-36,
+    "p50": 2.508218412413918e-21,
+    "p75": 0.31190013885498047,
+    "p95": 0.9999992251396179,
+    "p99": 1.0,
+    "positive_fraction_at_0_5": 0.14457083333333334,
+    "positive_pixels_at_0_5": 138788,
+    "shape": [
+      800,
+      1200
+    ]
+  },
+  "legacy_model_selection_1": {
+    "max": 1.0,
+    "mean": 0.053390249609947205,
+    "min": 0.0,
+    "near_threshold_0_4_0_6_fraction": 0.010953125,
+    "p01": 0.0,
+    "p05": 0.0,
+    "p25": 2.4341778499660507e-37,
+    "p50": 4.863912481908145e-28,
+    "p75": 7.541379121926792e-15,
+    "p95": 0.4052293598651886,
+    "p99": 1.0,
+    "positive_fraction_at_0_5": 0.04443125,
+    "positive_pixels_at_0_5": 42654,
+    "shape": [
+      800,
+      1200
+    ]
+  },
+  "output_dir": "C:\\Users\\Admin\\Desktop\\aestheticskintracker\\diagnostics\\candidate_body_7_segmentation",
+  "photo": "C:\\Users\\Admin\\Desktop\\aestheticskintracker\\candidate_body_7.jpg",
+  "pixel_disagreement": {
+    "both_negative_count": 820919,
+    "both_positive_count": 42361,
+    "count": 96720,
+    "custom_only_count": 96427,
+    "fraction": 0.10075,
+    "legacy_only_count": 293,
+    "mean_absolute_confidence_difference": 0.12167134881019592,
+    "p95_absolute_confidence_difference": 0.5872159004211426
+  }
+}
