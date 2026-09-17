@@ -4,6 +4,55 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 
+class NormalizedSquareCrop {
+  const NormalizedSquareCrop({
+    required this.left,
+    required this.top,
+    required this.size,
+  });
+
+  final double left;
+  final double top;
+  final double size;
+}
+
+class ImageCropSelection {
+  const ImageCropSelection({required this.bytes, required this.region});
+
+  final Uint8List bytes;
+  final NormalizedSquareCrop region;
+}
+
+Uint8List applyNormalizedSquareCrop(
+  Uint8List imageBytes,
+  NormalizedSquareCrop region,
+) {
+  final source = img.decodeImage(imageBytes);
+  if (source == null) return imageBytes;
+
+  final sourceSize = math.min(source.width, source.height);
+  final cropSize = (region.size * sourceSize)
+      .round()
+      .clamp(1, sourceSize)
+      .toInt();
+  final cropX = (region.left * source.width)
+      .round()
+      .clamp(0, source.width - cropSize)
+      .toInt();
+  final cropY = (region.top * source.height)
+      .round()
+      .clamp(0, source.height - cropSize)
+      .toInt();
+  final cropped = img.copyCrop(
+    source,
+    x: cropX,
+    y: cropY,
+    width: cropSize,
+    height: cropSize,
+  );
+  return Uint8List.fromList(img.encodeJpg(cropped, quality: 92));
+}
+
 /// Pure-Flutter manual crop dialog (web + mobile + desktop).
 ///
 /// Replaces `image_cropper`, which is incompatible with Flutter 3.24+ on web.
@@ -11,7 +60,13 @@ import 'package:image/image.dart' as img;
 /// cancels. Use it with `showDialog<Uint8List>(...)`.
 class ImageCropDialog extends StatefulWidget {
   final Uint8List imageBytes;
-  const ImageCropDialog({super.key, required this.imageBytes});
+  final ValueChanged<ImageCropSelection>? onCropSelected;
+
+  const ImageCropDialog({
+    super.key,
+    required this.imageBytes,
+    this.onCropSelected,
+  });
 
   @override
   State<ImageCropDialog> createState() => _ImageCropDialogState();
@@ -72,6 +127,11 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
         .clamp(1, math.min(maxW, maxH))
         .toInt();
 
+    final region = NormalizedSquareCrop(
+      left: srcX / imgW,
+      top: srcY / imgH,
+      size: srcSize / math.min(imgW, imgH),
+    );
     final cropped = img.copyCrop(
       src,
       x: srcX,
@@ -79,7 +139,9 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
       width: srcSize,
       height: srcSize,
     );
-    return Uint8List.fromList(img.encodeJpg(cropped, quality: 92));
+    final bytes = Uint8List.fromList(img.encodeJpg(cropped, quality: 92));
+    widget.onCropSelected?.call(ImageCropSelection(bytes: bytes, region: region));
+    return bytes;
   }
 
   @override

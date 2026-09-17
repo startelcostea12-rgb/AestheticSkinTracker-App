@@ -242,6 +242,7 @@ BodySilhouetteRequestParams buildBodySilhouetteRequestParams({
 class CameraScreen extends StatefulWidget {
   final Procedure? procedure;
   final bool isSkincareScan;
+  final bool aiMultiFrameCapture;
   final String? productName;
   final String? initialProcedureId;
   final String? initialProcedureLabel;
@@ -250,6 +251,7 @@ class CameraScreen extends StatefulWidget {
   const CameraScreen({
     this.procedure,
     this.isSkincareScan = false,
+    this.aiMultiFrameCapture = false,
     this.productName,
     this.initialProcedureId,
     this.initialProcedureLabel,
@@ -258,6 +260,16 @@ class CameraScreen extends StatefulWidget {
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
+}
+
+class AiSkinAnalysisCaptureResult {
+  const AiSkinAnalysisCaptureResult({
+    required this.primaryImagePath,
+    required this.croppedFrames,
+  });
+
+  final String primaryImagePath;
+  final List<Uint8List> croppedFrames;
 }
 
 class _CameraScreenState extends State<CameraScreen>
@@ -3936,6 +3948,104 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
+  Future<void> _captureAiSkinAnalysisFrames() async {
+    final controller = _cameraController;
+    if (controller == null || !controller.value.isInitialized) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Live camera unavailable.')),
+        );
+      }
+      return;
+    }
+    if (controller.value.isTakingPicture) return;
+
+    if (mounted) setState(() => _capturing = true);
+    final capturedFiles = <XFile>[];
+    try {
+      if (_lightingStreamActive && !kIsWeb) {
+        await controller.stopImageStream();
+        _lightingStreamActive = false;
+      }
+
+      try {
+        await controller.setExposureMode(ExposureMode.locked);
+      } catch (e) {
+        debugPrint('AI burst exposure lock unsupported: $e');
+      }
+      try {
+        await (controller as dynamic).setWhiteBalanceMode('locked');
+      } catch (e) {
+        debugPrint('AI burst white balance lock unsupported: $e');
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      for (var index = 0; index < 3; index++) {
+        capturedFiles.add(await controller.takePicture());
+        if (index < 2) {
+          await Future<void>.delayed(const Duration(milliseconds: 110));
+        }
+      }
+      if (!mounted || capturedFiles.length != 3) return;
+
+      final firstBytes = await capturedFiles.first.readAsBytes();
+      if (!mounted) return;
+      ImageCropSelection? cropSelection;
+      final firstCropped = await showDialog<Uint8List>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => ImageCropDialog(
+          imageBytes: firstBytes,
+          onCropSelected: (selection) => cropSelection = selection,
+        ),
+      );
+      if (!mounted || firstCropped == null || cropSelection == null) return;
+
+      final croppedFrames = <Uint8List>[firstCropped];
+      for (final file in capturedFiles.skip(1)) {
+        croppedFrames.add(
+          applyNormalizedSquareCrop(
+            await file.readAsBytes(),
+            cropSelection!.region,
+          ),
+        );
+      }
+
+      final primaryImagePath = await _persistScanImage(
+        croppedFrames.first,
+        sourcePath: capturedFiles.first.path,
+        prefix: 'ai_skin_analysis_frame_1',
+      );
+
+      if (!mounted) return;
+      Navigator.of(context).pop(
+        AiSkinAnalysisCaptureResult(
+          primaryImagePath: primaryImagePath,
+          croppedFrames: List<Uint8List>.unmodifiable(croppedFrames),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Multi-frame capture failed: $e')),
+        );
+      }
+    } finally {
+      try {
+        await controller.setExposureMode(ExposureMode.auto);
+      } catch (e) {
+        debugPrint('AI burst exposure reset unsupported: $e');
+      }
+      try {
+        await (controller as dynamic).setWhiteBalanceMode('auto');
+      } catch (e) {
+        debugPrint('AI burst white balance reset unsupported: $e');
+      }
+      _startLightingStream(controller);
+      if (mounted) setState(() => _capturing = false);
+    }
+  }
+
   @override
   void dispose() {
     if (_lightingStreamActive && !kIsWeb) {
@@ -4646,6 +4756,10 @@ class _CameraScreenState extends State<CameraScreen>
     try {
       final captureQuality = _captureQualityForCurrentConditions(report);
       _lastCaptureQualityTag = captureQuality;
+      if (widget.aiMultiFrameCapture) {
+        await _captureAiSkinAnalysisFrames();
+        return;
+      }
       // ImageSource.camera invokes the system camera which honours the
       // platform's hardware capture pipeline. The live preview above has
       // already coached the user into the correct pose. The actual burst

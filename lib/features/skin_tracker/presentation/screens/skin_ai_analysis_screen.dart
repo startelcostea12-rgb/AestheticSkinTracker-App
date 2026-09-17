@@ -60,6 +60,113 @@ class SkinAiAnalysisScreen extends StatefulWidget {
 
 enum _Stage { capture, analyzing, results }
 
+class MultiFrameAnalysisAggregate {
+  const MultiFrameAnalysisAggregate({
+    required this.response,
+    required this.metricContributorCounts,
+    required this.successfulFrames,
+    required this.requestedFrames,
+  });
+
+  final Map<String, dynamic> response;
+  final Map<String, int> metricContributorCounts;
+  final int successfulFrames;
+  final int requestedFrames;
+}
+
+Map<String, dynamic> _dynamicMap(dynamic value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return Map<String, dynamic>.from(value);
+  return const <String, dynamic>{};
+}
+
+MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
+  List<Map<String, dynamic>> responses, {
+  required int requestedFrames,
+}) {
+  final samples = <String, List<double>>{};
+  final successfulResponses = <Map<String, dynamic>>[];
+
+  for (final response in responses) {
+    final metricsNode = _dynamicMap(response['metrics']);
+    final matrix = _dynamicMap(response['metric_matrix']).isNotEmpty
+        ? _dynamicMap(response['metric_matrix'])
+        : _dynamicMap(metricsNode['metric_matrix']);
+    if (matrix.isEmpty) continue;
+    final frameMetrics = <String, double>{};
+    for (final entry in matrix.entries) {
+      final value = entry.value;
+      final numeric = value is num
+          ? value.toDouble()
+          : double.tryParse(value?.toString() ?? '');
+      if (numeric == null || !numeric.isFinite) continue;
+      frameMetrics[entry.key] = numeric;
+    }
+    if (frameMetrics.isEmpty) continue;
+    successfulResponses.add(response);
+    for (final entry in frameMetrics.entries) {
+      samples.putIfAbsent(entry.key, () => <double>[]).add(entry.value);
+    }
+  }
+
+  if (successfulResponses.isEmpty || samples.isEmpty) {
+    throw StateError('No captured frame produced usable backend metrics.');
+  }
+
+  final averagedMatrix = <String, double>{};
+  final contributorCounts = <String, int>{};
+  for (final entry in samples.entries) {
+    averagedMatrix[entry.key] =
+        entry.value.reduce((a, b) => a + b) / entry.value.length;
+    contributorCounts[entry.key] = entry.value.length;
+  }
+
+  final first = successfulResponses.first;
+  final response = Map<String, dynamic>.from(first);
+  final metricsNode = Map<String, dynamic>.from(_dynamicMap(first['metrics']));
+  response['metric_matrix'] = averagedMatrix;
+  response.addAll(averagedMatrix);
+  metricsNode
+    ..addAll(averagedMatrix)
+    ..['metric_matrix'] = averagedMatrix;
+  response['metrics'] = metricsNode;
+  response['multi_frame_analysis'] = <String, dynamic>{
+    'requested_frames': requestedFrames,
+    'successful_frames': successfulResponses.length,
+    'metric_contributor_counts': contributorCounts,
+  };
+
+  return MultiFrameAnalysisAggregate(
+    response: response,
+    metricContributorCounts: contributorCounts,
+    successfulFrames: successfulResponses.length,
+    requestedFrames: requestedFrames,
+  );
+}
+
+Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
+  List<Uint8List> frames, {
+  required Future<Map<String, dynamic>> Function(
+    Uint8List frame,
+    int frameNumber,
+  ) uploadFrame,
+}) async {
+  final responses = <Map<String, dynamic>>[];
+  for (var index = 0; index < frames.length; index++) {
+    try {
+      responses.add(await uploadFrame(frames[index], index + 1));
+    } catch (error) {
+      debugPrint(
+        '[MultiFrameAnalysis] Frame ${index + 1}/${frames.length} failed: $error',
+      );
+    }
+  }
+  return averageBackendAnalysisFrames(
+    responses,
+    requestedFrames: frames.length,
+  );
+}
+
 class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   static const String _manualBaselinePrefsKey =
       'skin_ai_manual_baseline_metric_matrix_v1';
@@ -73,6 +180,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// uncropped original. A "latest scan" selection leaves this null and is
   /// read from its stored path instead.
   Uint8List? _croppedBytes;
+  List<Uint8List> _analysisFrameBytes = const [];
 
   /// The user must explicitly accept the pre-analysis disclaimer before the
   /// "Run AI Analysis" button unlocks. This is a hard gate, not a checkbox
@@ -127,6 +235,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   bool _explicitBaselineSelection = false;
   Map<String, double> _serverTrendDeltas = const {};
   Map<String, dynamic>? _latestBackendAnalysisPayload;
+  Map<String, int> _metricContributorCounts = const {};
+  int _successfulAnalysisFrameCount = 0;
+  int _requestedAnalysisFrameCount = 0;
   Map<String, double>? _manualBaselineMetricMatrix;
   bool _awaitingBaselineOnboarding = true;
 
@@ -385,12 +496,21 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
   Future<void> _pickFromCamera() async {
     try {
-      final capturedImagePath = await Navigator.push<String>(
+      final captured = await Navigator.push<Object?>(
         context,
         MaterialPageRoute(
-          builder: (_) => const CameraScreen(isSkincareScan: true),
+          builder: (_) => const CameraScreen(
+            isSkincareScan: true,
+            aiMultiFrameCapture: true,
+          ),
         ),
       );
+
+      final capturedImagePath = switch (captured) {
+        AiSkinAnalysisCaptureResult result => result.primaryImagePath,
+        String path => path,
+        _ => null,
+      };
 
       if (!mounted || capturedImagePath == null || capturedImagePath.isEmpty) {
         return;
@@ -398,7 +518,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
       setState(() {
         _imagePath = capturedImagePath;
-        _croppedBytes = null;
+        if (captured is AiSkinAnalysisCaptureResult) {
+          _analysisFrameBytes = captured.croppedFrames;
+          _croppedBytes = captured.croppedFrames.first;
+        } else {
+          _analysisFrameBytes = const [];
+          _croppedBytes = null;
+        }
         _explicitBaselineSelection = false;
       });
 
@@ -451,6 +577,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         setState(() {
           _imagePath = null;
           _croppedBytes = null;
+          _analysisFrameBytes = const [];
         });
         return;
       }
@@ -459,6 +586,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       if (!mounted) return;
       setState(() {
         _croppedBytes = cropped;
+        _analysisFrameBytes = <Uint8List>[cropped];
         _imagePath = stored;
         _explicitBaselineSelection = false;
       });
@@ -656,11 +784,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       // Server-first execution: route this scan through the backend multipart
       // endpoint and parse canonical metrics + trend deltas from the payload.
       final backendBytes = imageBytes ?? await XFile(path).readAsBytes();
-      final backendFile = XFile.fromData(
-        backendBytes,
-        name: 'skin_ai_analysis_${DateTime.now().millisecondsSinceEpoch}.jpg',
-        mimeType: 'image/jpeg',
-      );
       final backendFields = <String, String>{
         if ((_selectedProcedureType ?? '').trim().isNotEmpty)
           'procedure_type': (_selectedProcedureType ?? '').trim(),
@@ -671,19 +794,33 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           'selected_skin_profile_note': _resolvedFocusArea().trim(),
       };
 
-      final backendResponse =
-          await remote_analysis.SkinAnalysisService.uploadSingleImageFile(
-            image: backendFile,
-            fields: backendFields,
-            baselineMetricMatrix:
-                _manualBaselineMetricMatrix ??
-                _baselineMetricMatrixForBackend(previousMetrics),
-            baselineExtractionPaths:
-                _manualBaselineMetricMatrix != null
-                ? null
-                : _buildLuxeBaselineExtractionPaths(),
-            allowBackend: true,
-          );
+      final frames = _analysisFrameBytes.isNotEmpty
+          ? _analysisFrameBytes
+          : <Uint8List>[backendBytes];
+      final aggregate = await analyzeBackendFrames(
+        frames,
+        uploadFrame: (frame, frameNumber) =>
+            remote_analysis.SkinAnalysisService.uploadSingleImageFile(
+              image: XFile.fromData(
+                frame,
+                name: 'skin_ai_analysis_frame_$frameNumber.jpg',
+                mimeType: 'image/jpeg',
+              ),
+              fields: backendFields,
+              baselineMetricMatrix:
+                  _manualBaselineMetricMatrix ??
+                  _baselineMetricMatrixForBackend(previousMetrics),
+              baselineExtractionPaths: _manualBaselineMetricMatrix != null
+                  ? null
+                  : _buildLuxeBaselineExtractionPaths(),
+              allowBackend: true,
+            ),
+      );
+      final backendResponse = aggregate.response;
+      debugPrint(
+        '[MultiFrameAnalysis] ${aggregate.successfulFrames}/${aggregate.requestedFrames} '
+        'frames succeeded; contributors=${aggregate.metricContributorCounts}',
+      );
       final parsedBackend = _parseBackendAnalysisPayload(backendResponse);
       final Map<String, double> fullMetrics = parsedBackend.fullMetrics;
       final Map<String, double> serverTrendDeltas =
@@ -788,6 +925,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         _previousMetrics = previousMetrics;
         _serverTrendDeltas = serverTrendDeltas;
         _latestBackendAnalysisPayload = backendResponse;
+        _metricContributorCounts = aggregate.metricContributorCounts;
+        _successfulAnalysisFrameCount = aggregate.successfulFrames;
+        _requestedAnalysisFrameCount = aggregate.requestedFrames;
         _result = report;
         _modelInfo = modelInfo;
         _modelConfidence = modelConf;
@@ -1511,6 +1651,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       _stage = _Stage.capture;
       _imagePath = null;
       _croppedBytes = null;
+      _analysisFrameBytes = const [];
       _result = null;
       _analysisError = null;
       _fullMetrics = const {};
@@ -1520,6 +1661,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       _priorFocusAreaScans = const [];
       _explicitBaselineSelection = false;
       _latestBackendAnalysisPayload = null;
+      _metricContributorCounts = const {};
+      _successfulAnalysisFrameCount = 0;
+      _requestedAnalysisFrameCount = 0;
     });
     _refreshFocusAreaPhaseHint();
   }
@@ -1922,6 +2066,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                   onPressed: () => setState(() {
                     _imagePath = null;
                     _croppedBytes = null;
+                    _analysisFrameBytes = const [];
                   }),
                   style: TextButton.styleFrom(
                     foregroundColor: MyApp.clinicalSlate,
@@ -2767,6 +2912,70 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     );
   }
 
+  Widget _multiFrameConfidenceCard() {
+    final entries = _metricContributorCounts.entries.toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.photo_library_outlined,
+                size: 17,
+                color: AppColors.champagneGold,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Multi-frame confidence: '
+                '$_successfulAnalysisFrameCount/$_requestedAnalysisFrameCount frames',
+                style: const TextStyle(
+                  color: AppColors.refinedSlate,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final entry in entries)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.mutedSage.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: AppColors.mutedSage.withValues(alpha: 0.28),
+                    ),
+                  ),
+                  child: Text(
+                    '${entry.key.replaceAll('_', ' ')}: '
+                    '${entry.value}/$_requestedAnalysisFrameCount',
+                    style: const TextStyle(
+                      color: AppColors.refinedSlate,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── Stage 2: analyzing ────────────────────────────────────────────
 
   Widget _buildAnalyzingStage() {
@@ -2868,6 +3077,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               _resultsTopDisclaimer(),
               const SizedBox(height: 14),
               _resultHeroCard(r),
+              if (_requestedAnalysisFrameCount > 1) ...[
+                const SizedBox(height: 14),
+                _multiFrameConfidenceCard(),
+              ],
               const SizedBox(height: 14),
               isFollowUpPhase
                   ? _followUpSummaryLine(r)
