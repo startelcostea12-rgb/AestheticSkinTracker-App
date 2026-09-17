@@ -85,7 +85,25 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
   required int requestedFrames,
 }) {
   final samples = <String, List<double>>{};
+  final confidenceSamples = <String, List<Object>>{};
   final successfulResponses = <Map<String, dynamic>>[];
+
+  Object? confidenceForMetric(
+    Map<String, dynamic> response,
+    Map<String, dynamic> metricsNode,
+    String metricKey,
+  ) {
+    for (final source in [
+      _dynamicMap(response['metric_confidence']),
+      _dynamicMap(metricsNode['metric_confidence']),
+    ]) {
+      final value = source[metricKey];
+      if (value is num && value.toDouble().isFinite) return value.toDouble();
+      final text = value?.toString().trim().toLowerCase();
+      if (text == 'high' || text == 'medium' || text == 'low') return text;
+    }
+    return null;
+  }
 
   for (final response in responses) {
     final metricsNode = _dynamicMap(response['metrics']);
@@ -106,6 +124,12 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     successfulResponses.add(response);
     for (final entry in frameMetrics.entries) {
       samples.putIfAbsent(entry.key, () => <double>[]).add(entry.value);
+      final confidence = confidenceForMetric(response, metricsNode, entry.key);
+      if (confidence != null) {
+        confidenceSamples.putIfAbsent(entry.key, () => <Object>[]).add(
+          confidence,
+        );
+      }
     }
   }
 
@@ -115,25 +139,44 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
 
   final averagedMatrix = <String, double>{};
   final contributorCounts = <String, int>{};
+  final metricRanges = <String, Map<String, num>>{};
   for (final entry in samples.entries) {
     averagedMatrix[entry.key] =
         entry.value.reduce((a, b) => a + b) / entry.value.length;
     contributorCounts[entry.key] = entry.value.length;
+    metricRanges[entry.key] = <String, num>{
+      'min': entry.value.reduce((a, b) => a < b ? a : b),
+      'max': entry.value.reduce((a, b) => a > b ? a : b),
+      'count': entry.value.length,
+    };
+  }
+
+  final correctedConfidence = <String, Object>{};
+  for (final entry in confidenceSamples.entries) {
+    if (entry.value.isEmpty) continue;
+    correctedConfidence[entry.key] = entry.value.first;
   }
 
   final first = successfulResponses.first;
   final response = Map<String, dynamic>.from(first);
   final metricsNode = Map<String, dynamic>.from(_dynamicMap(first['metrics']));
   response['metric_matrix'] = averagedMatrix;
+  response['metric_confidence'] = correctedConfidence;
   response.addAll(averagedMatrix);
   metricsNode
     ..addAll(averagedMatrix)
-    ..['metric_matrix'] = averagedMatrix;
+    ..['metric_matrix'] = averagedMatrix
+    ..['metric_confidence'] = correctedConfidence;
   response['metrics'] = metricsNode;
   response['multi_frame_analysis'] = <String, dynamic>{
     'requested_frames': requestedFrames,
     'successful_frames': successfulResponses.length,
     'metric_contributor_counts': contributorCounts,
+    'metric_frame_values': <String, List<double>>{
+      for (final entry in samples.entries)
+        entry.key: List<double>.unmodifiable(entry.value),
+    },
+    'metric_ranges': metricRanges,
   };
 
   return MultiFrameAnalysisAggregate(
@@ -166,6 +209,18 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
     requestedFrames: frames.length,
   );
 }
+
+Map<String, dynamic> luxePrecisionMetadataFromBackend(
+  Map<String, dynamic>? backendResponse,
+) =>
+    <String, dynamic>{
+      'metric_confidence': _dynamicMap(
+        backendResponse?['metric_confidence'],
+      ),
+      'multi_frame_analysis': _dynamicMap(
+        backendResponse?['multi_frame_analysis'],
+      ),
+    };
 
 class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   static const String _manualBaselinePrefsKey =
@@ -4350,6 +4405,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             backendResponse?['metric_extraction_paths'],
           ) ??
           const <String, dynamic>{},
+      ...luxePrecisionMetadataFromBackend(backendResponse),
       'baseline_metric_extraction_paths': baselineExtractionPaths,
       'baseline': baselineMetricMatrix,
       'trend_deltas': trendDeltas,

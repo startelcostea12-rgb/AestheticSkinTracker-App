@@ -25,6 +25,10 @@ class LuxeMetric {
     this.backendTrendStatus,
     this.usesBackendTrend = false,
     this.backendTrendLockReason,
+    this.currentRangeMin,
+    this.currentRangeMax,
+    this.contributorCount,
+    this.requestedFrameCount,
   });
 
   final String key;
@@ -48,6 +52,69 @@ class LuxeMetric {
   // path_mismatch, resolution_mismatch, ...). Purely informational — see
   // lib/utils/trend_lock_reason.dart.
   final String? backendTrendLockReason;
+  final double? currentRangeMin;
+  final double? currentRangeMax;
+  final int? contributorCount;
+  final int? requestedFrameCount;
+}
+
+class MetricPrecisionPresentation {
+  const MetricPrecisionPresentation({
+    required this.rangeSuffix,
+    required this.detailText,
+    required this.hasRealRange,
+  });
+
+  final String rangeSuffix;
+  final String detailText;
+  final bool hasRealRange;
+}
+
+MetricPrecisionPresentation metricPrecisionPresentation(LuxeMetric metric) {
+  final contributors = metric.contributorCount;
+  final requested = metric.requestedFrameCount;
+  final min = metric.currentRangeMin;
+  final max = metric.currentRangeMax;
+  final hasRealRange =
+      contributors != null &&
+      contributors >= 2 &&
+      min != null &&
+      max != null &&
+      min.isFinite &&
+      max.isFinite;
+
+  if (hasRealRange) {
+    return MetricPrecisionPresentation(
+      rangeSuffix: ' (${min.toStringAsFixed(1)}–${max.toStringAsFixed(1)})',
+      detailText: '$contributors/${requested ?? contributors} frames',
+      hasRealRange: true,
+    );
+  }
+
+  final rawConfidence = metric.currentConfidence;
+  String confidenceText;
+  if (rawConfidence is num && rawConfidence.toDouble().isFinite) {
+    final numeric = rawConfidence.toDouble();
+    final percent = numeric <= 1.0 ? numeric * 100.0 : numeric;
+    confidenceText = 'Confidence: ${percent.toStringAsFixed(0)}%';
+  } else {
+    final normalized = rawConfidence?.toString().trim().toLowerCase();
+    if (normalized == 'high' || normalized == 'medium' || normalized == 'low') {
+      confidenceText =
+          'Confidence: ${normalized![0].toUpperCase()}${normalized.substring(1)}';
+    } else {
+      confidenceText = 'Confidence unavailable';
+    }
+  }
+
+  final frameSuffix = contributors == null
+      ? ''
+      : ' · $contributors/${requested ?? contributors} frames';
+  return MetricPrecisionPresentation(
+    rangeSuffix: '',
+    detailText: '$confidenceText$frameSuffix',
+    hasRealRange: false,
+  );
 }
 
 class _ExtractedMetricValue {
@@ -302,6 +369,16 @@ class LuxeMetricParser {
     final trendDeltas = _canonicalizeMetricMap(payload['trend_deltas']);
     final trendStatus = _canonicalizeMetricMap(payload['trend_status']);
     final trendLockReasons = _canonicalizeMetricMap(payload['trend_lock_reasons']);
+    final multiFrameAnalysis = _asMap(payload['multi_frame_analysis']);
+    final metricRanges = _canonicalizeMetricMap(
+      multiFrameAnalysis['metric_ranges'],
+    );
+    final metricContributorCounts = _canonicalizeMetricMap(
+      multiFrameAnalysis['metric_contributor_counts'],
+    );
+    final requestedFrameCount = _asIntOrNull(
+      multiFrameAnalysis['requested_frames'],
+    );
 
     _traceMapEntries('payload.baseline', baselineNode);
     _traceMapEntries('payload.baseline_metric_matrix', baselineMetricMatrix);
@@ -509,6 +586,12 @@ class LuxeMetricParser {
           nestedRootMetricConfidence,
         ],
       );
+        final rangeNode = _asMap(metricRanges[spec.deltaKey]);
+        final rangeMin = _asDoubleOrNull(rangeNode['min']);
+        final rangeMax = _asDoubleOrNull(rangeNode['max']);
+        final contributorCount =
+          _asIntOrNull(metricContributorCounts[spec.deltaKey]) ??
+          _asIntOrNull(rangeNode['count']);
 
       debugPrint(
         'BASELINE MATCH [${spec.deltaKey}] matchedKey=${hasBaseline ? 'baseline_metric_matrix.${spec.deltaKey}' : 'not_found'} raw=${hasBaseline ? baseline.toStringAsFixed(2) : 'nan'} aliasUsed=none final=${hasBaseline ? baseline.toStringAsFixed(2) : 'nan'}',
@@ -591,6 +674,10 @@ class LuxeMetricParser {
           backendTrendStatus: usesBackendTrend ? backendTrendStatus : null,
           usesBackendTrend: usesBackendTrend,
           backendTrendLockReason: usesBackendTrend ? backendTrendLockReason : null,
+          currentRangeMin: rangeMin,
+          currentRangeMax: rangeMax,
+          contributorCount: contributorCount,
+          requestedFrameCount: requestedFrameCount,
         ),
       );
     }
@@ -755,6 +842,12 @@ class LuxeMetricParser {
     final parsed = double.tryParse(value.toString());
     if (parsed == null || !parsed.isFinite) return null;
     return parsed;
+  }
+
+  static int? _asIntOrNull(dynamic value) {
+    if (value is int) return value;
+    if (value is num && value.isFinite) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
   }
 
   static void _traceMapEntries(String label, Map<String, dynamic> map) {
@@ -1897,12 +1990,13 @@ class _MetricCard extends StatelessWidget {
     final chipColor = _chipColor(row.honestyStatus);
     const titleColor = AppColors.textStructure;
     final headlineDelta = row.honestyLabel;
+    final precision = metricPrecisionPresentation(metric);
     final currentDisplayText = row.hasComparableCurrentValue
       ? formatScoreWithSeverityBand(metric.key, row.currentValue)
       : 'Not compared';
     final comparisonSubtitle = row.hasRealBaseline
-        ? 'Current $currentDisplayText · Baseline ${row.baselineValue.toStringAsFixed(1)}'
-        : 'Current $currentDisplayText · Starting point';
+        ? 'Current $currentDisplayText${precision.rangeSuffix} · Baseline ${row.baselineValue.toStringAsFixed(1)}'
+        : 'Current $currentDisplayText${precision.rangeSuffix} · Starting point';
     final progressionDeltaText =
       row.badgeValueText == null ? '' : ' (${row.badgeValueText})';
     final progressionLine = !row.hasComparableCurrentValue
@@ -1956,6 +2050,15 @@ class _MetricCard extends StatelessWidget {
                   fontSize: 10.9,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.1,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                precision.detailText,
+                style: TextStyle(
+                  color: titleColor.withValues(alpha: 0.66),
+                  fontSize: 10.2,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
               const SizedBox(height: 5),

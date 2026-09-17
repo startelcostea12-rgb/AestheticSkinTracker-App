@@ -11,6 +11,10 @@ void main() {
       [
         {
           'status': 'success',
+          'metric_confidence': {
+            'localized_redness': 'high',
+            'pigment_load': 'medium',
+          },
           'metric_matrix': {
             'localized_redness': 10.0,
             'pigment_load': 20.0,
@@ -19,6 +23,10 @@ void main() {
         {
           'status': 'success',
           'metrics': {
+            'metric_confidence': {
+              'localized_redness': 'medium',
+              'texture_smoothness': 'low',
+            },
             'metric_matrix': {
               'localized_redness': 20.0,
               'pigment_load': null,
@@ -28,6 +36,7 @@ void main() {
         },
         {
           'status': 'success',
+          'metric_confidence': {'localized_redness': 'high'},
           'metric_matrix': {
             'localized_redness': 30.0,
             'pigment_load': 'invalid',
@@ -58,6 +67,50 @@ void main() {
         'pigment_load': 1,
         'texture_smoothness': 1,
       },
+      'metric_frame_values': {
+        'localized_redness': [10.0, 20.0, 30.0],
+        'pigment_load': [20.0],
+        'texture_smoothness': [60.0],
+      },
+      'metric_ranges': {
+        'localized_redness': {'min': 10.0, 'max': 30.0, 'count': 3},
+        'pigment_load': {'min': 20.0, 'max': 20.0, 'count': 1},
+        'texture_smoothness': {'min': 60.0, 'max': 60.0, 'count': 1},
+      },
+    });
+    expect(aggregate.response['metric_confidence'], {
+      'localized_redness': 'high',
+      'pigment_load': 'medium',
+      'texture_smoothness': 'low',
+    });
+    expect(nestedMetrics['metric_confidence'], {
+      'localized_redness': 'high',
+      'pigment_load': 'medium',
+      'texture_smoothness': 'low',
+    });
+  });
+
+  test('confidence is taken only from a frame that contributed the metric', () {
+    final aggregate = averageBackendAnalysisFrames(
+      [
+        {
+          'metric_matrix': {'localized_redness': 10.0},
+          'metric_confidence': {
+            'localized_redness': 'high',
+            'pigment_load': 'low',
+          },
+        },
+        {
+          'metric_matrix': {'pigment_load': 24.0},
+          'metric_confidence': {'pigment_load': 'high'},
+        },
+      ],
+      requestedFrames: 2,
+    );
+
+    expect(aggregate.response['metric_confidence'], {
+      'localized_redness': 'high',
+      'pigment_load': 'high',
     });
   });
 
