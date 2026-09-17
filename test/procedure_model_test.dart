@@ -65,5 +65,35 @@ void main() {
         'Brazilian Butt Lift with fat transfer to hips',
       );
     });
+
+    test('procedure persists bodyRegion and legacy data infers it', () {
+      final procedure = Procedure(
+        id: 'proc_body_region',
+        type: 'BBL',
+        category: 'Cosmetic Procedures',
+        provider: 'Test Clinic',
+        startDate: DateTime(2026, 6, 16),
+        numSessions: 1,
+        bodyRegion: ProcedureBodyRegion.body,
+      );
+
+      final json = procedure.toJson();
+      expect(json['bodyRegion'], 'body');
+
+      final roundTrip = Procedure.fromJson(json);
+      expect(roundTrip.bodyRegion, ProcedureBodyRegion.body);
+
+      final legacyJson = {
+        'id': 'legacy_proc',
+        'type': 'Botox / Dysport / Xeomin',
+        'category': 'Cosmetic Procedures',
+        'provider': 'Test Clinic',
+        'startDate': DateTime(2026, 6, 16).toIso8601String(),
+        'numSessions': 1,
+      };
+
+      final legacyRoundTrip = Procedure.fromJson(legacyJson);
+      expect(legacyRoundTrip.bodyRegion, ProcedureBodyRegion.face);
+    });
   });
 }

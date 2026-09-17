@@ -20,8 +20,10 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
+import 'dart:async' show unawaited;
 
 import '../app_theme.dart';
+import '../utils/conversion_analytics.dart';
 import '../utils/premium_access.dart';
 import 'clinical_section_header.dart';
 
@@ -54,6 +56,15 @@ class _PaywallScreenState extends State<PaywallScreen> {
   }
 
   Future<void> _bootstrap() async {
+    unawaited(
+      ConversionAnalytics.track(
+        ConversionEvent.paywallView,
+        properties: <String, dynamic>{
+          'surface': 'paywall_screen',
+          'default_annual_selected': _annual,
+        },
+      ),
+    );
     final available = await PremiumAccess.isTestingModeAvailable();
     final active = await PremiumAccess.isTestingPremiumActive();
     if (mounted) {
@@ -119,6 +130,17 @@ class _PaywallScreenState extends State<PaywallScreen> {
   }
 
   Future<void> _purchase() async {
+    unawaited(
+      ConversionAnalytics.track(
+        ConversionEvent.trialStart,
+        properties: <String, dynamic>{
+          'surface': 'paywall_screen',
+          'billing_cycle': _annual ? 'annual' : 'monthly',
+          'channel': (kIsWeb || _selectedPackage == null) ? 'simulated' : 'store',
+        },
+      ),
+    );
+
     setState(() {
       _purchasing = true;
       _errorMessage = null;
@@ -129,6 +151,16 @@ class _PaywallScreenState extends State<PaywallScreen> {
         // QA flows continue to work.
         await Future<void>.delayed(const Duration(milliseconds: 700));
         await PremiumAccess.setPremiumUnlocked(true);
+        unawaited(
+          ConversionAnalytics.track(
+            ConversionEvent.subscribe,
+            properties: <String, dynamic>{
+              'surface': 'paywall_screen',
+              'billing_cycle': _annual ? 'annual' : 'monthly',
+              'channel': 'simulated',
+            },
+          ),
+        );
         if (mounted) _showSuccessSnack('Welcome to Premium.');
         _finishUnlock();
         return;
@@ -140,6 +172,16 @@ class _PaywallScreenState extends State<PaywallScreen> {
       final hasEntitlement = result.customerInfo.entitlements.active.isNotEmpty;
       if (hasEntitlement) {
         await PremiumAccess.setPremiumUnlocked(true);
+        unawaited(
+          ConversionAnalytics.track(
+            ConversionEvent.subscribe,
+            properties: <String, dynamic>{
+              'surface': 'paywall_screen',
+              'billing_cycle': _annual ? 'annual' : 'monthly',
+              'channel': 'store',
+            },
+          ),
+        );
         if (mounted) _showSuccessSnack('Welcome to Premium.');
         _finishUnlock();
       } else {
@@ -205,6 +247,16 @@ class _PaywallScreenState extends State<PaywallScreen> {
 
   Future<void> _deactivateTestPremium() async {
     await PremiumAccess.resetAllPremium();
+    unawaited(
+      ConversionAnalytics.track(
+        ConversionEvent.churn,
+        properties: <String, dynamic>{
+          'surface': 'paywall_screen',
+          'channel': 'testing_override',
+          'reason': 'manual_reset_to_free',
+        },
+      ),
+    );
     if (!mounted) return;
     setState(() => _testingActive = false);
     _showSuccessSnack('Reverted to Free tier.');
@@ -890,6 +942,28 @@ class _PaywallScreenState extends State<PaywallScreen> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () {
+                Navigator.of(context).pushNamed('/conversion-diagnostics');
+              },
+              icon: const Icon(Icons.monitor_heart_outlined, size: 18),
+              label: const Text('Open Conversion Diagnostics'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: MyApp.clinicalSlate,
+                side: BorderSide(
+                  color: MyApp.clinicalSlate.withValues(alpha: 0.45),
+                  width: 1,
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
           ),
         ],
       ),

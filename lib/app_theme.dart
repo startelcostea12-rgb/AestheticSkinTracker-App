@@ -23,29 +23,43 @@ class MyApp {
       isDark ? AppColors.darkCanvas : AppColors.canvas;
   static Color get blush =>
       isDark ? AppColors.darkSurface : AppColors.cardBackground;
+  // Historically aliased to the status/worsened hex (softTerracotta), but
+  // every call site in the app uses it decoratively (challenge screens,
+  // selected-tab highlights, secondary-button accents, urgency badges) —
+  // never as a metric-worsened indicator. Repointed to the brand accent so
+  // decorative "warm highlight" usage no longer borrows the status color.
+  // Metric-worsened call sites were moved onto
+  // AppColors.kMetricWorsenedColor directly; see luxe_report_layout.dart,
+  // progress_report_screen.dart, metric_trend.dart.
   static Color get roseGold =>
-      isDark ? AppColors.softTerracotta : AppColors.softTerracotta;
-  static Color get goldShimmer => AppColors.champagneGold;
+      isDark ? AppColors.darkAccent : AppColors.brandAccent;
+  static Color get goldShimmer =>
+      isDark ? AppColors.darkAccent : AppColors.champagneGold;
   static Color get textBrown =>
-      Colors.black;
+      isDark ? AppColors.darkText : AppColors.textStructure;
   static Color get surface =>
       isDark ? AppColors.darkSurface : AppColors.cardBackground;
   static Color get clinicalNavy =>
-      Colors.black;
-  static Color get clinicalSlate => isDark
-      ? Colors.black
-      : Colors.black;
-  static Color get clinicalTeal => AppColors.mutedSage;
-  static Color get clinicalMuted => isDark
-      ? Colors.black
-      : Colors.black;
+      isDark ? AppColors.darkText : AppColors.textStructure;
+  static Color get clinicalSlate =>
+      isDark ? AppColors.darkText : AppColors.textStructure;
+  // Same reclassification as roseGold above: the overwhelming majority of
+  // call sites are decorative (icons, tab accents, toggle thumbs, section
+  // headers), not metric-improved indicators, so this now resolves to the
+  // brand accent. The few genuinely status-driven call sites (severity
+  // classifiers in procedure_profiles_screen.dart) were moved onto
+  // AppColors.kMetricImprovedColor directly instead of this getter.
+  static Color get clinicalTeal =>
+      isDark ? AppColors.darkAccent : AppColors.brandAccent;
+  static Color get clinicalMuted =>
+      isDark ? AppColors.darkBorders : AppColors.borders;
   static BorderRadius get cardRadius => BorderRadius.circular(cardRadiusValue);
   static BorderRadius get buttonRadius =>
       BorderRadius.circular(buttonRadiusValue);
 
   static List<BoxShadow> get cardShadow => [
     BoxShadow(
-      color: Colors.black.withValues(alpha: isDark ? 0.18 : 0.06),
+      color: Color(0xFF1E2225).withValues(alpha: isDark ? 0.18 : 0.06),
       blurRadius: 18,
       offset: const Offset(0, 8),
     ),
@@ -53,9 +67,7 @@ class MyApp {
 
   static RoundedRectangleBorder get cardShape => RoundedRectangleBorder(
     borderRadius: cardRadius,
-    side: BorderSide(
-      color: AppColors.borders.withValues(alpha: isDark ? 0.24 : 1.0),
-    ),
+    side: const BorderSide(color: AppColors.borders),
   );
 
   static BoxDecoration surfaceCardDecoration({double tintOpacity = 0.08}) {
@@ -96,26 +108,26 @@ class MyApp {
   );
 
   static ButtonStyle get primaryGoldButton => ElevatedButton.styleFrom(
-    backgroundColor: goldShimmer,
-    foregroundColor: Colors.black,
+    backgroundColor: AppColors.brandAccent,
+    foregroundColor: Colors.white,
     minimumSize: const Size(double.infinity, primaryButtonHeight),
     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
     shape: RoundedRectangleBorder(borderRadius: buttonRadius),
     elevation: 3,
-    shadowColor: goldShimmer.withValues(alpha: 0.28),
-    overlayColor: AppColors.goldHover.withValues(alpha: 0.18),
+    shadowColor: AppColors.brandAccent.withValues(alpha: 0.22),
+    overlayColor: AppColors.champagneGold.withValues(alpha: 0.18),
     textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
   );
 
   static ButtonStyle get primaryRoseButton => ElevatedButton.styleFrom(
-    backgroundColor: goldShimmer,
-    foregroundColor: Colors.black,
+    backgroundColor: AppColors.brandAccent,
+    foregroundColor: Colors.white,
     minimumSize: const Size(double.infinity, primaryButtonHeight),
     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
     shape: RoundedRectangleBorder(borderRadius: buttonRadius),
     elevation: 3,
-    shadowColor: goldShimmer.withValues(alpha: 0.28),
-    overlayColor: AppColors.goldHover.withValues(alpha: 0.18),
+    shadowColor: AppColors.brandAccent.withValues(alpha: 0.22),
+    overlayColor: AppColors.champagneGold.withValues(alpha: 0.18),
     textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
   );
 
@@ -142,3 +154,5 @@ class MyApp {
 
   MyApp._();
 }
+
+

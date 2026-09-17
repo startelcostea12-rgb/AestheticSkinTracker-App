@@ -18,6 +18,7 @@ import 'package:aesthetic_skin_tracker/models/procedure.dart';
 import 'package:aesthetic_skin_tracker/models/procedure_log.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/providers/procedure_logs_provider.dart';
+import 'package:aesthetic_skin_tracker/utils/trend_lock_reason.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_product_recommendation_engine.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_recovery_plan.dart';
 import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
@@ -49,6 +50,242 @@ import 'package:aesthetic_skin_tracker/screens/procedure_camera_guide_screen.dar
 import 'package:aesthetic_skin_tracker/screens/recovery_metric_detail_screen.dart';
 
 enum HeatmapDebugRegion { face, abdomen, flanks, thighs, arms, breasts }
+
+/// Which case the body-silhouette trend summary fell into — drives the
+/// widget's icon/color choice, kept separate from [BodySilhouetteTrendSummary]
+/// itself so the pure decision function below never touches Flutter's
+/// [IconData]/[Color] types.
+enum BodySilhouetteTrendKind { improved, worsened, insufficientSignal, stable }
+
+/// Result of [bodySilhouetteTrendSummary]: what to show, or null to show
+/// nothing at all.
+class BodySilhouetteTrendSummary {
+  final String headline;
+  final String detail;
+  final BodySilhouetteTrendKind kind;
+
+  const BodySilhouetteTrendSummary({
+    required this.headline,
+    required this.detail,
+    required this.kind,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      other is BodySilhouetteTrendSummary &&
+      other.headline == headline &&
+      other.detail == detail &&
+      other.kind == kind;
+
+  @override
+  int get hashCode => Object.hash(headline, detail, kind);
+}
+
+/// Pure decision logic for the body-silhouette honesty-gate summary shown
+/// on the body-contouring procedure detail screen. Extracted out of
+/// `_ProcedureProfilesScreenState._bodySilhouetteTrendSection` so the
+/// "what does this rawPayload mean" logic is unit-testable without pumping
+/// the full (8000+ line) procedure-profile widget tree — same rationale as
+/// the tilt/alignment pure helpers in camera_screen.dart.
+///
+/// [rawPayload] is expected to be a body scan's `ScanHistoryEntry.rawPayload`
+/// — the verbatim JSON response saved from `/api/body/analyze-silhouette`
+/// (see `_submitBodySilhouetteAnalysis` in camera_screen.dart): `{result,
+/// trend_deltas, trend_status, honesty_band_percent,
+/// consistent_scan_requirement, ...}`. Returns null (render nothing) when
+/// [isBodyContouringProcedure] is false, or [rawPayload] doesn't carry a
+/// real `result` map yet (legacy scan, or the backend call failed at
+/// capture time) — both are legitimate "no data yet" states, not errors.
+BodySilhouetteTrendSummary? bodySilhouetteTrendSummary({
+  required bool isBodyContouringProcedure,
+  required Map<String, dynamic>? rawPayload,
+}) {
+  if (!isBodyContouringProcedure) return null;
+
+  final result = rawPayload?['result'];
+  if (rawPayload == null || result is! Map) return null;
+
+  final trendStatusMap = rawPayload['trend_status'];
+  final trendDeltasMap = rawPayload['trend_deltas'];
+  final trendLockReasonsMap = rawPayload['trend_lock_reasons'];
+  final status =
+      (trendStatusMap is Map
+              ? trendStatusMap['normalized_area_index']
+              : null)
+          ?.toString() ??
+      'insufficient_signal';
+  final delta = trendDeltasMap is Map
+      ? trendDeltasMap['normalized_area_index']
+      : null;
+  final lockReason = trendLockReasonsMap is Map
+      ? trendLockReasonsMap['normalized_area_index']?.toString()
+      : null;
+  final requiredScans = rawPayload['consistent_scan_requirement'];
+
+  switch (status) {
+    case 'improved':
+    case 'worsened':
+      final pct = delta is num ? delta.abs().toStringAsFixed(1) : '—';
+      final sign = delta is num && delta > 0 ? '+' : '-';
+      return BodySilhouetteTrendSummary(
+        headline: 'Silhouette area index changed $sign$pct%',
+        detail:
+            'Measured against your baseline capture. This tracks visible '
+            'silhouette area only — it is not a clinical volume measurement.',
+        kind: status == 'improved'
+            ? BodySilhouetteTrendKind.improved
+            : BodySilhouetteTrendKind.worsened,
+      );
+    case 'insufficient_signal':
+      return BodySilhouetteTrendSummary(
+        headline: 'Not enough consistent scans yet',
+        detail: requiredScans is num
+            ? 'Silhouette trend needs $requiredScans consistent-condition '
+                  'scans before showing a real change — gated on scan count, '
+                  'separate from image quality.'
+            : 'Silhouette trend needs more consistent-condition scans before '
+                  'showing a real change.',
+        kind: BodySilhouetteTrendKind.insufficientSignal,
+      );
+    case 'stable':
+    default:
+      // A "stable" result here means one of two different things: a genuine
+      // small area delta (real, honest stability) or a forced lock because
+      // this scan's capture conditions (quality/resolution/mode/scale)
+      // weren't comparable to the baseline. Only the latter gets a distinct
+      // "standalone entry" headline — a genuine stable keeps its existing
+      // "holding stable" wording unchanged.
+      final lockDetail = trendLockReasonDetail(lockReason);
+      if (lockDetail != null) {
+        return BodySilhouetteTrendSummary(
+          headline: 'Standalone entry — not compared to baseline',
+          detail: lockDetail,
+          kind: BodySilhouetteTrendKind.stable,
+        );
+      }
+      return const BodySilhouetteTrendSummary(
+        headline: 'Silhouette holding stable',
+        detail:
+            'No change large enough to trust over normal capture variation. '
+            'A real change needs more evidence than one comparison.',
+        kind: BodySilhouetteTrendKind.stable,
+      );
+  }
+}
+
+class ProcedurePhotoComparisonEligibility {
+  const ProcedurePhotoComparisonEligibility({
+    required this.isComparable,
+    this.caveat,
+  });
+
+  final bool isComparable;
+  final String? caveat;
+}
+
+/// Uses the same capture provenance required by the metric honesty gates.
+ProcedurePhotoComparisonEligibility procedurePhotoComparisonEligibility({
+  required bool isBodyProcedure,
+  required ScanHistoryEntry? baseline,
+  required ScanHistoryEntry? latest,
+}) {
+  String? normalizedText(String? value) {
+    final normalized = value?.trim().toLowerCase();
+    return normalized == null || normalized.isEmpty ? null : normalized;
+  }
+
+  Map<String, String> extractionPaths(ScanHistoryEntry entry) {
+    final raw = entry.rawPayload;
+    final nested = raw?['metrics'];
+    final source = raw?['metric_extraction_paths'] ??
+        (nested is Map ? nested['metric_extraction_paths'] : null);
+    if (source is! Map) return const {};
+    final paths = <String, String>{};
+    for (final item in source.entries) {
+      final key = item.key.toString().trim().toLowerCase();
+      final value = item.value?.toString().trim().toLowerCase() ?? '';
+      if (key.isNotEmpty && value.isNotEmpty) paths[key] = value;
+    }
+    return paths;
+  }
+
+  double? scaleReferencePixels(ScanHistoryEntry entry) {
+    final raw = entry.rawPayload;
+    final result = raw?['result'];
+    final value = result is Map
+        ? result['scale_reference_pixels']
+        : raw?['scale_reference_pixels'];
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
+  }
+
+  if (baseline == null || latest == null) {
+    return const ProcedurePhotoComparisonEligibility(
+      isComparable: false,
+      caveat: 'Comparison unavailable because scan provenance is missing.',
+    );
+  }
+
+  final baselineQuality = normalizedText(baseline.captureQuality);
+  final latestQuality = normalizedText(latest.captureQuality);
+  if (baselineQuality == null || latestQuality == null) {
+    return const ProcedurePhotoComparisonEligibility(
+      isComparable: false,
+      caveat: 'Photos are shown separately because capture quality was not recorded for both scans.',
+    );
+  }
+  if (baselineQuality != latestQuality) {
+    return const ProcedurePhotoComparisonEligibility(
+      isComparable: false,
+      caveat: 'Photos are shown separately because capture conditions differed between scans.',
+    );
+  }
+
+  if (!isBodyProcedure) {
+    final baselinePaths = extractionPaths(baseline);
+    final latestPaths = extractionPaths(latest);
+    if (baselinePaths.isEmpty || latestPaths.isEmpty) {
+      return const ProcedurePhotoComparisonEligibility(
+        isComparable: false,
+        caveat: 'Photos are shown separately because matching analysis paths were not recorded.',
+      );
+    }
+    if (baselinePaths.length != latestPaths.length ||
+        baselinePaths.entries.any((item) => latestPaths[item.key] != item.value)) {
+      return const ProcedurePhotoComparisonEligibility(
+        isComparable: false,
+        caveat: 'Photos are shown separately because analysis paths differed between scans.',
+      );
+    }
+    return const ProcedurePhotoComparisonEligibility(isComparable: true);
+  }
+
+  final baselineMode = normalizedText(baseline.captureMode);
+  final latestMode = normalizedText(latest.captureMode);
+  if (baselineMode == null || latestMode == null || baselineMode != latestMode) {
+    return const ProcedurePhotoComparisonEligibility(
+      isComparable: false,
+      caveat: 'Photos are shown separately because body capture methods differed between scans.',
+    );
+  }
+
+  final baselineScale = scaleReferencePixels(baseline);
+  final latestScale = scaleReferencePixels(latest);
+  if (baselineScale == null || latestScale == null || baselineScale <= 0) {
+    return const ProcedurePhotoComparisonEligibility(
+      isComparable: false,
+      caveat: 'Photos are shown separately because body scale references were not recorded.',
+    );
+  }
+  final scaleDelta = (latestScale - baselineScale).abs() / baselineScale;
+  if (scaleDelta > 0.20) {
+    return const ProcedurePhotoComparisonEligibility(
+      isComparable: false,
+      caveat: 'Photos are shown separately because body framing scale differed between scans.',
+    );
+  }
+  return const ProcedurePhotoComparisonEligibility(isComparable: true);
+}
 
 class ProcedureProfilesScreen extends StatefulWidget {
   const ProcedureProfilesScreen({super.key});
@@ -445,9 +682,12 @@ class _ProcedureProfilesScreenState extends State<ProcedureProfilesScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                 decoration: BoxDecoration(
+                  // "Completed" is the genuine positive milestone (status
+                  // green); "Active" is a neutral ongoing state, so it uses
+                  // the brand accent rather than an arbitrary raw green.
                   color: isActive
-                      ? Colors.green.withValues(alpha: 0.11)
-                      : MyApp.roseGold.withValues(alpha: 0.13),
+                      ? AppColors.brandAccent.withValues(alpha: 0.13)
+                      : AppColors.kMetricImprovedColor.withValues(alpha: 0.11),
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
@@ -455,7 +695,9 @@ class _ProcedureProfilesScreenState extends State<ProcedureProfilesScreen> {
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
-                    color: isActive ? Colors.green.shade700 : MyApp.roseGold,
+                    color: isActive
+                        ? AppColors.brandAccent
+                        : AppColors.kMetricImprovedColor,
                   ),
                 ),
               ),
@@ -1064,20 +1306,22 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
   }
 
   Color _statusColorFromLabel(String label) {
+    // Genuine severity signal (not chrome) — stays within the reserved
+    // status-color family throughout, never the brand accent.
     final s = label.toLowerCase();
     if (s.contains('excellent') ||
         s.contains('optimal') ||
         s.contains('strong') ||
         s.contains('minimal')) {
-      return const Color(0xFF1E8C5F);
+      return AppColors.kMetricImprovedColor;
     }
     if (s.contains('mild') || s.contains('on-track') || s.contains('stable')) {
-      return MyApp.clinicalTeal;
+      return AppColors.kMetricImprovedColor;
     }
     if (s.contains('moderate')) {
-      return const Color(0xFFAD7C2B);
+      return AppColors.kMetricWorsenedColor.withValues(alpha: 0.75);
     }
-    return const Color(0xFFB13C52);
+    return AppColors.kMetricWorsenedColor;
   }
 
   late Procedure _procedure;
@@ -2231,7 +2475,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
               Expanded(child: Text('Surgeon instructions saved successfully.')),
             ],
           ),
-          backgroundColor: Colors.green[700],
+          backgroundColor: AppColors.kMetricImprovedColor,
           duration: const Duration(seconds: 3),
         ),
       );
@@ -2240,7 +2484,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Save failed: $e'),
-          backgroundColor: Colors.red[700],
+          backgroundColor: AppColors.kMetricWorsenedColor,
         ),
       );
     }
@@ -2675,7 +2919,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                                       Icon(
                                         Icons.check_circle_outline,
                                         size: 14,
-                                        color: Colors.green[700],
+                                        color: AppColors.kMetricImprovedColor,
                                       ),
                                       const SizedBox(width: 4),
                                       Expanded(
@@ -2684,7 +2928,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                                           style: TextStyle(
                                             fontSize: 12.5,
                                             fontWeight: FontWeight.w700,
-                                            color: Colors.green[700],
+                                            color: AppColors.kMetricImprovedColor,
                                           ),
                                         ),
                                       ),
@@ -2744,7 +2988,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                                         ),
                                         label: const Text('Remove'),
                                         style: TextButton.styleFrom(
-                                          foregroundColor: Colors.red[700],
+                                          foregroundColor: AppColors.kMetricWorsenedColor,
                                           padding: const EdgeInsets.symmetric(
                                             horizontal: 6,
                                           ),
@@ -2820,7 +3064,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                           Icon(
                             Icons.check_circle_outline,
                             size: 14,
-                            color: Colors.green[700],
+                            color: AppColors.kMetricImprovedColor,
                           ),
                           const SizedBox(width: 4),
                           Expanded(
@@ -2828,7 +3072,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                               'Imported: $importedFileName',
                               style: TextStyle(
                                 fontSize: 12,
-                                color: Colors.green[700],
+                                color: AppColors.kMetricImprovedColor,
                               ),
                             ),
                           ),
@@ -6370,6 +6614,86 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     );
   }
 
+  /// Additive body-silhouette honesty-gate summary for body-contouring
+  /// procedures (BBL, liposuction, etc.). Thin rendering wrapper around
+  /// [bodySilhouetteTrendSummary] — see that function for the actual
+  /// decision logic and why it's a separate top-level pure function. This
+  /// is a separate, self-contained render path: it does not touch
+  /// luxe_report_layout.dart's already-verified face trend-honesty
+  /// display, which body scans never fed into to begin with.
+  List<Widget> _bodySilhouetteTrendSection() {
+    final summary = bodySilhouetteTrendSummary(
+      isBodyContouringProcedure:
+          ProcedureIntelligence.categoryFor(_procedure.type) ==
+          ProcedureCategory.bodyContouring,
+      rawPayload: _findScanById(_latestScanId)?.rawPayload,
+    );
+    if (summary == null) return const [];
+
+    final IconData icon;
+    final Color accent;
+    switch (summary.kind) {
+      case BodySilhouetteTrendKind.improved:
+      case BodySilhouetteTrendKind.worsened:
+        icon = Icons.show_chart_rounded;
+        accent = MyApp.clinicalTeal;
+        break;
+      case BodySilhouetteTrendKind.insufficientSignal:
+        icon = Icons.hourglass_bottom_rounded;
+        accent = MyApp.clinicalSlate;
+        break;
+      case BodySilhouetteTrendKind.stable:
+        icon = Icons.horizontal_rule_rounded;
+        accent = MyApp.clinicalSlate;
+        break;
+    }
+    final headline = summary.headline;
+    final detail = summary.detail;
+
+    return [
+      const SizedBox(height: 14),
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: accent.withValues(alpha: 0.07),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: accent.withValues(alpha: 0.22), width: 0.8),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 18, color: accent),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    headline,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: MyApp.clinicalNavy,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    detail,
+                    style: TextStyle(
+                      fontSize: 11,
+                      height: 1.35,
+                      color: MyApp.textBrown,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ];
+  }
+
   Widget _buildBeforeAfterSection() {
     final baselinePhoto = _baselinePhotoBytes;
     final latestPhoto = _latestPhotoBytes;
@@ -6378,6 +6702,87 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
         latestPhoto != null &&
         latestPhoto.isNotEmpty &&
         _hasDistinctComparisonPair;
+    final isBodyProcedure =
+        ProcedureIntelligence.categoryFor(_procedure.type) ==
+        ProcedureCategory.bodyContouring;
+    final comparisonEligibility = procedurePhotoComparisonEligibility(
+      isBodyProcedure: isBodyProcedure,
+      baseline: _findScanById(_baselineScanId),
+      latest: _findScanById(_latestScanId),
+    );
+
+    Widget nonComparablePhotoPair({
+      required Uint8List baselinePhoto,
+      required Uint8List latestPhoto,
+      required String caveat,
+    }) {
+      Widget photo(Uint8List bytes, String label) {
+        return Expanded(
+          child: AspectRatio(
+            aspectRatio: 0.8,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.memory(bytes, fit: BoxFit.cover),
+                ),
+                Positioned(
+                  left: 6,
+                  bottom: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.65),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      label,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              photo(baselinePhoto, 'Baseline'),
+              const SizedBox(width: 8),
+              photo(latestPhoto, 'Latest'),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.info_outline, size: 16, color: AppColors.softTerracotta),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  caveat,
+                  style: TextStyle(
+                    color: MyApp.textBrown,
+                    fontSize: 12,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
 
     // At-Home procedures keep their photos on the linked ProcedureLog rather
     // than in scan history. When scan-history has no usable photo bytes but
@@ -6394,8 +6799,6 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       final baseline = _baselineMetrics;
       final latest = _latestMetrics;
       final localPayload = _localProcedureDeltaPayload;
-      final baselineProvider = MemoryImage(baselinePhoto);
-      final latestProvider = MemoryImage(latestPhoto);
       return Card(
         margin: EdgeInsets.zero,
         elevation: 2,
@@ -6436,7 +6839,9 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                       ),
                     ),
                     child: Text(
-                      'Drag to compare',
+                      comparisonEligibility.isComparable
+                          ? 'Drag to compare'
+                          : 'Conditions differ',
                       style: TextStyle(
                         fontSize: 10.5,
                         fontWeight: FontWeight.w700,
@@ -6452,18 +6857,27 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                 _buildHeatmapDebugChipRow(),
                 const SizedBox(height: 12),
               ],
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: _beforeAfterComparisonSlider(
+              if (comparisonEligibility.isComparable)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: _beforeAfterComparisonSlider(
+                    baselinePhoto: baselinePhoto,
+                    latestPhoto: latestPhoto,
+                    baselineMetrics: baseline,
+                    latestMetrics: latest,
+                    metricTags: localPayload != null
+                        ? _comparisonMetricTagsFromPayload(localPayload!)
+                        : const <BeforeAfterMetricTag>[],
+                  ),
+                )
+              else
+                nonComparablePhotoPair(
                   baselinePhoto: baselinePhoto,
                   latestPhoto: latestPhoto,
-                  baselineMetrics: baseline,
-                  latestMetrics: latest,
-                  metricTags: localPayload != null
-                      ? _comparisonMetricTagsFromPayload(localPayload!)
-                      : const <BeforeAfterMetricTag>[],
+                  caveat: comparisonEligibility.caveat ??
+                      'Photos are shown separately because capture conditions differed.',
                 ),
-              ),
+              ..._bodySilhouetteTrendSection(),
             ],
           ),
         ),
@@ -6760,12 +7174,12 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                           ),
                           decoration: BoxDecoration(
                             color: _procedure.isCompleted
-                                ? Colors.green.withValues(alpha: 0.10)
+                                ? AppColors.kMetricImprovedColor.withValues(alpha: 0.10)
                                 : MyApp.clinicalTeal.withValues(alpha: 0.10),
                             borderRadius: BorderRadius.circular(999),
                             border: Border.all(
                               color: _procedure.isCompleted
-                                  ? Colors.green.withValues(alpha: 0.32)
+                                  ? AppColors.kMetricImprovedColor.withValues(alpha: 0.32)
                                   : MyApp.clinicalTeal.withValues(alpha: 0.32),
                               width: 0.8,
                             ),
@@ -6779,7 +7193,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
                                   color: _procedure.isCompleted
-                                      ? Colors.green.shade600
+                                      ? AppColors.kMetricImprovedColor
                                       : MyApp.clinicalTeal,
                                 ),
                               ),
@@ -6791,7 +7205,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: 0.4,
                                   color: _procedure.isCompleted
-                                      ? Colors.green.shade700
+                                      ? AppColors.kMetricImprovedColor
                                       : MyApp.clinicalTeal,
                                 ),
                               ),
@@ -7325,7 +7739,7 @@ class _CustomRecoveryPlanScreenState extends State<CustomRecoveryPlanScreen> {
             Expanded(child: Text('Surgeon instructions saved.')),
           ],
         ),
-        backgroundColor: Colors.green[700],
+        backgroundColor: AppColors.kMetricImprovedColor,
         duration: const Duration(seconds: 3),
       ),
     );
@@ -7569,7 +7983,7 @@ class _CustomRecoveryPlanScreenState extends State<CustomRecoveryPlanScreen> {
                         Icon(
                           Icons.check_circle_outline,
                           size: 14,
-                          color: Colors.green[700],
+                          color: AppColors.kMetricImprovedColor,
                         ),
                         const SizedBox(width: 4),
                         Expanded(
@@ -7577,7 +7991,7 @@ class _CustomRecoveryPlanScreenState extends State<CustomRecoveryPlanScreen> {
                             'Imported: $importedFileName',
                             style: TextStyle(
                               fontSize: 12,
-                              color: Colors.green[700],
+                              color: AppColors.kMetricImprovedColor,
                             ),
                           ),
                         ),
@@ -7922,9 +8336,11 @@ class _CustomRecoveryPlanScreenState extends State<CustomRecoveryPlanScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
-                color: Colors.green.withValues(alpha: 0.10),
+                color: AppColors.kMetricImprovedColor.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: Colors.green.withValues(alpha: 0.28)),
+                border: Border.all(
+                  color: AppColors.kMetricImprovedColor.withValues(alpha: 0.28),
+                ),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -7932,7 +8348,7 @@ class _CustomRecoveryPlanScreenState extends State<CustomRecoveryPlanScreen> {
                   Icon(
                     Icons.check_circle_rounded,
                     size: 13,
-                    color: Colors.green[700],
+                    color: AppColors.kMetricImprovedColor,
                   ),
                   const SizedBox(width: 5),
                   Text(
@@ -7940,7 +8356,7 @@ class _CustomRecoveryPlanScreenState extends State<CustomRecoveryPlanScreen> {
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
-                      color: Colors.green[700],
+                      color: AppColors.kMetricImprovedColor,
                     ),
                   ),
                 ],

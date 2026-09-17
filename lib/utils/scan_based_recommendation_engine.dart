@@ -110,18 +110,9 @@ class ScanBasedRecommendationEngine {
     Map<String, double>? baselineBody,
   }) {
     final hasBaseline = baseline != null;
-    final effectiveBaseline =
-        baseline ??
-        const SkinMetrics(
-          redness: 5.5,
-          texture: 5.5,
-          wrinkle: 5.5,
-          pore: 5.5,
-          darkSpots: 5.0,
-          elasticity: 5.5,
-        );
-
-    final deltas = _buildDeltas(latest, effectiveBaseline);
+    final deltas = hasBaseline
+      ? _buildDeltas(latest, baseline)
+        : const <MetricDelta>[];
     final bodyDeltas = _buildBodyDeltas(latestBody, baselineBody);
 
     final peptides = _recommendPeptides(deltas, latest, bodyDeltas: bodyDeltas);
@@ -139,7 +130,7 @@ class ScanBasedRecommendationEngine {
     })();
     final products = AIProductRecommendationEngine.generateRecommendations(
       latest,
-      baselineMetrics: effectiveBaseline,
+      baselineMetrics: baseline,
       procedureType: resolvedProcedureType,
       maxRecommendations: 4,
       userSkinConcerns: [
@@ -158,7 +149,11 @@ class ScanBasedRecommendationEngine {
     );
 
     return ScanRecommendations(
-      headline: _buildHeadline(deltas, bodyDeltas),
+      headline: _buildHeadline(
+        deltas,
+        bodyDeltas,
+        hasBaseline: hasBaseline,
+      ),
       summary: _buildSummary(
         deltas,
         bodyDeltas: bodyDeltas,
@@ -169,7 +164,7 @@ class ScanBasedRecommendationEngine {
       products: products,
       deltas: deltas,
       bodyDeltas: bodyDeltas,
-      hasEnoughData: true,
+      hasEnoughData: hasBaseline || bodyDeltas.isNotEmpty,
     );
   }
 
@@ -339,7 +334,15 @@ class ScanBasedRecommendationEngine {
   static String _buildHeadline(
     List<MetricDelta> deltas,
     List<MetricDelta> bodyDeltas,
+    {
+    required bool hasBaseline,
+  }
   ) {
+    if (!hasBaseline) {
+      return bodyDeltas.isNotEmpty
+          ? 'Body trend captured — add a baseline scan to unlock full skin status trends'
+          : 'Baseline scan needed to unlock Stable / Improved / Worsened trends';
+    }
     final focusAreas = deltas
         .where(
           (d) =>

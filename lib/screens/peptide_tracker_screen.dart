@@ -12,6 +12,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import '../models/peptide_model.dart';
 import '../models/procedure.dart';
 import '../models/scan_history.dart';
+import '../theme/app_colors.dart';
 import '../utils/app_prefs.dart';
 import '../utils/metric_trend.dart';
 import '../utils/peptide_service.dart';
@@ -525,7 +526,7 @@ class _PeptideTrackerScreenState extends State<PeptideTrackerScreen> {
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text(
               'Delete',
-              style: TextStyle(color: Colors.redAccent),
+              style: TextStyle(color: AppColors.kMetricWorsenedColor),
             ),
           ),
         ],
@@ -664,7 +665,7 @@ class _PeptideTrackerScreenState extends State<PeptideTrackerScreen> {
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text(
               'Remove',
-              style: TextStyle(color: Colors.redAccent),
+              style: TextStyle(color: AppColors.kMetricWorsenedColor),
             ),
           ),
         ],
@@ -1385,10 +1386,10 @@ class _PeptideCard extends StatelessWidget {
                               vertical: 3,
                             ),
                             decoration: BoxDecoration(
-                              color: Colors.green.shade50,
+                              color: AppColors.kMetricImprovedColor.withValues(alpha: 0.12),
                               borderRadius: BorderRadius.circular(12),
                               border: Border.all(
-                                color: Colors.green.shade300,
+                                color: AppColors.kMetricImprovedColor.withValues(alpha: 0.4),
                                 width: 1,
                               ),
                             ),
@@ -1396,7 +1397,7 @@ class _PeptideCard extends StatelessWidget {
                               'Active',
                               style: TextStyle(
                                 fontSize: 10,
-                                color: Colors.green.shade700,
+                                color: AppColors.kMetricImprovedColor,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -2084,7 +2085,7 @@ class _MetricDeltaRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isPositive = delta >= 0;
-    final color = isPositive ? const Color(0xFF4CAF50) : Colors.redAccent;
+    final color = isPositive ? const Color(0xFF4CAF50) : AppColors.kMetricWorsenedColor;
     final sign = isPositive ? '+' : '';
     final pct = (delta.abs() / 10.0).clamp(0.0, 1.0);
 
@@ -2210,7 +2211,7 @@ class _BodyCorrelationMetricRow extends StatelessWidget {
     final declined = storedDelta < -0.05;
     final color = improved
         ? const Color(0xFF4CAF50)
-        : (declined ? Colors.redAccent : const Color(0xFF9E9E9E));
+        : (declined ? AppColors.kMetricWorsenedColor : const Color(0xFF9E9E9E));
 
     final bVal = _rawOf(rawBefore, _metricKeys[metric]);
     final aVal = _rawOf(rawAfter, _metricKeys[metric]);
@@ -3468,7 +3469,7 @@ class _StackDetailPageState extends State<_StackDetailPage>
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text(
               'Delete',
-              style: TextStyle(color: Colors.redAccent),
+              style: TextStyle(color: AppColors.kMetricWorsenedColor),
             ),
           ),
         ],
@@ -3588,12 +3589,12 @@ class _StackDetailPageState extends State<_StackDetailPage>
                     Icon(
                       Icons.delete_outline,
                       size: 18,
-                      color: Colors.redAccent,
+                      color: AppColors.kMetricWorsenedColor,
                     ),
                     SizedBox(width: 10),
                     Text(
                       'Delete Stack',
-                      style: TextStyle(color: Colors.redAccent),
+                      style: TextStyle(color: AppColors.kMetricWorsenedColor),
                     ),
                   ],
                 ),
@@ -5768,13 +5769,13 @@ class _PeptideJournalDetailSheet extends StatelessWidget {
                         onPressed: () => Navigator.of(context).pop('delete'),
                         icon: const Icon(
                           Icons.delete_outline_rounded,
-                          color: Colors.redAccent,
+                          color: AppColors.kMetricWorsenedColor,
                           size: 18,
                         ),
                         label: const Text(
                           'Delete',
                           style: TextStyle(
-                            color: Colors.redAccent,
+                            color: AppColors.kMetricWorsenedColor,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -6010,13 +6011,13 @@ class _JournalDetailSheet extends StatelessWidget {
                         onPressed: () => Navigator.of(context).pop('delete'),
                         icon: const Icon(
                           Icons.delete_outline_rounded,
-                          color: Colors.redAccent,
+                          color: AppColors.kMetricWorsenedColor,
                           size: 18,
                         ),
                         label: const Text(
                           'Delete',
                           style: TextStyle(
-                            color: Colors.redAccent,
+                            color: AppColors.kMetricWorsenedColor,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -6552,7 +6553,7 @@ class _StackJournalComposerSheetState
             const SizedBox(height: 6),
             Text(
               _error!,
-              style: const TextStyle(fontSize: 11, color: Colors.redAccent),
+              style: const TextStyle(fontSize: 11, color: AppColors.kMetricWorsenedColor),
             ),
           ],
           const SizedBox(height: 12),
@@ -6564,14 +6565,14 @@ class _StackJournalComposerSheetState
                   icon: Icon(
                     _dictating ? Icons.stop_circle_rounded : Icons.mic_rounded,
                     size: 18,
-                    color: _dictating ? Colors.redAccent : _rose,
+                    color: _dictating ? AppColors.kMetricWorsenedColor : _rose,
                   ),
                   label: Text(
                     _dictating
                         ? 'Stop dictation'
                         : (_speechAvailable ? 'Dictate' : 'Voice unavailable'),
                     style: TextStyle(
-                      color: _dictating ? Colors.redAccent : _rose,
+                      color: _dictating ? AppColors.kMetricWorsenedColor : _rose,
                       fontWeight: FontWeight.w700,
                       fontSize: 13,
                     ),
@@ -6579,7 +6580,7 @@ class _StackJournalComposerSheetState
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     side: BorderSide(
-                      color: (_dictating ? Colors.redAccent : _rose).withValues(
+                      color: (_dictating ? AppColors.kMetricWorsenedColor : _rose).withValues(
                         alpha: 0.55,
                       ),
                     ),
@@ -9192,12 +9193,12 @@ class _PeptideDetailSheetState extends State<_PeptideDetailSheet> {
                 ),
                 decoration: BoxDecoration(
                   color: widget.entry.isActive
-                      ? Colors.green.shade50
+                      ? AppColors.kMetricImprovedColor.withValues(alpha: 0.12)
                       : Colors.grey.shade100,
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(
                     color: widget.entry.isActive
-                        ? Colors.green.shade300
+                        ? AppColors.kMetricImprovedColor.withValues(alpha: 0.4)
                         : Colors.grey.shade300,
                   ),
                 ),
@@ -9207,7 +9208,7 @@ class _PeptideDetailSheetState extends State<_PeptideDetailSheet> {
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                     color: widget.entry.isActive
-                        ? Colors.green.shade700
+                        ? AppColors.kMetricImprovedColor
                         : Colors.grey.shade600,
                   ),
                 ),
@@ -9454,7 +9455,7 @@ class _PeptideDetailSheetState extends State<_PeptideDetailSheet> {
                     : '${90 - days} days to 90-day milestone',
                 style: TextStyle(
                   fontSize: 10,
-                  color: days >= 90 ? Colors.green.shade600 : _muted,
+                  color: days >= 90 ? AppColors.kMetricImprovedColor : _muted,
                   fontWeight: days >= 90 ? FontWeight.w700 : FontWeight.w400,
                 ),
               ),
@@ -10038,9 +10039,9 @@ class _PeptideDetailSheetState extends State<_PeptideDetailSheet> {
     final improved = directional > 0.1;
     final declined = directional < -0.1;
     final Color deltaColor = improved
-        ? Colors.green.shade600
+        ? AppColors.kMetricImprovedColor
         : declined
-        ? Colors.redAccent
+        ? AppColors.kMetricWorsenedColor
         : Colors.grey.shade500;
     final deltaSign = rawDelta >= 0 ? '+' : '';
     final deltaArrow = improved
@@ -10064,9 +10065,9 @@ class _PeptideDetailSheetState extends State<_PeptideDetailSheet> {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
               color: improved
-                  ? Colors.green.shade50
+                  ? AppColors.kMetricImprovedColor.withValues(alpha: 0.12)
                   : declined
-                  ? Colors.red.shade50
+                  ? AppColors.kMetricWorsenedColor.withValues(alpha: 0.12)
                   : Colors.grey.shade100,
               borderRadius: BorderRadius.circular(20),
               border: Border.all(color: deltaColor.withValues(alpha: 0.4)),
@@ -10095,9 +10096,9 @@ class _PeptideDetailSheetState extends State<_PeptideDetailSheet> {
     final improved = rawDelta > 0.1;
     final declined = rawDelta < -0.1;
     final Color deltaColor = improved
-        ? Colors.green.shade600
+        ? AppColors.kMetricImprovedColor
         : declined
-        ? Colors.redAccent
+        ? AppColors.kMetricWorsenedColor
         : Colors.grey.shade500;
     final clinical = _clinicalNote(name, rawDelta);
 
@@ -10122,9 +10123,9 @@ class _PeptideDetailSheetState extends State<_PeptideDetailSheet> {
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: improved
-                      ? Colors.green.shade50
+                      ? AppColors.kMetricImprovedColor.withValues(alpha: 0.12)
                       : declined
-                      ? Colors.red.shade50
+                      ? AppColors.kMetricWorsenedColor.withValues(alpha: 0.12)
                       : Colors.grey.shade100,
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: deltaColor.withValues(alpha: 0.4)),
@@ -10623,8 +10624,8 @@ class _PeptideDetailSheetState extends State<_PeptideDetailSheet> {
     final improved = directional > 0.05;
     final declined = directional < -0.05;
     final color = improved
-        ? Colors.green.shade600
-        : (declined ? Colors.redAccent : Colors.grey.shade500);
+        ? AppColors.kMetricImprovedColor
+        : (declined ? AppColors.kMetricWorsenedColor : Colors.grey.shade500);
     final arrow = improved
         ? (lowerIsBetter ? '↓' : '↑')
         : (declined ? (lowerIsBetter ? '↑' : '↓') : '→');
@@ -10889,9 +10890,9 @@ class _PeptideDetailSheetState extends State<_PeptideDetailSheet> {
     final good = lowerBetter ? value <= 4.0 : value >= 6.0;
     final bad = lowerBetter ? value >= 7.0 : value <= 3.0;
     final Color c = good
-        ? Colors.green.shade600
+        ? AppColors.kMetricImprovedColor
         : bad
-        ? Colors.redAccent
+        ? AppColors.kMetricWorsenedColor
         : Colors.orange.shade700;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
@@ -10951,9 +10952,9 @@ class _PeptideDetailSheetState extends State<_PeptideDetailSheet> {
     final good = lowerBetter ? value <= 4.0 : value >= 6.0;
     final bad = lowerBetter ? value >= 7.0 : value <= 3.0;
     final Color c = good
-        ? Colors.green.shade600
+        ? AppColors.kMetricImprovedColor
         : bad
-        ? Colors.redAccent
+        ? AppColors.kMetricWorsenedColor
         : Colors.orange.shade700;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
@@ -11392,7 +11393,7 @@ class _PeptideDetailSheetState extends State<_PeptideDetailSheet> {
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text(
               'Delete',
-              style: TextStyle(color: Colors.redAccent),
+              style: TextStyle(color: AppColors.kMetricWorsenedColor),
             ),
           ),
         ],
@@ -11516,8 +11517,8 @@ class _PeptideDetailSheetState extends State<_PeptideDetailSheet> {
               icon: const Icon(Icons.delete_outline, size: 16),
               label: const Text('Remove'),
               style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.redAccent,
-                side: BorderSide(color: Colors.red.shade300),
+                foregroundColor: AppColors.kMetricWorsenedColor,
+                side: BorderSide(color: AppColors.kMetricWorsenedColor.withValues(alpha: 0.4)),
                 padding: const EdgeInsets.symmetric(vertical: 13),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -11805,12 +11806,12 @@ class _JournalNoteTile extends StatelessWidget {
                         Icon(
                           Icons.delete_outline_rounded,
                           size: 16,
-                          color: Colors.redAccent,
+                          color: AppColors.kMetricWorsenedColor,
                         ),
                         SizedBox(width: 8),
                         Text(
                           'Delete',
-                          style: TextStyle(color: Colors.redAccent),
+                          style: TextStyle(color: AppColors.kMetricWorsenedColor),
                         ),
                       ],
                     ),

@@ -48,9 +48,8 @@ import 'package:aesthetic_skin_tracker/widgets/image_crop_dialog.dart';
 import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 import 'package:aesthetic_skin_tracker/widgets/skin_heatmap_overlay.dart';
 import 'package:aesthetic_skin_tracker/widgets/smart_narrative_container.dart';
-import 'package:aesthetic_skin_tracker/features/ai_coach/data/ai_context_repository.dart';
+import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
 import 'package:aesthetic_skin_tracker/screens/ai_recovery_coach_screen.dart';
-import 'package:aesthetic_skin_tracker/screens/ai_skincare_coach_screen.dart';
 
 class SkinAiAnalysisScreen extends StatefulWidget {
   const SkinAiAnalysisScreen({super.key});
@@ -130,7 +129,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   Map<String, dynamic>? _latestBackendAnalysisPayload;
   Map<String, double>? _manualBaselineMetricMatrix;
   bool _awaitingBaselineOnboarding = true;
-  final AiContextRepository _aiContextRepository = AiContextRepository();
 
   @override
   void initState() {
@@ -386,7 +384,40 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   // ── Photo source actions ──────────────────────────────────────────
 
   Future<void> _pickFromCamera() async {
-    await _pickAndCrop(ImageSource.camera, 'Camera unavailable');
+    try {
+      final capturedImagePath = await Navigator.push<String>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const CameraScreen(isSkincareScan: true),
+        ),
+      );
+
+      if (!mounted || capturedImagePath == null || capturedImagePath.isEmpty) {
+        return;
+      }
+
+      setState(() {
+        _imagePath = capturedImagePath;
+        _croppedBytes = null;
+        _explicitBaselineSelection = false;
+      });
+
+      if (_region == null) {
+        setState(() {
+          _focusAreaError =
+              'Please select a focus area before generating your progress report.';
+        });
+        return;
+      }
+
+      setState(() => _focusAreaError = null);
+      await _runAnalysis();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Camera unavailable: $e')),
+      );
+    }
   }
 
   Future<void> _pickFromGallery() async {
@@ -618,7 +649,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         features: features,
       );
 
-      final Map<String, double> previousMetrics = await _getPreviousMetrics();
+        final Map<String, double> previousMetrics = await _getPreviousMetrics();
+        final hadBaselineBeforeScan =
+          _explicitLocalFollowUpFlag || _localHistoryCountForFocusArea >= 2;
 
       // Server-first execution: route this scan through the backend multipart
       // endpoint and parse canonical metrics + trend deltas from the payload.
@@ -645,6 +678,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             baselineMetricMatrix:
                 _manualBaselineMetricMatrix ??
                 _baselineMetricMatrixForBackend(previousMetrics),
+            baselineExtractionPaths:
+                _manualBaselineMetricMatrix != null
+                ? null
+                : _buildLuxeBaselineExtractionPaths(),
             allowBackend: true,
           );
       final parsedBackend = _parseBackendAnalysisPayload(backendResponse);
@@ -692,10 +729,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             (_selectedProcedureId?.trim().isNotEmpty == true)
             ? _selectedProcedureId!.trim()
             : (await AppPrefs.getSelectedProcedureIdOrNull())?.trim();
-        debugPrint(
-          '[BASELINE_WRITE] ai_save selectedProcedureId=${_selectedProcedureId ?? 'null'} '
-          'resolvedProcedureId=${resolvedProcedureId ?? 'null'}',
-        );
         await SkinHistoryRepository.instance.saveScan(
           metrics: rawMetricScores,
           imagePath: path,
@@ -710,7 +743,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           rawPayload: persistencePayload,
         );
         savedToHistory = true;
-      } catch (_) {
+      } catch (e) {
         // Fallback: persist at least one AI scan entry with the image path,
         // even if metric_matrix is empty or repository sync fails.
         try {
@@ -729,6 +762,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 estimateVisualSkinAgeFromAiMetrics(timelineMetrics) ?? 0,
             metrics: rawMetricScores,
             rawPayload: persistencePayload,
+            scanEngine: ScanHistoryEntry.resolveScanEngine(
+              persistencePayload,
+              fallback: ScanHistoryEntry.engineBackendOpencv,
+            ),
           );
           final existing = await AppPrefs.getScanEntries();
           final alreadyExists = existing.any((s) => s.id == fallbackEntry.id);
@@ -766,6 +803,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       });
 
       if (savedToHistory) {
+        if (!hadBaselineBeforeScan) {
+          await _autoPinCurrentScanAsBaseline();
+        }
         final storageWarning = await AppPrefs.consumeScanStorageWarning();
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1210,6 +1250,64 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       ...luxeTrend,
     };
 
+    Map<String, dynamic> normalizePathMap(dynamic source) {
+      const canonicalKeys = <String>{
+        'localized_redness',
+        'texture_smoothness',
+        'pigment_load',
+        'wrinkle_load',
+        'pore_visibility',
+        'breakout_activity',
+        'sebum_excess_oil_gloss',
+        'diffuse_flushing_erythema',
+        'skin_tone_radiance_evenness',
+        'glabellar_wrinkle_depth',
+        'under_eye_texture_density',
+        'under_eye_dark_circle_density',
+        'rosacea_severity',
+        'structural_firmness_elasticity',
+        'pore_contraction_index',
+        'skin_hydration',
+      };
+      final map = _asDynamicMap(source) ?? const <String, dynamic>{};
+      final out = <String, dynamic>{
+        for (final key in canonicalKeys) key: 'unknown',
+      };
+      for (final entry in map.entries) {
+        final key = entry.key.toString().trim().toLowerCase();
+        if (!canonicalKeys.contains(key)) continue;
+        final raw = entry.value?.toString().trim().toLowerCase() ?? 'unknown';
+        if (raw == 'primary_roi' || raw == 'fallback' || raw == 'skipped') {
+          out[key] = raw;
+        } else {
+          out[key] = 'unknown';
+        }
+      }
+      return out;
+    }
+
+    final backendExtractionPaths = normalizePathMap(
+      backendResponse['metric_extraction_paths'],
+    );
+    final luxeExtractionPaths = normalizePathMap(
+      luxePayload['metric_extraction_paths'],
+    );
+    merged['metric_extraction_paths'] = {
+      ...backendExtractionPaths,
+      ...luxeExtractionPaths,
+    };
+
+    final backendBaselinePaths = normalizePathMap(
+      backendResponse['baseline_metric_extraction_paths'],
+    );
+    final luxeBaselinePaths = normalizePathMap(
+      luxePayload['baseline_metric_extraction_paths'],
+    );
+    merged['baseline_metric_extraction_paths'] = {
+      ...backendBaselinePaths,
+      ...luxeBaselinePaths,
+    };
+
     if (!shouldPersistPore) {
       final mergedMetrics =
           _asDynamicMap(merged['metrics']) ?? <String, dynamic>{};
@@ -1462,7 +1560,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             ),
             const SizedBox(width: 10),
             Text(
-              'Skin Progress Tracking',
+              'Skin Scan',
               style: TextStyle(
                 color: MyApp.clinicalNavy,
                 fontWeight: FontWeight.w900,
@@ -1520,7 +1618,22 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           title: '2. Capture Current Follow-Up Photo',
           eyebrow: 'Current scan input',
           icon: Icons.photo_camera_rounded,
-          child: _photoPickerCard(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _photoPickerCard(),
+              const SizedBox(height: 10),
+              Text(
+                'Fill more of the frame with your face — closer, even light.',
+                style: TextStyle(
+                  fontSize: 11.8,
+                  fontWeight: FontWeight.w700,
+                  height: 1.35,
+                  color: AppColors.refinedSlate.withValues(alpha: 0.72),
+                ),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 14),
         _captureSectionCard(
@@ -2740,126 +2853,399 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       r,
       backendResponse: _latestBackendAnalysisPayload,
     );
-    if (!isFollowUpPhase) {
-      return Column(
-        children: [
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
-              children: [
-                _compactBaselinePhotoHeader(r),
-                const SizedBox(height: 14),
-                _compactBaselineDiagnosticGrid(r),
-                const SizedBox(height: 14),
-                _baselinePhaseSummaryCard(),
-                const SizedBox(height: 14),
-                _disclaimerFootnote(),
+    final coachInsight = _coachInsightForPhase(
+      r,
+      luxePayload: luxePayload,
+      isFollowUp: isFollowUpPhase,
+    );
+
+    return Column(
+      children: [
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+            children: [
+              _resultsTopDisclaimer(),
+              const SizedBox(height: 14),
+              _resultHeroCard(r),
+              const SizedBox(height: 14),
+              isFollowUpPhase
+                  ? _followUpSummaryLine(r)
+                  : _baselinePhaseSummaryCard(),
+              const SizedBox(height: 18),
+              ClinicalSectionHeader(
+                icon: Icons.analytics_rounded,
+                eyebrow: isFollowUpPhase ? 'PROGRESS METRICS' : 'STARTING METRICS',
+                title: _isBodyProcedure
+                    ? 'Body recovery report'
+                    : _showCoreFaceMetricSetOnly
+                    ? 'Core skin-quality report'
+                    : 'Skin analysis report',
+              ),
+              const SizedBox(height: 10),
+              LuxeReportLayout(
+                rawPayload: luxePayload,
+                baselineImageProvider: _resultsBaselineImageProvider(r),
+                currentImageProvider: _imageProviderForPath(r.input.imagePath),
+                baselineLabel: 'Baseline',
+                currentLabel: isFollowUpPhase ? 'Current Follow-Up' : 'Current Scan',
+                localHistoryCount: _localHistoryCountForFocusArea,
+                isFollowUp: isFollowUpPhase,
+                gateReason: gateReason,
+              ),
+              const SizedBox(height: 18),
+              const ClinicalSectionHeader(
+                icon: Icons.psychology_alt_rounded,
+                eyebrow: 'AI COACH INSIGHT',
+                title: 'What this scan suggests today',
+              ),
+              const SizedBox(height: 10),
+              SmartNarrativeContainer(narrativeText: coachInsight),
+              const SizedBox(height: 18),
+              if (r.isClear) ...[_clearStateCard(r), const SizedBox(height: 18)],
+              if (!r.isClear) ...[
+                const ClinicalSectionHeader(
+                  icon: Icons.assessment_rounded,
+                  eyebrow: 'PHOTO OBSERVATIONS',
+                  title: 'What the current scan highlighted',
+                ),
+                const SizedBox(height: 8),
+                _aiModelBanner(),
+                const SizedBox(height: 10),
+                _scoreDirectionLegend(),
+                const SizedBox(height: 10),
+                _detectedMetricsCard(r),
+                const SizedBox(height: 18),
               ],
+              if (r.insights.isNotEmpty) ...[
+                const ClinicalSectionHeader(
+                  icon: Icons.lightbulb_outline_rounded,
+                  eyebrow: 'EDUCATIONAL INSIGHTS',
+                  title: 'Clinical-style interpretation',
+                ),
+                const SizedBox(height: 10),
+                _insightsCard(r),
+                const SizedBox(height: 18),
+              ],
+              const ClinicalSectionHeader(
+                icon: Icons.spa_rounded,
+                eyebrow: 'SAFETY & PRODUCTS',
+                title: 'Recommended for your skin today',
+              ),
+              const SizedBox(height: 10),
+              _buildRecommendationsSection(r),
+              const SizedBox(height: 18),
+              _scanPhaseCtaCard(isFollowUpPhase),
+              const SizedBox(height: 14),
+              _disclaimerFootnote(),
+            ],
+          ),
+        ),
+        if (!isFollowUpPhase) _firstScanActionDock(),
+      ],
+    );
+  }
+
+  Widget _followUpSummaryLine(PhotoAnalysisResult r) {
+    final summary = r.detectionSummary.trim();
+    final firstSentence = summary.contains('.')
+        ? '${summary.split('.').first.trim()}.'
+        : summary;
+    final safeText = firstSentence.isEmpty
+        ? 'Follow-up scan captured. Progress metrics are now compared against your saved baseline.'
+        : firstSentence;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _cardDecoration(),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.timeline_rounded,
+            size: 16,
+            color: AppColors.champagneGold,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              safeText,
+              style: TextStyle(
+                fontSize: 11.8,
+                height: 1.45,
+                color: MyApp.textBrown.withValues(alpha: 0.86),
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
-          _baselineStickyActionDock(r),
         ],
+      ),
+    );
+  }
+
+  String _coachInsightForPhase(
+    PhotoAnalysisResult r, {
+    required bool isFollowUp,
+    required Map<String, dynamic> luxePayload,
+  }) {
+    final scores = _recommendationScoresFor(r);
+    final metricMatrix = _asDynamicMap(luxePayload['metric_matrix']) ??
+        const <String, dynamic>{};
+    final topConcerns = _coachTopConcerns(scores);
+    final sensitivitySignal = _coachDetectedSignal(
+      r,
+      const ['skinSensitivity', 'skin_sensitivity', 'sensitivity'],
+    );
+    final barrierStressed =
+        sensitivitySignal >= 4.0 ||
+        (scores['redness'] ?? 0) >= 4.0 ||
+        (scores['rosacea_intensity'] ?? 0) >= 4.0;
+    final sentences = <String>[];
+
+    if (topConcerns.isEmpty) {
+      sentences.add(
+        isFollowUp
+            ? 'This follow-up reads fairly steady against baseline, so the safest move is to keep the routine simple and consistent.'
+            : 'Starting point shows a fairly calm overall pattern, so this scan is best used as your benchmark rather than a progress claim.',
+      );
+    } else {
+      final leadPhrase = _joinWithCommasAndAnd(
+        topConcerns
+            .take(3)
+            .map(
+              (entry) =>
+                  '${entry.label} at ${entry.value.toStringAsFixed(1)}/10',
+            )
+            .toList(),
+      );
+      sentences.add(
+        isFollowUp
+            ? 'This follow-up centers on $leadPhrase.'
+            : 'Starting point shows $leadPhrase.',
       );
     }
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-      children: [
-        _resultsTopDisclaimer(),
-        const SizedBox(height: 14),
-        _resultHeroCard(r),
-        const SizedBox(height: 18),
-        ClinicalSectionHeader(
-          icon: Icons.analytics_rounded,
-          eyebrow: 'PROGRESS TRACKING',
-          title: _isBodyProcedure
-              ? 'Body recovery tracking dashboard'
-              : _showCoreFaceMetricSetOnly
-              ? 'Core skin-quality progress dashboard'
-              : 'Skin progress dashboard',
-        ),
-        const SizedBox(height: 10),
-        LuxeReportLayout(
-          rawPayload: luxePayload,
-          baselineImageProvider: _resultsBaselineImageProvider(r),
-          currentImageProvider: _imageProviderForPath(r.input.imagePath),
-          baselineLabel: 'Before Baseline',
-          currentLabel: 'Current Follow-Up',
-          localHistoryCount: _localHistoryCountForFocusArea,
-          isFollowUp: isFollowUpPhase,
-          gateReason: gateReason,
-        ),
-        const SizedBox(height: 18),
-        SmartNarrativeContainer(narrativeText: r.detectionSummary),
-        const SizedBox(height: 18),
-        if (r.isClear) ...[_clearStateCard(r), const SizedBox(height: 18)],
-        if (!r.isClear) ...[
-          const ClinicalSectionHeader(
-            icon: Icons.assessment_rounded,
-            eyebrow: 'PHOTO OBSERVATIONS',
-            title: 'What the current scan highlighted',
+    final concernValues = topConcerns.take(3).map((entry) => entry.value).toList();
+    if (concernValues.isNotEmpty) {
+      final highest = concernValues.reduce((a, b) => a > b ? a : b);
+      if (highest >= 4.0) {
+        sentences.add(
+          barrierStressed
+              ? 'That pattern usually means calm-first care should lead, because the barrier looks a little reactive and the skin will tolerate less when actives are stacked.'
+              : 'That pattern usually means one or two focused steps will help more than a long routine, because the main signals are still doing the talking.',
+        );
+      } else {
+        sentences.add(
+          'The scan is showing a lighter concern pattern overall, so the goal is to keep the skin steady and avoid overcorrecting too early.',
+        );
+      }
+    }
+
+    if (isFollowUp) {
+      final trendSentences = _coachTrendSentences(scores);
+      if (trendSentences.isEmpty) {
+        sentences.add(
+          'Most of the measured pattern looks stable versus baseline, which is useful because it means the current routine is at least holding its ground.',
+        );
+      } else {
+        sentences.addAll(trendSentences.take(2));
+      }
+    } else {
+      sentences.add(
+        barrierStressed
+            ? 'Prioritize a gentle cleanse, a barrier moisturizer, and daily SPF first, then introduce only one calm active if the skin is already tolerating it.'
+            : 'Prioritize a gentle cleanse, a barrier moisturizer, and daily SPF first, then choose only one targeted active based on whether redness, pigment, texture, or breakouts are the leading concern.',
+      );
+    }
+
+    final rosaceaSignal = scores['rosacea_intensity'] ?? 0;
+    final acneSignal = scores['acne_severity'] ?? 0;
+    if (rosaceaSignal >= 4.0 || sensitivitySignal >= 4.0) {
+      sentences.add(
+        'Avoid fragrance, menthol, scrubs, and high-strength acids for now, because those are more likely to aggravate redness or stinging than to help this pattern.',
+      );
+    } else if (acneSignal >= 3.5) {
+      sentences.add(
+        'Breakout care should stay targeted rather than stacked, so keep any acne step spot-only or very limited until the barrier stays calm.',
+      );
+    } else {
+      final pigmentSignal = scores['pigment'] ?? 0;
+      final textureSignal = scores['texture'] ?? 0;
+      final wrinkleSignal = scores['wrinkle'] ?? 0;
+      final visibleTargets = <String>[
+        if (pigmentSignal >= 3.5) 'tone support for pigment',
+        if (textureSignal >= 3.5) 'texture support',
+        if (wrinkleSignal >= 3.5) 'firmness and line support',
+      ];
+      if (visibleTargets.isNotEmpty) {
+        sentences.add(
+          'The routine should stay centered on ${_joinWithCommasAndAnd(visibleTargets)} rather than on multiple actives at once.',
+        );
+      }
+    }
+
+    final matrixNote = _coachMatrixNote(metricMatrix);
+    if (matrixNote != null) {
+      sentences.add(matrixNote);
+    }
+
+    return sentences.where((sentence) => sentence.trim().isNotEmpty).take(6).join(' ');
+  }
+
+  List<({String key, String label, double value})> _coachTopConcerns(
+    Map<String, double> scores,
+  ) {
+    final concerns = <({String key, String label, double value})>[
+      (
+        key: 'redness',
+        label: 'redness / flushing',
+        value: scores['redness'] ?? 0,
+      ),
+      (
+        key: 'rosacea_intensity',
+        label: 'rosacea-pattern reactivity',
+        value: scores['rosacea_intensity'] ?? 0,
+      ),
+      (
+        key: 'acne_severity',
+        label: 'breakout activity',
+        value: scores['acne_severity'] ?? 0,
+      ),
+      (
+        key: 'texture',
+        label: 'texture roughness',
+        value: scores['texture'] ?? 0,
+      ),
+      (
+        key: 'pigment',
+        label: 'uneven tone / marks',
+        value: scores['pigment'] ?? 0,
+      ),
+      (
+        key: 'wrinkle',
+        label: 'fine lines / wrinkles',
+        value: scores['wrinkle'] ?? 0,
+      ),
+    ]..sort((a, b) => b.value.compareTo(a.value));
+
+    return concerns.where((entry) => entry.value >= 0.5).take(3).toList();
+  }
+
+  String? _coachMatrixNote(Map<String, dynamic> metricMatrix) {
+    if (metricMatrix.isEmpty) return null;
+    final supportedKeys = <String>[
+      'localized_redness',
+      'texture_smoothness',
+      'pigment_load',
+      'wrinkle_load',
+      'pore_visibility',
+      'breakout_activity',
+    ];
+    final available = supportedKeys
+        .where((key) => metricMatrix.containsKey(key))
+        .take(3)
+        .toList();
+    if (available.isEmpty) return null;
+
+    return 'The report payload also includes calibrated metric_matrix values for ${_joinWithCommasAndAnd(available.map(_coachMatrixLabel).toList())}, which keeps the advice tied to the actual scan rather than a generic template.';
+  }
+
+  String _coachMatrixLabel(String key) {
+    switch (key) {
+      case 'localized_redness':
+        return 'localized redness';
+      case 'texture_smoothness':
+        return 'texture smoothness';
+      case 'pigment_load':
+        return 'pigment load';
+      case 'wrinkle_load':
+        return 'wrinkle load';
+      case 'pore_visibility':
+        return 'pore visibility';
+      case 'breakout_activity':
+        return 'breakout activity';
+      default:
+        return key;
+    }
+  }
+
+  List<String> _coachTrendSentences(Map<String, double> scores) {
+    final trendSpecs = <({String key, String label, bool lowerIsBetter})>[
+      (key: 'redness', label: 'Redness', lowerIsBetter: true),
+      (key: 'texture', label: 'Texture', lowerIsBetter: true),
+      (key: 'pigment', label: 'Pigment', lowerIsBetter: true),
+      (key: 'wrinkle', label: 'Wrinkles', lowerIsBetter: true),
+      (key: 'acne_severity', label: 'Breakouts', lowerIsBetter: true),
+      (key: 'rosacea_intensity', label: 'Rosacea reactivity', lowerIsBetter: true),
+    ];
+
+    final sentences = <String>[];
+    for (final spec in trendSpecs) {
+      final current = scores[spec.key];
+      if (current == null) continue;
+      final trend = _trendFor(
+        spec.key,
+        current,
+        lowerIsBetter: spec.lowerIsBetter,
+      );
+      if (trend == null) continue;
+
+      if (trend.label == 'Stable') {
+        sentences.add('${spec.label} is stable versus baseline, so there is no need to chase a bigger change right now.');
+      } else {
+        final direction = trend.label == 'Improved' ? 'improved' : 'worsened';
+        final qualifier = trend.percentDelta.abs() >= 5.0 ? 'meaningfully' : 'slightly';
+        sentences.add('${spec.label} has $direction $qualifier versus baseline.');
+      }
+
+      if (sentences.length >= 2) break;
+    }
+
+    return sentences;
+  }
+
+  double _coachDetectedSignal(PhotoAnalysisResult r, List<String> keys) {
+    for (final key in keys) {
+      dynamic raw = r.detected[key];
+      raw ??= r.detected[key.replaceAll('_', '')];
+      final parsed = raw is num
+          ? raw.toDouble()
+          : double.tryParse(raw?.toString() ?? '');
+      if (parsed != null && parsed.isFinite) return parsed.clamp(0, 10).toDouble();
+    }
+    return 0;
+  }
+
+  String _joinWithCommasAndAnd(List<String> items) {
+    if (items.isEmpty) return '';
+    if (items.length == 1) return items.first;
+    if (items.length == 2) return '${items.first} and ${items.last}';
+    return '${items.sublist(0, items.length - 1).join(', ')}, and ${items.last}';
+  }
+
+  Widget _scanPhaseCtaCard(bool isFollowUpPhase) {
+    final text = isFollowUpPhase
+        ? 'Scan again in similar lighting to update progress.'
+        : 'Add another photo in similar lighting to unlock personalized progress tracking.';
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _cardDecoration(),
+      child: Row(
+        children: [
+          const Icon(Icons.camera_alt_rounded, size: 16, color: AppColors.champagneGold),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 11.6,
+                color: MyApp.textBrown.withValues(alpha: 0.85),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
-          const SizedBox(height: 8),
-          _aiModelBanner(),
-          const SizedBox(height: 10),
-          _scoreDirectionLegend(),
-          const SizedBox(height: 10),
-          _detectedMetricsCard(r),
-          const SizedBox(height: 18),
         ],
-        if (r.insights.isNotEmpty) ...[
-          const ClinicalSectionHeader(
-            icon: Icons.lightbulb_outline_rounded,
-            eyebrow: 'EDUCATIONAL INSIGHTS',
-            title: 'Progress-focused interpretation',
-          ),
-          const SizedBox(height: 10),
-          _insightsCard(r),
-          const SizedBox(height: 18),
-        ],
-        const ClinicalSectionHeader(
-          icon: Icons.spa_rounded,
-          eyebrow: 'PRODUCTS & ROUTINE',
-          title: 'Recommended for Your Skin Today',
-        ),
-        const SizedBox(height: 10),
-        _buildRecommendationsSection(r),
-        const SizedBox(height: 18),
-        if (r.procedures.isNotEmpty) ...[
-          const ClinicalSectionHeader(
-            icon: Icons.medical_services_outlined,
-            eyebrow: 'GENERAL INFORMATION',
-            title: 'Commonly Explored Procedures',
-          ),
-          const SizedBox(height: 10),
-          _framingNote(
-            'These are general options people commonly discuss with '
-            'dermatologists. They are not personalized recommendations.',
-          ),
-          const SizedBox(height: 10),
-          _proceduresCard(r),
-          const SizedBox(height: 18),
-        ],
-        if (r.productCues.isNotEmpty) ...[
-          const ClinicalSectionHeader(
-            icon: Icons.science_outlined,
-            eyebrow: 'GENERAL INFORMATION',
-            title: 'Ingredients commonly discussed',
-          ),
-          const SizedBox(height: 10),
-          _framingNote(
-            'General educational information — not a personalised routine. '
-            'Patch-test new products and check with a professional before '
-            'combining actives.',
-          ),
-          const SizedBox(height: 10),
-          _productCuesCard(r),
-          const SizedBox(height: 18),
-        ],
-        _followUpActionsCard(),
-        const SizedBox(height: 14),
-        _disclaimerFootnote(),
-      ],
+      ),
     );
   }
 
@@ -2890,8 +3276,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'This scan establishes your reference point for this focus area. '
-            'Take another scan in 2–4 weeks to unlock trend deltas, before/after comparison, and clinical progress curves.',
+            'This is your baseline. Add a second scan with similar lighting to unlock progress metrics.',
             style: TextStyle(
               fontSize: 11.5,
               height: 1.45,
@@ -2965,14 +3350,14 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF121212).withValues(alpha: 0.84),
+                    color: const Color(0xFF1E2225).withValues(alpha: 0.84),
                     borderRadius: BorderRadius.circular(999),
                     border: Border.all(
-                      color: AppColors.champagneGold.withValues(alpha: 0.70),
+                      color: AppColors.mutedSage.withValues(alpha: 0.70),
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: AppColors.champagneGold.withValues(alpha: 0.22),
+                        color: AppColors.mutedSage.withValues(alpha: 0.22),
                         blurRadius: 10,
                         offset: const Offset(0, 4),
                       ),
@@ -2981,7 +3366,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                   child: const Text(
                     'Baseline Scan Captured • Day 0',
                     style: TextStyle(
-                      color: Color(0xFFD4AF37),
+                      color: Colors.white,
                       fontSize: 10.5,
                       fontWeight: FontWeight.w900,
                     ),
@@ -3092,7 +3477,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     );
   }
 
-  Widget _baselineStickyActionDock(PhotoAnalysisResult r) {
+  Widget _firstScanActionDock() {
     return SafeArea(
       top: false,
       child: Container(
@@ -3117,13 +3502,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           children: [
             Expanded(
               child: FilledButton.icon(
-                onPressed: () => _openAiCoachRoutineHandoff(r),
-                icon: const Icon(Icons.auto_awesome_rounded, size: 17),
-                label: const Text('Generate Routine with AI Coach ->'),
+                onPressed: _onSaveBaselineAndGoHome,
+                icon: const Icon(Icons.verified_rounded, size: 17),
+                label: const Text('Save baseline'),
                 style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF121212),
-                  foregroundColor: const Color(0xFFD4AF37),
-                  side: const BorderSide(color: Color(0xFFD4AF37), width: 1),
+                  backgroundColor: AppColors.mutedSage,
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Color(0xFF7A8B7B), width: 1),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 12,
                     vertical: 13,
@@ -3139,41 +3524,28 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            OutlinedButton.icon(
-              onPressed: () => _openQuickJournalNoteSheet(r),
-              icon: const Icon(Icons.note_add_outlined, size: 16),
-              label: const Text('+ Add Journal Note'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: MyApp.clinicalNavy,
-                side: BorderSide(
-                  color: AppColors.champagneGold.withValues(alpha: 0.45),
-                  width: 1,
-                ),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 13,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                textStyle: const TextStyle(
-                  fontSize: 11.8,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              tooltip: 'Retake Scan',
-              onPressed: _startOver,
-              icon: const Icon(Icons.replay_circle_filled_rounded),
-              style: IconButton.styleFrom(
-                foregroundColor: const Color(0xFFD4AF37),
-                backgroundColor: const Color(0xFF121212),
-                side: const BorderSide(color: Color(0xFFD4AF37), width: 1),
-                minimumSize: const Size(46, 46),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(13),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _startOver,
+                icon: const Icon(Icons.camera_alt_rounded, size: 17),
+                label: const Text('Scan again'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: MyApp.clinicalNavy,
+                  side: BorderSide(
+                    color: AppColors.mutedSage.withValues(alpha: 0.45),
+                    width: 1,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 13,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 12.2,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ),
@@ -3183,182 +3555,19 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     );
   }
 
-  Future<void> _openAiCoachRoutineHandoff(PhotoAnalysisResult r) async {
-    final metrics = _singleScanMetricMap();
-    final payload = await _aiContextRepository.buildCoachPayload(
-      maxScans: 12,
-      maxProducts: 12,
-      maxProcedureLogs: 12,
-      maxJournalEntries: 40,
-      maxProviderNotes: 20,
+  Future<void> _onSaveBaselineAndGoHome() async {
+    final ok = await _onSaveAsBaselinePressed(
+      navigateHomeOnSuccess: true,
+      quietSuccessSnackBar: true,
     );
-    final payloadJson = jsonEncode(payload);
-    final handoffGoal =
-      'Generate a personalized morning and evening routine immediately using this baseline scan and payload context. '
-        'Prioritize barrier stability, inflammation control, and realistic progression over 7 days.\n\n'
-        'Baseline snapshot:\n'
-        '- Severity Score: ${r.severityIndex.toStringAsFixed(1)}\n'
-        '- Primary Diagnosis Tag: ${r.severityBandLabel}\n'
-        '- Redness: ${(metrics['redness'] ?? 0).toStringAsFixed(1)}%\n'
-        '- Texture Index: ${((_fullMetrics['texture'] ?? 0) * 100).clamp(0, 100).toStringAsFixed(1)}%\n\n'
-        'Structured Coach Payload JSON:\n$payloadJson';
-
     if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => AISkincareCoachScreen(initialGoal: handoffGoal),
-      ),
-    );
-  }
-
-  Future<void> _openQuickJournalNoteSheet(PhotoAnalysisResult r) async {
-    final noteController = TextEditingController();
-    String selectedFocus = _resolvedFocusArea().trim().isEmpty
-        ? 'Full Face'
-        : _resolvedFocusArea().trim();
-    const focusOptions = <String>[
-      'Full Face',
-      'Forehead',
-      'Cheeks',
-      'Chin & Jawline',
-      'Under Eyes',
-    ];
-
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.cardBackground,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Padding(
-              padding: EdgeInsets.fromLTRB(
-                16,
-                14,
-                16,
-                MediaQuery.of(context).viewInsets.bottom + 16,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Quick Journal Note',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                      color: MyApp.clinicalNavy,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      for (final option in focusOptions)
-                        ChoiceChip(
-                          label: Text(option),
-                          selected: selectedFocus == option,
-                          onSelected: (_) =>
-                              setModalState(() => selectedFocus = option),
-                          selectedColor: AppColors.champagneGold,
-                          labelStyle: TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w700,
-                            color: selectedFocus == option
-                                ? AppColors.onChampagneGold
-                                : MyApp.clinicalNavy,
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: noteController,
-                    minLines: 2,
-                    maxLines: 4,
-                    decoration: InputDecoration(
-                      hintText: 'How does your skin feel today?',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton(
-                      onPressed: () async {
-                        final note = noteController.text.trim();
-                        if (note.isEmpty) {
-                          Navigator.of(sheetContext).pop();
-                          return;
-                        }
-                        final prefs = await SharedPreferences.getInstance();
-                        const key = 'skin_ai_quick_journal_notes_v1';
-                        final raw = prefs.getString(key)?.trim();
-                        final List<Map<String, dynamic>> records = [];
-                        if (raw != null && raw.isNotEmpty) {
-                          try {
-                            final decoded = jsonDecode(raw);
-                            if (decoded is List) {
-                              records.addAll(
-                                decoded
-                                    .whereType<Map>()
-                                    .map((e) => Map<String, dynamic>.from(e)),
-                              );
-                            }
-                          } catch (_) {
-                            // Keep non-blocking if prior note payload is malformed.
-                          }
-                        }
-
-                        final metrics = _singleScanMetricMap();
-                        records.add({
-                          'created_at': DateTime.now().toIso8601String(),
-                          'focus_area': selectedFocus,
-                          'note': note,
-                          'severity_score': r.severityIndex,
-                          'redness_pct': metrics['redness'] ?? 0,
-                          'texture_index_pct':
-                              ((_fullMetrics['texture'] ?? 0) * 100)
-                                  .clamp(0, 100)
-                                  .toDouble(),
-                        });
-                        await prefs.setString(key, jsonEncode(records));
-                        if (!mounted) return;
-                        Navigator.of(sheetContext).pop();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Journal note saved.'),
-                          ),
-                        );
-                      },
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF121212),
-                        foregroundColor: const Color(0xFFD4AF37),
-                        side: const BorderSide(
-                          color: Color(0xFFD4AF37),
-                          width: 1,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text('Save Note'),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-    noteController.dispose();
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to save baseline for this scan.'),
+        ),
+      );
+    }
   }
 
   Widget _followUpActionsCard() {
@@ -3814,11 +4023,64 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     return canonicalBaseline;
   }
 
+  Map<String, String> _buildLuxeBaselineExtractionPaths() {
+    const canonicalKeys = <String>{
+      'localized_redness',
+      'texture_smoothness',
+      'pigment_load',
+      'wrinkle_load',
+      'pore_visibility',
+      'breakout_activity',
+      'sebum_excess_oil_gloss',
+      'diffuse_flushing_erythema',
+      'skin_tone_radiance_evenness',
+      'glabellar_wrinkle_depth',
+      'pore_contraction_index',
+      'structural_firmness_elasticity',
+      'rosacea_severity',
+      'skin_hydration',
+    };
+
+    final out = <String, String>{
+      for (final key in canonicalKeys) key: 'unknown',
+    };
+
+    final priorScan = _previousFocusAreaScan;
+    final rawPayload = priorScan?.rawPayload;
+    if (rawPayload == null || rawPayload.isEmpty) {
+      return out;
+    }
+
+    void mergePathSource(dynamic source) {
+      final map = _asDynamicMap(source);
+      if (map == null || map.isEmpty) return;
+      for (final entry in map.entries) {
+        final key = entry.key.toString().trim().toLowerCase();
+        if (!canonicalKeys.contains(key)) continue;
+        final raw = entry.value?.toString().trim().toLowerCase() ?? 'unknown';
+        if (raw == 'primary_roi' || raw == 'fallback' || raw == 'skipped') {
+          out[key] = raw;
+        } else {
+          out[key] = 'unknown';
+        }
+      }
+    }
+
+    mergePathSource(rawPayload['metric_extraction_paths']);
+    final nestedMetrics = _asDynamicMap(rawPayload['metrics']);
+    mergePathSource(nestedMetrics?['metric_extraction_paths']);
+    final nestedLuxe = _asDynamicMap(rawPayload['luxePayload']);
+    mergePathSource(nestedLuxe?['metric_extraction_paths']);
+    final nestedLuxeMetrics = _asDynamicMap(nestedLuxe?['metrics']);
+    mergePathSource(nestedLuxeMetrics?['metric_extraction_paths']);
+
+    return out;
+  }
+
   Map<String, dynamic> _buildLuxeResultsPayload(
     PhotoAnalysisResult r, {
     Map<String, dynamic>? backendResponse,
   }) {
-    final timeline = _timelineMetricsFor(r);
     final isFollowUp =
         _explicitLocalFollowUpFlag || _localHistoryCountForFocusArea >= 2;
 
@@ -3839,6 +4101,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     }
 
     final baselineMetricMatrix = _buildLuxeBaselineMetricMatrix();
+    final baselineExtractionPaths = _buildLuxeBaselineExtractionPaths();
     final usedPriorScan = baselineMetricMatrix.isNotEmpty;
     final priorScanId = usedPriorScan ? _previousFocusAreaScan?.id : null;
     final baselineKeys = baselineMetricMatrix.keys.toList()..sort();
@@ -3850,73 +4113,30 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       ? <String, dynamic>{..._serverTrendDeltas}
       : <String, dynamic>{};
 
-    double? deltaPct(
-      double current,
-      double? baseline, {
-      required bool lowerIsBetter,
-    }) {
-      if (baseline == null || baseline <= 0) return null;
-      final raw = ((current - baseline) / baseline) * 100.0;
-      return lowerIsBetter ? -raw : raw;
-    }
-
     if (isFollowUp && trendDeltas.isEmpty && _previousMetrics.isNotEmpty) {
-      final currRedness = _trendMetricValueFromMap(
-        timeline,
-        'localized_redness',
+      // Legacy fallback deltas had no extraction-path provenance. Keep these
+      // scans in tracking-only mode to avoid directional claims.
+      debugPrint(
+        'TREND DELTA FALLBACK: skipped directional fallback due to unknown extraction paths',
       );
-      final prevRedness = _trendMetricValueFromMap(
-        _previousMetrics,
-        'localized_redness',
-      );
-      final currTexture = _trendMetricValueFromMap(
-        timeline,
-        'texture_smoothness',
-      );
-      final prevTexture = _trendMetricValueFromMap(
-        _previousMetrics,
-        'texture_smoothness',
-      );
-      final currPigment = _trendMetricValueFromMap(timeline, 'pigment_load');
-      final prevPigment = _trendMetricValueFromMap(
-        _previousMetrics,
-        'pigment_load',
-      );
-      final currWrinkle = _trendMetricValueFromMap(timeline, 'wrinkle_load');
-      final prevWrinkle = _trendMetricValueFromMap(
-        _previousMetrics,
-        'wrinkle_load',
-      );
-
-      final dRedness = deltaPct(
-        currRedness ?? 0,
-        prevRedness,
-        lowerIsBetter: true,
-      );
-      if (dRedness != null) trendDeltas['localized_redness'] = dRedness;
-      final dTexture = deltaPct(
-        currTexture ?? 0,
-        prevTexture,
-        lowerIsBetter: false,
-      );
-      if (dTexture != null) trendDeltas['texture_smoothness'] = dTexture;
-      final dPigment = deltaPct(
-        currPigment ?? 0,
-        prevPigment,
-        lowerIsBetter: true,
-      );
-      if (dPigment != null) trendDeltas['pigment_load'] = dPigment;
-      final dWrinkle = deltaPct(
-        currWrinkle ?? 0,
-        prevWrinkle,
-        lowerIsBetter: true,
-      );
-      if (dWrinkle != null) trendDeltas['wrinkle_load'] = dWrinkle;
     }
 
     return <String, dynamic>{
       'metric_matrix': cleanedMetricMatrix,
       'baseline_metric_matrix': baselineMetricMatrix,
+      // NOTE: this whole map also gets persisted verbatim as the nested
+      // rawPayload['luxePayload'] key (see _mergePayloadForPersistence),
+      // where it becomes a point-in-time snapshot that is never refreshed.
+      // metric_extraction_paths/baseline_metric_extraction_paths below are
+      // fine for immediate live rendering, but progress_report_screen.dart's
+      // _buildLuxePayloadForAiScan must keep preferring the top-level
+      // rawPayload.metric_extraction_paths (which stays authoritative) over
+      // this nested copy when reconstructing an archived scan's payload.
+      'metric_extraction_paths': _asDynamicMap(
+            backendResponse?['metric_extraction_paths'],
+          ) ??
+          const <String, dynamic>{},
+      'baseline_metric_extraction_paths': baselineExtractionPaths,
       'baseline': baselineMetricMatrix,
       'trend_deltas': trendDeltas,
       'metrics': cleanedMetricMatrix,
@@ -3934,7 +4154,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// (red/pink accents to signal attention), topped with an overall
   /// skin-health score. When a previous scan exists, each metric shows a
   /// trend indicator (improved / worsened / stable) versus that scan.
-  Widget _fullMetricsCard() {
+  Widget _fullMetricsCard({bool showTrends = true}) {
     // Convert a stored 0–1 model output to the clinical 0–10 scale.
     double to10(String key) =>
         ((_fullMetrics[key] ?? 0) * 10).clamp(0, 10).toDouble();
@@ -4033,27 +4253,32 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 label: 'Pigmentation',
                 metricKey: 'pigment',
                 value: pigment,
+                showTrend: showTrends,
               ),
               _buildMetricRowWithTrend(
                 label: 'Redness',
                 metricKey: 'redness',
                 value: redness,
+                showTrend: showTrends,
               ),
               _buildMetricRowWithTrend(
                 label: 'Texture',
                 metricKey: 'texture',
                 value: texture,
+                showTrend: showTrends,
               ),
               _buildMetricRowWithTrend(
                 label: 'Wrinkles',
                 metricKey: 'wrinkle',
                 value: wrinkle,
+                showTrend: showTrends,
               ),
               if (pore != null)
                 _buildMetricRowWithTrend(
                   label: 'Pores',
                   metricKey: 'pore',
                   value: pore,
+                  showTrend: showTrends,
                 ),
             ],
           ),
@@ -4246,10 +4471,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     required String metricKey,
     required double value,
     bool lowerIsBetter = true,
+    bool showTrend = true,
   }) {
     final color = _directedValueColor(value, lowerIsBetter: lowerIsBetter);
     final band = _directedSeverityBand(value, lowerIsBetter: lowerIsBetter);
-    final trend = _trendFor(metricKey, value, lowerIsBetter: lowerIsBetter);
+    final trend = showTrend
+        ? _trendFor(metricKey, value, lowerIsBetter: lowerIsBetter)
+        : null;
     final value100 = (value * 10).clamp(0.0, 100.0);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -5178,15 +5406,58 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final addComparisonLabel = hasComparison
         ? 'Add Another Comparison Photo'
         : 'Add Comparison Photo';
+    final baselineMetricMatrix = _buildLuxeBaselineMetricMatrix();
+    final hasBaseline = baselineMetricMatrix.isNotEmpty;
+    final baselineSourceDate = _previousFocusAreaScan?.timestamp.toLocal();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _luxeActionButton(
-          icon: Icons.verified_rounded,
-          label: 'Save as Baseline',
-          onPressed: _onSaveAsBaselinePressed,
-        ),
+        if (hasBaseline) ...[
+          OutlinedButton.icon(
+            onPressed: _confirmUpdateBaselinePressed,
+            icon: const Icon(Icons.edit_rounded, size: 16),
+            label: const Text(
+              'Update baseline',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.15,
+              ),
+            ),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(48),
+              foregroundColor: Colors.white,
+              side: BorderSide(
+                color: Colors.white.withValues(alpha: 0.34),
+                width: 1.0,
+              ),
+              backgroundColor: Colors.white.withValues(alpha: 0.03),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+          if (baselineSourceDate != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Baseline set • ${baselineSourceDate.toIso8601String().split('T').first}',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.68),
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ] else ...[
+          _luxeActionButton(
+            icon: Icons.verified_rounded,
+            label: 'Save as Baseline',
+            onPressed: _onSaveAsBaselinePressed,
+          ),
+        ],
         const SizedBox(height: 10),
         _luxeActionButton(
           icon: Icons.compare_arrows_rounded,
@@ -5222,8 +5493,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     required String label,
     required VoidCallback onPressed,
   }) {
-    const goldButton = Color(0xFFC5A059);
-    const obsidian = Color(0xFF1A1A1A);
+    const goldButton = Color(0xFF7A8B7B);
+    const obsidian = Colors.white;
 
     return SizedBox(
       width: double.infinity,
@@ -5243,7 +5514,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           elevation: 0,
           foregroundColor: obsidian,
           side: BorderSide(
-            color: obsidian.withValues(alpha: 0.28),
+            color: goldButton.withValues(alpha: 0.28),
             width: 0.9,
           ),
           backgroundColor: goldButton,
@@ -5278,9 +5549,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     return null;
   }
 
-  Future<void> _onSaveAsBaselinePressed() async {
+  Future<bool> _onSaveAsBaselinePressed({
+    bool navigateHomeOnSuccess = false,
+    bool quietSuccessSnackBar = false,
+  }) async {
     final currentScanId = await _resolveCurrentScanIdForActions();
-    if (!mounted) return;
+    if (!mounted) return false;
 
     if (currentScanId == null || currentScanId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -5288,7 +5562,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           content: Text('Current scan is not saved yet. Save it first.'),
         ),
       );
-      return;
+      return false;
     }
 
     bool ok = await AppPrefs.setBaselineScanId(currentScanId);
@@ -5320,19 +5594,102 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       }
     }
 
-    if (!mounted) return;
+    if (!ok) {
+      final scans = await AppPrefs.getScanEntries();
+      final current = scans.where((s) => s.id == currentScanId).toList();
+      if (current.isNotEmpty && current.first.isBaseline) {
+        ok = true;
+      }
+    }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: ok ? MyApp.clinicalTeal : const Color(0xFFBF8A30),
-        content: Text(
-          ok
-              ? 'Baseline updated successfully.'
-              : 'Unable to set baseline for this scan.',
-          style: const TextStyle(fontWeight: FontWeight.w800),
+    if (!mounted) return false;
+
+    if (ok && navigateHomeOnSuccess) {
+      _goHome();
+      return true;
+    }
+
+    if (!(ok && quietSuccessSnackBar)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: ok ? MyApp.clinicalTeal : AppColors.mutedSage,
+          content: Text(
+            ok
+                ? 'Baseline updated successfully.'
+                : 'Unable to set baseline for this scan.',
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
         ),
-      ),
+      );
+    }
+
+    return ok;
+  }
+
+  Future<void> _autoPinCurrentScanAsBaseline() async {
+    final currentScanId = await _resolveCurrentScanIdForActions();
+    if (currentScanId == null || currentScanId.isEmpty) return;
+
+    bool ok = await AppPrefs.setBaselineScanId(currentScanId);
+
+    if (!ok) {
+      String selectedProcedureId =
+          (_selectedProcedureId ?? '').trim().isNotEmpty
+          ? (_selectedProcedureId ?? '').trim()
+          : (await AppPrefs.getSelectedProcedureIdOrNull())?.trim() ?? '';
+
+      if (selectedProcedureId.isEmpty) {
+        final focus = _normalizeFocus(_resolvedFocusArea()).replaceAll(' ', '_');
+        selectedProcedureId = 'ai_focus_${focus.isEmpty ? 'full_face' : focus}';
+      }
+
+      if (selectedProcedureId.isNotEmpty) {
+        final patched = await AppPrefs.patchScanProcedureId(
+          currentScanId,
+          selectedProcedureId,
+        );
+        if (patched) {
+          ok = await AppPrefs.setBaselineScanId(currentScanId);
+        }
+      }
+    }
+
+    if (!mounted || !ok) return;
+    final scans = await AppPrefs.getScanEntries();
+    final pinned = scans.where((s) => s.id == currentScanId).toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    if (!mounted) return;
+    setState(() {
+      _baselineFocusAreaScan = pinned.isNotEmpty ? pinned.first : _baselineFocusAreaScan;
+    });
+  }
+
+  Future<void> _confirmUpdateBaselinePressed() async {
+    final shouldUpdate = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Update baseline?'),
+          content: const Text(
+            'This will overwrite the current baseline with the current scan for progress tracking.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Update baseline'),
+            ),
+          ],
+        );
+      },
     );
+
+    if (shouldUpdate == true) {
+      await _onSaveAsBaselinePressed();
+    }
   }
 
   void _openBeforeAfterSplitView() {
@@ -5659,9 +6016,15 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final confLine = (_modelConfidence != null)
         ? '  ·  Model confidence: ${(_modelConfidence! * 100).round()}%'
         : '';
+    // "Full-frame face coverage" here is bounding-box-area / full-image-area
+    // -- a different denominator than the live capture guide's percentage
+    // (which divides by a fixed 68%x84% guide box, not the full frame), so
+    // the two are NOT directly comparable. Label explicitly to avoid a
+    // normal or even slightly-too-close capture reading as alarmingly
+    // low just because this number uses a larger denominator.
     final meshLine = meshUsed
         ? '\nFace Mesh: '
-              '${_faceCoverage != null ? "face covers ${(_faceCoverage! * 100).round()}% of frame" : "face cropped"}'
+              '${_faceCoverage != null ? "full-frame face coverage: ${(_faceCoverage! * 100).round()}%" : "face cropped"}'
               '${_symmetryScore != null ? " · L/R symmetry ${(_symmetryScore! * 100).round()}%" : ""}'
         : '';
     final detLine = yoloUsed
@@ -6181,21 +6544,39 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       return _buildBodyRecoveryRecommendationsSection(scores);
     }
 
+    final isFollowUp = _explicitLocalFollowUpFlag || _localHistoryCountForFocusArea >= 2;
+    final sensitivitySignal = _coachDetectedSignal(
+      r,
+      const ['skinSensitivity', 'skin_sensitivity', 'sensitivity'],
+    );
+    final barrierStressed =
+        sensitivitySignal >= 4.0 ||
+        (scores['redness'] ?? 0) >= 4.0 ||
+        (scores['rosacea_intensity'] ?? 0) >= 4.0;
+
     final redness = scores['redness'] ?? 0;
     final rosacea = scores['rosacea_intensity'] ?? 0;
     final acne = scores['acne_severity'] ?? 0;
-    final pigment = scores['pigment'] ?? 0;
-    final texture = scores['texture'] ?? 0;
-    final wrinkle = scores['wrinkle'] ?? 0;
     final inflammation = [
       redness,
       rosacea,
       acne,
     ].reduce((a, b) => a > b ? a : b);
-    final treatInflammationFirst = inflammation >= 4.0;
+    final treatInflammationFirst = inflammation >= 4.0 || barrierStressed;
 
     final recommendations = _productRecommendationsForScores(scores);
-    final routine = _routineForScores(scores);
+    final routine = _routineForScores(
+      scores,
+      isFollowUp: isFollowUp,
+      sensitivitySignal: sensitivitySignal,
+      barrierStressed: barrierStressed,
+    );
+    final routineHeader = _coachRoutineHeaderText(
+      scores,
+      isFollowUp: isFollowUp,
+      barrierStressed: barrierStressed,
+      sensitivitySignal: sensitivitySignal,
+    );
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -6245,7 +6626,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                       Text(
                         treatInflammationFirst
                             ? 'Calm first, actives second'
-                            : 'Support the strongest visible concerns',
+                            : isFollowUp
+                            ? 'Keep the gains steady'
+                            : 'Build around the main signals',
                         style: TextStyle(
                           color: MyApp.clinicalNavy,
                           fontSize: 13.5,
@@ -6254,9 +6637,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        treatInflammationFirst
-                            ? 'Inflammation-led scores are the priority today: redness ${redness.toStringAsFixed(1)}, rosacea ${rosacea.toStringAsFixed(1)}, acne ${acne.toStringAsFixed(1)}. Keep the routine calming before stronger exfoliating or brightening actives.'
-                            : 'Today\'s routine is matched to pigmentation ${pigment.toStringAsFixed(1)}, texture ${texture.toStringAsFixed(1)}, and wrinkle ${wrinkle.toStringAsFixed(1)} scores while keeping the skin barrier steady.',
+                        routineHeader,
                         style: TextStyle(
                           color: MyApp.textBrown.withValues(alpha: 0.82),
                           fontSize: 11.5,
@@ -6276,20 +6657,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             _recommendationTile(recommendations[i], index: i + 1),
           ],
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: _routineColumn('AM', routine.$1, MyApp.clinicalTeal),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _routineColumn(
-                  'PM',
-                  routine.$2,
-                  const Color(0xFFD06B6B),
-                ),
-              ),
-            ],
+          _routineExpansionTile(
+            amSteps: routine.$1,
+            pmSteps: routine.$2,
+            pmAccent: const Color(0xFFD06B6B),
+            title: 'Suggested routine',
           ),
           const SizedBox(height: 14),
           _framingNote(
@@ -6394,16 +6766,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             _recommendationTile(recommendations[i], index: i + 1),
           ],
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: _routineColumn('AM', routine.$1, MyApp.clinicalTeal),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _routineColumn('PM', routine.$2, MyApp.goldShimmer),
-              ),
-            ],
+          _routineExpansionTile(
+            amSteps: routine.$1,
+            pmSteps: routine.$2,
+            pmAccent: MyApp.goldShimmer,
+            title: 'Suggested routine',
           ),
           const SizedBox(height: 14),
           _framingNote(
@@ -6438,6 +6805,45 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       'acne_severity': score('acne_severity'),
       'rosacea_intensity': score('rosacea_intensity'),
     };
+  }
+
+  String _coachRoutineHeaderText(
+    Map<String, double> scores, {
+    required bool isFollowUp,
+    required bool barrierStressed,
+    required double sensitivitySignal,
+  }) {
+    final redness = scores['redness'] ?? 0;
+    final rosacea = scores['rosacea_intensity'] ?? 0;
+    final acne = scores['acne_severity'] ?? 0;
+    final pigment = scores['pigment'] ?? 0;
+    final texture = scores['texture'] ?? 0;
+    final wrinkle = scores['wrinkle'] ?? 0;
+    final concernParts = <String>[
+      if (redness >= 4.0) 'redness ${redness.toStringAsFixed(1)}',
+      if (rosacea >= 4.0) 'rosacea ${rosacea.toStringAsFixed(1)}',
+      if (acne >= 3.5) 'breakouts ${acne.toStringAsFixed(1)}',
+      if (texture >= 3.5) 'texture ${texture.toStringAsFixed(1)}',
+      if (pigment >= 3.5) 'pigment ${pigment.toStringAsFixed(1)}',
+      if (wrinkle >= 3.5) 'wrinkles ${wrinkle.toStringAsFixed(1)}',
+    ];
+
+    final concernText = concernParts.isEmpty
+        ? 'a fairly calm baseline overall'
+        : _joinWithCommasAndAnd(concernParts);
+
+    if (isFollowUp) {
+      if (barrierStressed || sensitivitySignal >= 4.0) {
+        return 'The follow-up is still reading as a calm-first day, with barrier support more important than pushing stronger actives. The main signals are $concernText, so keep the plan simple and steady.';
+      }
+      return 'The follow-up is centered on $concernText, which means the best move is to keep one clear routine in place and only adjust a single step if the skin is already tolerating it.';
+    }
+
+    if (barrierStressed || sensitivitySignal >= 4.0) {
+      return 'Starting point shows $concernText, and the barrier looks a bit reactive, so the routine should stay gentle, fragrance-free, and low-spirited on actives until the skin feels calmer.';
+    }
+
+    return 'Starting point shows $concernText, so I would build around a gentle cleanse, hydration, barrier support, and one targeted active rather than trying to do everything at once.';
   }
 
   List<({String title, String reason, IconData icon, Color accent})>
@@ -6617,33 +7023,68 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     return recs.take(6).toList();
   }
 
-  (List<String>, List<String>) _routineForScores(Map<String, double> scores) {
+  (List<String>, List<String>) _routineForScores(
+    Map<String, double> scores, {
+    required bool isFollowUp,
+    required double sensitivitySignal,
+    required bool barrierStressed,
+  }) {
     final redness = scores['redness'] ?? 0;
     final rosacea = scores['rosacea_intensity'] ?? 0;
     final acne = scores['acne_severity'] ?? 0;
+    final pigment = scores['pigment'] ?? 0;
+    final texture = scores['texture'] ?? 0;
+    final wrinkle = scores['wrinkle'] ?? 0;
     final inflammation = [
       redness,
       rosacea,
       acne,
     ].reduce((a, b) => a > b ? a : b);
-    final calmFirst = inflammation >= 4;
+    final calmFirst = inflammation >= 4 || barrierStressed || sensitivitySignal >= 4;
+    final allowActives = !calmFirst && isFollowUp;
 
     final am = <String>[
-      'Gentle cleanse or water rinse',
-      calmFirst ? 'Centella or cica ampoule' : 'Niacinamide serum if tolerated',
-      'Ceramide moisturizer',
-      'Broad-spectrum SPF 30+',
+      calmFirst
+          ? 'Gentle low-pH cleanser or a water rinse if your skin is dry, so the barrier stays quiet while redness and sensitivity settle.'
+          : 'Gentle low-pH cleanser to lift overnight oil and sunscreen without stripping the skin that this scan is trying to protect.',
+      calmFirst
+          ? 'Centella or heartleaf toner / essence, because that is the calmest way to support a reactive barrier before any active treatment.'
+          : pigment >= 3.5
+          ? 'Hydrating toner or essence, because the scan shows tone support is useful and hydration keeps brightening steps better tolerated.'
+          : texture >= 3.5 || wrinkle >= 3.5
+          ? 'Peptide-friendly hydrating essence, because texture and firmness work best when the skin is comfortable first.'
+          : 'Simple hydrating essence, because the skin does not need extra noise in the morning.',
+      calmFirst
+          ? 'Ceramide moisturizer only, or a niacinamide 2-5% serum if you already know your skin tolerates it, so the morning stays barrier-first.'
+          : acne >= 3.5
+          ? 'Niacinamide 2-5% serum or a light breakout-support serum, because the scan shows acne is present but the routine should still avoid stacking actives.'
+          : pigment >= 3.5
+          ? 'Niacinamide 2-5% serum, because it fits uneven tone and visible redness without pushing the skin too hard.'
+          : 'Ceramide moisturizer, because keeping water in the skin is still the safest way to support the current scan pattern.',
+      'Broad-spectrum SPF 30+, because it protects collagen, pigment, redness, and any progress this scan is tracking.',
     ];
+
     final pm = <String>[
-      'Gentle cleanse',
+      'Gentle cleanse, and if you wore sunscreen or makeup, double cleanse first so the evening routine starts from a clean surface.',
       calmFirst
-          ? 'Snail mucin or centella layer'
-          : 'Copper peptide / GHK-Cu serum',
-      'Barrier cream',
+          ? 'Centella, snail mucin, or a bland hydrating serum tonight, because the scan says calming the barrier should come before any stronger treatment.'
+          : allowActives && (texture >= 3.5 || wrinkle >= 3.5)
+          ? 'GHK-Cu Copper Tripeptide-1 at night, because texture and firmness concerns respond best when the barrier is calm and the routine stays consistent.'
+          : allowActives && pigment >= 3.5
+          ? 'GHK-Cu Copper Tripeptide-1 or another gentle peptide serum, because the scan favors quiet repair more than aggressive exfoliation.'
+          : 'Hydrating serum or peptide step only if the skin stays comfortable, because the routine does not need to be overloaded.',
       calmFirst
-          ? 'Pimple patches only where needed; save acids for calmer nights'
-          : 'Optional Some By Mi toner 1-2 nights weekly, not with irritation',
+          ? 'Ceramide barrier cream, because sealing the routine with lipids is the safest way to keep the skin quiet while redness or sensitivity is visible.'
+          : acne >= 3.5
+          ? 'Barrier cream plus a spot-only acne patch on active blemishes, because breakout support should stay targeted instead of turning into a full-face stack.'
+          : 'Barrier cream, because this scan still benefits more from steady repair than from piling on more treatment steps.',
+      calmFirst
+          ? 'Skip acids, retinoids, and scrubs for now; if you want a weekly active later, wait until the skin is calm for several nights in a row.'
+          : allowActives && (texture >= 3.5 || wrinkle >= 3.5 || pigment >= 3.5)
+          ? 'If you add an exfoliant later, keep it to one calm night a week and do not stack it with GHK-Cu or spot acne care.'
+          : 'If the skin feels stable, keep any extra treatment step optional rather than mandatory so you do not crowd the routine.',
     ];
+
     return (am, pm);
   }
 
@@ -6670,6 +7111,68 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       'Sleep in surgeon-approved position',
     ];
     return (am, pm);
+  }
+
+  Widget _routineExpansionTile({
+    required List<String> amSteps,
+    required List<String> pmSteps,
+    required Color pmAccent,
+    String title = 'Suggested routine',
+  }) {
+    final hasRoutine = amSteps.isNotEmpty || pmSteps.isNotEmpty;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: AppColors.champagneGold.withValues(alpha: 0.24),
+          width: 0.8,
+        ),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+          childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+          iconColor: MyApp.clinicalNavy,
+          collapsedIconColor: MyApp.clinicalNavy,
+          title: Text(
+            title,
+            style: TextStyle(
+              color: MyApp.clinicalNavy,
+              fontSize: 12.4,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          subtitle: Text(
+            'Tap to view AM/PM steps',
+            style: TextStyle(
+              color: MyApp.textBrown.withValues(alpha: 0.74),
+              fontSize: 10.8,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          children: [
+            if (hasRoutine)
+              Row(
+                children: [
+                  Expanded(
+                    child: _routineColumn('AM', amSteps, MyApp.clinicalTeal),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _routineColumn('PM', pmSteps, pmAccent),
+                  ),
+                ],
+              )
+            else
+              _framingNote(
+                'Routine tips unlock from your scores.',
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _recommendationTile(
@@ -7322,140 +7825,6 @@ class _SkinAiSplitComparisonScreen extends StatelessWidget {
   }
 }
 
-class LuxeMetricGrid extends StatelessWidget {
-  const LuxeMetricGrid({super.key, required this.metrics});
-
-  final Map<String, double> metrics;
-
-  @override
-  Widget build(BuildContext context) {
-    final tiles = [
-      _LuxeMetricTile(
-        label: 'Redness',
-        value: metrics['redness'] ?? 0,
-        accent: const Color(0xFFC76A55),
-      ),
-      _LuxeMetricTile(
-        label: 'Wrinkles',
-        value: metrics['wrinkles'] ?? 0,
-        accent: const Color(0xFFD08A4A),
-      ),
-      _LuxeMetricTile(
-        label: 'Dark spots',
-        value: metrics['darkSpots'] ?? 0,
-        accent: const Color(0xFFB89A6E),
-      ),
-    ];
-
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: tiles.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 1.05,
-      ),
-      itemBuilder: (context, index) => tiles[index],
-    );
-  }
-}
-
-class _LuxeMetricTile extends StatelessWidget {
-  const _LuxeMetricTile({
-    required this.label,
-    required this.value,
-    required this.accent,
-  });
-
-  final String label;
-  final double value;
-  final Color accent;
-
-  String get _status {
-    if (value < 25) return 'Low';
-    if (value < 50) return 'Mild';
-    if (value < 75) return 'Moderate';
-    return 'High';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final score = value.clamp(0, 100).toDouble();
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF151922),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x33000000),
-            blurRadius: 18,
-            offset: Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.72),
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.3,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            score.toStringAsFixed(0),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 38,
-              fontWeight: FontWeight.w300,
-              height: 1,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            '0-100 calibrated',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.5),
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const Spacer(),
-          Text(
-            _status,
-            style: TextStyle(
-              color: accent,
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.2,
-            ),
-          ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: SizedBox(
-              height: 6,
-              child: LinearProgressIndicator(
-                value: score / 100,
-                backgroundColor: Colors.white.withValues(alpha: 0.08),
-                valueColor: AlwaysStoppedAnimation<Color>(accent),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 /// Reusable results screen for the backend-powered Deep Analysis flow in
 /// [CameraScreen]. It accepts flexible JSON so future trained-model payloads
 /// can be displayed without coupling the camera screen to a specific schema.
@@ -7563,14 +7932,64 @@ class SkinAiAnalysisResultsScreen extends StatelessWidget {
     );
     final nestedMatrix = readMap(metrics['metric_matrix']);
 
+    // Same dropped-field pattern as metric_matrix above -- _assessMetricHonesty
+    // resolves hasComparisonBaseline from baseline_metric_matrix, so without
+    // this a baseline value is never available at all (a different symptom
+    // than the trend_status gap below, but the same missing-merge bug).
+    final rootBaselineMatrix = readMap(
+      _body['baseline_metric_matrix'] ?? analysisResult['baseline_metric_matrix'],
+    );
+    final nestedBaselineMatrix = readMap(metrics['baseline_metric_matrix']);
+
+    // trend_status must travel alongside trend_deltas -- _assessMetricHonesty
+    // (luxe_report_layout.dart) only trusts the backend trend for a metric
+    // when BOTH trend_deltas and trend_status are present; dropping either
+    // one silently forces every metric on this screen into the Dart-recompute
+    // fallback (LUXE TREND FALLBACK) even when the backend sent a real trend.
+    final rootTrendStatus = readMap(
+      _body['trend_status'] ?? analysisResult['trend_status'],
+    );
+    final nestedTrendStatus = readMap(metrics['trend_status']);
+
+    // Same dropped-field pattern as trend_deltas/metric_matrix above, for the
+    // extraction-path fields the honesty/path-mismatch guard depends on.
+    final rootExtractionPaths = readMap(
+      _body['metric_extraction_paths'] ?? analysisResult['metric_extraction_paths'],
+    );
+    final nestedExtractionPaths = readMap(metrics['metric_extraction_paths']);
+    final rootBaselineExtractionPaths = readMap(
+      _body['baseline_metric_extraction_paths'] ??
+          analysisResult['baseline_metric_extraction_paths'],
+    );
+    final nestedBaselineExtractionPaths = readMap(
+      metrics['baseline_metric_extraction_paths'],
+    );
+
     final trendDeltas = rootTrend ?? nestedTrend;
     final metricMatrix = rootMatrix ?? nestedMatrix;
+    final baselineMatrix = rootBaselineMatrix ?? nestedBaselineMatrix;
+    final trendStatus = rootTrendStatus ?? nestedTrendStatus;
+    final extractionPaths = rootExtractionPaths ?? nestedExtractionPaths;
+    final baselineExtractionPaths =
+        rootBaselineExtractionPaths ?? nestedBaselineExtractionPaths;
 
     if (trendDeltas != null) {
       merged['trend_deltas'] = trendDeltas;
     }
     if (metricMatrix != null) {
       merged['metric_matrix'] = metricMatrix;
+    }
+    if (baselineMatrix != null) {
+      merged['baseline_metric_matrix'] = baselineMatrix;
+    }
+    if (trendStatus != null) {
+      merged['trend_status'] = trendStatus;
+    }
+    if (extractionPaths != null) {
+      merged['metric_extraction_paths'] = extractionPaths;
+    }
+    if (baselineExtractionPaths != null) {
+      merged['baseline_metric_extraction_paths'] = baselineExtractionPaths;
     }
 
     return merged;
@@ -7812,7 +8231,7 @@ class SkinAiAnalysisResultsScreen extends StatelessWidget {
                     Text(
                       product.price,
                       style: const TextStyle(
-                        color: Color(0xFFD4AF37),
+                        color: Color(0xFF7A8B7B),
                         fontSize: 16,
                         fontWeight: FontWeight.w900,
                       ),
@@ -7825,8 +8244,8 @@ class SkinAiAnalysisResultsScreen extends StatelessWidget {
                         onPressed: () =>
                             _launchAffiliateUrl(context, product.affiliateUrl),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFD4AF37),
-                          foregroundColor: const Color(0xFF1A1F2C),
+                          backgroundColor: const Color(0xFF7A8B7B),
+                          foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(10),
                           ),

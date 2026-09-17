@@ -220,6 +220,8 @@ bool usesBodyCameraGuide(String procedureType) {
 
 enum ProcedureCameraGuideType { facial, body, general }
 
+enum ProcedureBodyRegion { face, body, general }
+
 ProcedureCameraGuideType procedureCameraGuideType(String procedureType) {
   final trimmed = procedureType.trim();
   if (trimmed.isEmpty) return ProcedureCameraGuideType.general;
@@ -243,6 +245,42 @@ ProcedureCameraGuideType procedureCameraGuideType(String procedureType) {
   }
 
   return ProcedureCameraGuideType.general;
+}
+
+ProcedureBodyRegion procedureBodyRegionForType(String procedureType) {
+  switch (procedureCameraGuideType(procedureType)) {
+    case ProcedureCameraGuideType.facial:
+      return ProcedureBodyRegion.face;
+    case ProcedureCameraGuideType.body:
+      return ProcedureBodyRegion.body;
+    case ProcedureCameraGuideType.general:
+      return ProcedureBodyRegion.general;
+  }
+}
+
+String procedureBodyRegionToJson(ProcedureBodyRegion region) {
+  switch (region) {
+    case ProcedureBodyRegion.face:
+      return 'face';
+    case ProcedureBodyRegion.body:
+      return 'body';
+    case ProcedureBodyRegion.general:
+      return 'general';
+  }
+}
+
+ProcedureBodyRegion procedureBodyRegionFromJson(dynamic value, String type) {
+  if (value is String) {
+    switch (value.trim().toLowerCase()) {
+      case 'face':
+        return ProcedureBodyRegion.face;
+      case 'body':
+        return ProcedureBodyRegion.body;
+      case 'general':
+        return ProcedureBodyRegion.general;
+    }
+  }
+  return procedureBodyRegionForType(type);
 }
 
 String? normalizedCustomDescription(String? value) {
@@ -377,6 +415,7 @@ class Procedure {
   final String id;
   final String type;
   final String category;
+  final ProcedureBodyRegion bodyRegion;
   final String provider;
   final DateTime startDate;
   final bool isCompleted;
@@ -400,10 +439,11 @@ class Procedure {
   // Healing Journey support - uses the shared rich JournalEntry
   final List<JournalEntry> journalEntries;
 
-  const Procedure({
+  Procedure({
     required this.id,
     required this.type,
     this.category = '',
+    ProcedureBodyRegion? bodyRegion,
     required this.provider,
     required this.startDate,
     this.isCompleted = false,
@@ -420,15 +460,22 @@ class Procedure {
     this.afterPhotoBytes,
     this.surgeonPlanPhotoBytes,
     this.journalEntries = const [], // default to empty list
-  });
+  }) : bodyRegion = bodyRegion ?? procedureBodyRegionForType(type);
 
   factory Procedure.fromJson(Map<String, dynamic> json) {
+    final type = json['type'] as String? ?? '';
+    final savedBodyRegionValue = json['bodyRegion'];
+    final inferredBodyRegion = procedureBodyRegionForType(type);
+
     return Procedure(
       id: json['id'] as String,
-      type: json['type'] as String,
+      type: type,
       category: (json['category'] as String?)?.trim().isNotEmpty == true
           ? (json['category'] as String).trim()
-          : inferProcedureCategory(json['type'] as String? ?? ''),
+          : inferProcedureCategory(type),
+      bodyRegion: savedBodyRegionValue == null
+          ? inferredBodyRegion
+          : procedureBodyRegionFromJson(savedBodyRegionValue, type),
       provider: json['provider'] as String,
       startDate: DateTime.parse(json['startDate'] as String),
       isCompleted: json['isCompleted'] as bool? ?? false,
@@ -482,6 +529,7 @@ class Procedure {
     'id': id,
     'type': type,
     'category': category.isEmpty ? inferProcedureCategory(type) : category,
+    'bodyRegion': procedureBodyRegionToJson(bodyRegion),
     'provider': provider,
     'startDate': startDate.toIso8601String(),
     'isCompleted': isCompleted,
@@ -504,6 +552,7 @@ class Procedure {
     String? id,
     String? type,
     String? category,
+    ProcedureBodyRegion? bodyRegion,
     String? provider,
     DateTime? startDate,
     bool? isCompleted,
@@ -526,6 +575,7 @@ class Procedure {
       id: id ?? this.id,
       type: type ?? this.type,
       category: category ?? this.category,
+      bodyRegion: bodyRegion ?? this.bodyRegion,
       provider: provider ?? this.provider,
       startDate: startDate ?? this.startDate,
       isCompleted: isCompleted ?? this.isCompleted,

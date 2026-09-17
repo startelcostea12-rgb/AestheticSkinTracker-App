@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'dart:async' show unawaited;
 
 import '../app_theme.dart';
+import '../utils/conversion_analytics.dart';
 
 // ── Subscription tier enum (used for dev/mock state) ─────────────────────────
 enum MockSubscriptionTier { free, premium, pro }
@@ -20,11 +22,43 @@ class _PaywallSubscriptionScreenState extends State<PaywallSubscriptionScreen> {
   MockSubscriptionTier _activeTier = MockSubscriptionTier.free;
   bool _selectedYearly = false;
 
+  @override
+  void initState() {
+    super.initState();
+    unawaited(
+      ConversionAnalytics.track(
+        ConversionEvent.paywallView,
+        properties: <String, dynamic>{
+          'surface': 'paywall_subscription_screen',
+          'default_annual_selected': _selectedYearly,
+        },
+      ),
+    );
+  }
+
   bool get _isPremium =>
       _activeTier == MockSubscriptionTier.premium ||
       _activeTier == MockSubscriptionTier.pro;
 
   void _selectTier(MockSubscriptionTier tier) {
+    final wasPremium =
+        _activeTier == MockSubscriptionTier.premium ||
+        _activeTier == MockSubscriptionTier.pro;
+    final nextPremium =
+        tier == MockSubscriptionTier.premium || tier == MockSubscriptionTier.pro;
+
+    if (wasPremium && !nextPremium) {
+      unawaited(
+        ConversionAnalytics.track(
+          ConversionEvent.churn,
+          properties: const <String, dynamic>{
+            'surface': 'paywall_subscription_screen',
+            'channel': 'mock_tier_switch',
+          },
+        ),
+      );
+    }
+
     setState(() => _activeTier = tier);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -34,7 +68,29 @@ class _PaywallSubscriptionScreenState extends State<PaywallSubscriptionScreen> {
     );
   }
 
-  void _handleUpgrade() => _selectTier(MockSubscriptionTier.premium);
+  void _handleUpgrade() {
+    unawaited(
+      ConversionAnalytics.track(
+        ConversionEvent.trialStart,
+        properties: <String, dynamic>{
+          'surface': 'paywall_subscription_screen',
+          'billing_cycle': _selectedYearly ? 'annual' : 'monthly',
+          'channel': 'mock',
+        },
+      ),
+    );
+    unawaited(
+      ConversionAnalytics.track(
+        ConversionEvent.subscribe,
+        properties: <String, dynamic>{
+          'surface': 'paywall_subscription_screen',
+          'billing_cycle': _selectedYearly ? 'annual' : 'monthly',
+          'channel': 'mock',
+        },
+      ),
+    );
+    _selectTier(MockSubscriptionTier.premium);
+  }
 
   void _restorePurchases() {
     ScaffoldMessenger.of(context).showSnackBar(

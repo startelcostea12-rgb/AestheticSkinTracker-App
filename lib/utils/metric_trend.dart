@@ -1,79 +1,86 @@
 import 'package:flutter/material.dart';
 
-import '../app_theme.dart';
+import '../theme/app_colors.dart';
 
-enum MetricDirectionality { lowerIsBetter, higherIsBetter }
-
-const Map<String, MetricDirectionality> _metricDirectionality = {
-  'redness': MetricDirectionality.lowerIsBetter,
-  'texture': MetricDirectionality.lowerIsBetter,
-  'wrinkle': MetricDirectionality.lowerIsBetter,
-  'wrinkles': MetricDirectionality.lowerIsBetter,
-  'pore': MetricDirectionality.lowerIsBetter,
-  'pores': MetricDirectionality.lowerIsBetter,
-  'dark spots': MetricDirectionality.lowerIsBetter,
-  'darkspots': MetricDirectionality.lowerIsBetter,
-  'swelling': MetricDirectionality.lowerIsBetter,
-  'bruising': MetricDirectionality.lowerIsBetter,
-  'skin laxity': MetricDirectionality.higherIsBetter,
-  'scar visibility': MetricDirectionality.lowerIsBetter,
-  'asymmetry': MetricDirectionality.lowerIsBetter,
-  'eyelid swelling': MetricDirectionality.lowerIsBetter,
-  'firmness': MetricDirectionality.higherIsBetter,
-  'elasticity': MetricDirectionality.higherIsBetter,
-  'shape definition': MetricDirectionality.higherIsBetter,
-  'symmetry': MetricDirectionality.higherIsBetter,
-  'tip refinement': MetricDirectionality.higherIsBetter,
-  'jawline definition': MetricDirectionality.higherIsBetter,
-  'neck tightness': MetricDirectionality.higherIsBetter,
-  'lift': MetricDirectionality.higherIsBetter,
-  'fat retention': MetricDirectionality.higherIsBetter,
-  'contour smoothness': MetricDirectionality.higherIsBetter,
-  'skin tightness': MetricDirectionality.higherIsBetter,
-  'hooding reduction': MetricDirectionality.higherIsBetter,
+const Map<String, bool> _metricLowerIsBetter = {
+  'redness': true,
+  'texture': true,
+  'wrinkle': true,
+  'wrinkles': true,
+  'pore': true,
+  'pores': true,
+  'dark spots': true,
+  'darkspots': true,
+  'swelling': true,
+  'bruising': true,
+  'skin laxity': false,
+  'scar visibility': true,
+  'asymmetry': true,
+  'eyelid swelling': true,
+  'firmness': false,
+  'elasticity': false,
+  'shape definition': false,
+  'symmetry': false,
+  'tip refinement': false,
+  'jawline definition': false,
+  'neck tightness': false,
+  'lift': false,
+  'fat retention': false,
+  'contour smoothness': false,
+  'skin tightness': false,
+  'hooding reduction': false,
   // Extended skin / wellness metrics
-  'hydration': MetricDirectionality.higherIsBetter,
-  'barrier health': MetricDirectionality.higherIsBetter,
-  'evenness': MetricDirectionality.higherIsBetter,
-  'tone': MetricDirectionality.higherIsBetter,
-  'skin tone': MetricDirectionality.higherIsBetter,
-  'pigmentation': MetricDirectionality.lowerIsBetter,
-  'dark spots / pigmentation': MetricDirectionality.lowerIsBetter,
-  'inflammation': MetricDirectionality.lowerIsBetter,
-  'redness / swelling': MetricDirectionality.lowerIsBetter,
-  'skin age': MetricDirectionality.lowerIsBetter,
-  'biological age': MetricDirectionality.lowerIsBetter,
+  'hydration': false,
+  'barrier health': false,
+  'evenness': false,
+  'tone': false,
+  'skin tone': false,
+  'pigmentation': true,
+  'dark spots / pigmentation': true,
+  'inflammation': true,
+  'redness / swelling': true,
+  'skin age': true,
+  'biological age': true,
   // Body composition
-  'weight': MetricDirectionality.lowerIsBetter,
-  'weight loss': MetricDirectionality.higherIsBetter,
-  'body fat': MetricDirectionality.lowerIsBetter,
-  'body fat %': MetricDirectionality.lowerIsBetter,
-  'waist': MetricDirectionality.lowerIsBetter,
-  'waist circumference': MetricDirectionality.lowerIsBetter,
-  'muscle mass': MetricDirectionality.higherIsBetter,
-  'muscle retention': MetricDirectionality.higherIsBetter,
-  'appetite control': MetricDirectionality.higherIsBetter,
-  'satiety': MetricDirectionality.higherIsBetter,
-  'body composition score': MetricDirectionality.higherIsBetter,
+  'weight': true,
+  'weight loss': false,
+  'body fat': true,
+  'body fat %': true,
+  'waist': true,
+  'waist circumference': true,
+  'muscle mass': false,
+  'muscle retention': false,
+  'appetite control': false,
+  'satiety': false,
+  'body composition score': false,
   // Canonical clinical metric labels (see SkinMetricRegistry).
-  'erythema': MetricDirectionality.lowerIsBetter,
-  'erythema (redness)': MetricDirectionality.lowerIsBetter,
-  'skin texture quality': MetricDirectionality.lowerIsBetter,
-  'skin texture': MetricDirectionality.lowerIsBetter,
-  'rhytids': MetricDirectionality.lowerIsBetter,
-  'rhytids (fine lines & wrinkles)': MetricDirectionality.lowerIsBetter,
-  'fine lines & wrinkles': MetricDirectionality.lowerIsBetter,
-  'fine lines / wrinkles': MetricDirectionality.lowerIsBetter,
-  'pore visibility': MetricDirectionality.lowerIsBetter,
-  'hyperpigmentation': MetricDirectionality.lowerIsBetter,
-  'hyperpigmentation (dark spots)': MetricDirectionality.lowerIsBetter,
-  'skin laxity (firmness / elasticity)': MetricDirectionality.higherIsBetter,
-  'skin laxity (firmness)': MetricDirectionality.higherIsBetter,
-  'skin tone uniformity': MetricDirectionality.higherIsBetter,
-  'skin hydration level': MetricDirectionality.higherIsBetter,
-  'inflammatory response': MetricDirectionality.lowerIsBetter,
-  'rosacea severity': MetricDirectionality.lowerIsBetter,
-  'global skin quality score': MetricDirectionality.higherIsBetter,
+  'erythema': true,
+  'erythema (redness)': true,
+  'skin texture quality': true,
+  'skin texture': true,
+  'rhytids': true,
+  'rhytids (fine lines & wrinkles)': true,
+  'fine lines & wrinkles': true,
+  'fine lines / wrinkles': true,
+  'pore visibility': true,
+  'localized redness': true,
+  'pigment load': true,
+  'breakout activity': true,
+  'wrinkle load': true,
+  'diffuse flushing erythema': true,
+  'hyperpigmentation': true,
+  'hyperpigmentation (dark spots)': true,
+  'skin laxity (firmness / elasticity)': false,
+  'skin laxity (firmness)': false,
+  'texture smoothness': false,
+  'skin tone uniformity': false,
+  'skin tone radiance evenness': false,
+  'structural firmness elasticity': false,
+  'skin hydration level': false,
+  'skin hydration': false,
+  'inflammatory response': true,
+  'rosacea severity': true,
+  'global skin quality score': false,
 };
 
 String _normalizeMetricLabel(String metricLabel) {
@@ -107,13 +114,13 @@ MetricTrend resolveMetricTrend(
   required double baseline,
   required double current,
   double threshold = 0.05,
-  MetricDirectionality? directionalityOverride,
+  bool? lowerIsBetterOverride,
 }) {
   final normalizedLabel = _normalizeMetricLabel(metricLabel);
   final change = current - baseline;
   final hasMeaningfulChange = change.abs() > threshold;
-  final directionality =
-      directionalityOverride ?? _metricDirectionality[normalizedLabel];
+  final lowerIsBetter =
+      lowerIsBetterOverride ?? _metricLowerIsBetter[normalizedLabel];
 
   if (!hasMeaningfulChange) {
     return MetricTrend(
@@ -125,26 +132,26 @@ MetricTrend resolveMetricTrend(
     );
   }
 
-  if (directionality == null) {
+  if (lowerIsBetter == null) {
     return MetricTrend(
       icon: change < 0 ? Icons.arrow_downward : Icons.arrow_upward,
-      color: MyApp.roseGold,
+      color: AppColors.kMetricWorsenedColor,
       change: change,
       hasMeaningfulChange: true,
       isImproved: false,
     );
   }
 
-  final isImproved = directionality == MetricDirectionality.lowerIsBetter
-      ? change < 0
-      : change > 0;
+  final isImproved = lowerIsBetter ? change < 0 : change > 0;
   final directionalIcon = change < 0
       ? Icons.arrow_downward
       : Icons.arrow_upward;
 
   return MetricTrend(
     icon: directionalIcon,
-    color: isImproved ? MyApp.clinicalTeal : MyApp.roseGold,
+    color: isImproved
+        ? AppColors.kMetricImprovedColor
+        : AppColors.kMetricWorsenedColor,
     change: change,
     hasMeaningfulChange: true,
     isImproved: isImproved,

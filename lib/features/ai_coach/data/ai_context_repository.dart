@@ -5,6 +5,7 @@ import 'package:hive/hive.dart';
 import 'package:aesthetic_skin_tracker/models/product_tracker.dart';
 import 'package:aesthetic_skin_tracker/models/procedure.dart';
 import 'package:aesthetic_skin_tracker/models/procedure_log.dart';
+import 'package:aesthetic_skin_tracker/models/journal_entry.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/services/skin_history_repository.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
@@ -35,6 +36,8 @@ class AiContextRepository {
       AppPrefs.getProcedureType(),
       AppPrefs.getActiveProductOrNull(),
       AppPrefs.getString('skincare_journal_entries'),
+      AppPrefs.getGeneralJournalEntries(),
+      AppPrefs.getScarHealingEntriesRaw(),
       AppPrefs.getString('provider_notes_v1'),
     ]);
 
@@ -51,7 +54,11 @@ class AiContextRepository {
     final procedureType = (results[9] as String).trim();
     final activeProduct = (results[10] as String?)?.trim();
     final skincareJournalRaw = results[11] as String?;
-    final providerNotesRaw = results[12] as String?;
+    final generalJournalEntries =
+      List<JournalEntry>.from(results[12] as List<JournalEntry>);
+    final scarHealingEntries =
+      List<Map<String, dynamic>>.from(results[13] as List<Map<String, dynamic>>);
+    final providerNotesRaw = results[14] as String?;
 
     final sortedScans = List<ScanHistoryEntry>.from(scans)
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
@@ -92,6 +99,8 @@ class AiContextRepository {
     final procedureNotes = _collectProcedureNotes(procedures);
     final procedureJournalEntries = _collectProcedureJournalEntries(procedures);
     final skincareJournalEntries = _parseSkincareJournalEntries(skincareJournalRaw);
+    final recentUserJournalNotes = _journalEntriesToPayload(generalJournalEntries);
+    final scarHealingContext = _scarHealingContextToPayload(scarHealingEntries);
     final providerNotes = _parseProviderNotes(providerNotesRaw);
 
     final selectedProcedure =
@@ -144,15 +153,21 @@ class AiContextRepository {
         'counts': {'total': procedureLogs.length},
       },
       'journal_and_notes': {
+        'recent_user_journal_notes':
+          recentUserJournalNotes.take(maxJournalEntries).toList(growable: false),
         'procedure_journal_entries':
             procedureJournalEntries.take(maxJournalEntries).toList(growable: false),
         'skincare_journal_entries':
             skincareJournalEntries.take(maxJournalEntries).toList(growable: false),
+        'scar_healing_entries':
+            scarHealingContext.take(maxJournalEntries).toList(growable: false),
         'procedure_notes': procedureNotes,
         'provider_notes': providerNotes.take(maxProviderNotes).toList(growable: false),
         'counts': {
           'procedure_journal_entries': procedureJournalEntries.length,
+          'recent_user_journal_notes': recentUserJournalNotes.length,
           'skincare_journal_entries': skincareJournalEntries.length,
+          'scar_healing_entries': scarHealingContext.length,
           'procedure_notes': procedureNotes.length,
           'provider_notes': providerNotes.length,
         },
@@ -263,6 +278,47 @@ class AiContextRepository {
     return entries;
   }
 
+  List<Map<String, dynamic>> _scarHealingContextToPayload(
+    List<Map<String, dynamic>> entries,
+  ) {
+    final payload = <Map<String, dynamic>>[];
+    for (final raw in entries) {
+      final notes = raw['notes'] is List
+          ? (raw['notes'] as List)
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList(growable: false)
+          : const <Map<String, dynamic>>[];
+      final latestNote = notes.isNotEmpty ? notes.last : null;
+      payload.add({
+        'procedure_id': raw['procedureId'],
+        'procedure_name': raw['procedureName'],
+        'procedure_tag': raw['procedureTag'],
+        'date': raw['date'],
+        'concern_level': raw['concernLevel'],
+        'note_count':
+            notes.length +
+            ((raw['transcript'] as String?)?.trim().isNotEmpty == true ? 1 : 0),
+        'latest_transcript':
+            (raw['transcript'] as String?)?.trim().isEmpty == true
+            ? null
+            : raw['transcript'],
+        'latest_note': latestNote == null ? null : latestNote['text'],
+        'metrics': raw['metrics'],
+      });
+    }
+    payload.sort((a, b) {
+      final left =
+          DateTime.tryParse((a['date'] ?? '').toString()) ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      final right =
+          DateTime.tryParse((b['date'] ?? '').toString()) ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      return right.compareTo(left);
+    });
+    return payload;
+  }
+
   List<Map<String, dynamic>> _parseSkincareJournalEntries(String? raw) {
     if (raw == null || raw.trim().isEmpty) return const [];
     try {
@@ -290,8 +346,10 @@ class AiContextRepository {
       }
 
       output.sort((a, b) {
-        final aDate = DateTime.tryParse((a['date'] ?? '').toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
-        final bDate = DateTime.tryParse((b['date'] ?? '').toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final aDate = DateTime.tryParse((a['date'] ?? '').toString()) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        final bDate = DateTime.tryParse((b['date'] ?? '').toString()) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
         return bDate.compareTo(aDate);
       });
       return output;
@@ -320,13 +378,32 @@ class AiContextRepository {
         });
       }
       notes.sort((a, b) {
-        final aDate = DateTime.tryParse((a['date'] ?? '').toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
-        final bDate = DateTime.tryParse((b['date'] ?? '').toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final aDate = DateTime.tryParse((a['date'] ?? '').toString()) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        final bDate = DateTime.tryParse((b['date'] ?? '').toString()) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
         return bDate.compareTo(aDate);
       });
       return notes;
     } catch (_) {
       return const [];
     }
+  }
+
+  List<Map<String, dynamic>> _journalEntriesToPayload(
+    List<JournalEntry> entries,
+  ) {
+    return entries
+        .map(
+          (entry) => {
+            'date': entry.date.toIso8601String(),
+            'title': entry.title,
+            'content': entry.content,
+            'mood_rating': entry.moodRating,
+            'swelling_level': entry.swellingLevel,
+            'attached_image_path': entry.attachedImagePath,
+          },
+        )
+        .toList(growable: false);
   }
 }

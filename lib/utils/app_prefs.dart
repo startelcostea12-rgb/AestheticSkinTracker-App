@@ -7,6 +7,7 @@ import 'package:hive/hive.dart';
 import '../models/product_tracker.dart';
 import '../models/product_feedback.dart';
 import '../models/acne_rosacea_log.dart';
+import '../models/journal_entry.dart';
 import '../models/scan_history.dart';
 import '../models/skin_profile.dart';
 import '../models/procedure_log.dart';
@@ -31,16 +32,24 @@ class AppPrefs {
   static const String legacyScanHistoryKey = 'scan_history_v1';
   static const String procedurePhotoComparisonKey =
       'procedure_photo_comparison';
+    static const String bodyConsistentScanCountsKey =
+      'body_consistent_scan_counts';
   static const String procedureHistoryKey = 'procedure_history';
   static const String selectedProcedureIdKey = 'selected_procedure_id';
   static const String activeSkincareProductKey = 'active_skincare_product_name';
   static const String trackedProductsKey = 'tracked_products';
   static const String productFeedbackKey = 'product_feedback_entries';
   static const String acneRosaceaLogsKey = 'acne_rosacea_logs';
+  static const String generalJournalEntriesKey = 'general_journal_entries_v1';
+  static const String scarHealingEntriesKey = 'scar_healing_entries_v1';
+  static const String activeAiRoutineKey = 'active_ai_skincare_routine_v1';
+  static const String activeAiRoutineCompletionKey =
+      'active_ai_skincare_routine_completion_v1';
   static const String peptideStackNameKey = 'peptide_stack_name';
   static const String scanHistoryStorageWarningKey =
       'scan_history_storage_warning';
   static const String verboseDiagnosticsKey = 'verbose_diagnostics_enabled';
+  static const String notificationsEnabledKey = 'notifications_enabled';
   static const int maxStoredScans = 50;
   static const int minStoredScansOnQuotaRetry = 30;
   static const int maxStoredScanImages = 12;
@@ -63,6 +72,16 @@ class AppPrefs {
     await getVerboseDiagnosticsEnabled();
   }
 
+  static Future<bool> getNotificationsEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(notificationsEnabledKey) ?? false;
+  }
+
+  static Future<void> setNotificationsEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(notificationsEnabledKey, enabled);
+  }
+
   // ── Journal Support Methods (getString / setString) ──
   static Future<String?> getString(String key) async {
     final prefs = await SharedPreferences.getInstance();
@@ -72,6 +91,126 @@ class AppPrefs {
   static Future<void> setString(String key, String value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(key, value);
+  }
+
+  static Future<int> getBodyConsistentScanCount(String procedureId) async {
+    final id = procedureId.trim();
+    if (id.isEmpty) return 0;
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(bodyConsistentScanCountsKey);
+    if (raw == null || raw.isEmpty) return 0;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return 0;
+      final value = decoded[id];
+      return value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  static Future<void> setBodyConsistentScanCount(
+    String procedureId,
+    int count,
+  ) async {
+    final id = procedureId.trim();
+    if (id.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(bodyConsistentScanCountsKey);
+    final values = <String, dynamic>{};
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) values.addAll(Map<String, dynamic>.from(decoded));
+      } catch (_) {}
+    }
+    values[id] = count.clamp(0, 999);
+    await prefs.setString(bodyConsistentScanCountsKey, jsonEncode(values));
+  }
+
+  static Future<List<JournalEntry>> getGeneralJournalEntries() async {
+    final raw = await getString(generalJournalEntriesKey);
+    if (raw == null || raw.trim().isEmpty) return [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+      final entries = decoded
+          .whereType<Map>()
+          .map((item) => JournalEntry.fromJson(Map<String, dynamic>.from(item)))
+          .toList(growable: false)
+        ..sort((a, b) => b.date.compareTo(a.date));
+      return entries;
+    } catch (error) {
+      debugPrint('Failed to decode general journal entries: $error');
+      return [];
+    }
+  }
+
+  static Future<void> saveGeneralJournalEntries(
+    List<JournalEntry> entries,
+  ) async {
+    final encoded = entries
+        .map((entry) => entry.toJson())
+        .toList(growable: false);
+    await setString(generalJournalEntriesKey, jsonEncode(encoded));
+  }
+
+  static Future<List<Map<String, dynamic>>> getScarHealingEntriesRaw() async {
+    final raw = await getString(scarHealingEntriesKey);
+    if (raw == null || raw.trim().isEmpty) return [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+      return decoded
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+    } catch (error) {
+      debugPrint('Failed to decode scar healing entries: $error');
+      return [];
+    }
+  }
+
+  static Future<void> saveScarHealingEntriesRaw(
+    List<Map<String, dynamic>> entries,
+  ) async {
+    await setString(scarHealingEntriesKey, jsonEncode(entries));
+  }
+
+  static Future<Map<String, dynamic>?> getActiveAiRoutine() async {
+    final raw = await getString(activeAiRoutineKey);
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      return Map<String, dynamic>.from(decoded);
+    } catch (error) {
+      debugPrint('Failed to decode active AI routine: $error');
+      return null;
+    }
+  }
+
+  static Future<void> saveActiveAiRoutine(Map<String, dynamic> routine) async {
+    await setString(activeAiRoutineKey, jsonEncode(routine));
+  }
+
+  static Future<Map<String, dynamic>> getActiveAiRoutineCompletion() async {
+    final raw = await getString(activeAiRoutineCompletionKey);
+    if (raw == null || raw.trim().isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return {};
+      return Map<String, dynamic>.from(decoded);
+    } catch (error) {
+      debugPrint('Failed to decode active AI routine completion: $error');
+      return {};
+    }
+  }
+
+  static Future<void> saveActiveAiRoutineCompletion(
+    Map<String, dynamic> completion,
+  ) async {
+    await setString(activeAiRoutineCompletionKey, jsonEncode(completion));
   }
 
   static Future<String?> getPeptideStackNameOrNull() async {
@@ -715,10 +854,16 @@ class AppPrefs {
           lightingConfidence: entry.lightingConfidence,
           preferredReference: entry.preferredReference,
           isBaseline: shouldBeBaseline,
+          bodyReferenceGeometry: entry.bodyReferenceGeometry,
           makeupPresent: entry.makeupPresent,
           distanceEstimate: entry.distanceEstimate,
           headTiltAngle: entry.headTiltAngle,
           expressionConfidence: entry.expressionConfidence,
+          captureQuality: entry.captureQuality,
+          scanEngine: entry.scanEngine,
+          captureMode: entry.captureMode,
+          sourceImageWidth: entry.sourceImageWidth,
+          sourceImageHeight: entry.sourceImageHeight,
         );
       }
     }
@@ -777,10 +922,16 @@ class AppPrefs {
     double? lightingConfidence,
     bool preferredReference = false,
     Map<String, double>? extraMetrics,
+    Map<String, double>? bodyReferenceGeometry,
     bool makeupPresent = false,
     double? distanceEstimate,
     double? headTiltAngle,
     double? expressionConfidence,
+    String? captureQuality,
+    String? captureMode,
+    int? sourceImageWidth,
+    int? sourceImageHeight,
+    Map<String, dynamic>? rawPayload,
   }) async {
     final activeProduct = productName ?? await getActiveProduct();
     final now = DateTime.now();
@@ -859,10 +1010,21 @@ class AppPrefs {
       lightingConfidence: lightingConfidence,
       preferredReference: preferredReference,
       isBaseline: isBaseline,
+      bodyReferenceGeometry: bodyReferenceGeometry,
       makeupPresent: makeupPresent,
       distanceEstimate: distanceEstimate,
       headTiltAngle: headTiltAngle,
       expressionConfidence: expressionConfidence,
+      captureQuality: captureQuality,
+      captureMode: captureMode,
+      sourceImageWidth: sourceImageWidth,
+      sourceImageHeight: sourceImageHeight,
+      rawPayload: rawPayload,
+      // Every caller of addScanMetric derives `current` from
+      // camera_screen.dart's _metricsFromBackendOrThrow, which despite its
+      // name always runs the on-device TFLite model (SkinAnalysisService.
+      // instance.runFullAnalysis) — never the remote backend.
+      scanEngine: ScanHistoryEntry.engineLocalTflite,
     );
     debugPrint(
       'Added scan for product: ${entry.productName ?? "none"} | isBaseline=$isBaseline | procedureId=$procedureId | procedureType=${entry.procedure} | makeup=$makeupPresent',
@@ -949,13 +1111,66 @@ class AppPrefs {
   }
 
   static Future<void> clearScanHistory() async {
+    await clearAllScanHistoryAndBaselines();
+  }
+
+  /// Clears all persisted scan-history and baseline/progress pointers used by
+  /// AI analysis and procedure photo comparison flows.
+  ///
+  /// This method intentionally preserves user profile, onboarding completion,
+  /// product preferences, peptide state, and subscription state unless
+  /// [clearOnboardingState] is explicitly set to true by the caller.
+  static Future<void> clearAllScanHistoryAndBaselines({
+    bool clearOnboardingState = false,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
+
+    // SharedPreferences scan/baseline/progress pointers.
     await prefs.remove(scanHistoryKey);
     await prefs.remove(legacyScanHistoryKey);
     await prefs.remove(procedurePhotoComparisonKey);
     await prefs.remove(scanHistoryStorageWarningKey);
     await prefs.remove(acneRosaceaLogsKey);
-    debugPrint('Cleared scan history');
+    await prefs.remove(selectedProcedureIdKey);
+
+    // Legacy compatibility pointers seen in older builds.
+    await prefs.remove('last_scan_metrics');
+    await prefs.remove('baseline_scan');
+
+    // Remove procedure-scoped recovery/assessment history snapshots that are
+    // derived from scan timelines.
+    final keysToRemove = prefs.getKeys().where((key) {
+      return key.startsWith('bbl_assessment_') || key.startsWith('bbl_history_');
+    }).toList(growable: false);
+    for (final key in keysToRemove) {
+      await prefs.remove(key);
+    }
+
+    // Scan/procedure-log related Hive storage used in analysis flows.
+    await clearAllProcedureData();
+    await _deleteHiveBoxes(const [
+      'scans',
+      'skin_analysis',
+      'scan_history',
+      'photos',
+    ]);
+
+    if (clearOnboardingState) {
+      await prefs.remove(skinProfileKey);
+      await prefs.remove(userNameKey);
+      await prefs.remove(userAgeRangeKey);
+      await prefs.remove(userSkinConcernsKey);
+      await prefs.remove(userClinicKey);
+      await prefs.remove(userZipCodeKey);
+      await prefs.remove(userProfilePictureKey);
+      await prefs.setBool(onboardingCompleteKey, false);
+      await prefs.setBool(tourCompletedKey, false);
+    }
+
+    await prefs.reload();
+    debugPrint(
+      'Cleared scan history + baselines (clearOnboardingState=$clearOnboardingState).',
+    );
   }
 
   /// NUCLEAR CLEAR - removes ALL scan, procedure, and product data
@@ -1261,6 +1476,13 @@ class AppPrefs {
     }
 
     return retained.map((entry) {
+      final migratedMetrics = ScanHistoryEntry.migrateMetricsForLuxe(
+        entry.metrics,
+      );
+      final migratedRawPayload = _migrateRawPayloadForLuxe(
+        entry.rawPayload,
+        migratedMetrics,
+      );
       final procedureId = entry.procedureId?.trim();
       final baselineEntry = lockedBaselineByProcedure[procedureId];
       final shouldBeBaseline = procedureId != null && procedureId.isNotEmpty
@@ -1277,7 +1499,9 @@ class AppPrefs {
           : _prunedScanImagePath(entry.imagePath);
       if (entry.isBaseline == shouldBeBaseline &&
           entry.parentBaselineId == parentBaselineId &&
-          entry.imagePath == imagePath) {
+          entry.imagePath == imagePath &&
+          _mapsClose(entry.metrics, migratedMetrics) &&
+          _rawPayloadEquivalent(entry.rawPayload, migratedRawPayload)) {
         return entry;
       }
 
@@ -1290,7 +1514,8 @@ class AppPrefs {
         scanType: entry.resolvedScanType,
         peptideId: entry.peptideId,
         estimatedSkinAge: entry.estimatedSkinAge,
-        metrics: Map<String, double>.from(entry.metrics),
+        metrics: migratedMetrics,
+        rawPayload: migratedRawPayload,
         procedure: entry.procedure,
         productName: entry.productName,
         poseTemplate: entry.poseTemplate,
@@ -1303,8 +1528,134 @@ class AppPrefs {
         distanceEstimate: entry.distanceEstimate,
         headTiltAngle: entry.headTiltAngle,
         expressionConfidence: entry.expressionConfidence,
+        scanEngine: entry.scanEngine,
+        captureQuality: entry.captureQuality,
+        captureMode: entry.captureMode,
+        sourceImageWidth: entry.sourceImageWidth,
+        sourceImageHeight: entry.sourceImageHeight,
       );
     }).toList();
+  }
+
+  static Map<String, dynamic>? _migrateRawPayloadForLuxe(
+    Map<String, dynamic>? rawPayload,
+    Map<String, double> migratedMetrics,
+  ) {
+    if (rawPayload == null) return null;
+    final out = Map<String, dynamic>.from(rawPayload);
+
+    Map<String, dynamic> asMap(dynamic value) {
+      if (value is Map<String, dynamic>) return Map<String, dynamic>.from(value);
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return <String, dynamic>{};
+    }
+
+    final metricMatrix = asMap(out['metric_matrix']);
+    final metricsNode = asMap(out['metrics']);
+    final nestedMetricMatrix = asMap(metricsNode['metric_matrix']);
+
+    const canonicalKeys = <String>{
+      'localized_redness',
+      'texture_smoothness',
+      'pigment_load',
+      'wrinkle_load',
+      'pore_visibility',
+      'breakout_activity',
+      'sebum_excess_oil_gloss',
+      'diffuse_flushing_erythema',
+      'skin_tone_radiance_evenness',
+      'glabellar_wrinkle_depth',
+      'under_eye_texture_density',
+      'under_eye_dark_circle_density',
+      'rosacea_severity',
+      'structural_firmness_elasticity',
+      'pore_contraction_index',
+      'skin_hydration',
+    };
+
+    Map<String, dynamic> normalizePathMap(dynamic source) {
+      final input = asMap(source);
+      final normalized = <String, dynamic>{
+        for (final key in canonicalKeys) key: 'unknown',
+      };
+      for (final entry in input.entries) {
+        final key = entry.key.toString().trim().toLowerCase();
+        if (!canonicalKeys.contains(key)) continue;
+        final raw = entry.value?.toString().trim().toLowerCase() ?? 'unknown';
+        if (raw == 'primary_roi' || raw == 'fallback' || raw == 'skipped') {
+          normalized[key] = raw;
+        } else {
+          normalized[key] = 'unknown';
+        }
+      }
+      return normalized;
+    }
+
+    void putIfMissing(Map<String, dynamic> target, String key, double? value) {
+      if (value == null || !value.isFinite) return;
+      if (!target.containsKey(key)) target[key] = value;
+    }
+
+    final lr = migratedMetrics['localized_redness'];
+    final ts = migratedMetrics['texture_smoothness'];
+    final wl = migratedMetrics['wrinkle_load'];
+    final pl = migratedMetrics['pigment_load'];
+    final fe = migratedMetrics['structural_firmness_elasticity'];
+
+    for (final map in [metricMatrix, nestedMetricMatrix]) {
+      putIfMissing(map, 'localized_redness', lr);
+      putIfMissing(map, 'texture_smoothness', ts);
+      putIfMissing(map, 'wrinkle_load', wl);
+      putIfMissing(map, 'pigment_load', pl);
+      putIfMissing(map, 'structural_firmness_elasticity', fe);
+    }
+
+    if (metricMatrix.isNotEmpty) out['metric_matrix'] = metricMatrix;
+    if (nestedMetricMatrix.isNotEmpty || metricsNode.isNotEmpty) {
+      metricsNode['metric_matrix'] = nestedMetricMatrix;
+      out['metrics'] = metricsNode;
+    }
+
+    // Top-level fields only. A nested payload['metrics']['metric_extraction_paths']
+    // duplicate used to be written here too, but nothing upstream ever
+    // populates metrics.metric_extraction_paths in the first place, so
+    // normalizePathMap(<empty>) always produced an all-"unknown" map --
+    // and nothing in the app reads payload.metrics.metric_extraction_paths
+    // (confirmed by search: only the top-level fields below are read, e.g.
+    // luxe_report_layout.dart's _extractServerDeltaMetrics). That dead,
+    // permanently-"unknown" duplicate has been removed; do not re-add a
+    // metrics-nested copy of this field without wiring a real reader for it.
+    out['metric_extraction_paths'] = normalizePathMap(
+      out['metric_extraction_paths'],
+    );
+    out['baseline_metric_extraction_paths'] = normalizePathMap(
+      out['baseline_metric_extraction_paths'],
+    );
+
+    return out;
+  }
+
+  static bool _mapsClose(Map<String, double> a, Map<String, double> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    final keys = {...a.keys, ...b.keys};
+    for (final key in keys) {
+      final av = a[key];
+      final bv = b[key];
+      if (av == null && bv == null) continue;
+      if (av == null || bv == null) return false;
+      if ((av - bv).abs() > 0.0001) return false;
+    }
+    return true;
+  }
+
+  static bool _rawPayloadEquivalent(
+    Map<String, dynamic>? a,
+    Map<String, dynamic>? b,
+  ) {
+    if (a == null && b == null) return true;
+    if (a == null || b == null) return false;
+    return jsonEncode(a) == jsonEncode(b);
   }
 
   static String? _prunedScanImagePath(String? imagePath) {
@@ -1460,6 +1811,11 @@ class AppPrefs {
       distanceEstimate: old.distanceEstimate,
       headTiltAngle: old.headTiltAngle,
       expressionConfidence: old.expressionConfidence,
+      captureQuality: old.captureQuality,
+      scanEngine: old.scanEngine,
+      captureMode: old.captureMode,
+      sourceImageWidth: old.sourceImageWidth,
+      sourceImageHeight: old.sourceImageHeight,
     );
     history[idx] = updated;
     await _saveScanEntries(history);
@@ -1502,6 +1858,11 @@ class AppPrefs {
       distanceEstimate: old.distanceEstimate,
       headTiltAngle: old.headTiltAngle,
       expressionConfidence: old.expressionConfidence,
+      captureQuality: old.captureQuality,
+      scanEngine: old.scanEngine,
+      captureMode: old.captureMode,
+      sourceImageWidth: old.sourceImageWidth,
+      sourceImageHeight: old.sourceImageHeight,
     );
     history[idx] = updated;
     await _saveScanEntries(history);
@@ -1547,7 +1908,12 @@ class AppPrefs {
       distanceEstimate: old.distanceEstimate,
       headTiltAngle: old.headTiltAngle,
       expressionConfidence: old.expressionConfidence,
+      captureQuality: old.captureQuality,
       rawPayload: old.rawPayload,
+      scanEngine: old.scanEngine,
+      captureMode: old.captureMode,
+      sourceImageWidth: old.sourceImageWidth,
+      sourceImageHeight: old.sourceImageHeight,
     );
 
     history[idx] = updated;

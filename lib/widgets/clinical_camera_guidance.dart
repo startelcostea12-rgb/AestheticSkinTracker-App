@@ -130,27 +130,36 @@ class ClinicalCameraOverlayPainter extends CustomPainter {
     final cx = w / 2.0;
     final cy = h / 2.0;
 
-    // Oval geometry — facial mode uses 0.62 × 0.78 of the available area.
-    // Body mode uses a taller, narrower oval to frame torso/treatment area.
+    // Facial mode uses a 0.62 × 0.78 oval. Body mode uses a taller,
+    // narrower rounded-rect "capsule" instead of an oval — a stretched
+    // oval still reads as a face guide, whereas a capsule silhouette is
+    // the standard shape for a full-body framing guide.
     final ovalW = w * (bodyMode ? 0.55 : 0.62);
     final ovalH = h * (bodyMode ? 0.86 : 0.78);
-    final ovalRect = Rect.fromCenter(
+    final guideRect = Rect.fromCenter(
       center: Offset(cx, cy - h * 0.02),
       width: ovalW,
       height: ovalH,
     );
+    final bodyRRect = RRect.fromRectAndRadius(
+      guideRect,
+      Radius.circular(ovalW * 0.42),
+    );
 
-    // ── Outer scrim — dim everything outside the oval ────────────────────
+    Path outlinePath() =>
+        bodyMode ? (Path()..addRRect(bodyRRect)) : (Path()..addOval(guideRect));
+
+    // ── Outer scrim — dim everything outside the guide shape ─────────────
     final scrimPath = Path()
       ..addRect(Rect.fromLTWH(0, 0, w, h))
-      ..addOval(ovalRect)
+      ..addPath(outlinePath(), Offset.zero)
       ..fillType = PathFillType.evenOdd;
     canvas.drawPath(
       scrimPath,
       Paint()..color = Colors.black.withValues(alpha: 0.35),
     );
 
-    // ── Oval stroke ──────────────────────────────────────────────────────
+    // ── Outline stroke ─────────────────────────────────────────────────
     final tint = Color.lerp(
       const Color(0xFFB23A48), // red on poor alignment
       const Color(0xFF2E7D32), // green on optimal alignment
@@ -162,16 +171,32 @@ class ClinicalCameraOverlayPainter extends CustomPainter {
       ..strokeWidth = 2.2 + (pulse * 1.4)
       ..color = tint.withValues(alpha: 0.92);
 
-    canvas.drawOval(ovalRect, stroke);
+    if (bodyMode) {
+      canvas.drawRRect(bodyRRect, stroke);
+    } else {
+      canvas.drawOval(guideRect, stroke);
+    }
 
-    // Inner ghosted oval — subtle parallax to read as "depth".
-    canvas.drawOval(
-      ovalRect.deflate(6),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.8
-        ..color = Colors.white.withValues(alpha: 0.20),
-    );
+    // Inner ghosted outline — subtle parallax to read as "depth".
+    final innerPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.8
+      ..color = Colors.white.withValues(alpha: 0.20);
+    if (bodyMode) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          guideRect.deflate(6),
+          Radius.circular((ovalW - 12) * 0.42),
+        ),
+        innerPaint,
+      );
+    } else {
+      canvas.drawOval(guideRect.deflate(6), innerPaint);
+    }
+
+    // ovalRect retained under its historical name below for the
+    // still-shared face-only drawing code (grid, crosshairs, jaw arc).
+    final ovalRect = guideRect;
 
     if (bodyMode) {
       // Body mode: vertical centerline only.

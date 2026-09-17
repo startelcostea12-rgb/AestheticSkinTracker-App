@@ -19,7 +19,11 @@ import 'package:aesthetic_skin_tracker/utils/landmark_assessment.dart';
 import 'package:aesthetic_skin_tracker/utils/local_image_bytes.dart';
 import 'package:aesthetic_skin_tracker/utils/premium_access.dart';
 import 'package:aesthetic_skin_tracker/utils/premium_recovery_service.dart';
-import 'package:aesthetic_skin_tracker/services/skin_analysis_service.dart' as local_skin_analysis;
+import 'package:aesthetic_skin_tracker/services/skin_analysis_service.dart'
+    as local_skin_analysis;
+import 'package:aesthetic_skin_tracker/services/notification_service.dart';
+import 'package:aesthetic_skin_tracker/utils/skin_analysis_service.dart'
+    as remote_skin_analysis;
 import 'package:aesthetic_skin_tracker/utils/web_upload_image_utils.dart';
 import 'package:aesthetic_skin_tracker/utils/web_image_picker.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
@@ -31,6 +35,212 @@ import 'package:aesthetic_skin_tracker/widgets/local_image_preview.dart';
 import 'package:aesthetic_skin_tracker/widgets/makeup_badge.dart';
 import 'package:aesthetic_skin_tracker/widgets/makeup_disclosure_dialog.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
+
+// ─────────────────────────────────────────────────────────────────────────
+// Pure tilt/alignment helpers
+//
+// Extracted out of _CameraScreenState so they're unit-testable without the
+// full widget/CameraController lifecycle. Behavior is unchanged from their
+// original private-method form — these are the exact same calculations,
+// just taking a LandmarkAssessment/values as parameters instead of reading
+// instance state.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Aggregate head-tilt magnitude in degrees for FACE mode. Uses yaw+pitch+
+/// roll when available; falls back to a rotationProxy+eyeTilt synthetic
+/// value only when all three are unset (sparse-signal case — this is a
+/// face-only fallback and was never intended for body assessments, which
+/// never populate yaw/pitch/roll at all).
+double? headTiltAngleFromAssessment(LandmarkAssessment a) {
+  if (!a.available) return null;
+  final yaw = a.yaw?.abs() ?? 0.0;
+  final pitch = a.pitch?.abs() ?? 0.0;
+  final roll = a.roll?.abs() ?? 0.0;
+  if (yaw == 0 && pitch == 0 && roll == 0) {
+    // Fallback: use rotation proxy + eye tilt as a synthetic degree value.
+    return (a.rotationProxy * 30.0).abs() + ((a.eyeTilt?.abs() ?? 0.0) * 30.0);
+  }
+  return yaw + pitch + roll;
+}
+
+/// Body-mode tilt magnitude in degrees, using the actual shoulder-line
+/// angle relative to horizontal ([LandmarkAssessment.shoulderTilt]) — a
+/// genuine tilt measurement, unlike rotationProxy (shoulder/hip width
+/// ratio), which has no angular meaning and must never drive this value.
+double? bodyTiltAngleFromAssessment(LandmarkAssessment a) {
+  if (!a.available) return null;
+  return a.shoulderTilt?.abs();
+}
+
+/// Pure red/yellow/green classification for the Alignment quality signal.
+/// [tilt] should come from [headTiltAngleFromAssessment] (face) or
+/// [bodyTiltAngleFromAssessment] (body) — pass null when unavailable, which
+/// resolves to a 999° sentinel that always classifies as red.
+QualityState alignmentQualityStatus({
+  required bool isBodyGuide,
+  required double? tilt,
+  required double centerDelta,
+}) {
+  final resolvedTilt = tilt ?? 999.0;
+  final redThreshold = isBodyGuide ? 15.0 : 40.0;
+  final yellowThreshold = isBodyGuide ? 8.0 : 30.0;
+  if (centerDelta > 0.35 || resolvedTilt > redThreshold) {
+    return QualityState.red;
+  }
+  if (centerDelta > 0.25 || resolvedTilt > yellowThreshold) {
+    return QualityState.yellow;
+  }
+  return QualityState.green;
+}
+
+/// How a body-procedure photo was captured. Only meaningful for body scans
+/// (face/general scans are always a direct front-camera selfie, equivalent
+/// to [assisted] in framing terms, and don't set this).
+///
+/// [mirror] photos are a FRONT-camera capture of the user's reflection in a
+/// mirror — the sensor sees a left-right-flipped view of the subject, which
+/// must be flipped back before any landmark/symmetry analysis (see
+/// [flipForStorageIfMirror]). [assisted] and [timer] are direct camera
+/// captures (someone else holding the phone, or the phone propped up) with
+/// no mirroring involved.
+enum BodyCaptureMode {
+  mirror,
+  assisted,
+  timer;
+
+  String get storageValue => switch (this) {
+    BodyCaptureMode.mirror => 'mirror',
+    BodyCaptureMode.assisted => 'assisted',
+    BodyCaptureMode.timer => 'timer',
+  };
+
+  static BodyCaptureMode? fromStorageValue(String? value) {
+    switch (value?.trim().toLowerCase()) {
+      case 'mirror':
+        return BodyCaptureMode.mirror;
+      case 'assisted':
+        return BodyCaptureMode.assisted;
+      case 'timer':
+        return BodyCaptureMode.timer;
+      default:
+        return null;
+    }
+  }
+
+  String get label => switch (this) {
+    BodyCaptureMode.mirror => 'Mirror',
+    BodyCaptureMode.assisted => 'Someone else is taking this photo',
+    BodyCaptureMode.timer => 'Timer + propped phone',
+  };
+
+  String get description => switch (this) {
+    BodyCaptureMode.mirror =>
+      'Stand in front of a mirror and use the front camera. Recommended for solo capture.',
+    BodyCaptureMode.assisted =>
+      'A partner, friend, or clinic staff holds the phone and takes the photo directly.',
+    BodyCaptureMode.timer =>
+      'Prop the phone up, start a countdown, and step into frame.',
+  };
+}
+
+/// Horizontally flips [bytes] when [mode] is [BodyCaptureMode.mirror] —
+/// mirror captures show a left-right-flipped view of the subject, so this
+/// must run BEFORE the bytes are persisted, analyzed for landmarks, or sent
+/// to any backend, so every downstream consumer (including a future
+/// symmetry analysis) sees the same un-mirrored orientation as an
+/// assisted/timer capture. Returns [bytes] unchanged for any other mode, or
+/// if decoding fails (caller keeps the original capture rather than losing
+/// the photo).
+Uint8List flipForStorageIfMirror(Uint8List bytes, BodyCaptureMode? mode) {
+  if (mode != BodyCaptureMode.mirror) return bytes;
+  try {
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) return bytes;
+    final flipped = img.flipHorizontal(decoded);
+    return Uint8List.fromList(img.encodeJpg(flipped, quality: 92));
+  } catch (_) {
+    // decodeImage's format-sniffing can throw (not just return null) on
+    // malformed/truncated input — e.g. a short buffer that partially
+    // matches a format's magic bytes. Confirmed by
+    // camera_screen_body_capture_test.dart's "undecodable bytes" case,
+    // which threw a RangeError here before this try/catch existed. Either
+    // way the contract is the same: keep the original capture rather than
+    // losing the photo or crashing the save.
+    return bytes;
+  }
+}
+
+/// Request parameters for the body-silhouette backend call, as decided by
+/// the current capture-mode/reference-scan state. Returned as data (not
+/// dispatched) so the "what do we send, and where does each field come
+/// from" logic is unit-testable without a full CameraScreen/
+/// CameraController lifecycle — same rationale as the tilt/alignment
+/// helpers above and [flipForStorageIfMirror].
+class BodySilhouetteRequestParams {
+  final String? captureMode;
+  final String? captureQuality;
+  final Map<String, dynamic>? baselineResult;
+  final String? baselineCaptureMode;
+  final String? baselineCaptureQuality;
+  final int? currentConsistentScanCount;
+  final int? baselineConsistentScanCount;
+  final int? sourceImageWidth;
+  final int? sourceImageHeight;
+  final int? baselineSourceImageWidth;
+  final int? baselineSourceImageHeight;
+
+  const BodySilhouetteRequestParams({
+    this.captureMode,
+    this.captureQuality,
+    this.baselineResult,
+    this.baselineCaptureMode,
+    this.baselineCaptureQuality,
+    this.currentConsistentScanCount,
+    this.baselineConsistentScanCount,
+    this.sourceImageWidth,
+    this.sourceImageHeight,
+    this.baselineSourceImageWidth,
+    this.baselineSourceImageHeight,
+  });
+}
+
+/// Pure builder for [BodySilhouetteRequestParams]. [baselineRawPayload] is
+/// the reference (previous) scan's `ScanHistoryEntry.rawPayload` — the
+/// verbatim response saved by a prior call to this same endpoint; only its
+/// `result` map (normalized_area_index/scale_reference_pixels/etc.) is
+/// forwarded as the new request's baseline, matching what
+/// `analyze_body_silhouette_endpoint` in main.py expects under
+/// `baselineResult`.
+BodySilhouetteRequestParams buildBodySilhouetteRequestParams({
+  required BodyCaptureMode? selectedCaptureMode,
+  required String? lastCaptureQualityTag,
+  required Map<String, dynamic>? baselineRawPayload,
+  required String? baselineCaptureMode,
+  String? baselineCaptureQuality,
+  int priorConsistentScanCount = 0,
+  int? sourceImageWidth,
+  int? sourceImageHeight,
+  int? baselineSourceImageWidth,
+  int? baselineSourceImageHeight,
+}) {
+  final baselineResultRaw = baselineRawPayload?['result'];
+  final baselineResult = baselineResultRaw is Map
+      ? Map<String, dynamic>.from(baselineResultRaw)
+      : null;
+  return BodySilhouetteRequestParams(
+    captureMode: selectedCaptureMode?.storageValue,
+    captureQuality: lastCaptureQualityTag,
+    baselineResult: baselineResult,
+    baselineCaptureMode: baselineCaptureMode,
+    baselineCaptureQuality: baselineCaptureQuality,
+    currentConsistentScanCount: priorConsistentScanCount + 1,
+    baselineConsistentScanCount: priorConsistentScanCount,
+    sourceImageWidth: sourceImageWidth,
+    sourceImageHeight: sourceImageHeight,
+    baselineSourceImageWidth: baselineSourceImageWidth,
+    baselineSourceImageHeight: baselineSourceImageHeight,
+  );
+}
 
 class CameraScreen extends StatefulWidget {
   final Procedure? procedure;
@@ -99,11 +309,14 @@ class _CameraScreenState extends State<CameraScreen>
   bool _showGhostOverlay = true;
   double _ghostOverlayOpacity = 0.20;
   bool _isGoodReferencePhoto = false;
+  double _liveBodyAlignmentScore = 0.0;
   String _selectedPoseTemplate = 'Front';
   _LightingGuidance _lightingGuidance = const _LightingGuidance.unknown();
   LandmarkAssessment _liveLandmarkAssessment = LandmarkAssessment.unsupported;
   bool _landmarkAssessmentInFlight = false;
   int _landmarkFrameCounter = 0;
+  static const int _landmarkSmoothingWindow = 5;
+  final List<LandmarkAssessment> _landmarkHistory = <LandmarkAssessment>[];
   int? _lastConsistencyScore;
 
   /// Result of the pre-scan makeup disclosure dialog. `null` until the user
@@ -112,10 +325,20 @@ class _CameraScreenState extends State<CameraScreen>
   bool? _makeupPresent;
   bool _disclosureInFlight = false;
 
-  double? _baselineHeadEulerX;
-  double? _baselineHeadEulerY;
-  double? _baselineHeadEulerZ;
-  double? _baselineAmbientBrightness;
+  /// Which real-world capture setup produced (or will produce) this scan's
+  /// photos. Only prompted for body-region procedures — face/general scans
+  /// are always a direct front-camera selfie and leave this null.
+  BodyCaptureMode? _selectedBodyCaptureMode;
+  bool _captureModePromptInFlight = false;
+
+  /// Countdown (seconds remaining) for the user-initiated timer-capture
+  /// flow. Distinct from [_autoCaptureCountdown], which is the
+  /// quality-gated auto-capture countdown — this one starts only when the
+  /// user taps "Start timer" in [BodyCaptureMode.timer] and fires
+  /// regardless of live quality signals, since the whole point is to let
+  /// the user step away from the phone.
+  int? _timerCaptureCountdown;
+  Timer? _timerCaptureTimer;
 
   String? _postOpDaysForBackend() {
     final procedure = widget.procedure;
@@ -258,15 +481,36 @@ class _CameraScreenState extends State<CameraScreen>
   int _sharpnessFrameCounter = 0;
   double _liveSharpness = 0;
   double _liveMeanBrightness = 0;
+  double _liveFaceRoiLuma = 0;
   double _liveBacklightDelta = 0;
+  // Signed left-minus-right frame luma delta (reuses the same sampling as
+  // _liveBacklightDelta, which only keeps the unsigned max of horizontal vs
+  // vertical). Positive = left half of frame brighter than right.
+  double _liveLightHorizontalDelta = 0;
   double _liveFaceFillRatio = 0;
-  String _qaBannerMessage = 'Center your face inside the mask';
+  // Neutral placeholder only — widget.procedure isn't attached yet at field
+  // init time so _isBodyGuide can't be read here. Overwritten by the first
+  // _buildClinicalQualityReport() call, which does branch on it.
+  String _qaBannerMessage = 'Center yourself inside the guide';
+  String? _lastCaptureQualityTag;
 
   List<String> get _guidanceTips =>
       _isBodyGuide ? _bodyGuidanceTips : _faceGuidanceTips;
 
-  ProcedureCameraGuideType get _guideType =>
-      procedureCameraGuideType(_effectiveGuideProcedureType);
+  ProcedureCameraGuideType get _guideType {
+    final savedRegion = widget.procedure?.bodyRegion;
+    if (savedRegion != null) {
+      switch (savedRegion) {
+        case ProcedureBodyRegion.face:
+          return ProcedureCameraGuideType.facial;
+        case ProcedureBodyRegion.body:
+          return ProcedureCameraGuideType.body;
+        case ProcedureBodyRegion.general:
+          return ProcedureCameraGuideType.general;
+      }
+    }
+    return procedureCameraGuideType(_effectiveGuideProcedureType);
+  }
 
   String get _effectiveGuideProcedureType {
     if (widget.procedure != null) return widget.procedure!.type;
@@ -317,17 +561,6 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
-  String get _bottomConsistencyReminder {
-    switch (_guideType) {
-      case ProcedureCameraGuideType.facial:
-        return 'Match the exact same distance, angle, and lighting as your previous photos. Keep a neutral expression for reliable facial metrics.';
-      case ProcedureCameraGuideType.body:
-        return 'Match the exact same distance, angle, and lighting as your previous photos. Keep posture neutral and show the same treated area each time.';
-      case ProcedureCameraGuideType.general:
-        return 'Match the exact same distance, angle, and lighting as your previous photos so every comparison stays trustworthy.';
-    }
-  }
-
   @override
   void initState() {
     super.initState();
@@ -365,8 +598,254 @@ class _CameraScreenState extends State<CameraScreen>
       return;
     }
     setState(() => _makeupPresent = result);
-    // Now that the patient has acknowledged the disclosure, start the camera.
+
+    if (_isBodyGuide && _selectedBodyCaptureMode == null) {
+      final mode = await _promptBodyCaptureMode();
+      if (!mounted) return;
+      if (mode == null) {
+        // User backed out of choosing a capture method — leave the screen
+        // rather than guessing, same as declining the makeup disclosure.
+        Navigator.of(context).maybePop();
+        return;
+      }
+      setState(() => _selectedBodyCaptureMode = mode);
+    }
+
+    // Now that the patient has acknowledged the disclosure (and, for body
+    // scans, chosen a capture method), start the camera.
     _initLiveCamera();
+  }
+
+  /// Blocking capture-method picker for body-region procedures. Mirrors the
+  /// makeup-disclosure dialog's shape: no dismiss-by-tapping-outside, and a
+  /// null result (explicit "Cancel") pops the camera screen rather than
+  /// silently defaulting to a mode the user didn't choose — capture mode
+  /// materially changes downstream analysis (mirror-flip), so it must be an
+  /// explicit user choice, never guessed.
+  Future<BodyCaptureMode?> _promptBodyCaptureMode() async {
+    if (_captureModePromptInFlight) return _selectedBodyCaptureMode;
+    _captureModePromptInFlight = true;
+    try {
+      return await showDialog<BodyCaptureMode>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          BodyCaptureMode selected = BodyCaptureMode.mirror;
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              Widget option(BodyCaptureMode mode, {bool recommended = false}) {
+                final isSelected = selected == mode;
+                return InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () => setDialogState(() => selected = mode),
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? MyApp.goldShimmer.withValues(alpha: 0.14)
+                          : Colors.transparent,
+                      border: Border.all(
+                        color: isSelected
+                            ? MyApp.goldShimmer
+                            : AppColors.borders,
+                        width: isSelected ? 1.6 : 1.0,
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          isSelected
+                              ? Icons.radio_button_checked
+                              : Icons.radio_button_off,
+                          color: isSelected
+                              ? MyApp.goldShimmer
+                              : AppColors.refinedSlate,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      mode.label,
+                                      style: TextStyle(
+                                        color: MyApp.clinicalNavy,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                  if (recommended) ...[
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 2,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.mutedSage.withValues(
+                                          alpha: 0.2,
+                                        ),
+                                        borderRadius: BorderRadius.circular(
+                                          8,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        'RECOMMENDED',
+                                        style: TextStyle(
+                                          color: AppColors.mutedSage,
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w900,
+                                          letterSpacing: 0.4,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                mode.description,
+                                style: TextStyle(
+                                  color: MyApp.textBrown,
+                                  fontSize: 12,
+                                  height: 1.3,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              return AlertDialog(
+                title: const Text('How are you taking this photo?'),
+                content: SizedBox(
+                  width: 340,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      option(BodyCaptureMode.mirror, recommended: true),
+                      option(BodyCaptureMode.assisted),
+                      option(BodyCaptureMode.timer),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () =>
+                        Navigator.of(dialogContext).pop(null),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(
+                    onPressed: () =>
+                        Navigator.of(dialogContext).pop(selected),
+                    child: const Text('Continue'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      _captureModePromptInFlight = false;
+    }
+  }
+
+  /// Lets the user switch capture method mid-session (e.g. they started in
+  /// mirror mode but a partner walked in to help). Re-runs the same prompt
+  /// and, if the front/rear camera preference changed, re-initializes the
+  /// controller on the right lens.
+  Future<void> _changeBodyCaptureMode() async {
+    final previous = _selectedBodyCaptureMode;
+    final mode = await _promptBodyCaptureMode();
+    if (!mounted || mode == null || mode == previous) return;
+    setState(() => _selectedBodyCaptureMode = mode);
+    final wantsRearNow =
+        mode == BodyCaptureMode.assisted || mode == BodyCaptureMode.timer;
+    final wantsRearBefore =
+        previous == BodyCaptureMode.assisted ||
+        previous == BodyCaptureMode.timer;
+    if (wantsRearNow != wantsRearBefore && _availableCameras.isNotEmpty) {
+      final target = wantsRearNow
+          ? _availableCameras.firstWhere(
+              (c) => c.lensDirection == CameraLensDirection.back,
+              orElse: () => _availableCameras.first,
+            )
+          : _availableCameras.firstWhere(
+              (c) => c.lensDirection == CameraLensDirection.front,
+              orElse: () => _availableCameras.first,
+            );
+      await _initializeController(target);
+    }
+  }
+
+  /// Guidance copy shown alongside the chosen capture mode, per PRIORITY
+  /// 1.3/2.1/3 of the body-capture redesign — distance/angle/addressee
+  /// differ enough between the three setups that a single shared string
+  /// would be wrong for at least two of them.
+  String get _bodyCaptureModeInstruction {
+    switch (_selectedBodyCaptureMode) {
+      case BodyCaptureMode.mirror:
+        return 'Stand facing the mirror, phone at chest height, arm fully '
+            'extended toward the mirror. The reflection adds real depth vs. '
+            'a normal selfie — step back until your full treatment area '
+            'fits inside the outline before capturing.';
+      case BodyCaptureMode.assisted:
+        return 'Photographer: stand facing away from the light source, '
+            'center their treatment area inside the outline, and hold the '
+            'phone steady at chest height — avoid tilting up or down.';
+      case BodyCaptureMode.timer:
+        return 'Prop the phone against something stable at chest height and '
+            'level. Tap "Start timer", then step back into frame and hold '
+            'your pose until the shutter fires.';
+      case null:
+        return '';
+    }
+  }
+
+  /// User-initiated countdown for [BodyCaptureMode.timer]. Deliberately
+  /// ignores the live quality gate that [_evaluateAutoCapture] enforces —
+  /// the entire point of this mode is that the user has stepped away from
+  /// the phone and can't react to a "hold still" prompt, so it fires on a
+  /// fixed clock instead of waiting for green quality signals.
+  void _startTimerCapture() {
+    if (_timerCaptureCountdown != null || _capturing) return;
+    const totalSeconds = 8;
+    setState(() => _timerCaptureCountdown = totalSeconds);
+    _timerCaptureTimer?.cancel();
+    _timerCaptureTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      final remaining = (_timerCaptureCountdown ?? 1) - 1;
+      if (remaining <= 0) {
+        timer.cancel();
+        setState(() => _timerCaptureCountdown = null);
+        // bypassFramingGate: true — by the time the countdown ends the user
+        // has stepped away from the phone and can't react to a "hold
+        // still"/framing warning the way a manual tap or the quality-gated
+        // auto-capture can. Capture on the fixed clock regardless; any real
+        // framing/lighting problem still lands honestly in the saved scan's
+        // captureQuality tag instead of silently doing nothing.
+        _handleCaptureTap(auto: true, bypassFramingGate: true);
+        return;
+      }
+      setState(() => _timerCaptureCountdown = remaining);
+    });
   }
 
   Future<void> _refreshPremiumStatus() async {
@@ -390,10 +869,25 @@ class _CameraScreenState extends State<CameraScreen>
         return;
       }
       _availableCameras = cameras;
-      final preferred = cameras.firstWhere(
-        (c) => c.lensDirection == CameraLensDirection.front,
-        orElse: () => cameras.first,
-      );
+      // Mirror mode needs the front (selfie) camera so the live preview
+      // shows the user their own reflection framing. Assisted/timer modes
+      // are a direct shot of the subject by someone else (or a propped
+      // phone) — the rear camera gives better image quality and isn't
+      // constrained by needing to face a screen, so prefer it there when
+      // available.
+      final wantsRearCamera =
+          _isBodyGuide &&
+          (_selectedBodyCaptureMode == BodyCaptureMode.assisted ||
+              _selectedBodyCaptureMode == BodyCaptureMode.timer);
+      final preferred = wantsRearCamera
+          ? cameras.firstWhere(
+              (c) => c.lensDirection == CameraLensDirection.back,
+              orElse: () => cameras.first,
+            )
+          : cameras.firstWhere(
+              (c) => c.lensDirection == CameraLensDirection.front,
+              orElse: () => cameras.first,
+            );
       await _initializeController(preferred);
     } catch (e) {
       if (!mounted) return;
@@ -424,6 +918,8 @@ class _CameraScreenState extends State<CameraScreen>
         return;
       }
 
+      await _setCameraAutoModes(controller);
+
       setState(() {
         _cameraController = controller;
         _cameraReady = true;
@@ -443,6 +939,19 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
+  Future<void> _setCameraAutoModes(CameraController controller) async {
+    try {
+      await controller.setExposureMode(ExposureMode.auto);
+    } catch (e) {
+      debugPrint('Camera exposure auto mode unsupported: $e');
+    }
+    try {
+      await (controller as dynamic).setWhiteBalanceMode('auto');
+    } catch (e) {
+      debugPrint('Camera white balance auto mode unsupported: $e');
+    }
+  }
+
   Future<void> _toggleCameraLens() async {
     if (_availableCameras.length < 2) return;
     final current = _cameraController?.description;
@@ -456,8 +965,12 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   void _startLightingStream(CameraController controller) {
-    if (kIsWeb || _lightingStreamActive) return;
-    if (!controller.value.isInitialized) return;
+    if (kIsWeb || _lightingStreamActive) {
+      return;
+    }
+    if (!controller.value.isInitialized) {
+      return;
+    }
 
     _lightingStreamActive = true;
     if (mounted) {
@@ -474,31 +987,36 @@ class _CameraScreenState extends State<CameraScreen>
           final shouldRefreshLighting = _lightingFrameCounter == 0;
           if (shouldRefreshLighting || shouldRefreshSharpness) {
             final summary = _summarizeCameraImage(image);
+            final faceRoiLuma = _estimateFaceRoiLumaFromStream(image);
             final guidance = shouldRefreshLighting
-                ? _lightingFromCameraImage(image)
+                ? _lightingFromCameraImage(image, faceRoiLuma: faceRoiLuma)
                 : _lightingGuidance;
 
+            final horizontalLightDelta = summary.leftMean - summary.rightMean;
             final edgeDelta = [
-              (summary.leftMean - summary.rightMean).abs(),
+              horizontalLightDelta.abs(),
               (summary.topMean - summary.bottomMean).abs(),
             ].reduce(math.max);
             final sharpness = shouldRefreshSharpness
                 ? _estimateLaplacianVarianceFromYPlane(image)
                 : _liveSharpness;
-
             final needsUiUpdate =
                 guidance.level != _lightingGuidance.level ||
                 guidance.label != _lightingGuidance.label ||
                 (_liveSharpness - sharpness).abs() >= 1.5 ||
                 (_liveMeanBrightness - summary.mean).abs() >= 2.0 ||
-                (_liveBacklightDelta - edgeDelta).abs() >= 2.0;
+                (_liveFaceRoiLuma - faceRoiLuma).abs() >= 2.0 ||
+                (_liveBacklightDelta - edgeDelta).abs() >= 2.0 ||
+                (_liveLightHorizontalDelta - horizontalLightDelta).abs() >= 2.0;
 
             if (needsUiUpdate && mounted) {
               setState(() {
                 _lightingGuidance = guidance;
                 _liveSharpness = sharpness;
                 _liveMeanBrightness = summary.mean;
+                _liveFaceRoiLuma = faceRoiLuma;
                 _liveBacklightDelta = edgeDelta;
+                _liveLightHorizontalDelta = horizontalLightDelta;
               });
             }
           }
@@ -517,11 +1035,16 @@ class _CameraScreenState extends State<CameraScreen>
               poseTemplate: _selectedPoseTemplate,
             );
             if (!mounted) return;
-            if (_shouldRefreshLandmarkAssessment(assessment)) {
+            final stabilized = _stabilizeLandmarkAssessment(assessment);
+            final shouldRefresh = _shouldRefreshLandmarkAssessment(stabilized);
+            if (shouldRefresh || stabilized.available) {
+              print(
+                '[LIVE FACE POSE] available=${stabilized.available} yaw=${(stabilized.yaw ?? 0.0).toStringAsFixed(2)}° pitch=${(stabilized.pitch ?? 0.0).toStringAsFixed(2)}° roll=${(stabilized.roll ?? 0.0).toStringAsFixed(2)}° centerDelta=${((stabilized.centerOffsetX.abs() + stabilized.centerOffsetY.abs())).toStringAsFixed(3)} faceFillRatio=${stabilized.faceFillRatio.toStringAsFixed(3)} poseSimilarity=${stabilized.poseSimilarity.toStringAsFixed(2)}',
+              );
               setState(() {
-                _liveLandmarkAssessment = assessment;
-                if (assessment.faceFillRatio > 0) {
-                  _liveFaceFillRatio = assessment.faceFillRatio;
+                _liveLandmarkAssessment = stabilized;
+                if (stabilized.faceFillRatio > 0) {
+                  _liveFaceFillRatio = stabilized.faceFillRatio;
                 }
               });
             }
@@ -531,7 +1054,7 @@ class _CameraScreenState extends State<CameraScreen>
             _landmarkAssessmentInFlight = false;
           }
         })
-        .catchError((_) {
+        .catchError((Object error, StackTrace stack) {
           _lightingStreamActive = false;
           if (mounted) {
             setState(() {});
@@ -539,7 +1062,10 @@ class _CameraScreenState extends State<CameraScreen>
         });
   }
 
-  _LightingGuidance _lightingFromCameraImage(CameraImage image) {
+  _LightingGuidance _lightingFromCameraImage(
+    CameraImage image, {
+    required double faceRoiLuma,
+  }) {
     final plane = image.planes.firstOrNull;
     if (plane == null || plane.bytes.isEmpty) {
       return _lightingGuidance;
@@ -548,6 +1074,14 @@ class _CameraScreenState extends State<CameraScreen>
     final thresholds = _lightingThresholds;
     final summary = _summarizeCameraImage(image);
     if (summary.isEmpty) return _lightingGuidance;
+
+    if (faceRoiLuma > 0 && faceRoiLuma < thresholds.darkMeanFloor) {
+      return const _LightingGuidance(
+        level: _LightingLevel.tooDark,
+        label: 'Too dark',
+        instruction: 'Move to better light for a cleaner scan.',
+      );
+    }
 
     if (summary.mean < thresholds.darkMeanFloor ||
         summary.darkRatio > thresholds.darkRatioCeil) {
@@ -631,29 +1165,9 @@ class _CameraScreenState extends State<CameraScreen>
       _scanCustomDescription = customDescription;
     });
     if (widget.initialTrackProcedureBaselineRecord != null) {
-      initializeTrackProcedureBaseline(
-        widget.initialTrackProcedureBaselineRecord!,
-      );
+      // Baseline capture state is no longer stored in this screen.
     }
     await _loadReferenceContext();
-  }
-
-  void initializeTrackProcedureBaseline(
-    Map<String, dynamic> localBaselineRecord,
-  ) {
-    double? readMetric(String key) {
-      final value = localBaselineRecord[key];
-      if (value == null) return null;
-      if (value is num) return value.toDouble();
-      return double.tryParse(value.toString());
-    }
-
-    setState(() {
-      _baselineHeadEulerX = readMetric('euler_x');
-      _baselineHeadEulerY = readMetric('euler_y');
-      _baselineHeadEulerZ = readMetric('euler_z');
-      _baselineAmbientBrightness = readMetric('ambient_brightness');
-    });
   }
 
   Map<String, dynamic> _currentTrackProcedureCalibrationRecord() {
@@ -663,6 +1177,70 @@ class _CameraScreenState extends State<CameraScreen>
       'euler_z': _liveLandmarkAssessment.roll,
       'ambient_brightness': _liveMeanBrightness,
     };
+  }
+
+  double _bodyAlignmentScoreFromReference() {
+    final ref = _referenceScan?.bodyReferenceGeometry;
+    final live = _liveLandmarkAssessment.bodyReferenceGeometry;
+    if (ref == null || live == null || ref.isEmpty || live.isEmpty) {
+      return 0.0;
+    }
+
+    double scoreComponent(double liveValue, double refValue, {double tolerance = 0.12}) {
+      final delta = (liveValue - refValue).abs();
+      final normalizedDelta = delta / (tolerance == 0 ? 1.0 : tolerance);
+      return (1.0 - normalizedDelta.clamp(0.0, 1.0)).clamp(0.0, 1.0);
+    }
+
+    final shoulderWidth = scoreComponent(
+      live['shoulderWidthNorm'] ?? 0.0,
+      ref['shoulderWidthNorm'] ?? 0.0,
+      tolerance: 0.12,
+    );
+    final hipWidth = scoreComponent(
+      live['hipWidthNorm'] ?? 0.0,
+      ref['hipWidthNorm'] ?? 0.0,
+      tolerance: 0.12,
+    );
+    final shoulderToHip = scoreComponent(
+      live['shoulderToHipRatio'] ?? 0.0,
+      ref['shoulderToHipRatio'] ?? 0.0,
+      tolerance: 0.18,
+    );
+    final centerDelta = (
+          (live['centerOffsetX'] ?? 0.0) - (ref['centerOffsetX'] ?? 0.0)
+      ).abs() + (
+          (live['centerOffsetY'] ?? 0.0) - (ref['centerOffsetY'] ?? 0.0)
+      ).abs();
+    final centerScore = (1.0 - (centerDelta / 0.20).clamp(0.0, 1.0)).clamp(0.0, 1.0);
+
+    final score =
+        (shoulderWidth * 0.40) +
+        (hipWidth * 0.30) +
+        (shoulderToHip * 0.20) +
+        (centerScore * 0.10);
+    _liveBodyAlignmentScore = score;
+    return score;
+  }
+
+  String get _bodyAlignmentStatusLabel {
+    if (!_isBodyGuide) return 'Body alignment';
+    final score = _liveBodyAlignmentScore > 0.0
+        ? _liveBodyAlignmentScore
+        : _bodyAlignmentScoreFromReference();
+    if (score >= 0.82) return 'Aligned';
+    if (score >= 0.60) return 'Adjust position';
+    return 'Re-align';
+  }
+
+  Color get _bodyAlignmentStatusColor {
+    if (!_isBodyGuide) return Colors.transparent;
+    final score = _liveBodyAlignmentScore > 0.0
+        ? _liveBodyAlignmentScore
+        : _bodyAlignmentScoreFromReference();
+    if (score >= 0.82) return AppColors.mutedSage;
+    if (score >= 0.60) return AppColors.champagneGold;
+    return AppColors.softTerracotta;
   }
 
   Future<void> _loadReferenceContext() async {
@@ -994,13 +1572,99 @@ class _CameraScreenState extends State<CameraScreen>
     return controller.value.deviceOrientation;
   }
 
+  LandmarkAssessment _stabilizeLandmarkAssessment(LandmarkAssessment next) {
+    if (!next.available) return next;
+
+    _landmarkHistory.add(next);
+    if (_landmarkHistory.length > _landmarkSmoothingWindow) {
+      _landmarkHistory.removeAt(0);
+    }
+
+    final yaw = _average(
+      _landmarkHistory.map((item) => item.yaw ?? 0.0),
+    );
+    final pitch = _average(
+      _landmarkHistory.map((item) => item.pitch ?? 0.0),
+    );
+    final roll = _average(
+      _landmarkHistory.map((item) => item.roll ?? 0.0),
+    );
+    final eyeTilt = _average(
+      _landmarkHistory.map((item) => item.eyeTilt ?? 0.0),
+    );
+    final shoulderTilt = _average(
+      _landmarkHistory.map((item) => item.shoulderTilt ?? 0.0),
+    );
+    final centerOffsetX = _average(
+      _landmarkHistory.map((item) => item.centerOffsetX),
+    );
+    final centerOffsetY = _average(
+      _landmarkHistory.map((item) => item.centerOffsetY),
+    );
+    final landmarkQuality = _average(
+      _landmarkHistory.map((item) => item.landmarkQuality),
+    );
+    final poseSimilarity = _average(
+      _landmarkHistory.map((item) => item.poseSimilarity),
+    );
+    final rotationProxy = _average(
+      _landmarkHistory.map((item) => item.rotationProxy),
+    );
+    final faceFillRatio = _average(
+      _landmarkHistory.map((item) => item.faceFillRatio),
+    );
+
+    return LandmarkAssessment(
+      available: true,
+      primaryInstruction: next.primaryInstruction,
+      secondaryInstruction: next.secondaryInstruction,
+      yaw: yaw,
+      pitch: pitch,
+      roll: roll,
+      eyeTilt: eyeTilt,
+      shoulderTilt: shoulderTilt,
+      centerOffsetX: centerOffsetX,
+      centerOffsetY: centerOffsetY,
+      landmarkQuality: landmarkQuality,
+      poseSimilarity: poseSimilarity,
+      rotationProxy: rotationProxy,
+      faceFillRatio: faceFillRatio,
+      mode: next.mode,
+    );
+  }
+
+  double _average(Iterable<double> values) {
+    final list = values.toList();
+    if (list.isEmpty) return 0.0;
+    return list.reduce((a, b) => a + b) / list.length;
+  }
+
   bool _shouldRefreshLandmarkAssessment(LandmarkAssessment next) {
     final current = _liveLandmarkAssessment;
+    final pitchDelta = ((current.pitch ?? 0.0) - (next.pitch ?? 0.0)).abs();
+    final yawDelta = ((current.yaw ?? 0.0) - (next.yaw ?? 0.0)).abs();
+    final rollDelta = ((current.roll ?? 0.0) - (next.roll ?? 0.0)).abs();
+    final centerChanged =
+        (current.centerOffsetX - next.centerOffsetX).abs() >= 0.02 ||
+        (current.centerOffsetY - next.centerOffsetY).abs() >= 0.02;
+
+    final pitchChanged = (current.pitch ?? 0.0) != (next.pitch ?? 0.0) &&
+        pitchDelta >= 1.0;
+    final yawChanged = (current.yaw ?? 0.0) != (next.yaw ?? 0.0) &&
+        yawDelta >= 1.0;
+    final rollChanged = (current.roll ?? 0.0) != (next.roll ?? 0.0) &&
+        rollDelta >= 1.0;
+
     return current.available != next.available ||
         current.primaryInstruction != next.primaryInstruction ||
         current.secondaryInstruction != next.secondaryInstruction ||
         (current.poseSimilarity - next.poseSimilarity).abs() >= 3 ||
-        (current.landmarkQuality - next.landmarkQuality).abs() >= 0.04;
+        (current.landmarkQuality - next.landmarkQuality).abs() >= 0.04 ||
+        pitchChanged ||
+        yawChanged ||
+        rollChanged ||
+        centerChanged ||
+        (current.faceFillRatio - next.faceFillRatio).abs() >= 0.03;
   }
 
   ({Color color, String label, String note}) _consistencyVisuals(int score) {
@@ -1516,8 +2180,18 @@ class _CameraScreenState extends State<CameraScreen>
 
   Future<void> _showPhotoGuide() async {
     final isBodyGuide = _isBodyGuide;
+    final bodyModePoint = switch (_selectedBodyCaptureMode) {
+      BodyCaptureMode.mirror =>
+        'Mirror mode: phone at chest height, arm extended toward the mirror — step back for real depth',
+      BodyCaptureMode.assisted =>
+        'Assisted mode: photographer holds the phone steady at chest height, facing away from the light',
+      BodyCaptureMode.timer =>
+        'Timer mode: prop the phone level at chest height before starting the countdown',
+      null => null,
+    };
     final correctPoints = isBodyGuide
-        ? const [
+        ? [
+            if (bodyModePoint != null) bodyModePoint,
             'Keep the full treatment area centered inside the body outline',
             'Stand upright with even front lighting and a neutral stance',
             'Match distance, clothing coverage, and camera height each time',
@@ -1572,15 +2246,6 @@ class _CameraScreenState extends State<CameraScreen>
                       child: Text('Photo Guide', style: MyApp.pageTitleStyle()),
                     ),
                   ],
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  'Use the same distance, angle, and lighting as your previous photos for accurate metrics.',
-                  style: TextStyle(
-                    color: MyApp.textBrown.withValues(alpha: 0.85),
-                    height: 1.45,
-                    fontWeight: FontWeight.w600,
-                  ),
                 ),
                 const SizedBox(height: 18),
                 SizedBox(
@@ -1696,9 +2361,7 @@ class _CameraScreenState extends State<CameraScreen>
     }
 
     final docsDir = await getApplicationDocumentsDirectory();
-    final scansDir = Directory(
-      '${docsDir.path}${Platform.pathSeparator}scans',
-    );
+    final scansDir = Directory('${docsDir.path}${Platform.pathSeparator}scans');
     if (!await scansDir.exists()) {
       await scansDir.create(recursive: true);
     }
@@ -1818,6 +2481,8 @@ class _CameraScreenState extends State<CameraScreen>
         if ((widget.procedure?.type ?? '').trim().isNotEmpty)
           'procedure_type': widget.procedure!.type.trim(),
         if (postOpDays != null) 'days_post_op': postOpDays,
+        if ((_lastCaptureQualityTag ?? '').trim().isNotEmpty)
+          'capture_quality': _lastCaptureQualityTag!.trim(),
         if ((_scanCustomDescription ?? '').trim().isNotEmpty)
           'skin_profile_note': (_scanCustomDescription ?? '').trim(),
         if ((_focusAreaForSave ?? '').trim().isNotEmpty)
@@ -1827,18 +2492,20 @@ class _CameraScreenState extends State<CameraScreen>
 
       dynamic result;
       try {
-        result = await local_skin_analysis.SkinAnalysisService.uploadSingleImageFile(
-          image: deepFile,
-          fields: fields,
-          baselineMetricMatrix: baselineMetricMatrix,
-        );
+        result =
+            await local_skin_analysis.SkinAnalysisService.uploadSingleImageFile(
+              image: deepFile,
+              fields: fields,
+              baselineMetricMatrix: baselineMetricMatrix,
+            );
       } catch (_) {
         // Fallback to legacy JSON-bytes route where multipart is unavailable.
-        result = await local_skin_analysis.SkinAnalysisService.analyzeImageFromBytes(
-          _croppedImageBytes!,
-          filename: deepFile.name,
-          baselineMetricMatrix: baselineMetricMatrix,
-        );
+        result =
+            await local_skin_analysis.SkinAnalysisService.analyzeImageFromBytes(
+              _croppedImageBytes!,
+              filename: deepFile.name,
+              baselineMetricMatrix: baselineMetricMatrix,
+            );
       }
 
       if (!mounted) return;
@@ -2071,7 +2738,9 @@ class _CameraScreenState extends State<CameraScreen>
         .runFullAnalysis(imagePath);
 
     if (raw.isEmpty) {
-      return SkinMetrics.simulatedScan(previous: _referenceScan?.toSkinMetrics());
+      return SkinMetrics.simulatedScan(
+        previous: _referenceScan?.toSkinMetrics(),
+      );
     }
 
     double readScore(List<String> keys, {double fallback = 5.0}) {
@@ -2088,11 +2757,17 @@ class _CameraScreenState extends State<CameraScreen>
     }
 
     final previous = _referenceScan?.toSkinMetrics() ?? const SkinMetrics();
-    final redness = readScore(['redness', 'rosacea_intensity'], fallback: previous.redness);
+    final redness = readScore([
+      'redness',
+      'rosacea_intensity',
+    ], fallback: previous.redness);
     final texture = readScore(['texture'], fallback: previous.texture);
     final wrinkle = readScore(['wrinkle'], fallback: previous.wrinkle);
     final pore = readScore(['acne_severity', 'pore'], fallback: previous.pore);
-    final darkSpots = readScore(['pigment', 'dark_spots'], fallback: previous.darkSpots);
+    final darkSpots = readScore([
+      'pigment',
+      'dark_spots',
+    ], fallback: previous.darkSpots);
     final elasticity = (10.0 - texture).clamp(0.0, 10.0);
 
     return SkinMetrics(
@@ -2104,6 +2779,82 @@ class _CameraScreenState extends State<CameraScreen>
       elasticity: elasticity,
       date: DateTime.now(),
     );
+  }
+
+  /// Submits a body-region capture to `/api/body/analyze-silhouette` and
+  /// returns its raw JSON response — {status, text, modelUsed, result,
+  /// trend_deltas, trend_status, honesty_band_percent,
+  /// consistent_scan_requirement} — unmodified, so it can be stored
+  /// verbatim as the saved scan's `rawPayload` and later read back as the
+  /// next scan's baseline (see the `baselineResult` extraction below) or
+  /// rendered by a downstream UI the same way `rawPayload` already carries
+  /// the face pipeline's trend data.
+  ///
+  /// Returns null for non-body scans, and also (silently) on any backend
+  /// failure — this call is best-effort by design; see
+  /// [remote_skin_analysis.SkinAnalysisService.analyzeBodySilhouette] for
+  /// why that doesn't throw here.
+  Future<Map<String, dynamic>?> _submitBodySilhouetteAnalysis(
+    Uint8List bytes,
+    {
+    int? sourceImageWidth,
+    int? sourceImageHeight,
+  }
+  ) async {
+    if (!_isBodyGuide) return null;
+    final procedureId = widget.procedure?.id ?? _selectedProcedureId;
+    final priorCount = procedureId == null
+        ? 0
+        : await AppPrefs.getBodyConsistentScanCount(procedureId);
+    final params = buildBodySilhouetteRequestParams(
+      selectedCaptureMode: _selectedBodyCaptureMode,
+      lastCaptureQualityTag: _lastCaptureQualityTag,
+      baselineRawPayload: _referenceScan?.rawPayload,
+      baselineCaptureMode: _referenceScan?.captureMode,
+      baselineCaptureQuality: _referenceScan?.captureQuality,
+      priorConsistentScanCount: priorCount,
+      sourceImageWidth: sourceImageWidth,
+      sourceImageHeight: sourceImageHeight,
+      baselineSourceImageWidth: _referenceScan?.sourceImageWidth,
+      baselineSourceImageHeight: _referenceScan?.sourceImageHeight,
+    );
+    final response = await remote_skin_analysis.SkinAnalysisService.analyzeBodySilhouette(
+      bytes: bytes,
+      captureMode: params.captureMode,
+      captureQuality: params.captureQuality,
+      baselineResult: params.baselineResult,
+      baselineCaptureMode: params.baselineCaptureMode,
+      baselineCaptureQuality: params.baselineCaptureQuality,
+      currentConsistentScanCount: params.currentConsistentScanCount,
+      baselineConsistentScanCount: params.baselineConsistentScanCount,
+      sourceImageWidth: params.sourceImageWidth,
+      sourceImageHeight: params.sourceImageHeight,
+      baselineSourceImageWidth: params.baselineSourceImageWidth,
+      baselineSourceImageHeight: params.baselineSourceImageHeight,
+    );
+    final confirmedCount = response?['consistent_scan_count'];
+    if (procedureId != null && confirmedCount is num) {
+      await AppPrefs.setBodyConsistentScanCount(procedureId, confirmedCount.toInt());
+      final status = response?['trend_status'];
+      final trendStatus = status is Map
+          ? status['normalized_area_index']?.toString()
+          : null;
+      final notifications = NotificationService();
+      await notifications.cancelBodyTrendReminder(procedureId);
+      if (bodyTrendReminderAction(
+            trendStatus: trendStatus,
+            consistentScanCount: confirmedCount.toInt(),
+        priorConsistentScanCount: priorCount,
+          ) ==
+          BodyTrendReminderAction.schedule) {
+        await notifications.scheduleBodyTrendReminder(
+          procedureId: procedureId,
+          procedureName: _effectiveGuideProcedureType,
+          consistentScanCount: confirmedCount.toInt(),
+        );
+      }
+    }
+    return response;
   }
 
   /// Premium Deep Analysis block: a top disclaimer, the consent gate, and the
@@ -2439,6 +3190,9 @@ class _CameraScreenState extends State<CameraScreen>
           if (mounted) setState(() => _capturing = false);
           return;
         }
+        final sourceImage = img.decodeImage(bytes);
+        final sourceImageWidth = sourceImage?.width;
+        final sourceImageHeight = sourceImage?.height;
 
         final prepared = await prepareWebUploadImage(bytes);
         if (!prepared.isSuccess) {
@@ -2468,6 +3222,8 @@ class _CameraScreenState extends State<CameraScreen>
           croppedBytes,
           procedureIdToSave,
           productNameToSave,
+          sourceImageWidth,
+          sourceImageHeight,
         );
       } catch (e) {
         debugPrint('[WEB PICKER] exception: $e');
@@ -2500,6 +3256,8 @@ class _CameraScreenState extends State<CameraScreen>
     Uint8List bytes,
     String? procedureIdToSave,
     String? productNameToSave,
+    int? sourceImageWidth,
+    int? sourceImageHeight,
   ) async {
     final resolvedProcedureId = !widget.isSkincareScan
         ? (procedureIdToSave?.trim().isNotEmpty == true
@@ -2526,6 +3284,12 @@ class _CameraScreenState extends State<CameraScreen>
       '[_saveWebGalleryBytes] START bytes.length=${bytes.length} procedureIdToSave=$resolvedProcedureId productNameToSave=$productNameToSave isSkincareScan=${widget.isSkincareScan}',
     );
 
+    // Same mirror un-flip as the native capture path (_pickAndSavePhoto) —
+    // must happen before storage/landmark/backend use of `bytes` below.
+    if (_isBodyGuide) {
+      bytes = flipForStorageIfMirror(bytes, _selectedBodyCaptureMode);
+    }
+
     final bytesForStorage = kIsWeb ? _prepareWebStorageBytes(bytes) : bytes;
     final imagePathToSave = await _persistScanImage(
       bytesForStorage,
@@ -2533,6 +3297,15 @@ class _CameraScreenState extends State<CameraScreen>
       prefix: 'procedure_scan',
     );
     final nextMetrics = await _metricsFromBackendOrThrow(imagePathToSave);
+    // Runs alongside _metricsFromBackendOrThrow, not instead of it: that
+    // call still drives captureQuality/consistencyScore gating shared by
+    // every scan (body included), so it isn't replaced here. This adds the
+    // actual body-silhouette signal on top for body-region procedures only.
+    final bodySilhouettePayload = await _submitBodySilhouetteAnalysis(
+      bytes,
+      sourceImageWidth: sourceImageWidth,
+      sourceImageHeight: sourceImageHeight,
+    );
     try {
       debugPrint(
         '[_saveWebGalleryBytes] imagePathToSave length=${imagePathToSave.length}, originalBytes=${bytes.length}, storedBytes=${bytesForStorage.length}',
@@ -2626,10 +3399,17 @@ class _CameraScreenState extends State<CameraScreen>
           lightingConfidence: lightingConfidence,
           preferredReference: preferredReference,
           extraMetrics: capturedLandmarks.toMetricMap(),
+          bodyReferenceGeometry: capturedLandmarks.bodyReferenceGeometry,
           makeupPresent: _makeupPresent ?? false,
           distanceEstimate: _distanceEstimate(),
-          headTiltAngle: _headTiltAngle(),
+          headTiltAngle: _isBodyGuide ? _bodyTiltAngle() : _headTiltAngle(),
           expressionConfidence: _expressionConfidence(),
+          captureMode: _isBodyGuide
+              ? _selectedBodyCaptureMode?.storageValue
+              : null,
+            sourceImageWidth: sourceImageWidth,
+            sourceImageHeight: sourceImageHeight,
+          rawPayload: bodySilhouettePayload,
         );
         debugPrint(
           '[_saveWebGalleryBytes] skincare scan saved, updatedHistory.length=${updatedHistory.length}',
@@ -2652,8 +3432,14 @@ class _CameraScreenState extends State<CameraScreen>
           extraMetrics: capturedLandmarks.toMetricMap(),
           makeupPresent: _makeupPresent ?? false,
           distanceEstimate: _distanceEstimate(),
-          headTiltAngle: _headTiltAngle(),
+          headTiltAngle: _isBodyGuide ? _bodyTiltAngle() : _headTiltAngle(),
           expressionConfidence: _expressionConfidence(),
+          captureMode: _isBodyGuide
+              ? _selectedBodyCaptureMode?.storageValue
+              : null,
+            sourceImageWidth: sourceImageWidth,
+            sourceImageHeight: sourceImageHeight,
+          rawPayload: bodySilhouettePayload,
         );
         debugPrint(
           '[_saveWebGalleryBytes] procedure scan saved, updatedHistory.length=${updatedHistory.length}',
@@ -2795,6 +3581,7 @@ class _CameraScreenState extends State<CameraScreen>
   // ── Mobile / camera photo picker ──────────────────────────────────────────
   Future<void> _pickAndSavePhoto({
     ImageSource source = ImageSource.camera,
+    String? captureQuality,
   }) async {
     if (source == ImageSource.gallery) {
       // Reset current selection; it becomes valid again only after crop success.
@@ -2850,8 +3637,19 @@ class _CameraScreenState extends State<CameraScreen>
         return;
       }
 
+      String? selectedCaptureQuality = captureQuality;
+      if (source == ImageSource.camera) {
+        selectedCaptureQuality = await _resolveSelectedFrameCaptureQuality(
+          pickedFile,
+        );
+        _lastCaptureQualityTag = selectedCaptureQuality;
+      }
+
       // ── Manual crop: let the user select a focused skin patch ──────────
       final rawBytes = await pickedFile.readAsBytes();
+      final sourceImage = img.decodeImage(rawBytes);
+      final sourceImageWidth = sourceImage?.width;
+      final sourceImageHeight = sourceImage?.height;
       if (!mounted) {
         setState(() => _capturing = false);
         return;
@@ -2867,7 +3665,15 @@ class _CameraScreenState extends State<CameraScreen>
         if (mounted) setState(() => _capturing = false);
         return;
       }
-      final bytes = croppedBytes;
+      // Mirror captures are a front-camera view of the user's reflection —
+      // left-right flipped relative to how they'd appear to someone facing
+      // them directly. Flip back to a normal (un-mirrored) orientation here,
+      // before anything downstream (persisted file, landmark analysis,
+      // backend metrics) ever sees the bytes, so mirror/assisted/timer
+      // scans are all analyzed in the same orientation.
+      final bytes = _isBodyGuide
+          ? flipForStorageIfMirror(croppedBytes, _selectedBodyCaptureMode)
+          : croppedBytes;
       final imagePathToSave = await _persistScanImage(
         bytes,
         sourcePath: pickedFile.path,
@@ -2896,6 +3702,13 @@ class _CameraScreenState extends State<CameraScreen>
       }
 
       final nextMetrics = await _metricsFromBackendOrThrow(imagePathToSave);
+      // Runs alongside _metricsFromBackendOrThrow, not instead of it — see
+      // the matching comment in _saveWebGalleryBytes.
+      final bodySilhouettePayload = await _submitBodySilhouetteAnalysis(
+        bytes,
+        sourceImageWidth: sourceImageWidth,
+        sourceImageHeight: sourceImageHeight,
+      );
       final consistencyScore = _calculateConsistencyScore(
         bytes,
         nextMetrics,
@@ -2924,8 +3737,15 @@ class _CameraScreenState extends State<CameraScreen>
           extraMetrics: capturedLandmarks.toMetricMap(),
           makeupPresent: _makeupPresent ?? false,
           distanceEstimate: _distanceEstimate(),
-          headTiltAngle: _headTiltAngle(),
+          headTiltAngle: _isBodyGuide ? _bodyTiltAngle() : _headTiltAngle(),
           expressionConfidence: _expressionConfidence(),
+          captureQuality: selectedCaptureQuality,
+          captureMode: _isBodyGuide
+              ? _selectedBodyCaptureMode?.storageValue
+              : null,
+            sourceImageWidth: sourceImageWidth,
+            sourceImageHeight: sourceImageHeight,
+          rawPayload: bodySilhouettePayload,
         );
       } else {
         updatedHistory = await AppPrefs.addScanMetric(
@@ -2942,8 +3762,15 @@ class _CameraScreenState extends State<CameraScreen>
           extraMetrics: capturedLandmarks.toMetricMap(),
           makeupPresent: _makeupPresent ?? false,
           distanceEstimate: _distanceEstimate(),
-          headTiltAngle: _headTiltAngle(),
+          headTiltAngle: _isBodyGuide ? _bodyTiltAngle() : _headTiltAngle(),
           expressionConfidence: _expressionConfidence(),
+          captureQuality: selectedCaptureQuality,
+          captureMode: _isBodyGuide
+              ? _selectedBodyCaptureMode?.storageValue
+              : null,
+            sourceImageWidth: sourceImageWidth,
+            sourceImageHeight: sourceImageHeight,
+          rawPayload: bodySilhouettePayload,
         );
 
         final proceduresJson = await AppPrefs.getProcedureEntries();
@@ -3002,6 +3829,11 @@ class _CameraScreenState extends State<CameraScreen>
         );
         await _loadReferenceContext();
         if (!mounted) return;
+
+        if (widget.isSkincareScan) {
+          navigator.pop(imagePathToSave);
+          return;
+        }
         navigator.pop(true);
       }
     } catch (e) {
@@ -3016,9 +3848,93 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
+  double _sharpnessFromImageBytes(Uint8List bytes) {
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) return 0;
+
+    final gray = img.grayscale(decoded);
+    final width = gray.width;
+    final height = gray.height;
+    if (width < 6 || height < 6) return 0;
+
+    const step = 2;
+    var count = 0;
+    var sum = 0.0;
+    var sumSq = 0.0;
+
+    for (var y = 1; y < height - 1; y += step) {
+      for (var x = 1; x < width - 1; x += step) {
+        final center = gray.getPixel(x, y).r.toDouble();
+        final left = gray.getPixel(x - 1, y).r.toDouble();
+        final right = gray.getPixel(x + 1, y).r.toDouble();
+        final up = gray.getPixel(x, y - 1).r.toDouble();
+        final down = gray.getPixel(x, y + 1).r.toDouble();
+
+        final lap = (4 * center) - left - right - up - down;
+        sum += lap;
+        sumSq += lap * lap;
+        count++;
+      }
+    }
+
+    if (count == 0) return 0;
+    final mean = sum / count;
+    final variance = (sumSq / count) - (mean * mean);
+    return variance.isFinite ? variance.clamp(0.0, 5000.0) : 0.0;
+  }
+
+  double _burstFrameScoreFromPreview({required double sharpness}) {
+    final assessment = _liveLandmarkAssessment;
+    final centerDelta = assessment.available
+        ? assessment.centerOffsetX.abs() + assessment.centerOffsetY.abs()
+        : 0.25;
+    final pitchPenalty = assessment.available && assessment.pitch != null
+        ? assessment.pitch!.abs() / 30.0
+        : 0.0;
+    final alignmentScore = (1.0 - (centerDelta.clamp(0.0, 0.35) / 0.35)).clamp(
+      0.0,
+      1.0,
+    );
+    final pitchScore = (1.0 - pitchPenalty.clamp(0.0, 1.0)).clamp(0.0, 1.0);
+    final exposureScore = _lightingGuidance.level == _LightingLevel.optimal
+        ? 1.0
+        : 0.6;
+
+    return (sharpness / 75.0) +
+        (alignmentScore * 6.0) +
+        (pitchScore * 4.0) +
+        exposureScore;
+  }
+
+  Future<String> _resolveSelectedFrameCaptureQuality(XFile file) async {
+    final bytes = await file.readAsBytes();
+    final sharpness = _sharpnessFromImageBytes(bytes);
+    final pitch = _liveLandmarkAssessment.pitch;
+    if (pitch != null && pitch.abs() > _pitchWarnThresholdDegrees) {
+      return 'poor_angle';
+    }
+    if (sharpness > 0 && sharpness < _sharpnessVarianceFloor) {
+      return 'blurry';
+    }
+    final lowLight =
+        _lightingGuidance.level == _LightingLevel.tooDark ||
+        (_liveFaceRoiLuma > 0
+            ? _liveFaceRoiLuma < _lightingThresholds.darkMeanFloor
+            : _liveMeanBrightness < _lightingThresholds.darkMeanFloor);
+    if (lowLight) return 'low_light';
+    if (_isLightDirectionUneven) return 'uneven_lighting';
+    return 'normal';
+  }
+
   Future<XFile?> _captureFromLiveCamera() async {
     final controller = _cameraController;
     if (controller == null || !controller.value.isInitialized) {
+      final reason = controller == null
+          ? 'controller_null'
+          : 'controller_not_initialized';
+      debugPrint(
+        'CAPTURE_FALLBACK: using gallery picker instead of camera, reason=$reason',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Live camera unavailable. Opening Gallery...'),
@@ -3028,23 +3944,82 @@ class _CameraScreenState extends State<CameraScreen>
     }
     if (controller.value.isTakingPicture) return null;
 
+    final burstFiles = <XFile>[];
+
     try {
       if (_lightingStreamActive && !kIsWeb) {
         await controller.stopImageStream();
-        if (!mounted) return null;
         _lightingStreamActive = false;
       }
-      final file = await controller.takePicture();
-      if (!mounted) return null;
-      _startLightingStream(controller);
-      return file;
+
+      try {
+        await controller.setExposureMode(ExposureMode.locked);
+      } catch (e) {
+        debugPrint('Camera exposure lock unsupported; continuing capture: $e');
+      }
+      try {
+        await (controller as dynamic).setWhiteBalanceMode('locked');
+      } catch (e) {
+        debugPrint(
+          'Camera white balance lock unsupported; continuing capture: $e',
+        );
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+
+      for (var i = 0; i < 3; i++) {
+        final file = await controller.takePicture();
+        burstFiles.add(file);
+        if (i < 2) {
+          await Future<void>.delayed(const Duration(milliseconds: 110));
+        }
+      }
+
+      if (burstFiles.isEmpty) return null;
+
+      var bestFile = burstFiles.first;
+      var bestScore = double.negativeInfinity;
+      for (final file in burstFiles) {
+        final bytes = await file.readAsBytes();
+        final sharpness = _sharpnessFromImageBytes(bytes);
+        final score = _burstFrameScoreFromPreview(sharpness: sharpness);
+        if (score > bestScore) {
+          bestScore = score;
+          bestFile = file;
+        }
+      }
+
+      for (final file in burstFiles) {
+        if (file.path == bestFile.path) continue;
+        try {
+          final discardFile = File(file.path);
+          if (await discardFile.exists()) {
+            await discardFile.delete();
+          }
+        } catch (_) {
+          // Best-effort cleanup only; do not fail the capture.
+        }
+      }
+
+      return bestFile;
     } catch (e) {
       if (!mounted) return null;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Capture failed: $e')));
-      _startLightingStream(controller);
       return null;
+    } finally {
+      try {
+        await controller.setExposureMode(ExposureMode.auto);
+      } catch (e) {
+        debugPrint('Camera exposure reset unsupported: $e');
+      }
+      try {
+        await (controller as dynamic).setWhiteBalanceMode('auto');
+      } catch (e) {
+        debugPrint('Camera white balance reset unsupported: $e');
+      }
+      _startLightingStream(controller);
     }
   }
 
@@ -3055,6 +4030,7 @@ class _CameraScreenState extends State<CameraScreen>
     }
     closeLandmarkAnalyzers();
     _autoCaptureTimer?.cancel();
+    _timerCaptureTimer?.cancel();
     _cameraController?.dispose();
     _shimmerController.dispose();
     _successController.dispose();
@@ -3215,28 +4191,273 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   /// Aggregate head-tilt magnitude in degrees. Lower = more neutral.
-  double? _headTiltAngle() {
-    final a = _liveLandmarkAssessment;
-    if (!a.available) return null;
-    final yaw = a.yaw?.abs() ?? 0.0;
-    final pitch = a.pitch?.abs() ?? 0.0;
-    final roll = a.roll?.abs() ?? 0.0;
-    if (yaw == 0 && pitch == 0 && roll == 0) {
-      // Fallback: use rotation proxy + eye tilt as a synthetic degree value.
-      return (a.rotationProxy * 30.0).abs() +
-          ((a.eyeTilt?.abs() ?? 0.0) * 30.0);
-    }
-    return yaw + pitch + roll;
-  }
+  /// Face mode only — [_assessBody] never populates yaw/pitch/roll/eyeTilt,
+  /// so this always falls into the rotationProxy fallback for body
+  /// assessments, which is meaningless there (rotationProxy is a
+  /// shoulder/hip width ratio, not an angle). Use [_bodyTiltAngle] instead
+  /// for body mode.
+  double? _headTiltAngle() => headTiltAngleFromAssessment(_liveLandmarkAssessment);
 
-  /// Synthesised expression-acceptability confidence (0..1). High when the
-  /// face is detected with neutral pose and good landmark quality.
+  /// Body-mode tilt magnitude in degrees, using the actual shoulder-line
+  /// angle relative to horizontal ([LandmarkAssessment.shoulderTilt]) —
+  /// a genuine tilt measurement, unlike rotationProxy (shoulder/hip width
+  /// ratio), which has no angular meaning and was never intended as a
+  /// tilt proxy for body poses.
+  double? _bodyTiltAngle() => bodyTiltAngleFromAssessment(_liveLandmarkAssessment);
+
+  /// Synthesised pose-acceptability confidence (0..1), persisted with the
+  /// scan record and averaged into procedure_profiles_screen's
+  /// comparison-confidence label — not a transient display-only value, so
+  /// this must use a genuine tilt measurement per mode, same as Alignment.
+  /// High when a face/body is detected with neutral pose and good
+  /// landmark quality.
   double? _expressionConfidence() {
     final a = _liveLandmarkAssessment;
     if (!a.available) return null;
+    if (_isBodyGuide) {
+      final tilt = _bodyTiltAngle() ?? 0.0;
+      // Same ratio as face mode below (red threshold ⇒ ~2/3 penalty):
+      // face's 40° red threshold sits at 40/60 of its zero-credit ceiling,
+      // so body's 15° red threshold scales to a 22.5° ceiling.
+      final tiltPenalty = (tilt / 22.5).clamp(0.0, 1.0);
+      return (a.landmarkQuality * (1.0 - tiltPenalty * 0.6)).clamp(0.0, 1.0);
+    }
     final tilt = _headTiltAngle() ?? 0.0;
     final tiltPenalty = (tilt / 60.0).clamp(0.0, 1.0); // 60°+ ⇒ zero credit
     return (a.landmarkQuality * (1.0 - tiltPenalty * 0.6)).clamp(0.0, 1.0);
+  }
+
+  bool _isAlignmentInRange() {
+    final a = _liveLandmarkAssessment;
+    if (!a.available) return false;
+    final centerDelta = a.centerOffsetX.abs() + a.centerOffsetY.abs();
+    final tilt = _headTiltAngle() ?? 999.0;
+    final pitch = a.pitch ?? 0.0;
+    final yaw = a.yaw ?? 0.0;
+    final roll = a.roll ?? 0.0;
+    print(
+      '[FRONTEND LIVE POSE] pitch=${pitch.toStringAsFixed(2)} yaw=${yaw.toStringAsFixed(2)} tilt=${tilt.toStringAsFixed(2)} roll=${roll.toStringAsFixed(2)} centerDelta=${centerDelta.toStringAsFixed(3)}',
+    );
+    return centerDelta <= 0.25 && tilt <= 30.0;
+  }
+
+  bool _isCaptureFramingReady(ClinicalQualityReport report) {
+    // Body capture guidance is intentionally warning-only: the overlay can coach
+    // framing, but body photos should never be blocked by a slightly cropped or
+    // offset frame. Keep the strict face gate unchanged.
+    if (_isBodyGuide) {
+      return true;
+    }
+
+    // Scale / distance and lighting are intentionally passive here: they can
+    // guide the user, but they must never block a photo. The true capture gates
+    // remain face-centering and alignment.
+    return _isLiveFacePresentAndCentered() &&
+        _isAlignmentInRange() &&
+      report.headAngle.state == QualityState.green;
+  }
+
+  bool _isLiveFacePresentAndCentered() {
+    final a = _liveLandmarkAssessment;
+    if (!a.available) return false;
+    final centerDelta = a.centerOffsetX.abs() + a.centerOffsetY.abs();
+    if (centerDelta > 0.35) return false;
+    final fill = a.faceFillRatio;
+    if (fill > 0 && fill < (_targetFaceFillFloor * 0.82)) return false;
+    return true;
+  }
+
+  double _estimateFaceRoiLumaFromStream(CameraImage image) {
+    final yPlane = image.planes.firstOrNull;
+    if (yPlane == null || yPlane.bytes.isEmpty) return 0;
+    final assessment = _liveLandmarkAssessment;
+    if (!assessment.available) return 0;
+
+    final width = image.width;
+    final height = image.height;
+    final rowStride = yPlane.bytesPerRow;
+    if (width <= 4 || height <= 4 || rowStride < width) return 0;
+
+    final centerX = ((assessment.centerOffsetX + 0.5) * width).round();
+    final centerY = ((assessment.centerOffsetY + 0.5) * height).round();
+    final fill = assessment.faceFillRatio.clamp(0.10, 0.40);
+    final roiW = (width * math.sqrt(fill) * 0.90).round().clamp(24, width);
+    final roiH = (height * math.sqrt(fill) * 1.05).round().clamp(24, height);
+
+    final left = (centerX - (roiW ~/ 2)).clamp(0, width - 1);
+    final top = (centerY - (roiH ~/ 2)).clamp(0, height - 1);
+    final right = (left + roiW).clamp(left + 1, width);
+    final bottom = (top + roiH).clamp(top + 1, height);
+
+    var sum = 0.0;
+    var count = 0;
+    const step = 4;
+    final bytes = yPlane.bytes;
+    for (var y = top; y < bottom; y += step) {
+      final row = y * rowStride;
+      for (var x = left; x < right; x += step) {
+        sum += bytes[row + x];
+        count++;
+      }
+    }
+    if (count == 0) return 0;
+    return sum / count;
+  }
+
+  bool _isLowLightWarningActive() {
+    final darkFloor = _lightingThresholds.darkMeanFloor;
+    return _lightingGuidance.level == _LightingLevel.tooDark ||
+        (_liveFaceRoiLuma > 0 && _liveFaceRoiLuma < darkFloor);
+  }
+
+  // Face pose warnings should show up before capture when the subject is
+  // noticeably tilted, but we intentionally allow a little more headroom than
+  // the original capture gate so the user can still snap a good photo without
+  // chasing nearly-perfect alignment.
+  static const double _poseWarnThresholdDegrees = 32.0;
+
+  // Pitch above this magnitude reliably breaks pore_visibility,
+  // glabellar_wrinkle_depth, and under_eye metrics server-side (backend
+  // pose_ok gate). This is a live, pre-capture warning threshold — kept a bit
+  // more forgiving than the original gate so it coaches users without blocking
+  // a usable shot.
+  static const double _pitchWarnThresholdDegrees = 38.0;
+
+  // Left/right frame luma imbalance above this is treated as "uneven
+  // lighting direction." Slightly looser than before so normal room light and
+  // camera asymmetry won't prevent capture unless the lighting is clearly off.
+  static const double _lightDirectionImbalanceThreshold = 22.0;
+
+  bool get _isPitchOutOfRange {
+    final pitch = _liveLandmarkAssessment.pitch;
+    if (!_liveLandmarkAssessment.available || pitch == null) return false;
+    return pitch.abs() > _pitchWarnThresholdDegrees;
+  }
+
+  bool get _isYawOutOfRange {
+    final yaw = _liveLandmarkAssessment.yaw;
+    if (!_liveLandmarkAssessment.available || yaw == null) return false;
+    return yaw.abs() > _poseWarnThresholdDegrees;
+  }
+
+  bool get _isFaceFramingOff {
+    if (!_liveLandmarkAssessment.available) return false;
+    final centerDelta =
+        _liveLandmarkAssessment.centerOffsetX.abs() +
+        _liveLandmarkAssessment.centerOffsetY.abs();
+    return centerDelta > 0.16;
+  }
+
+  bool get _isBodyFramingOff {
+    if (!_isBodyGuide || !_liveLandmarkAssessment.available) return false;
+    final centerDelta =
+        _liveLandmarkAssessment.centerOffsetX.abs() +
+        _liveLandmarkAssessment.centerOffsetY.abs();
+    return centerDelta > 0.18;
+  }
+
+  /// Live pose guidance text tuned for the actual face-angle telemetry. This is
+  /// what the user sees before pressing capture so they know exactly why the
+  /// current frame is not yet ideal.
+  String get _livePoseGuidanceText {
+    if (_isBodyGuide && _isBodyFramingOff) {
+      return 'Step back — full body needed.';
+    }
+
+    final pitch = _liveLandmarkAssessment.pitch;
+    final yaw = _liveLandmarkAssessment.yaw;
+
+    if (_isPitchOutOfRange && pitch != null) {
+      if (pitch > 0) return 'Level your head — lower your chin.';
+      return 'Level your head — lift your chin.';
+    }
+
+    if (_isYawOutOfRange && yaw != null) {
+      if (yaw > 0) return 'Hold phone straight — turn your face slightly left.';
+      return 'Hold phone straight — turn your face slightly right.';
+    }
+
+    if (_isFaceFramingOff) {
+      // _isFaceFramingOff uses a tighter threshold than _isBodyFramingOff
+      // (already checked above), so this can still fire in body mode for a
+      // delta between the two thresholds — keep the copy body-aware.
+      return _isBodyGuide
+          ? 'Center your body in the frame.'
+          : 'Center your face in the frame.';
+    }
+
+    if (_isLowLightWarningActive()) {
+      return 'Move to better light for a cleaner scan.';
+    }
+
+    if (_isLightDirectionUneven) {
+      return 'Light is uneven — face your main light source.';
+    }
+
+    if (!_liveLandmarkAssessment.available) {
+      return _isBodyGuide
+          ? 'Center your body inside the guide.'
+          : 'Center your face inside the guide.';
+    }
+
+    return 'Position OK';
+  }
+
+  /// Live pitch guidance text. Mirrors the sign convention already used by
+  /// [LandmarkAssessment.primaryInstruction] (pitch > 0 ⇒ chin is high ⇒
+  /// lower it; pitch < 0 ⇒ chin is low ⇒ lift it), just surfaced as its own
+  /// always-visible indicator with a dedicated ~20° warning threshold.
+  String get _pitchGuidanceLabel {
+    final pitch = _liveLandmarkAssessment.pitch;
+    if (!_liveLandmarkAssessment.available || pitch == null) {
+      return _isBodyGuide
+          ? 'Center your body to check angle'
+          : 'Center your face to check angle';
+    }
+    if (pitch > _pitchWarnThresholdDegrees) {
+      return 'Tilt your chin down slightly';
+    }
+    if (pitch < -_pitchWarnThresholdDegrees) {
+      return 'Tilt your chin up slightly';
+    }
+    return 'Level';
+  }
+
+  bool get _isLightDirectionUneven =>
+      _liveLightHorizontalDelta.abs() > _lightDirectionImbalanceThreshold;
+
+  String _captureQualityForCurrentConditions(ClinicalQualityReport report) {
+    if (!_isCaptureFramingReady(report)) {
+      return _isBodyGuide ? 'partial_body_framing' : 'face_offcenter';
+    }
+    final thresholds = _lightingThresholds;
+    final lowLight =
+        _lightingGuidance.level == _LightingLevel.tooDark ||
+        (_liveFaceRoiLuma > 0
+            ? _liveFaceRoiLuma < thresholds.darkMeanFloor
+            : _liveMeanBrightness < thresholds.darkMeanFloor);
+
+    // Priority when multiple issues are present at capture time (most
+    // severe first, per the guided-capture investigation findings):
+    //   1. face_offcenter / partial_body_framing — warn-only for body, hard
+    //      gate for face; this remains the only body-only guidance path.
+    //   2. poor_angle — excess pitch reliably breaks pore_visibility,
+    //      glabellar_wrinkle_depth, and under_eye metrics outright.
+    //   3. low_light — absolute darkness degrades every metric (existing).
+    //   4. blurry — motion / focus softness degrades edge detail while still
+    //      allowing a usable capture to proceed with a warning-tag.
+    //   5. uneven_lighting — directional imbalance mainly destabilizes
+    //      under_eye_dark_circle_density; the face is otherwise usably lit,
+    //      so this is judged less severe than absolute low light.
+    //   6. normal.
+    if (_isBodyGuide && _isBodyFramingOff) return 'partial_body_framing';
+    if (_isPitchOutOfRange) return 'poor_angle';
+    if (lowLight) return 'low_light';
+    if (_liveSharpness > 0 && _liveSharpness < _sharpnessVarianceFloor) {
+      return 'blurry';
+    }
+    if (_isLightDirectionUneven) return 'uneven_lighting';
+    return 'normal';
   }
 
   /// Compose the live 4-signal traffic-light report shown above the
@@ -3244,64 +4465,106 @@ class _CameraScreenState extends State<CameraScreen>
   ClinicalQualityReport _buildClinicalQualityReport() {
     final hasFace = _liveLandmarkAssessment.available;
 
-    // ── Scale / proximity (targeted face occupancy for ROI fidelity) ──────
+    // ── Scale / proximity (passive-only guide; never a hard capture blocker) ─
+    // Detection math is unchanged (still driven by face-fill-ratio/landmark
+    // signals even in body mode, per the existing _isBodyFramingOff pattern
+    // elsewhere in this file) — only the displayed copy branches on
+    // _isBodyGuide, since "face" wording was showing up on Body procedure
+    // captures regardless of what was actually being framed.
     QualitySignal scale;
     final fill = _liveFaceFillRatio;
     if (!hasFace || fill <= 0) {
+      scale = QualitySignal(
+        label: 'Scale',
+        state: QualityState.yellow,
+        detail: _isBodyGuide
+            ? 'Center your body inside the frame'
+            : 'Center your face inside the mask',
+      );
+    } else if (fill < _targetFaceFillFloor) {
+      scale = QualitySignal(
+        label: 'Scale',
+        state: QualityState.yellow,
+        detail: _isBodyGuide
+            ? 'Move closer — body is a bit too far away'
+            : 'Move closer — face is a bit too far away',
+      );
+    } else if (fill > _targetFaceFillCeil) {
+      scale = QualitySignal(
+        label: 'Scale',
+        state: QualityState.yellow,
+        detail: _isBodyGuide
+            ? 'Move slightly back — body is a bit too close'
+            : 'Move slightly back — face is a bit too close',
+      );
+    } else if (fill < _targetFaceFillFloor * 1.12 ||
+        fill > _targetFaceFillCeil * 0.92) {
       scale = const QualitySignal(
         label: 'Scale',
         state: QualityState.yellow,
-        detail: 'Center your face inside the mask',
-      );
-    } else if (fill < _targetFaceFillFloor) {
-      scale = const QualitySignal(
-        label: 'Scale',
-        state: QualityState.red,
-        detail: 'Move closer — fill more of the guide',
-      );
-    } else if (fill > _targetFaceFillCeil) {
-      scale = const QualitySignal(
-        label: 'Scale',
-        state: QualityState.red,
-        detail: 'Move slightly back — face is too close',
+        detail: 'Adjust distance to the center of the guide',
       );
     } else {
-      scale = const QualitySignal(
+      scale = QualitySignal(
         label: 'Scale',
         state: QualityState.green,
-        detail: 'Face size in target range',
+        detail: _isBodyGuide ? 'Body size in target range' : 'Face size in target range',
       );
     }
 
-    // ── Alignment (centering + neutral head pose) ────────────────────────
+    // ── Alignment (centering + neutral tilt) ──────────────────────────────
+    // Tilt source and thresholds are mode-specific: face uses aggregate
+    // head yaw+pitch+roll (30°/40° thresholds), body uses the actual
+    // shoulder-line angle (8°/15° thresholds — a single-plane angle is
+    // naturally much smaller than a 3-angle sum, and shoulder tilt is
+    // visually obvious well before 15°). rotationProxy (shoulder/hip width
+    // ratio) is not used here at all — it has no angular meaning and
+    // previously made Alignment unreachable-green for anyone with
+    // shoulders wider than hips, regardless of actual tilt/centering.
     QualitySignal alignment;
-    final tilt = _headTiltAngle() ?? 999;
+    final double? tilt = _isBodyGuide ? _bodyTiltAngle() : _headTiltAngle();
     final centerDelta =
         _liveLandmarkAssessment.centerOffsetX.abs() +
         _liveLandmarkAssessment.centerOffsetY.abs();
+    // Threshold classification is delegated to the pure, unit-tested
+    // alignmentQualityStatus() so the red/yellow/green cutoffs used here
+    // are covered by an automated test, not just this call site.
+    final alignmentStatus = alignmentQualityStatus(
+      isBodyGuide: _isBodyGuide,
+      tilt: tilt,
+      centerDelta: centerDelta,
+    );
     if (!hasFace) {
-      alignment = const QualitySignal(
+      alignment = QualitySignal(
         label: 'Alignment',
         state: QualityState.red,
-        detail: 'Center your face inside the mask',
+        detail: _isBodyGuide
+            ? 'Center your body inside the frame'
+            : 'Center your face inside the mask',
       );
-    } else if (centerDelta > 0.18 || tilt > 22) {
-      alignment = const QualitySignal(
+    } else if (alignmentStatus == QualityState.red) {
+      alignment = QualitySignal(
         label: 'Alignment',
         state: QualityState.red,
-        detail: 'Center your face inside the mask',
+        detail: _isBodyGuide
+            ? 'Center your body inside the frame'
+            : 'Center your face inside the mask',
       );
-    } else if (centerDelta > 0.11 || tilt > 14) {
-      alignment = const QualitySignal(
+    } else if (alignmentStatus == QualityState.yellow) {
+      alignment = QualitySignal(
         label: 'Alignment',
         state: QualityState.yellow,
-        detail: 'Straighten and center your face',
+        detail: _isBodyGuide
+            ? 'Straighten and center your body'
+            : 'Straighten and center your face',
       );
     } else {
-      alignment = const QualitySignal(
+      alignment = QualitySignal(
         label: 'Alignment',
         state: QualityState.green,
-        detail: 'Eyes, nose, and chin are aligned',
+        detail: _isBodyGuide
+            ? 'Body positioning looks aligned'
+            : 'Eyes, nose, and chin are aligned',
       );
     }
 
@@ -3310,14 +4573,14 @@ class _CameraScreenState extends State<CameraScreen>
     if (_lightingGuidance.level == _LightingLevel.tooDark) {
       lighting = const QualitySignal(
         label: 'Lighting',
-        state: QualityState.red,
-        detail: 'Too dark — move to a well-lit area',
+        state: QualityState.yellow,
+        detail: 'Dim light — try a brighter angle or softer front light',
       );
     } else if (_lightingGuidance.level == _LightingLevel.tooHarsh ||
         _liveBacklightDelta > _backlightDeltaCeil) {
       lighting = const QualitySignal(
         label: 'Lighting',
-        state: QualityState.red,
+        state: QualityState.yellow,
         detail: 'Harsh backlighting detected',
       );
     } else if (_lightingGuidance.level == _LightingLevel.unknown) {
@@ -3432,11 +4695,14 @@ class _CameraScreenState extends State<CameraScreen>
   /// Unified capture entry point used by the manual button and the
   /// auto-capture timer. Honours the quality gate; if conditions are not
   /// ideal the user must explicitly confirm an override.
-  Future<void> _handleCaptureTap({bool auto = false}) async {
+  Future<void> _handleCaptureTap({
+    bool auto = false,
+    bool bypassFramingGate = false,
+  }) async {
     if (_captureInProgress || _capturing) return;
     final report = _buildClinicalQualityReport();
 
-    if (!report.allGreen) {
+    if (!bypassFramingGate && !_isCaptureFramingReady(report)) {
       _updateQaBannerFromReport(report);
       if (!auto && mounted) {
         ScaffoldMessenger.of(context)
@@ -3452,12 +4718,29 @@ class _CameraScreenState extends State<CameraScreen>
       return;
     }
 
+    final capturePitch = _liveLandmarkAssessment.pitch ?? 0.0;
+    final captureYaw = _liveLandmarkAssessment.yaw ?? 0.0;
+    final captureRoll = _liveLandmarkAssessment.roll ?? 0.0;
+    final captureFaceFill = _liveLandmarkAssessment.faceFillRatio;
+    final captureCenterDelta =
+        _liveLandmarkAssessment.centerOffsetX.abs() +
+        _liveLandmarkAssessment.centerOffsetY.abs();
+    print(
+      '[FRONTEND CAPTURE FINAL] pitch=${capturePitch.toStringAsFixed(2)} yaw=${captureYaw.toStringAsFixed(2)} roll=${captureRoll.toStringAsFixed(2)} faceFill=${captureFaceFill.toStringAsFixed(3)} centerDelta=${captureCenterDelta.toStringAsFixed(3)}',
+    );
+
     _captureInProgress = true;
     try {
+      final captureQuality = _captureQualityForCurrentConditions(report);
+      _lastCaptureQualityTag = captureQuality;
       // ImageSource.camera invokes the system camera which honours the
       // platform's hardware capture pipeline. The live preview above has
-      // already coached the user into the correct pose.
-      await _pickAndSavePhoto(source: ImageSource.camera);
+      // already coached the user into the correct pose. The actual burst
+      // selection resolves the final capture_quality from the chosen frame.
+      await _pickAndSavePhoto(
+        source: ImageSource.camera,
+        captureQuality: captureQuality,
+      );
     } finally {
       _captureInProgress = false;
       // Reset quality stability so a new countdown starts fresh.
@@ -3587,7 +4870,7 @@ class _CameraScreenState extends State<CameraScreen>
 
                   const SizedBox(height: 14),
 
-                  // ── Primary live instruction ─────────────────────────────
+                  // ── Primary live instruction (always mounted) ───────────
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
@@ -3601,16 +4884,22 @@ class _CameraScreenState extends State<CameraScreen>
                     child: Row(
                       children: [
                         Icon(
-                          Icons.center_focus_strong_rounded,
-                          color: MyApp.clinicalTeal,
+                          _isPitchOutOfRange || _isYawOutOfRange
+                              ? Icons.warning_amber_rounded
+                              : Icons.center_focus_strong_rounded,
+                          color: _isPitchOutOfRange || _isYawOutOfRange
+                              ? AppColors.softTerracotta
+                              : MyApp.clinicalTeal,
                           size: 20,
                         ),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            report.primaryInstruction,
+                            _livePoseGuidanceText,
                             style: TextStyle(
-                              color: MyApp.clinicalNavy,
+                              color: _isPitchOutOfRange || _isYawOutOfRange
+                                  ? AppColors.softTerracotta
+                                  : MyApp.clinicalNavy,
                               fontSize: 13.5,
                               fontWeight: FontWeight.w800,
                               height: 1.35,
@@ -3626,6 +4915,122 @@ class _CameraScreenState extends State<CameraScreen>
                   // ── Quality indicator chips ──────────────────────────────
                   ClinicalQualityIndicators(report: report),
 
+                  // ── Live pitch (tilt) indicator ───────────────────────────
+                  // Always visible while a face is detected — a dedicated,
+                  // continuously-updating proxy for chin-up/chin-down tilt,
+                  // separate from the combined Alignment chip above. Warns
+                  // (color/text change) past ~20°; never blocks capture.
+                  if (_liveLandmarkAssessment.available)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Row(
+                        children: [
+                          Icon(
+                            _isPitchOutOfRange
+                                ? ((_liveLandmarkAssessment.pitch ?? 0) > 0
+                                      ? Icons.keyboard_double_arrow_down_rounded
+                                      : Icons.keyboard_double_arrow_up_rounded)
+                                : Icons.height_rounded,
+                            size: 16,
+                            color: _isPitchOutOfRange
+                                ? AppColors.softTerracotta
+                                : AppColors.mutedSage,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _pitchGuidanceLabel,
+                            style: TextStyle(
+                              color: _isPitchOutOfRange
+                                  ? AppColors.softTerracotta
+                                  : AppColors.mutedSage,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                  if (_isBodyGuide && _isBodyFramingOff)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 8),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.warning_amber_rounded,
+                            size: 16,
+                            color: AppColors.softTerracotta,
+                          ),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Move further from the camera — full body needed. You can still capture now.',
+                              style: TextStyle(
+                                color: AppColors.softTerracotta,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                  if (_isLowLightWarningActive())
+                    const Padding(
+                      padding: EdgeInsets.only(top: 8),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.wb_sunny_outlined,
+                            size: 16,
+                            color: AppColors.softTerracotta,
+                          ),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Move to better light for a cleaner scan. You can still capture now.',
+                              style: TextStyle(
+                                color: AppColors.softTerracotta,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                  // ── Light-direction (left/right) evenness warning ────────
+                  // Independent of the tooDark/tooHarsh lighting level above
+                  // — the face can be adequately lit overall while still
+                  // being lit unevenly from one side, which is what actually
+                  // destabilizes under_eye_dark_circle_density.
+                  if (_isLightDirectionUneven)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 8),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.flare_outlined,
+                            size: 16,
+                            color: AppColors.softTerracotta,
+                          ),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Light is uneven — try facing your main light source directly. You can still capture now.',
+                              style: TextStyle(
+                                color: AppColors.softTerracotta,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
                   const SizedBox(height: 18),
 
                   // ── Capture button (gated) ──────────────────────────────
@@ -3636,7 +5041,7 @@ class _CameraScreenState extends State<CameraScreen>
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           ClinicalCaptureButton(
-                            enabled: report.allGreen,
+                            enabled: _isCaptureFramingReady(report),
                             busy: _capturing,
                             countdownProgress: _autoCaptureCountdown == null
                                 ? null
@@ -3704,7 +5109,65 @@ class _CameraScreenState extends State<CameraScreen>
             child: _buildQaTopBanner(report),
           ),
           _buildSuccessOverlay(),
+          _buildLivePoseOverlay(),
         ],
+      ),
+    );
+  }
+
+  Widget _buildLivePoseOverlay() {
+    final warning = _isPitchOutOfRange || _isYawOutOfRange;
+
+    return Positioned(
+      top: 130,
+      left: 16,
+      right: 16,
+      child: IgnorePointer(
+        child: SafeArea(
+          bottom: false,
+          child: Container(
+            height: 50,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.yellow,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.38),
+                width: 1.2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.22),
+                  blurRadius: 14,
+                  offset: const Offset(0, 7),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  warning
+                      ? Icons.warning_amber_rounded
+                      : Icons.center_focus_strong_rounded,
+                  color: Colors.white,
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _livePoseGuidanceText,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -3801,13 +5264,60 @@ class _CameraScreenState extends State<CameraScreen>
                 ),
                 if (_showGhostOverlay && _referenceImagePath != null)
                   _buildGhostReferenceOverlay(),
+                if (_isBodyGuide)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(28),
+                          border: Border.all(
+                            color: _bodyAlignmentStatusColor,
+                            width: 2.2,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: _bodyAlignmentStatusColor.withValues(alpha: 0.22),
+                              blurRadius: 12,
+                              offset: const Offset(0, 0),
+                            ),
+                          ],
+                        ),
+                        child: Align(
+                          alignment: Alignment.topCenter,
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 10),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: _bodyAlignmentStatusColor.withValues(alpha: 0.10),
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                  color: _bodyAlignmentStatusColor.withValues(alpha: 0.35),
+                                ),
+                              ),
+                              child: Text(
+                                _bodyAlignmentStatusLabel,
+                                style: TextStyle(
+                                  color: _bodyAlignmentStatusColor,
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.12,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 AdaptiveCameraOutline(
                   guideType: _guideType,
                   height: _isBodyGuide ? 380 : 340,
                   angleChips: _overlayAngles,
                   selectedAngleChip: _selectedPoseTemplate,
                   poseTemplate: _selectedPoseTemplate,
-                  bottomLabel: _bottomConsistencyReminder,
+                  showBottomLabel: false,
                 ),
               ],
             ),
@@ -3971,10 +5481,11 @@ class _CameraScreenState extends State<CameraScreen>
           harshRatioCeil: 0.21,
         );
       case ProcedureCameraGuideType.general:
-        // General mode balances common webcam + phone front-camera behavior.
+        // General mode balances common webcam + phone front-camera behavior and
+        // uses the empirically verified mean-luma band from device testing.
         return const _LightingThresholds(
-          darkMeanFloor: 100,
-          harshMeanCeil: 172,
+          darkMeanFloor: 58,
+          harshMeanCeil: 194,
           darkRatioCeil: 0.26,
           harshRatioCeil: 0.19,
         );
@@ -3984,39 +5495,46 @@ class _CameraScreenState extends State<CameraScreen>
   double get _sharpnessVarianceFloor {
     switch (_guideType) {
       case ProcedureCameraGuideType.facial:
-        // Higher detail floor for pore-level facial metrics.
-        return 48.0;
+        // Slightly more forgiving for real-world smartphone / webcam captures
+        // while still warning when the frame is distractingly soft.
+        return 36.0;
       case ProcedureCameraGuideType.body:
         // Body surfaces have lower high-frequency detail than facial skin.
-        return 32.0;
+        return 24.0;
       case ProcedureCameraGuideType.general:
-        // Strict, but still realistic for typical webcams and phones.
-        return 38.0;
+        // Relaxed enough to avoid blocking routine captures without losing
+        // the useful blur cue.
+        return 28.0;
     }
   }
 
   double get _targetFaceFillFloor {
     switch (_guideType) {
       case ProcedureCameraGuideType.facial:
-        // Require adequate on-sensor face pixels for robust ROI analysis.
-        return 0.15;
+        // Give normal arm-length phone holding distances plenty of room to pass
+        // the scale check while still maintaining a meaningful visual reference.
+        return 0.08;
       case ProcedureCameraGuideType.body:
-        // Wider body composition framing accepts smaller face occupancy.
-        return 0.10;
+        // Body framing tolerates a wider range of distance changes.
+        return 0.07;
       case ProcedureCameraGuideType.general:
-        return 0.13;
+        return 0.08;
     }
   }
 
   double get _targetFaceFillCeil {
     switch (_guideType) {
       case ProcedureCameraGuideType.facial:
-        // Prevent close-up distortion / clipping around forehead and chin.
-        return 0.24;
+        // This wider upper bound prevents valid close-to-mid range captures from
+        // getting flagged as over-scaled in everyday use.
+        return 0.35;
       case ProcedureCameraGuideType.body:
-        return 0.20;
+        // Full arm-extension body captures can legitimately land just under
+        // 0.29; keep that comfortably green while still warning before the
+        // general/facial close-range ceilings.
+        return 0.32;
       case ProcedureCameraGuideType.general:
-        return 0.22;
+        return 0.38;
     }
   }
 
@@ -4387,6 +5905,93 @@ class _CameraScreenState extends State<CameraScreen>
               ],
             ),
           ),
+          if (_isBodyGuide && _selectedBodyCaptureMode != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 11,
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.cardBackground.withValues(alpha: 0.94),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: MyApp.goldShimmer.withValues(alpha: 0.28),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        _selectedBodyCaptureMode == BodyCaptureMode.mirror
+                            ? Icons.flip_rounded
+                            : _selectedBodyCaptureMode ==
+                                  BodyCaptureMode.timer
+                            ? Icons.timer_outlined
+                            : Icons.people_alt_outlined,
+                        color: MyApp.goldShimmer,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          _selectedBodyCaptureMode!.label,
+                          style: TextStyle(
+                            color: MyApp.goldShimmer,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12.8,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _changeBodyCaptureMode,
+                        style: TextButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          minimumSize: const Size(0, 0),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text(
+                          'Change',
+                          style: TextStyle(fontSize: 11.5),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    _bodyCaptureModeInstruction,
+                    style: TextStyle(
+                      color: MyApp.textBrown.withValues(alpha: 0.8),
+                      fontSize: 12.2,
+                      fontWeight: FontWeight.w600,
+                      height: 1.32,
+                    ),
+                  ),
+                  if (_selectedBodyCaptureMode == BodyCaptureMode.timer) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed:
+                            (_timerCaptureCountdown != null || _capturing)
+                            ? null
+                            : _startTimerCapture,
+                        icon: const Icon(Icons.timer_outlined, size: 16),
+                        label: Text(
+                          _timerCaptureCountdown != null
+                              ? 'Capturing in $_timerCaptureCountdown…'
+                              : 'Start timer (8s)',
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
           if (_lastConsistencyScore != null) ...[
             const SizedBox(height: 10),
             Builder(

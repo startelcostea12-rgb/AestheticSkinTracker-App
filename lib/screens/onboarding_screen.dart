@@ -83,7 +83,7 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
-    const backgroundColor = AppColors.warmAlabaster;
+    const backgroundColor = Color(0xFFF4F6F4);
     const titleColor = AppColors.refinedSlate;
 
     return Scaffold(
@@ -100,14 +100,14 @@ class _SplashScreenState extends State<SplashScreen>
               ),
             ),
           ),
-          Positioned.fill(
+          const Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [
-                    AppColors.warmAlabaster,
-                    AppColors.cardBackground,
-                    AppColors.champagneGold.withValues(alpha: 0.08),
+                    Color(0xFFF4F6F4),
+                    Color(0xFFEFF4F0),
+                    Color(0xFFE8EFE9),
                   ],
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
@@ -134,21 +134,25 @@ class _SplashScreenState extends State<SplashScreen>
                 FadeTransition(
                   opacity: _logoFadeIn,
                   child: Container(
-                    width: 96,
-                    height: 96,
+                    width: 126,
+                    height: 126,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: AppColors.cardBackground,
+                      color: const Color(0xFFF8FBF8),
                       border: Border.all(
-                        color: AppColors.champagneGold.withValues(alpha: 0.72),
-                        width: 2,
+                        color: const Color(0xFF7A8B7B),
+                        width: 2.2,
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.champagneGold.withValues(
-                            alpha: 0.20,
-                          ),
-                          blurRadius: 16,
+                          color: const Color(0xFF7A8B7B).withValues(alpha: 0.20),
+                          blurRadius: 24,
+                          offset: const Offset(0, 10),
+                        ),
+                        BoxShadow(
+                          color: AppColors.refinedSlate.withValues(alpha: 0.08),
+                          blurRadius: 14,
+                          offset: const Offset(0, 4),
                         ),
                       ],
                     ),
@@ -156,16 +160,13 @@ class _SplashScreenState extends State<SplashScreen>
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Image.asset(
-                              'assets/logo/logo.png',
-                              fit: BoxFit.contain,
-                              errorBuilder: (_, __, ___) => const Icon(
-                                Icons.spa_rounded,
-                                color: AppColors.champagneGold,
-                                size: 34,
-                              ),
+                          Image.asset(
+                            'assets/logo/logo.png',
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const Icon(
+                              Icons.spa_rounded,
+                              color: Color(0xFF7A8B7B),
+                              size: 58,
                             ),
                           ),
                           // Pearl shimmer handoff from native splash into Flutter UI.
@@ -204,45 +205,34 @@ class _SplashScreenState extends State<SplashScreen>
                     ),
                   ),
                 ),
-                const SizedBox(height: 18),
-                AnimatedBuilder(
-                  animation: _shimmerAnimation,
-                  builder: (context, child) {
-                    return ShaderMask(
-                      shaderCallback: (bounds) {
-                        return LinearGradient(
-                          colors: [
-                            titleColor.withValues(alpha: 0.6),
-                            AppColors.champagneGold.withValues(alpha: 0.8),
-                            titleColor.withValues(alpha: 0.6),
-                          ],
-                          stops: const [0.0, 0.5, 1.0],
-                          begin: Alignment(-1 + _shimmerAnimation.value, 0),
-                          end: Alignment(1 + _shimmerAnimation.value, 0),
-                        ).createShader(bounds);
-                      },
-                      child: const Text(
-                        'AestheticSkinTracker',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontFamily: 'Serif',
-                          fontSize: 36,
-                          fontWeight: FontWeight.w700,
-                          color: titleColor,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Luxury skin progress, guided with care',
-                  style: TextStyle(
-                    fontFamily: 'Serif',
-                    fontSize: 16,
-                    color: titleColor.withValues(alpha: 0.8),
+                const SizedBox(height: 22),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(
+                    'AestheticSkinTracker',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: 'Serif',
+                      fontSize: 33,
+                      fontWeight: FontWeight.w700,
+                      color: titleColor,
+                      height: 1.08,
+                    ),
                   ),
-                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 30),
+                  child: Text(
+                    'Luxury skin progress, guided with care',
+                    style: TextStyle(
+                      fontFamily: 'Serif',
+                      fontSize: 15,
+                      color: titleColor.withValues(alpha: 0.78),
+                      height: 1.34,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
                 ),
                 const SizedBox(height: 36),
                 SizedBox(

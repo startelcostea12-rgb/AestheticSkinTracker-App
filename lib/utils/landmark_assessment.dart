@@ -22,6 +22,7 @@ class LandmarkAssessment {
     this.rotationProxy = 0,
     this.faceFillRatio = 0,
     this.mode = 'fallback',
+    this.bodyReferenceGeometry,
   });
 
   final bool available;
@@ -39,6 +40,7 @@ class LandmarkAssessment {
   final double rotationProxy;
   final double faceFillRatio;
   final String mode;
+  final Map<String, double>? bodyReferenceGeometry;
 
   Map<String, double> toMetricMap() {
     return {

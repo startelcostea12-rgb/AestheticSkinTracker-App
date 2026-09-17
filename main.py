@@ -33,6 +33,23 @@ except Exception:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+MIN_USABLE_CHEEK_PIXELS = 2000
+MIN_USABLE_TEXTURE_ROI_PIXELS = MIN_USABLE_CHEEK_PIXELS
+MIN_USABLE_TZONE_PIXELS = 1500
+
+# apply_white_balance_calibration searches the outer image margin for a
+# bright, low-chroma patch and treats it as a neutral color reference.
+# Investigation (2026-08-07) against real casual selfies found it fires on
+# <10% of frames and, when it does, can lock onto scene background
+# (patterned fabric, hair) rather than a true neutral object -- injecting
+# uncontrolled cross-scan noise into the exact metrics this pipeline is
+# meant to keep clean. Disabled for the live capture/analyze path; the
+# pre-capture lighting-quality gate (guided-capture face-ROI luma
+# sampling) remains the sole mechanism for catching bad lighting. Kept as
+# a flag (not deleted) in case a future guided flow with a real physical
+# reference object wants to re-enable it.
+ENABLE_WHITE_BALANCE_CALIBRATION = False
+
 
 def safe_float(val: Any) -> float | None:
     if val is None:
@@ -63,6 +80,10 @@ _FACE_MESH = None
 _FACE_LANDMARKER = None
 _FACE_DETECTOR = None
 _YOLO = None
+_BODY_POSE_LANDMARKER = None
+_BODY_SEGMENTATION_MODEL = None
+_BODY_PIPELINE_READY = False
+_BODY_PIPELINE_ERROR = ""
 
 
 class ModelAssetManager:
@@ -220,6 +241,93 @@ def _extract_primary_landmarks(rgb_image: np.ndarray):
     return face.landmark, len(face.landmark), "mesh"
 
 
+def ensure_body_pipeline_ready() -> Dict[str, str]:
+    global _BODY_POSE_LANDMARKER, _BODY_SEGMENTATION_MODEL, _BODY_PIPELINE_READY, _BODY_PIPELINE_ERROR
+
+    if _BODY_PIPELINE_READY:
+        return {"status": "ready"}
+
+    if _BODY_PIPELINE_ERROR:
+        raise RuntimeError(_BODY_PIPELINE_ERROR)
+
+    if mp is None:
+        _BODY_PIPELINE_ERROR = "MediaPipe is not installed. Run 'pip install mediapipe'."
+        raise RuntimeError(_BODY_PIPELINE_ERROR)
+
+    try:
+        from mediapipe.tasks import python as mp_python
+        from mediapipe.tasks.python import vision as mp_vision
+
+        pose_candidates = [
+            "pose_landmarker_lite.task",
+            "pose_landmarker_full.task",
+            "pose_landmarker_heavy.task",
+        ]
+        pose_model_path = None
+        for candidate in pose_candidates:
+            try:
+                pose_model_path = _MODEL_PATH_RESOLVER.resolve(
+                    env_var="POSE_LANDMARKER_MODEL_PATH",
+                    candidate_filenames=[candidate],
+                    purpose="MediaPipe body pose landmark model",
+                )
+                break
+            except FileNotFoundError:
+                continue
+
+        if pose_model_path is not None:
+            pose_options = mp_vision.PoseLandmarkerOptions(
+                base_options=mp_python.BaseOptions(model_asset_path=pose_model_path),
+                running_mode=mp_vision.RunningMode.IMAGE,
+                num_poses=1,
+            )
+            _BODY_POSE_LANDMARKER = mp_vision.PoseLandmarker.create_from_options(pose_options)
+            logger.info("Loaded MediaPipe pose landmarker model from: %s", pose_model_path)
+        else:
+            logger.warning(
+                "No pose_landmarker *.task asset found for body tracking. "
+                "Set POSE_LANDMARKER_MODEL_PATH to a downloaded MediaPipe pose task file."
+            )
+            _BODY_POSE_LANDMARKER = None
+
+        segmentation_candidates = [
+            "selfie_segmenter.tflite",
+            "selfie_segmenter_v2.tflite",
+        ]
+        segmentation_model_path = None
+        for candidate in segmentation_candidates:
+            try:
+                segmentation_model_path = _MODEL_PATH_RESOLVER.resolve(
+                    env_var="SELFIE_SEGMENTER_MODEL_PATH",
+                    candidate_filenames=[candidate],
+                    purpose="MediaPipe selfie segmentation model",
+                )
+                break
+            except FileNotFoundError:
+                continue
+
+        if segmentation_model_path is not None:
+            logger.info("Loaded MediaPipe selfie segmenter model from: %s", segmentation_model_path)
+            _BODY_SEGMENTATION_MODEL = mp.solutions.selfie_segmentation.SelfieSegmentation(
+                model_selection=1,
+            )
+        else:
+            _BODY_SEGMENTATION_MODEL = mp.solutions.selfie_segmentation.SelfieSegmentation(
+                model_selection=1,
+            )
+
+        logger.info("Initialized MediaPipe selfie segmentation for body silhouette masking.")
+        _BODY_PIPELINE_READY = True
+        return {"status": "ready"}
+    except Exception:
+        logger.exception("Body silhouette pipeline failed during model initialization")
+        _BODY_PIPELINE_ERROR = (
+            "Body silhouette tracking unavailable. "
+            "Download a MediaPipe pose task model and ensure mediapipe/selfie segmentation is installed."
+        )
+        raise RuntimeError(_BODY_PIPELINE_ERROR)
+
+
 def ensure_pipeline_ready() -> Dict[str, str]:
     global _PIPELINE_READY, _PIPELINE_ERROR, _FACE_MESH, _FACE_LANDMARKER, _FACE_DETECTOR, _YOLO
     with _PIPELINE_LOCK:
@@ -350,47 +458,180 @@ def ensure_pipeline_ready() -> Dict[str, str]:
             raise RuntimeError(_PIPELINE_ERROR)
 
 
-def _gray_world_white_balance(bgr: np.ndarray) -> np.ndarray:
-    bgr_f = bgr.astype(np.float32) + 1.0
-    means = bgr_f.reshape(-1, 3).mean(axis=0)
-    gray = float(np.mean(means))
-    gains = gray / means
-    return np.clip(bgr_f * gains, 0, 255).astype(np.uint8)
+def _body_pose_landmarks_for_image(rgb_image: np.ndarray):
+    if _BODY_POSE_LANDMARKER is None:
+        return None
+    try:
+        from mediapipe.tasks.python import vision as mp_vision
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
+        result = _BODY_POSE_LANDMARKER.detect(mp_image)
+        if result.pose_landmarks:
+            return result.pose_landmarks[0]
+        return None
+    except Exception:
+        logger.exception("PoseLandmarker detection failed for body silhouette analysis")
+        return None
+
+
+def _silhouette_mask_from_image(rgb_image: np.ndarray) -> np.ndarray:
+    if _BODY_SEGMENTATION_MODEL is None:
+        return np.zeros(rgb_image.shape[:2], dtype=np.uint8)
+
+    try:
+        result = _BODY_SEGMENTATION_MODEL.process(rgb_image)
+        if result.segmentation_mask is None:
+            return np.zeros(rgb_image.shape[:2], dtype=np.uint8)
+        mask = result.segmentation_mask.astype(np.float32)
+        return (mask > 0.5).astype(np.uint8)
+    except Exception:
+        logger.exception("Selfie segmentation failed for body silhouette analysis")
+        return np.zeros(rgb_image.shape[:2], dtype=np.uint8)
+
+
+def analyze_body_silhouette(image_bgr: np.ndarray, *, roi_name: str = "hip_buttock") -> Dict[str, Any]:
+    ensure_body_pipeline_ready()
+
+    rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    pose_landmarks = _body_pose_landmarks_for_image(rgb)
+    if pose_landmarks is None or len(pose_landmarks) < 33:
+        raise ValueError("Pose Landmarker could not detect a full body pose for silhouette analysis.")
+
+    pose_points = np.array(
+        [[lm.x, lm.y, getattr(lm, 'visibility', 0.0)] for lm in pose_landmarks],
+        dtype=np.float32,
+    )
+
+    if pose_points.shape[0] < 33:
+        raise ValueError("Detected pose has fewer than 33 landmarks; body silhouette analysis is not reliable.")
+
+    image_h, image_w = image_bgr.shape[:2]
+    pose_points_px = pose_points.copy()
+    pose_points_px[:, 0] = pose_points[:, 0] * image_w
+    pose_points_px[:, 1] = pose_points[:, 1] * image_h
+
+    left_shoulder = pose_points_px[11]
+    right_shoulder = pose_points_px[12]
+    left_hip = pose_points_px[23]
+    right_hip = pose_points_px[24]
+
+    shoulder_mid = (left_shoulder[:2] + right_shoulder[:2]) / 2.0
+    hip_mid = (left_hip[:2] + right_hip[:2]) / 2.0
+    scale_reference_pixels = max(float(np.linalg.norm(shoulder_mid - hip_mid) * 1.25), 30.0)
+
+    roi_y0 = int(max(0, min(left_hip[1], right_hip[1]) - 0.35 * scale_reference_pixels))
+    roi_y1 = int(min(image_bgr.shape[0], max(left_hip[1], right_hip[1]) + 0.85 * scale_reference_pixels))
+    roi_x0 = int(max(0, min(left_hip[0], right_hip[0]) - 0.50 * scale_reference_pixels))
+    roi_x1 = int(min(image_bgr.shape[1], max(left_hip[0], right_hip[0]) + 0.50 * scale_reference_pixels))
+
+    if roi_y1 <= roi_y0 or roi_x1 <= roi_x0:
+        raise ValueError("Body silhouette ROI could not be derived from detected pose landmarks.")
+
+    silhouette_mask = _silhouette_mask_from_image(rgb)
+    roi_mask = silhouette_mask[roi_y0:roi_y1, roi_x0:roi_x1]
+    roi_pixel_count = int(np.count_nonzero(roi_mask > 0.5))
+    normalized_area_index = float(roi_pixel_count / max(scale_reference_pixels, 1.0))
+
+    visibility_scores = [
+        float(pose_points[11][2]),
+        float(pose_points[12][2]),
+        float(pose_points[23][2]),
+        float(pose_points[24][2]),
+    ]
+    confidence = float(np.clip(np.mean(visibility_scores), 0.0, 1.0))
+    if np.count_nonzero(roi_mask) == 0:
+        confidence *= 0.75
+
+    logger.info(
+        "BODY_SILHOUETTE_LOG roi=%s scale_reference_pixels=%.2f roi_pixel_count=%d normalized_area_index=%.4f confidence=%.4f image_size=%sx%s",
+        roi_name,
+        scale_reference_pixels,
+        roi_pixel_count,
+        normalized_area_index,
+        confidence,
+        image_bgr.shape[1],
+        image_bgr.shape[0],
+    )
+    return {
+        "status": "success",
+        "roi_name": roi_name,
+        "normalized_area_index": round(normalized_area_index, 6),
+        "scale_reference_pixels": round(float(scale_reference_pixels), 2),
+        "roi_pixel_count": roi_pixel_count,
+        "confidence": round(confidence, 6),
+        "body_pose_detected": True,
+        "landmark_count": int(len(pose_landmarks)),
+    }
 
 
 def normalize_lighting_and_shadows(bgr_image: np.ndarray) -> np.ndarray:
-    balanced = _gray_world_white_balance(bgr_image)
-    lab = cv2.cvtColor(balanced, cv2.COLOR_BGR2LAB)
+    # Deliberately no gray-world/chroma correction here: this runs on a
+    # face-dominated crop, so "the average color is mostly warm skin tone"
+    # is not a cast to neutralize (same failure mode the a*/b* recenter
+    # step used to have). Only luminance (shadow/exposure) is flattened;
+    # a*/b* pass through untouched so genuine redness survives.
+    lab = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
 
     # Stronger illumination flattening: CLAHE on L with clinically-safe limits.
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     l_eq = clahe.apply(l)
 
-    # Reduce warm/cool cast drift so a*/b* driven metrics are more stable.
-    ycrcb = cv2.cvtColor(balanced, cv2.COLOR_BGR2YCrCb)
-    skin_mask = cv2.inRange(
-        ycrcb,
-        np.array([0, 133, 77], dtype=np.uint8),
-        np.array([255, 173, 127], dtype=np.uint8),
-    )
-    if int(cv2.countNonZero(skin_mask)) > 1200:
-        a_vals = a[skin_mask > 0].astype(np.float32)
-        b_vals = b[skin_mask > 0].astype(np.float32)
-    else:
-        h, w = a.shape[:2]
-        y0, y1 = int(h * 0.20), int(h * 0.80)
-        x0, x1 = int(w * 0.20), int(w * 0.80)
-        a_vals = a[y0:y1, x0:x1].astype(np.float32).reshape(-1)
-        b_vals = b[y0:y1, x0:x1].astype(np.float32).reshape(-1)
-
-    a_shift = float(np.clip(128.0 - float(np.mean(a_vals)), -6.0, 6.0))
-    b_shift = float(np.clip(128.0 - float(np.mean(b_vals)), -6.0, 6.0))
-    a_bal = np.clip(a.astype(np.float32) + a_shift, 0.0, 255.0).astype(np.uint8)
-    b_bal = np.clip(b.astype(np.float32) + b_shift, 0.0, 255.0).astype(np.uint8)
-
-    merged = cv2.merge((l_eq, a_bal, b_bal))
+    merged = cv2.merge((l_eq, a, b))
     return cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
+
+
+def _apply_capture_white_balance_correction(bgr_image: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Apply a restrained LAB neutral-axis correction before metric extraction."""
+    if bgr_image is None or bgr_image.size == 0:
+        return bgr_image, {
+            "applied": False,
+            "reason": "empty_image",
+        }
+
+    lab = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2LAB)
+    l_channel = lab[:, :, 0]
+    a_channel = lab[:, :, 1].astype(np.float32)
+    b_channel = lab[:, :, 2].astype(np.float32)
+    chroma = np.sqrt((a_channel - 128.0) ** 2 + (b_channel - 128.0) ** 2)
+
+    l_low = float(np.percentile(l_channel, 35))
+    l_high = float(np.percentile(l_channel, 98))
+    chroma_ceiling = min(18.0, float(np.percentile(chroma, 35)) + 4.0)
+    candidates = np.logical_and.reduce(
+        [
+            l_channel >= l_low,
+            l_channel <= l_high,
+            chroma <= chroma_ceiling,
+        ]
+    )
+
+    minimum_pixels = max(800, int(bgr_image.shape[0] * bgr_image.shape[1] * 0.01))
+    candidate_count = int(np.count_nonzero(candidates))
+    if candidate_count < minimum_pixels:
+        return bgr_image.copy(), {
+            "applied": False,
+            "reason": "insufficient_neutral_pixels",
+            "candidate_pixels": candidate_count,
+            "minimum_pixels": minimum_pixels,
+        }
+
+    a_offset = float(np.median(a_channel[candidates]) - 128.0)
+    b_offset = float(np.median(b_channel[candidates]) - 128.0)
+    a_adjustment = float(np.clip(a_offset * 0.70, -8.0, 8.0))
+    b_adjustment = float(np.clip(b_offset * 0.70, -8.0, 8.0))
+
+    corrected_lab = lab.copy().astype(np.float32)
+    corrected_lab[:, :, 1] = np.clip(corrected_lab[:, :, 1] - a_adjustment, 0.0, 255.0)
+    corrected_lab[:, :, 2] = np.clip(corrected_lab[:, :, 2] - b_adjustment, 0.0, 255.0)
+    corrected_bgr = cv2.cvtColor(corrected_lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
+
+    return corrected_bgr, {
+        "applied": abs(a_adjustment) >= 0.25 or abs(b_adjustment) >= 0.25,
+        "method": "lab_low_chroma_neutral_axis",
+        "candidate_pixels": candidate_count,
+        "a_adjustment": round(a_adjustment, 3),
+        "b_adjustment": round(b_adjustment, 3),
+    }
 
 
 def _compute_ssim_gray(gray_a: np.ndarray, gray_b: np.ndarray) -> float:
@@ -498,9 +739,9 @@ def assess_and_normalize_image(image_bytes: bytes) -> Tuple[np.ndarray, Dict[str
     blur_threshold = float(os.getenv("IQA_BLUR_THRESHOLD", "80.0"))
     image_blurry = blur_score < blur_threshold
 
-    wb_image = _gray_world_white_balance(image_bgr)
-    wb_lab = cv2.cvtColor(wb_image, cv2.COLOR_BGR2LAB)
-    l_channel, a_channel, b_channel = cv2.split(wb_lab)
+    white_balanced_bgr, white_balance_profile = _apply_capture_white_balance_correction(image_bgr)
+    lab = cv2.cvtColor(white_balanced_bgr, cv2.COLOR_BGR2LAB)
+    l_channel, a_channel, b_channel = cv2.split(lab)
 
     clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8))
     l_equalized = clahe.apply(l_channel)
@@ -549,6 +790,7 @@ def assess_and_normalize_image(image_bytes: bytes) -> Tuple[np.ndarray, Dict[str
         "chroma_cast": round(chroma_cast, 2),
         "sharpness_score": round(sharpness_score, 3),
         "lighting_balance_score": round(lighting_balance_score, 3),
+        "white_balance_profile": white_balance_profile,
         "preprocess_warnings": warnings,
     }
 
@@ -641,7 +883,7 @@ def apply_white_balance_calibration(image: np.ndarray) -> Tuple[np.ndarray, Dict
         [
             margin_pixels,
             l_channel >= bright_floor,
-            chroma_distance <= 18.0,
+            chroma_distance <= 12.0,
         ]
     ).astype(np.uint8) * 255
 
@@ -658,13 +900,30 @@ def apply_white_balance_calibration(image: np.ndarray) -> Tuple[np.ndarray, Dict
 
     contour = max(contours, key=cv2.contourArea)
     contour_area = float(cv2.contourArea(contour))
-    minimum_area = max(250.0, float(h * w) * 0.002)
+    minimum_area = max(900.0, float(h * w) * 0.004)
     if contour_area < minimum_area:
         return image.copy(), {
             "reference_found": False,
             "reason": "reference_too_small",
             "detected_area": round(contour_area, 2),
             "minimum_area": round(minimum_area, 2),
+        }
+
+    x, y, bw, bh = cv2.boundingRect(contour)
+    short_side = float(max(1, min(bw, bh)))
+    long_side = float(max(bw, bh))
+    aspect_ratio = long_side / short_side
+    if aspect_ratio > 4.0:
+        logger.info(
+            "WB calibration skipped: reason=reference_aspect_ratio_invalid bbox=%s aspect_ratio=%.3f",
+            [int(x), int(y), int(bw), int(bh)],
+            aspect_ratio,
+        )
+        return image.copy(), {
+            "reference_found": False,
+            "reason": "reference_aspect_ratio_invalid",
+            "reference_bbox": [int(x), int(y), int(bw), int(bh)],
+            "reference_aspect_ratio": round(aspect_ratio, 4),
         }
 
     reference_mask = np.zeros((h, w), dtype=np.uint8)
@@ -678,16 +937,45 @@ def apply_white_balance_calibration(image: np.ndarray) -> Tuple[np.ndarray, Dict
 
     ref_bgr = image[reference_pixels].astype(np.float32)
     ref_bgr_mean = ref_bgr.mean(axis=0)
-    rgb_gains = np.clip(245.0 / np.maximum(ref_bgr_mean, 1.0), 0.82, 1.18)
+    raw_rgb_gains = 245.0 / np.maximum(ref_bgr_mean, 1.0)
+    raw_rgb_corrected = np.clip(image.astype(np.float32) * raw_rgb_gains.reshape(1, 1, 3), 0, 255).astype(np.uint8)
+    raw_corrected_lab = cv2.cvtColor(raw_rgb_corrected, cv2.COLOR_BGR2LAB).astype(np.float32)
+    raw_reference_lab = raw_corrected_lab[reference_pixels]
+    raw_lab_shift = np.array(
+        [
+            245.0 - float(raw_reference_lab[:, 0].mean()),
+            128.0 - float(raw_reference_lab[:, 1].mean()),
+            128.0 - float(raw_reference_lab[:, 2].mean()),
+        ],
+        dtype=np.float32,
+    )
+    raw_gain_min = float(np.min(raw_rgb_gains))
+    raw_gain_max = float(np.max(raw_rgb_gains))
+    if raw_gain_min < 0.85 or raw_gain_max > 1.15 or float(np.max(np.abs(raw_lab_shift))) > 8.0:
+        logger.info(
+            "WB calibration skipped: reason=reference_requires_extreme_correction bbox=%s raw_rgb_gains_bgr=%s raw_lab_shift=%s",
+            [int(x), int(y), int(bw), int(bh)],
+            [round(float(v), 4) for v in raw_rgb_gains.tolist()],
+            [round(float(v), 4) for v in raw_lab_shift.tolist()],
+        )
+        return image.copy(), {
+            "reference_found": False,
+            "reason": "reference_requires_extreme_correction",
+            "reference_bbox": [int(x), int(y), int(bw), int(bh)],
+            "raw_rgb_gains_bgr": [round(float(v), 4) for v in raw_rgb_gains.tolist()],
+            "raw_lab_shift": [round(float(v), 4) for v in raw_lab_shift.tolist()],
+        }
+
+    rgb_gains = np.clip(raw_rgb_gains, 0.82, 1.18)
     rgb_corrected = np.clip(image.astype(np.float32) * rgb_gains.reshape(1, 1, 3), 0, 255).astype(np.uint8)
 
     corrected_lab = cv2.cvtColor(rgb_corrected, cv2.COLOR_BGR2LAB).astype(np.float32)
     reference_lab = corrected_lab[reference_pixels]
     lab_shift = np.array(
         [
-            np.clip(245.0 - float(reference_lab[:, 0].mean()), -12.0, 12.0),
-            np.clip(128.0 - float(reference_lab[:, 1].mean()), -10.0, 10.0),
-            np.clip(128.0 - float(reference_lab[:, 2].mean()), -10.0, 10.0),
+            np.clip(raw_lab_shift[0], -12.0, 12.0),
+            np.clip(raw_lab_shift[1], -10.0, 10.0),
+            np.clip(raw_lab_shift[2], -10.0, 10.0),
         ],
         dtype=np.float32,
     )
@@ -696,12 +984,13 @@ def apply_white_balance_calibration(image: np.ndarray) -> Tuple[np.ndarray, Dict
     corrected_lab[:, :, 2] = np.clip(corrected_lab[:, :, 2] + lab_shift[2], 0, 255)
     calibrated = cv2.cvtColor(corrected_lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
 
-    x, y, bw, bh = cv2.boundingRect(contour)
     return calibrated, {
         "reference_found": True,
         "reference_bbox": [int(x), int(y), int(bw), int(bh)],
         "reference_area_ratio": round(contour_area / max(float(h * w), 1.0), 5),
+        "raw_rgb_gains_bgr": [round(float(v), 4) for v in raw_rgb_gains.tolist()],
         "rgb_gains_bgr": [round(float(v), 4) for v in rgb_gains.tolist()],
+        "raw_lab_shift": [round(float(v), 4) for v in raw_lab_shift.tolist()],
         "lab_shift": [round(float(v), 4) for v in lab_shift.tolist()],
     }
 
@@ -752,6 +1041,15 @@ def _skin_mask(bgr: np.ndarray) -> np.ndarray:
     return cv2.morphologyEx(cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel), cv2.MORPH_CLOSE, kernel)
 
 
+def _as_binary_mask(mask: np.ndarray, shape: Tuple[int, int] | None = None) -> np.ndarray:
+    out = np.asarray(mask)
+    if out.ndim == 3:
+        out = out[:, :, 0]
+    if shape is not None and tuple(out.shape[:2]) != tuple(shape):
+        out = cv2.resize(out, (shape[1], shape[0]), interpolation=cv2.INTER_NEAREST)
+    return np.where(out > 0, 255, 0).astype(np.uint8)
+
+
 def _polygon_mask(shape: Tuple[int, int], polygon: np.ndarray) -> np.ndarray:
     h, w = shape
     out = np.zeros((h, w), dtype=np.uint8)
@@ -790,8 +1088,136 @@ def _project_hairline_points(points: np.ndarray, brow_ids: list[int], anchor_id:
     return np.array(projected, dtype=np.float32)
 
 
+def _expanded_polygon_points(
+    polygon: np.ndarray,
+    shape: Tuple[int, int],
+    *,
+    scale: float = 0.12,
+) -> np.ndarray:
+    h, w = shape
+    poly = np.asarray(polygon, dtype=np.float32).reshape(-1, 2)
+    if poly.shape[0] < 3:
+        return poly
+
+    center = np.mean(poly, axis=0)
+    expanded = center + ((poly - center) * (1.0 + scale))
+    expanded[:, 0] = np.clip(expanded[:, 0], 0, w - 1)
+    expanded[:, 1] = np.clip(expanded[:, 1], 0, h - 1)
+    return expanded.astype(np.float32)
+
+
+def _face_oval_mask(shape: Tuple[int, int], points: np.ndarray) -> np.ndarray:
+    face_oval_ids = [
+        10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
+        397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
+        172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109,
+    ]
+    valid_ids = [idx for idx in face_oval_ids if 0 <= idx < points.shape[0]]
+    if len(valid_ids) < 3:
+        return np.zeros(shape, dtype=np.uint8)
+    return _polygon_mask(shape, points[valid_ids])
+
+
+def _expand_mask_from_contour(
+    mask: np.ndarray,
+    shape: Tuple[int, int],
+    *,
+    scale: float = 0.12,
+    dilate_px: int = 5,
+) -> np.ndarray:
+    binary_mask = _as_binary_mask(mask, shape)
+    contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    expanded = np.zeros(shape, dtype=np.uint8)
+    for contour in contours:
+        if contour is None or contour.shape[0] < 3:
+            continue
+        expanded_points = _expanded_polygon_points(contour.reshape(-1, 2), shape, scale=scale)
+        expanded = cv2.bitwise_or(expanded, _polygon_mask(shape, expanded_points))
+
+    if dilate_px > 0:
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (dilate_px * 2 + 1, dilate_px * 2 + 1),
+        )
+        expanded = cv2.dilate(expanded, kernel, iterations=1)
+    return expanded
+
+
+def _build_tzone_roi(
+    shape: Tuple[int, int],
+    points: np.ndarray,
+    forehead_mask: np.ndarray,
+    skin_mask: np.ndarray,
+    face_skin_mask: np.ndarray,
+) -> tuple[np.ndarray, Dict[str, Any]]:
+    h, w = shape
+    forehead_mask = _as_binary_mask(forehead_mask, (h, w))
+    skin_mask = _as_binary_mask(skin_mask, (h, w))
+    face_skin_mask = _as_binary_mask(face_skin_mask, (h, w))
+    face_oval = _face_oval_mask((h, w), points)
+    face_clip_mask = face_oval if cv2.countNonZero(face_oval) > 0 else np.full((h, w), 255, dtype=np.uint8)
+
+    nose_polygon = _nose_region_mask((h, w), points, skin_mask, apply_skin_mask=False)
+    raw_tzone = cv2.bitwise_or(forehead_mask, nose_polygon)
+    tzone_raw_pixels = int(cv2.countNonZero(raw_tzone))
+
+    dilate_px = int(np.clip(round(min(h, w) * 0.008), 3, 7))
+    expanded_tzone = _expand_mask_from_contour(
+        raw_tzone,
+        (h, w),
+        scale=0.12,
+        dilate_px=dilate_px,
+    )
+    expanded_tzone = cv2.bitwise_and(expanded_tzone, face_clip_mask)
+    after_expand_pixels = int(cv2.countNonZero(expanded_tzone))
+
+    preferred_skin_mask = face_skin_mask if cv2.countNonZero(face_skin_mask) > 0 else skin_mask
+    tzone_after_skin = cv2.bitwise_and(expanded_tzone, preferred_skin_mask)
+    after_skin_pixels = int(cv2.countNonZero(tzone_after_skin))
+
+    if after_skin_pixels >= MIN_USABLE_TZONE_PIXELS:
+        final_tzone = tzone_after_skin
+        path = "primary_roi"
+    else:
+        final_tzone = expanded_tzone
+        path = "tzone_landmark_fallback" if after_skin_pixels == 0 and tzone_raw_pixels > 100 else "tzone_face_fallback"
+
+    if path == "tzone_face_fallback" and after_skin_pixels < 500:
+        final_tzone = expanded_tzone
+        path = "tzone_face_fallback_expanded"
+
+    final_pixels = int(cv2.countNonZero(final_tzone))
+    if final_pixels < 200 and cv2.countNonZero(expanded_tzone) > 0:
+        boosted_tzone = expanded_tzone.copy()
+        boost_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        for _ in range(3):
+            if int(cv2.countNonZero(boosted_tzone)) >= 200:
+                break
+            boosted_tzone = cv2.dilate(boosted_tzone, boost_kernel, iterations=1)
+            boosted_tzone = cv2.bitwise_and(boosted_tzone, face_clip_mask)
+        final_tzone = boosted_tzone
+
+    final_pixels = int(cv2.countNonZero(final_tzone))
+    logger.info(
+        "TZONE_ROI_BUILD raw=%d after_expand=%d after_skin=%d final=%d path=%s",
+        tzone_raw_pixels,
+        after_expand_pixels,
+        after_skin_pixels,
+        final_pixels,
+        path,
+    )
+    return final_tzone, {
+        "raw_pixels": tzone_raw_pixels,
+        "after_expand_pixels": after_expand_pixels,
+        "after_skin_pixels": after_skin_pixels,
+        "final_pixels": final_pixels,
+        "path": path,
+    }
+
+
 def _region_masks(shape: Tuple[int, int], skin_mask: np.ndarray, points: np.ndarray) -> Dict[str, np.ndarray]:
     h, w = shape
+    skin_mask = _as_binary_mask(skin_mask, (h, w))
     region = {
         "forehead": np.zeros((h, w), dtype=np.uint8),
         "left_cheek": np.zeros((h, w), dtype=np.uint8),
@@ -806,13 +1232,159 @@ def _region_masks(shape: Tuple[int, int], skin_mask: np.ndarray, points: np.ndar
     region["forehead"] = _polygon_mask((h, w), forehead_poly)
 
     # Cheeks: bounded by outer eye corners, nose wings, and lateral ear/tragus landmarks.
+    face_oval = _face_oval_mask((h, w), points)
+    face_clip_mask = face_oval if cv2.countNonZero(face_oval) > 0 else np.full((h, w), 255, dtype=np.uint8)
+    dilate_px = int(np.clip(round(min(h, w) * 0.01), 3, 7))
+    dilate_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        (dilate_px * 2 + 1, dilate_px * 2 + 1),
+    )
+
     left_cheek_ids = [33, 130, 205, 50, 234, 132, 172, 136, 98]
     right_cheek_ids = [263, 359, 425, 280, 454, 361, 397, 365, 327]
-    region["left_cheek"] = _polygon_mask((h, w), points[left_cheek_ids])
-    region["right_cheek"] = _polygon_mask((h, w), points[right_cheek_ids])
+
+    left_raw = _polygon_mask((h, w), points[left_cheek_ids])
+    right_raw = _polygon_mask((h, w), points[right_cheek_ids])
+
+    left_expanded = cv2.dilate(
+        _polygon_mask((h, w), _expanded_polygon_points(points[left_cheek_ids], (h, w))),
+        dilate_kernel,
+        iterations=1,
+    )
+    right_expanded = cv2.dilate(
+        _polygon_mask((h, w), _expanded_polygon_points(points[right_cheek_ids], (h, w))),
+        dilate_kernel,
+        iterations=1,
+    )
+
+    left_expanded = cv2.bitwise_and(left_expanded, face_clip_mask)
+    right_expanded = cv2.bitwise_and(right_expanded, face_clip_mask)
+
+    union_raw = cv2.bitwise_or(left_raw, right_raw)
+    union_after_expand = cv2.bitwise_or(left_expanded, right_expanded)
+    union_after_expand_pixels = int(cv2.countNonZero(union_after_expand))
+
+    left_after_skin = cv2.bitwise_and(left_expanded, skin_mask)
+    right_after_skin = cv2.bitwise_and(right_expanded, skin_mask)
+    union_after_skin = cv2.bitwise_or(left_after_skin, right_after_skin)
+
+    after_skin_pixels = int(cv2.countNonZero(union_after_skin))
+    left_after_skin_pixels = int(cv2.countNonZero(left_after_skin))
+    right_after_skin_pixels = int(cv2.countNonZero(right_after_skin))
+
+    # Asymmetric recovery: salvage a single good cheek when the other collapses.
+    if left_after_skin_pixels >= 800 and right_after_skin_pixels < 200:
+        mirror_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+        mirrored = cv2.flip(left_after_skin, 1)
+        mirrored = cv2.dilate(mirrored, mirror_kernel, iterations=1)
+        mirrored = cv2.bitwise_and(mirrored, right_expanded)
+        right_after_skin = cv2.bitwise_or(right_after_skin, mirrored)
+        union_after_skin = cv2.bitwise_or(left_after_skin, right_after_skin)
+        after_skin_pixels = int(cv2.countNonZero(union_after_skin))
+        logger.info("CHEEK_ROI_ASYM kept=left pixels=%d", left_after_skin_pixels)
+    elif right_after_skin_pixels >= 800 and left_after_skin_pixels < 200:
+        mirror_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+        mirrored = cv2.flip(right_after_skin, 1)
+        mirrored = cv2.dilate(mirrored, mirror_kernel, iterations=1)
+        mirrored = cv2.bitwise_and(mirrored, left_expanded)
+        left_after_skin = cv2.bitwise_or(left_after_skin, mirrored)
+        union_after_skin = cv2.bitwise_or(left_after_skin, right_after_skin)
+        after_skin_pixels = int(cv2.countNonZero(union_after_skin))
+        logger.info("CHEEK_ROI_ASYM kept=right pixels=%d", right_after_skin_pixels)
+
+    # Lightweight skin-mask assist for under-segmented cheeks in otherwise large cheek unions.
+    if after_skin_pixels < 1200 and union_after_expand_pixels >= 15000:
+        face_bbox = cv2.bitwise_or(left_expanded, right_expanded)
+        assist_skin = cv2.bitwise_and(skin_mask, face_bbox)
+        assist_skin = cv2.morphologyEx(
+            assist_skin,
+            cv2.MORPH_CLOSE,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+            iterations=1,
+        )
+        left_assist = cv2.bitwise_and(left_expanded, assist_skin)
+        right_assist = cv2.bitwise_and(right_expanded, assist_skin)
+        assist_union = cv2.bitwise_or(left_assist, right_assist)
+        assist_after_skin_pixels = int(cv2.countNonZero(assist_union))
+        logger.info(
+            "SKIN_MASK_ASSIST before=%d after=%d",
+            after_skin_pixels,
+            assist_after_skin_pixels,
+        )
+        if assist_after_skin_pixels > after_skin_pixels:
+            left_after_skin = left_assist
+            right_after_skin = right_assist
+            union_after_skin = assist_union
+            after_skin_pixels = assist_after_skin_pixels
+
+    force_skin_intersect_for_scoring = False
+    if after_skin_pixels < 2000 and union_after_expand_pixels >= 15000:
+        extra_dilate_px = int(np.clip(dilate_px, 5, 7))
+        extra_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (extra_dilate_px * 2 + 1, extra_dilate_px * 2 + 1),
+        )
+        left_expanded = cv2.dilate(left_expanded, extra_kernel, iterations=1)
+        right_expanded = cv2.dilate(right_expanded, extra_kernel, iterations=1)
+        left_expanded = cv2.bitwise_and(left_expanded, face_clip_mask)
+        right_expanded = cv2.bitwise_and(right_expanded, face_clip_mask)
+        left_after_skin = cv2.bitwise_and(left_expanded, skin_mask)
+        right_after_skin = cv2.bitwise_and(right_expanded, skin_mask)
+        expanded_union_after_skin = cv2.bitwise_or(left_after_skin, right_after_skin)
+        expanded_after_skin_pixels = int(cv2.countNonZero(expanded_union_after_skin))
+        logger.info(
+            "CHEEK_ROI_EXPAND before_skin=%d after_skin=%d union_before_skin=%d",
+            after_skin_pixels,
+            expanded_after_skin_pixels,
+            union_after_expand_pixels,
+        )
+        union_after_skin = expanded_union_after_skin
+        after_skin_pixels = expanded_after_skin_pixels
+        force_skin_intersect_for_scoring = True
+
+    cheek_no_skin_fallback_used = False
+    if after_skin_pixels < 500 and union_after_expand_pixels >= 15000:
+        region["left_cheek"] = left_expanded
+        region["right_cheek"] = right_expanded
+        cheek_no_skin_fallback_used = True
+        logger.info(
+            "CHEEK_ROI_NO_SKIN_FALLBACK pixels=%d",
+            int(cv2.countNonZero(cv2.bitwise_or(left_expanded, right_expanded))),
+        )
+
+    else:
+        min_usable_cheek_pixels = (
+            1200 if union_after_expand_pixels >= 15000 else MIN_USABLE_CHEEK_PIXELS
+        )
+        if after_skin_pixels >= min_usable_cheek_pixels or force_skin_intersect_for_scoring:
+            region["left_cheek"] = left_after_skin
+            region["right_cheek"] = right_after_skin
+        else:
+            region["left_cheek"] = left_expanded
+            region["right_cheek"] = right_expanded
+
+    final_union = cv2.bitwise_or(region["left_cheek"], region["right_cheek"])
+    final_left_pixels = int(cv2.countNonZero(region["left_cheek"]))
+    final_right_pixels = int(cv2.countNonZero(region["right_cheek"]))
+    final_union_pixels = int(cv2.countNonZero(final_union))
+    usable = final_union_pixels >= MIN_USABLE_CHEEK_PIXELS
+    logger.info(
+        "CHEEK_ROI_BUILD left=%d right=%d union=%d after_expand=%d after_skin=%d usable=%s",
+        final_left_pixels,
+        final_right_pixels,
+        final_union_pixels,
+        union_after_expand_pixels,
+        after_skin_pixels,
+        usable,
+    )
+    if cheek_no_skin_fallback_used:
+        logger.info("CHEEK_ROI_BUILD path=cheek_expand_no_skin")
 
     for key in region.keys():
-        region[key] = cv2.bitwise_and(region[key], skin_mask)
+        if key == "forehead":
+            region[key] = cv2.bitwise_and(region[key], skin_mask)
+        else:
+            region[key] = cv2.bitwise_and(region[key], face_clip_mask)
     return region
 
 
@@ -901,7 +1473,95 @@ def _compute_pose_pitch_yaw_from_landmarks(points: np.ndarray) -> tuple[float, f
     vertical_ratio = float((nose[1] - eye_mid[1]) / face_height)
     pitch = (vertical_ratio - 0.18) * 240.0
 
+    print(
+        f'[BACKEND POSE PROXY] pitch={pitch:.2f} yaw={yaw:.2f} eye_dist={eye_dist:.2f} face_height={face_height:.2f}',
+        flush=True,
+    )
     return pitch, yaw
+
+
+def _landmark_bbox_mask(
+    shape: Tuple[int, int],
+    points: np.ndarray,
+    *,
+    pad_ratio: float = 0.12,
+) -> np.ndarray:
+    h, w = shape
+    bbox_mask = np.zeros((h, w), dtype=np.uint8)
+    if points.size == 0:
+        return bbox_mask
+
+    min_xy = np.floor(np.min(points, axis=0)).astype(np.int32)
+    max_xy = np.ceil(np.max(points, axis=0)).astype(np.int32)
+    bbox_w = max(1, int(max_xy[0] - min_xy[0]))
+    bbox_h = max(1, int(max_xy[1] - min_xy[1]))
+    pad_x = max(1, int(round(bbox_w * pad_ratio)))
+    pad_y = max(1, int(round(bbox_h * pad_ratio)))
+    x0 = max(0, int(min_xy[0] - pad_x))
+    y0 = max(0, int(min_xy[1] - pad_y))
+    x1 = min(w, int(max_xy[0] + pad_x))
+    y1 = min(h, int(max_xy[1] + pad_y))
+    if x1 <= x0 or y1 <= y0:
+        return bbox_mask
+
+    bbox_mask[y0:y1, x0:x1] = 255
+    return bbox_mask
+
+
+class _RequestRoiCache:
+    """Request-scoped cache for expensive per-face ROI masks.
+
+    This is intentionally kept local to a single analysis request so we do not
+    persist computed masks across requests or stale scan results.
+    """
+
+    def __init__(self) -> None:
+        self._pore_cache: Dict[tuple[object, ...], tuple[np.ndarray, np.ndarray]] = {}
+        self._tzone_cache: Dict[tuple[object, ...], tuple[np.ndarray, Dict[str, Any]]] = {}
+
+    def get_pore_mask(
+        self,
+        shape: Tuple[int, int],
+        points: np.ndarray,
+        face_bgr: np.ndarray,
+        skin_mask: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        key = (
+            tuple(shape),
+            id(points),
+            id(face_bgr),
+            id(skin_mask),
+        )
+        cached = self._pore_cache.get(key)
+        if cached is not None:
+            return cached
+
+        result = _build_pore_roi_masks(shape, points, face_bgr, skin_mask)
+        self._pore_cache[key] = result
+        return result
+
+    def get_tzone_mask(
+        self,
+        shape: Tuple[int, int],
+        points: np.ndarray,
+        forehead_mask: np.ndarray,
+        skin_mask: np.ndarray,
+        face_skin_mask: np.ndarray,
+    ) -> tuple[np.ndarray, Dict[str, Any]]:
+        key = (
+            tuple(shape),
+            id(points),
+            id(forehead_mask),
+            id(skin_mask),
+            id(face_skin_mask),
+        )
+        cached = self._tzone_cache.get(key)
+        if cached is not None:
+            return cached
+
+        result = _build_tzone_roi(shape, points, forehead_mask, skin_mask, face_skin_mask)
+        self._tzone_cache[key] = result
+        return result
 
 
 def _build_pore_roi_masks(
@@ -945,9 +1605,49 @@ def _build_pore_roi_masks(
         inner_face_mask,
         cv2.bitwise_not(exclusion),
     )
+    skin_locked_mask = cv2.bitwise_and(face_skin_candidate, skin_mask)
+
+    # Restrict the pore mask to the true T-zone: nose bridge + immediate inner
+    # cheeks/paranasal zone. This avoids ingesting the forehead, outer cheeks,
+    # and jawline, which would otherwise inflate the ROI to near whole-face
+    # dimensions and trip the pore gate unnecessarily.
+    tzone_ids = [1, 33, 133, 263, 362, 61, 291, 234, 454, 152, 296, 300]
+    valid_tzone_ids = [idx for idx in tzone_ids if 0 <= idx < points.shape[0]]
+    if len(valid_tzone_ids) >= 5:
+        center = np.mean(points[valid_tzone_ids], axis=0).astype(np.float32)
+        cx = int(np.clip(round(float(center[0])), 0, w - 1))
+        cy = int(np.clip(round(float(center[1])), 0, h - 1))
+        # Keep pore measurement tightly centered on the nose/inner-cheek area.
+        band_w = int(np.clip(min(w * 0.18, 120.0), 80.0, 120.0))
+        band_h = int(np.clip(min(h * 0.22, 100.0), 70.0, 100.0))
+        x0 = max(0, cx - band_w // 2)
+        x1 = min(w, cx + band_w // 2)
+        y0 = max(0, cy - band_h // 2)
+        y1 = min(h, cy + band_h // 2)
+        tzone_window = np.zeros((h, w), dtype=np.uint8)
+        tzone_window[y0:y1, x0:x1] = 255
+        skin_locked_mask = cv2.bitwise_and(skin_locked_mask, tzone_window)
+
+    # Strict cap: pore ROIs must stay in a realistic T-zone range, not whole-face
+    # masks. This is a bounding-box clamp only; it does not change scoring,
+    # confidence, or emit logic outside the pore ROI itself.
+    skin_pixels = int(cv2.countNonZero(skin_locked_mask))
+    if skin_pixels > 25000:
+        ys, xs = np.where(skin_locked_mask > 0)
+        if xs.size > 0 and ys.size > 0:
+            cx = int(np.mean(xs))
+            cy = int(np.mean(ys))
+            band_w = int(np.clip(min(w * 0.14, 100.0), 60.0, 100.0))
+            band_h = int(np.clip(min(h * 0.18, 90.0), 50.0, 90.0))
+            x0 = max(0, cx - band_w // 2)
+            x1 = min(w, cx + band_w // 2)
+            y0 = max(0, cy - band_h // 2)
+            y1 = min(h, cy + band_h // 2)
+            tight_mask = np.zeros((h, w), dtype=np.uint8)
+            tight_mask[y0:y1, x0:x1] = 255
+            skin_locked_mask = cv2.bitwise_and(skin_locked_mask, tight_mask)
 
     # Primary intersection with upstream skin mask.
-    skin_locked_mask = cv2.bitwise_and(face_skin_candidate, skin_mask)
     raw_pixels = int(cv2.countNonZero(face_skin_candidate))
     intersected_pixels = int(cv2.countNonZero(skin_locked_mask))
 
@@ -1013,6 +1713,49 @@ def _extract_normalized_pore_roi(
     if int(cv2.countNonZero(skin_locked_mask)) <= 0:
         return None, None, 0
 
+    h, w = face_bgr.shape[:2]
+    pore_ids = [1, 33, 133, 263, 362, 61, 291, 234, 454, 152, 296, 300]
+    valid_ids = [idx for idx in pore_ids if 0 <= idx < points.shape[0]]
+    if len(valid_ids) >= 5:
+        pore_points = points[valid_ids].astype(np.float32)
+        center = np.mean(pore_points, axis=0).astype(np.float32)
+        cx = int(np.clip(round(float(center[0])), 0, w - 1))
+        cy = int(np.clip(round(float(center[1])), 0, h - 1))
+        box_w = int(np.clip(min(w * 0.18, 120.0), 80.0, 120.0))
+        box_h = int(np.clip(min(h * 0.22, 100.0), 70.0, 100.0))
+        x0 = max(0, cx - box_w // 2)
+        x1 = min(w, cx + box_w // 2)
+        y0 = max(0, cy - box_h // 2)
+        y1 = min(h, cy + box_h // 2)
+        if x1 > x0 and y1 > y0:
+            tzone_mask = np.zeros((h, w), dtype=np.uint8)
+            tzone_mask[y0:y1, x0:x1] = 255
+            skin_locked_mask = cv2.bitwise_and(skin_locked_mask, tzone_mask)
+
+    mask_pixels = int(cv2.countNonZero(skin_locked_mask))
+    if mask_pixels <= 0:
+        return None, None, 0
+
+    # Final explicit cap: nose/inner-cheek pores should remain in a compact
+    # T-zone window, not a whole-face mask.
+    if mask_pixels > 25000:
+        ys, xs = np.where(skin_locked_mask > 0)
+        if xs.size > 0 and ys.size > 0:
+            cx = int(np.mean(xs))
+            cy = int(np.mean(ys))
+            box_w = int(np.clip(min(w * 0.14, 100.0), 60.0, 100.0))
+            box_h = int(np.clip(min(h * 0.18, 90.0), 50.0, 90.0))
+            x0 = max(0, cx - box_w // 2)
+            x1 = min(w, cx + box_w // 2)
+            y0 = max(0, cy - box_h // 2)
+            y1 = min(h, cy + box_h // 2)
+            tight_mask = np.zeros((h, w), dtype=np.uint8)
+            tight_mask[y0:y1, x0:x1] = 255
+            skin_locked_mask = cv2.bitwise_and(skin_locked_mask, tight_mask)
+            mask_pixels = int(cv2.countNonZero(skin_locked_mask))
+            if mask_pixels <= 0:
+                return None, None, 0
+
     ys, xs = np.where(skin_locked_mask > 0)
     if xs.size == 0 or ys.size == 0:
         return None, None, 0
@@ -1070,11 +1813,154 @@ def _pore_signal_conf(pixel_count: int, spread: float) -> str:
     return "low"
 
 
+# under_eye_dark_circle_density dead-zone: raw darkness_delta (mean cheek
+# L minus mean under-eye L, in OpenCV's 0-255 LAB units) below this is
+# treated as normal anatomical eye-socket shadow, not a dark circle, and
+# scores 0. This is a first-pass estimate reasoned from the shape of the
+# problem (a flat multiplier with no dead-zone means ANY shadow starts
+# accumulating score immediately), not derived from real paired-scan data
+# yet. Revisit once real photos with known, human-rated dark-circle
+# severity are available to calibrate against.
+UNDER_EYE_DARK_CIRCLE_DEAD_ZONE_L_UNITS = 8.0
+
+# Score multiplier applied to the dead-zone-adjusted delta. Provisional,
+# same caveat as the dead zone above. NOTE this was re-derived DOWN from
+# the pre-dead-zone value of 2.0, not up: investigation showed 8 of 11
+# real test photos already saturated to a 100.0 score under the old
+# formula (multiplier=2.0, no dead zone), meaning raw deltas of >=50
+# L-units are common from anatomical shadow and lighting/angle alone, not
+# genuine pigment. An 8-unit dead zone barely dents deltas that large, so
+# widening the multiplier (the naive "compensate for the dead zone"
+# move) would have made the saturation worse, not better. 1.2 is chosen
+# so a photo needs a clearly larger post-dead-zone delta before reaching
+# the 40-80 "visible" range, rather than nearly every casual selfie
+# maxing out at 100.
+UNDER_EYE_DARK_CIRCLE_SCORE_MULTIPLIER = 1.2
+
+# PROVISIONAL pigment-load calibration (second pass).
+#
+# The previous constants (dead_zone=12.0, center=35.0, slope=10.0) were tuned
+# against a pigment_signal that carried two pigment-independent pedestals:
+#   1. l_contrast, measured at 1.01x discrimination between a visually clear
+#      face and a visibly pigmented one (56.27 vs 57.09) while supplying 54%
+#      of a clear face's total raw signal.
+#   2. chroma deviation measured from fixed grey (128,128), which scores
+#      ordinary skin-tone warmth as pigmentation - a clear face's cheek mean
+#      alone sat 13.33 units from grey before any unevenness was measured.
+# Together they put a hard ~12.7 floor under the scale, so genuinely clear
+# skin could not score low.
+#
+# Re-derived against a 17-photo set (20-portrait diverse batch plus the two
+# named evidence photos) on the rebaselined self-mean signal, whose observed
+# range is 0.05-36.76 with p10 5.80 / p90 15.61. Still provisional: it has not
+# been validated against same-person paired captures, and the batch remains
+# small and fixed. Revisit once real CALIBRATION_LOG data accumulates.
+PIGMENT_LOAD_DEAD_ZONE_SIGNAL = 4.0
+PIGMENT_LOAD_SCORE_CENTER = 13.5
+PIGMENT_LOAD_SCORE_SLOPE = 3.6
+
+# PROVISIONAL. Set to 0.0 because measured l_contrast discrimination between
+# clear and pigmented cheeks was 1.01x - it tracks anatomical shading, not
+# pigment. Kept as a named weight (not deleted) so the term can be restored if
+# a future ROI makes it genuinely informative.
+PIGMENT_LOAD_L_CONTRAST_WEIGHT = 0.0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Pure scoring-formula extractions
+#
+# These take plain scalar inputs (already-reduced pixel statistics) rather
+# than image arrays, so they're unit-testable in isolation without the
+# ROI/landmark pipeline. Behavior-preserving extractions of math that used
+# to be inlined at each call site — see test_scoring_formulas.py.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def compute_localized_redness_and_rosacea(p95_a, baseline_a_ref, diffuse_density):
+    """Pure extraction of the localized_redness / rosacea_severity formula
+    from _compute_zone_based_metrics. Inputs are already-reduced cheek-ROI
+    statistics (95th-percentile LAB 'a' channel, personal baseline 'a'
+    reference, and diffuse-flushing pixel density), not image arrays.
+    Returns a dict: localized_redness, diffuse_flushing_erythema,
+    rosacea_before, rosacea_severity, rosacea_reason.
+    """
+    localized_redness = float(np.clip((p95_a - baseline_a_ref) * 3.1, 0.0, 100.0))
+    diffuse_flushing_erythema = float(
+        np.clip((0.70 * diffuse_density) + (0.30 * localized_redness), 0.0, 100.0)
+    )
+    rosacea_before = float(
+        np.clip((0.65 * diffuse_flushing_erythema) + (0.35 * localized_redness), 0.0, 100.0)
+    )
+    rosacea_severity = rosacea_before
+    rosacea_reason = "unchanged"
+    rosacea_cap = max(
+        localized_redness + 20.0, localized_redness * 2.5, diffuse_density * 0.45
+    )
+    if localized_redness <= 25.0 and rosacea_before > rosacea_cap:
+        rosacea_severity = float(np.clip(rosacea_cap, 0.0, 100.0))
+        rosacea_reason = "cap_low_redness_divergence"
+    return {
+        "localized_redness": localized_redness,
+        "diffuse_flushing_erythema": diffuse_flushing_erythema,
+        "rosacea_before": rosacea_before,
+        "rosacea_severity": rosacea_severity,
+        "rosacea_reason": rosacea_reason,
+    }
+
+
+def compute_pigment_load(
+    pigment_signal,
+    dead_zone=PIGMENT_LOAD_DEAD_ZONE_SIGNAL,
+    center=PIGMENT_LOAD_SCORE_CENTER,
+    slope=PIGMENT_LOAD_SCORE_SLOPE,
+):
+    """Pure extraction of the pigment_load dead-zone/sigmoid formula from
+    _compute_zone_based_metrics. [pigment_signal] is the already-combined
+    chroma-deviation + L-contrast statistic, not an image array.
+    """
+    effective_signal = max(0.0, pigment_signal - dead_zone)
+    pigment = 100.0 / (
+        1.0 + math.exp(-(effective_signal - (center - dead_zone)) / slope)
+    )
+    return float(np.clip(pigment, 0.0, 100.0))
+
+
+def compute_under_eye_dark_circle_density(
+    darkness_delta,
+    dead_zone=UNDER_EYE_DARK_CIRCLE_DEAD_ZONE_L_UNITS,
+    multiplier=UNDER_EYE_DARK_CIRCLE_SCORE_MULTIPLIER,
+):
+    """Pure extraction of the under_eye_dark_circle_density dead-zone
+    formula from _compute_zone_based_metrics. [darkness_delta] is the
+    already-computed cheek-minus-under-eye mean L-channel delta (clamped
+    to >= 0), not an image array.
+    """
+    effective_delta = max(0.0, darkness_delta - dead_zone)
+    return float(np.clip(effective_delta * multiplier, 0.0, 100.0))
+
+
+def is_redness_unset(current_value):
+    """True when localized_redness is missing/invalid/non-positive and is
+    therefore eligible for the mean-based cheek-ROI fallback in
+    _compute_canonical_patch_metrics to fill in. This is the exact guard
+    that was broken before: a valid canonical value must make this False,
+    so the fallback block (gated on this being True) never overwrites it.
+    """
+    return (
+        current_value is None
+        or not math.isfinite(current_value)
+        or current_value <= 0.0
+    )
+
+
 def _compute_zone_based_metrics(
     face_bgr: np.ndarray,
     skin_mask: np.ndarray,
     regions: Dict[str, np.ndarray],
     points: np.ndarray,
+    *,
+    baseline_matrix: Dict[str, Any] | None = None,
+    roi_cache: _RequestRoiCache | None = None,
 ) -> Dict[str, Any]:
     h, w = face_bgr.shape[:2]
     if h == 0 or w == 0:
@@ -1095,22 +1981,50 @@ def _compute_zone_based_metrics(
     gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
     lap_abs = np.abs(cv2.Laplacian(gray, cv2.CV_32F, ksize=3))
 
-    forehead = regions.get("forehead", np.zeros((h, w), dtype=np.uint8))
+    skin_mask = _as_binary_mask(skin_mask, (h, w))
+    if roi_cache is not None:
+        _, face_skin_mask = roi_cache.get_pore_mask((h, w), points, face_bgr, skin_mask)
+    else:
+        _, face_skin_mask = _build_pore_roi_masks((h, w), points, face_bgr, skin_mask)
+    if cv2.countNonZero(face_skin_mask) <= 0:
+        face_skin_mask = skin_mask.copy()
+
+    forehead = _as_binary_mask(
+        regions.get("forehead", np.zeros((h, w), dtype=np.uint8)),
+        (h, w),
+    )
     nose_polygon = _nose_region_mask((h, w), points, skin_mask, apply_skin_mask=False)
     t_zone_polygon = cv2.bitwise_or(forehead, nose_polygon)
-    t_zone = cv2.bitwise_and(t_zone_polygon, skin_mask)
+    t_zone_before_fix = cv2.bitwise_and(t_zone_polygon, skin_mask)
     tzone_raw_pixels = int(cv2.countNonZero(t_zone_polygon))
-    tzone_skin_pixels = int(cv2.countNonZero(t_zone))
+    tzone_skin_pixels_before = int(cv2.countNonZero(t_zone_before_fix))
+    if roi_cache is not None:
+        t_zone, tzone_meta = roi_cache.get_tzone_mask(
+            (h, w),
+            points,
+            forehead,
+            skin_mask,
+            face_skin_mask,
+        )
+    else:
+        t_zone, tzone_meta = _build_tzone_roi(
+            (h, w),
+            points,
+            forehead,
+            skin_mask,
+            face_skin_mask,
+        )
+    tzone_skin_pixels = int(tzone_meta["after_skin_pixels"])
     logger.info(
-        "[TZoneFix] raw_polygon_pixels: %d, skin_intersected_pixels: %d",
+        "[TZoneFix] before_fix tzone_raw=%d skin_intersect=%d",
+        tzone_raw_pixels,
+        tzone_skin_pixels_before,
+    )
+    logger.info(
+        "[TZoneFix] after_fix tzone_raw=%d skin_intersect=%d",
         tzone_raw_pixels,
         tzone_skin_pixels,
     )
-    if (tzone_skin_pixels == 0 and tzone_raw_pixels > 100) or (
-        tzone_skin_pixels < 500 and tzone_raw_pixels > 500
-    ):
-        t_zone = t_zone_polygon
-        tzone_skin_pixels = tzone_raw_pixels
     pore_t_zone_pixels = int(cv2.countNonZero(t_zone))
 
     # T-zone: oil gloss + pore visibility.
@@ -1151,12 +2065,26 @@ def _compute_zone_based_metrics(
         median_a = 128.0
         p95_a = 128.0
 
-    localized_redness = float(np.clip((p95_a - 128.0) * 3.1, 0.0, 100.0))
+    personal_lab_baseline = _resolve_personal_lab_ctx(baseline_matrix)
+    baseline_a_ref = personal_lab_baseline.get("a_mean", 128.0)
     diffuse_threshold = max(138.0, median_a + 5.0)
     diffuse_mask = np.logical_and(u_zone_pixels, a_blur >= diffuse_threshold)
     diffuse_density = float(np.clip(np.mean(diffuse_mask) * 100.0, 0.0, 100.0))
-    diffuse_flushing_erythema = float(np.clip((0.70 * diffuse_density) + (0.30 * localized_redness), 0.0, 100.0))
-    rosacea_severity = float(np.clip((0.65 * diffuse_flushing_erythema) + (0.35 * localized_redness), 0.0, 100.0))
+    _redness_result = compute_localized_redness_and_rosacea(
+        p95_a, baseline_a_ref, diffuse_density
+    )
+    localized_redness = _redness_result["localized_redness"]
+    diffuse_flushing_erythema = _redness_result["diffuse_flushing_erythema"]
+    rosacea_before = _redness_result["rosacea_before"]
+    rosacea_severity = _redness_result["rosacea_severity"]
+    rosacea_reason = _redness_result["rosacea_reason"]
+    logger.info(
+        "ROSACEA_CALIB redness=%.1f rosacea_before=%.1f rosacea_after=%.1f reason=%s",
+        localized_redness,
+        rosacea_before,
+        rosacea_severity,
+        rosacea_reason,
+    )
 
     # Glabellar zone: directional line depth estimation for 11 lines.
     glabella_mask = _glabella_region_mask((h, w), points, skin_mask)
@@ -1186,7 +2114,24 @@ def _compute_zone_based_metrics(
         cheek_l_mean = float(np.mean(l_channel[cheek_mask])) if np.any(cheek_mask) else 150.0
         peri_l_mean = float(np.mean(l_channel[peri_pixels]))
         darkness_delta = max(0.0, cheek_l_mean - peri_l_mean)
-        under_eye_dark_circle_density = float(np.clip(darkness_delta * 2.0, 0.0, 100.0))
+        # FIRST-PASS FIX, NOT A FINISHED SCALE: the dead zone + multiplier
+        # below are reasoned starting points (see the constants' comments
+        # above _compute_zone_based_metrics), not a clinically-validated
+        # mapping from L-channel delta to dark-circle severity. Revisit
+        # both once real paired scans with known visible severity exist —
+        # use the UNDER_EYE_DARK_CIRCLE log line below to gather that data
+        # instead of re-deriving the formula from scratch.
+        effective_delta = max(
+            0.0, darkness_delta - UNDER_EYE_DARK_CIRCLE_DEAD_ZONE_L_UNITS
+        )
+        under_eye_dark_circle_density = compute_under_eye_dark_circle_density(darkness_delta)
+        logger.info(
+            "UNDER_EYE_DARK_CIRCLE raw_delta=%.2f dead_zone=%.1f effective_delta=%.2f score=%.1f",
+            darkness_delta,
+            UNDER_EYE_DARK_CIRCLE_DEAD_ZONE_L_UNITS,
+            effective_delta,
+            under_eye_dark_circle_density,
+        )
     else:
         under_eye_texture_density = 0.0
         under_eye_dark_circle_density = 0.0
@@ -1209,6 +2154,8 @@ def _compute_additional_opencv_metrics(
     skin_mask: np.ndarray,
     regions: Dict[str, np.ndarray],
     points: np.ndarray,
+    *,
+    roi_cache: _RequestRoiCache | None = None,
 ) -> Dict[str, float]:
     h, w = face_bgr.shape[:2]
     if h == 0 or w == 0:
@@ -1233,12 +2180,33 @@ def _compute_additional_opencv_metrics(
     val = hsv[:, :, 2]
 
     # 1) Sebum / Excess Oil Gloss (defect)
-    forehead = regions.get("forehead", np.zeros((h, w), dtype=np.uint8))
+    skin_mask = _as_binary_mask(skin_mask, (h, w))
+    if roi_cache is not None:
+        _, face_skin_mask = roi_cache.get_pore_mask((h, w), points, face_bgr, skin_mask)
+    else:
+        _, face_skin_mask = _build_pore_roi_masks((h, w), points, face_bgr, skin_mask)
+    if cv2.countNonZero(face_skin_mask) <= 0:
+        face_skin_mask = skin_mask.copy()
+    forehead = _as_binary_mask(regions.get("forehead", np.zeros((h, w), dtype=np.uint8)), (h, w))
+    if roi_cache is not None:
+        t_zone, _ = roi_cache.get_tzone_mask(
+            (h, w),
+            points,
+            forehead,
+            skin_mask,
+            face_skin_mask,
+        )
+    else:
+        t_zone, _ = _build_tzone_roi(
+            (h, w),
+            points,
+            forehead,
+            skin_mask,
+            face_skin_mask,
+        )
     nose = _nose_region_mask((h, w), points, skin_mask)
-    t_zone = cv2.bitwise_or(forehead, nose)
-    t_zone = cv2.bitwise_and(t_zone, skin_mask)
     if cv2.countNonZero(t_zone) == 0:
-        t_zone = skin_mask
+        t_zone = face_skin_mask
 
     t_zone_pixels = val[t_zone > 0]
     v_threshold = 220.0
@@ -1261,7 +2229,7 @@ def _compute_additional_opencv_metrics(
     left_cheek = regions.get("left_cheek", np.zeros((h, w), dtype=np.uint8))
     right_cheek = regions.get("right_cheek", np.zeros((h, w), dtype=np.uint8))
     flush_roi = cv2.bitwise_or(cv2.bitwise_or(left_cheek, right_cheek), nose)
-    flush_roi = cv2.bitwise_and(flush_roi, skin_mask)
+    flush_roi = cv2.bitwise_and(flush_roi, face_skin_mask)
     flush_area = max(int(cv2.countNonZero(flush_roi)), 1)
 
     a_channel = lab[:, :, 1].astype(np.float32)
@@ -1333,6 +2301,8 @@ def _compute_structural_opencv_metrics(
     skin_mask: np.ndarray,
     regions: Dict[str, np.ndarray],
     points: np.ndarray,
+    *,
+    roi_cache: _RequestRoiCache | None = None,
 ) -> Dict[str, float]:
     h, w = face_bgr.shape[:2]
     if h == 0 or w == 0:
@@ -1684,6 +2654,8 @@ def _compute_canonical_patch_metrics(
     *,
     yolo_kept: int,
     yolo_max_conf: float,
+    baseline_matrix: Dict[str, Any] | None = None,
+    roi_cache: _RequestRoiCache | None = None,
 ) -> tuple[Dict[str, Any], Dict[str, str], Dict[str, float]]:
     h, w = face_bgr.shape[:2]
     matrix: Dict[str, Any] = {}
@@ -1696,75 +2668,202 @@ def _compute_canonical_patch_metrics(
         "breakout_activity": "low",
     }
     raw_components: Dict[str, float] = {}
+    personal_lab_baseline = _resolve_personal_lab_ctx(baseline_matrix)
 
     if h == 0 or w == 0:
         return matrix, confidence, raw_components
 
+    skin_mask = _as_binary_mask(skin_mask, (h, w))
     lab = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2LAB)
     gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
 
     glabella = _glabella_region_mask((h, w), points, skin_mask)
     face_landmarks_present = points.shape[0] > 0
 
-    left_cheek = regions.get("left_cheek", np.zeros((h, w), dtype=np.uint8))
-    right_cheek = regions.get("right_cheek", np.zeros((h, w), dtype=np.uint8))
-    primary_cheek_mask = cv2.bitwise_and(cv2.bitwise_or(left_cheek, right_cheek), skin_mask)
-
-    forehead = regions.get("forehead", np.zeros((h, w), dtype=np.uint8))
-    nose_polygon = _nose_region_mask((h, w), points, skin_mask, apply_skin_mask=False)
-    primary_t_zone_mask = cv2.bitwise_and(cv2.bitwise_or(forehead, nose_polygon), skin_mask)
-
-    primary_cheek_pixels = int(cv2.countNonZero(primary_cheek_mask))
-    primary_t_zone_pixels = int(cv2.countNonZero(primary_t_zone_mask))
-
-    # Default ROI for canonical skin metrics: full-face skin contour.
-    _, full_face_skin_mask = _build_pore_roi_masks((h, w), points, face_bgr, skin_mask)
+    if roi_cache is not None:
+        _, full_face_skin_mask = roi_cache.get_pore_mask((h, w), points, face_bgr, skin_mask)
+    else:
+        _, full_face_skin_mask = _build_pore_roi_masks((h, w), points, face_bgr, skin_mask)
     if cv2.countNonZero(full_face_skin_mask) <= 0:
         full_face_skin_mask = skin_mask.copy()
+    full_face_skin_mask = _as_binary_mask(full_face_skin_mask, (h, w))
     full_face_pixels = int(cv2.countNonZero(full_face_skin_mask))
     skin_mask_pixels = int(cv2.countNonZero(skin_mask))
     skin_mask_failed = skin_mask_pixels <= 0
     raw_components["full_face_skin_pixels"] = float(full_face_pixels)
     raw_components["skin_mask_pixels"] = float(skin_mask_pixels)
 
-    cheek_mask = primary_cheek_mask if primary_cheek_pixels > 0 else full_face_skin_mask
-    texture_mask = primary_cheek_mask if primary_cheek_pixels > 0 else full_face_skin_mask
+    left_cheek = _as_binary_mask(regions.get("left_cheek", np.zeros((h, w), dtype=np.uint8)), (h, w))
+    right_cheek = _as_binary_mask(regions.get("right_cheek", np.zeros((h, w), dtype=np.uint8)), (h, w))
+    primary_cheek_mask = cv2.bitwise_or(left_cheek, right_cheek)
+
+    forehead = _as_binary_mask(regions.get("forehead", np.zeros((h, w), dtype=np.uint8)), (h, w))
+    forehead_skin_mask = cv2.bitwise_and(forehead, full_face_skin_mask)
+    nose_polygon = _nose_region_mask((h, w), points, skin_mask, apply_skin_mask=False)
+    primary_t_zone_polygon = cv2.bitwise_or(forehead, nose_polygon)
+    primary_t_zone_mask_before_fix = cv2.bitwise_and(primary_t_zone_polygon, skin_mask)
+    if roi_cache is not None:
+        primary_t_zone_mask, tzone_meta = roi_cache.get_tzone_mask(
+            (h, w),
+            points,
+            forehead,
+            skin_mask,
+            full_face_skin_mask,
+        )
+    else:
+        primary_t_zone_mask, tzone_meta = _build_tzone_roi(
+            (h, w),
+            points,
+            forehead,
+            skin_mask,
+            full_face_skin_mask,
+        )
+    primary_cheek_pixels = int(cv2.countNonZero(primary_cheek_mask))
+    primary_cheek_skin_pixels = int(cv2.countNonZero(cv2.bitwise_and(primary_cheek_mask, skin_mask)))
+    cheek_expand_no_skin_used = (
+        primary_cheek_skin_pixels < 500 and primary_cheek_pixels >= 15000
+    )
+    if cheek_expand_no_skin_used:
+        logger.info("CHEEK_ROI_NO_SKIN_FALLBACK pixels=%d", primary_cheek_pixels)
+    primary_t_zone_pixels_before_fix = int(cv2.countNonZero(primary_t_zone_mask_before_fix))
+    primary_t_zone_pixels = int(tzone_meta["final_pixels"])
+
+    logger.info(
+        "[TZoneFix] before_fix tzone_raw=%d skin_intersect=%d",
+        int(cv2.countNonZero(primary_t_zone_polygon)),
+        primary_t_zone_pixels_before_fix,
+    )
+    logger.info(
+        "[TZoneFix] after_fix tzone_raw=%d skin_intersect=%d",
+        int(cv2.countNonZero(primary_t_zone_polygon)),
+        primary_t_zone_pixels,
+    )
+
+    tzone_path = str(tzone_meta.get("path", "tzone_face_fallback"))
+    tzone_primary_used = tzone_path == "primary_roi" and primary_t_zone_pixels >= MIN_USABLE_TZONE_PIXELS
+    tzone_landmark_fallback_used = tzone_path == "tzone_landmark_fallback"
+    tzone_face_fallback_used = tzone_path in {"tzone_face_fallback", "tzone_face_fallback_expanded"}
+
+    cheek_union_after_expand_pixels = 0
+    if points.shape[0] > 0:
+        cheek_dilate_px = int(np.clip(round(min(h, w) * 0.01), 3, 7))
+        cheek_dilate_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (cheek_dilate_px * 2 + 1, cheek_dilate_px * 2 + 1),
+        )
+        cheek_face_oval = _face_oval_mask((h, w), points)
+        cheek_face_clip = (
+            cheek_face_oval
+            if cv2.countNonZero(cheek_face_oval) > 0
+            else np.full((h, w), 255, dtype=np.uint8)
+        )
+        left_cheek_ids = [33, 130, 205, 50, 234, 132, 172, 136, 98]
+        right_cheek_ids = [263, 359, 425, 280, 454, 361, 397, 365, 327]
+        left_cheek_expanded = cv2.dilate(
+            _polygon_mask((h, w), _expanded_polygon_points(points[left_cheek_ids], (h, w))),
+            cheek_dilate_kernel,
+            iterations=1,
+        )
+        right_cheek_expanded = cv2.dilate(
+            _polygon_mask((h, w), _expanded_polygon_points(points[right_cheek_ids], (h, w))),
+            cheek_dilate_kernel,
+            iterations=1,
+        )
+        left_cheek_expanded = cv2.bitwise_and(left_cheek_expanded, cheek_face_clip)
+        right_cheek_expanded = cv2.bitwise_and(right_cheek_expanded, cheek_face_clip)
+        cheek_union_after_expand_pixels = int(
+            cv2.countNonZero(cv2.bitwise_or(left_cheek_expanded, right_cheek_expanded))
+        )
+
+    cheek_reject_min = 1200 if cheek_union_after_expand_pixels >= 15000 else MIN_USABLE_CHEEK_PIXELS
+    cheek_primary_usable = primary_cheek_pixels >= cheek_reject_min
+    if primary_cheek_pixels < cheek_reject_min:
+        logger.info(
+            "CHEEK_ROI_REJECT pixels=%d min=%d -> using fallback",
+            primary_cheek_pixels,
+            cheek_reject_min,
+        )
+
+    forehead_pixels = int(cv2.countNonZero(forehead_skin_mask))
+    texture_primary_usable = False
+    texture_roi_source = "large_roi_fallback"
+    if forehead_pixels >= MIN_USABLE_TEXTURE_ROI_PIXELS:
+        texture_mask = forehead_skin_mask
+        texture_primary_usable = True
+        texture_roi_source = "primary_roi"
+    elif cheek_primary_usable:
+        texture_mask = primary_cheek_mask
+        texture_primary_usable = True
+        texture_roi_source = "cheek_expand_no_skin" if cheek_expand_no_skin_used else "primary_roi"
+    else:
+        texture_mask = full_face_skin_mask.copy()
+
+    if cheek_primary_usable:
+        redness_roi_source = (
+            "cheek_primary_no_skin_mask"
+            if cheek_expand_no_skin_used
+            else "cheek_primary"
+        )
+        pigment_roi_source = (
+            "cheek_primary_no_skin_mask"
+            if cheek_expand_no_skin_used
+            else "cheek_primary"
+        )
+    else:
+        redness_roi_source = "full_face_fallback"
+        pigment_roi_source = "full_face_fallback"
+    cheek_mask = primary_cheek_mask if cheek_primary_usable else full_face_skin_mask.copy()
     wrinkle_mask = cv2.bitwise_or(glabella, texture_mask)
 
     primary_texture_pixels = int(cv2.countNonZero(texture_mask))
     primary_pigment_pixels = int(cv2.countNonZero(cheek_mask))
+    large_roi_fallback_used = (
+        redness_roi_source != "cheek_primary"
+        or texture_roi_source != "primary_roi"
+    )
 
-    fallback_used = False
+    fallback_used = large_roi_fallback_used
     bbox_fallback_used = False
     core_roi_pixels = max(primary_texture_pixels, primary_pigment_pixels)
     sparse_primary_roi = (
         primary_t_zone_pixels <= 100
-        or primary_cheek_pixels <= 100
+        or primary_cheek_pixels < MIN_USABLE_CHEEK_PIXELS
         or core_roi_pixels < 5000
     )
     if face_landmarks_present and sparse_primary_roi:
-        # Landmark bbox fallback does not depend on skin-mask success.
-        min_xy = np.floor(np.min(points, axis=0)).astype(np.int32)
-        max_xy = np.ceil(np.max(points, axis=0)).astype(np.int32)
-        bbox_w = max(1, int(max_xy[0] - min_xy[0]))
-        bbox_h = max(1, int(max_xy[1] - min_xy[1]))
-        pad_x = max(1, int(round(bbox_w * 0.12)))
-        pad_y = max(1, int(round(bbox_h * 0.12)))
-        x0 = max(0, int(min_xy[0] - pad_x))
-        y0 = max(0, int(min_xy[1] - pad_y))
-        x1 = min(w, int(max_xy[0] + pad_x))
-        y1 = min(h, int(max_xy[1] + pad_y))
-
-        if x1 > x0 and y1 > y0:
-            bbox_mask = np.zeros((h, w), dtype=np.uint8)
-            bbox_mask[y0:y1, x0:x1] = 255
-            cheek_mask = bbox_mask
-            texture_mask = bbox_mask
-            wrinkle_mask = cv2.bitwise_or(glabella, bbox_mask)
+        # Landmark bbox fallback does not depend on skin-mask success, but it
+        # must still be clipped to the face oval -- the raw landmark bounding
+        # rectangle's corners fall outside any real face's oval, so left
+        # un-clipped it can pull hair/ear/background pixels directly into a
+        # metric score. Intersecting here (at the point the mask is
+        # selected) means every downstream consumer is safe by construction.
+        bbox_mask = cv2.bitwise_and(
+            _landmark_bbox_mask((h, w), points),
+            _face_oval_mask((h, w), points),
+        )
+        if cv2.countNonZero(bbox_mask) > 0:
+            if not cheek_primary_usable:
+                cheek_mask = bbox_mask
+                redness_roi_source = "full_face_fallback"
+                pigment_roi_source = "full_face_fallback"
+            if not texture_primary_usable:
+                texture_mask = full_face_skin_mask.copy()
+                texture_roi_source = "large_roi_fallback"
+            wrinkle_mask = cv2.bitwise_or(glabella, texture_mask)
             fallback_used = True
             bbox_fallback_used = True
 
+    raw_components["primary_t_zone_skin_pixels_before_fix"] = float(primary_t_zone_pixels_before_fix)
+    raw_components["primary_t_zone_after_expand_pixels"] = float(tzone_meta.get("after_expand_pixels", 0))
+    raw_components["primary_t_zone_after_skin_pixels"] = float(tzone_meta.get("after_skin_pixels", 0))
+    raw_components["tzone_landmark_fallback_used"] = 1.0 if tzone_landmark_fallback_used else 0.0
+    raw_components["tzone_face_fallback_used"] = 1.0 if tzone_face_fallback_used else 0.0
+    raw_components["tzone_primary_used"] = 1.0 if tzone_primary_used else 0.0
+
     raw_components["primary_cheek_roi_pixels"] = float(primary_cheek_pixels)
+    raw_components["primary_cheek_skin_roi_pixels"] = float(primary_cheek_skin_pixels)
+    raw_components["cheek_primary_usable"] = 1.0 if cheek_primary_usable else 0.0
+    raw_components["cheek_expand_no_skin_used"] = 1.0 if cheek_expand_no_skin_used else 0.0
     raw_components["primary_t_zone_skin_pixels"] = float(primary_t_zone_pixels)
     raw_components["primary_texture_roi_pixels"] = float(primary_texture_pixels)
     raw_components["primary_pigment_roi_pixels"] = float(primary_pigment_pixels)
@@ -1776,6 +2875,20 @@ def _compute_canonical_patch_metrics(
     raw_components["fallback_texture_roi_pixels"] = float(fallback_roi_pixels)
     raw_components["fallback_pigment_roi_pixels"] = float(fallback_roi_pixels)
     raw_components["fallback_breakout_roi_pixels"] = float(fallback_roi_pixels)
+    raw_components["localized_redness_cheek_primary_used"] = 1.0 if redness_roi_source == "cheek_primary" else 0.0
+    raw_components["localized_redness_cheek_primary_no_skin_mask_used"] = 1.0 if redness_roi_source == "cheek_primary_no_skin_mask" else 0.0
+    raw_components["localized_redness_full_face_fallback_used"] = 1.0 if redness_roi_source == "full_face_fallback" else 0.0
+    raw_components["localized_redness_primary_used"] = 1.0 if redness_roi_source == "cheek_primary" else 0.0
+    raw_components["localized_redness_cheek_expand_no_skin_used"] = 1.0 if redness_roi_source == "cheek_primary_no_skin_mask" else 0.0
+    raw_components["localized_redness_bbox_fallback_used"] = 1.0 if (redness_roi_source == "full_face_fallback" and bbox_fallback_used) else 0.0
+    raw_components["localized_redness_large_fallback_used"] = 1.0 if (redness_roi_source == "full_face_fallback" and not bbox_fallback_used) else 0.0
+    raw_components["pigment_cheek_primary_used"] = 1.0 if pigment_roi_source == "cheek_primary" else 0.0
+    raw_components["pigment_cheek_primary_no_skin_mask_used"] = 1.0 if pigment_roi_source == "cheek_primary_no_skin_mask" else 0.0
+    raw_components["pigment_full_face_fallback_used"] = 1.0 if pigment_roi_source == "full_face_fallback" else 0.0
+    raw_components["texture_primary_used"] = 1.0 if texture_roi_source == "primary_roi" else 0.0
+    raw_components["texture_cheek_expand_no_skin_used"] = 1.0 if texture_roi_source == "cheek_expand_no_skin" else 0.0
+    raw_components["texture_bbox_fallback_used"] = 1.0 if texture_roi_source == "approximate_face_bbox" else 0.0
+    raw_components["texture_large_fallback_used"] = 1.0 if texture_roi_source == "large_roi_fallback" else 0.0
 
     def _conf(pixel_count: int) -> str:
         if pixel_count >= 6000:
@@ -1801,6 +2914,8 @@ def _compute_canonical_patch_metrics(
         redness = ((mean_a - 128.0) / 30.0) * 100.0
         matrix["localized_redness"] = round(float(np.clip(redness, 0.0, 100.0)), 1)
     confidence["localized_redness"] = _conf(cheek_pixels)
+    if cheek_expand_no_skin_used and confidence["localized_redness"] == "high":
+        confidence["localized_redness"] = "medium"
 
     texture_pixels = int(cv2.countNonZero(texture_mask))
     raw_components["texture_roi_pixels"] = float(texture_pixels)
@@ -1837,7 +2952,11 @@ def _compute_canonical_patch_metrics(
             math.isfinite(float(v))
             for v in (var_p80, lap_p80, texture_energy, texture_spread)
         )
-        if (texture_value is None or not math.isfinite(texture_value)) and texture_signal_present:
+        if (
+            texture_value is None
+            or not math.isfinite(texture_value)
+            or texture_value <= 0.0
+        ) and texture_signal_present:
             fallback_energy = max(float(texture_energy), 0.0)
             smoothness_fallback = 100.0 - min(100.0, fallback_energy * 2.5)
             matrix["texture_smoothness"] = round(
@@ -1874,15 +2993,19 @@ def _compute_canonical_patch_metrics(
         fallback_a = a_channel[texture_mask > 0]
         if fallback_a.size > 0:
             fallback_mean_a = float(np.mean(fallback_a))
-            fallback_redness = ((fallback_mean_a - 128.0) / 30.0) * 100.0
-            matrix["localized_redness"] = round(
-                float(np.clip(fallback_redness, 0.0, 100.0)),
-                1,
-            )
-            confidence["localized_redness"] = _max_conf(
-                confidence.get("localized_redness", "low"),
-                _conf(texture_pixels),
-            )
+            fallback_redness = ((fallback_mean_a - personal_lab_baseline.get("a_mean", 128.0)) / 30.0) * 100.0
+            clipped_fallback_redness = float(np.clip(fallback_redness, 0.0, 100.0))
+            if clipped_fallback_redness > 0.0:
+                matrix["localized_redness"] = round(
+                    clipped_fallback_redness,
+                    1,
+                )
+                confidence["localized_redness"] = _max_conf(
+                    confidence.get("localized_redness", "low"),
+                    _conf(texture_pixels),
+                )
+                if cheek_expand_no_skin_used and confidence["localized_redness"] == "high":
+                    confidence["localized_redness"] = "medium"
 
     # Pore extraction: ROI-locked, scale-normalized, and high-confidence gated.
     pose_pitch, pose_yaw = _compute_pose_pitch_yaw_from_landmarks(points)
@@ -1915,32 +3038,41 @@ def _compute_canonical_patch_metrics(
         if dog_vals.size > 0:
             pore_response_mean = float(np.mean(dog_vals))
             pore_spread = float(np.std(dog_vals))
-            pore_confidence = _pore_signal_conf(
-                pore_roi_pixels,
-                pore_spread,
-            )
-            confidence["pore_visibility"] = pore_confidence
-            raw_components["pore_hf_energy"] = round(float(pore_response_mean), 4)
-            raw_components["pore_spread"] = round(float(pore_spread), 4)
-
-            if pore_confidence != "low":
-                pores = 100.0 / (1.0 + math.exp(-(pore_response_mean - 7.5) / 1.9))
-                matrix["pore_visibility"] = round(float(np.clip(pores, 0.0, 100.0)), 1)
-                pore_visibility_detected = True
+            if not np.isfinite(pore_response_mean) or not np.isfinite(pore_spread):
+                confidence["pore_visibility"] = "low"
                 logger.info(
-                    "PORE SCORED value=%.1f confidence=%s roi_pixels=%d pitch=%.2f yaw=%.2f",
-                    matrix["pore_visibility"],
-                    pore_confidence,
+                    "PORE OMITTED reason=non_finite_stats roi_pixels=%d mean=%s spread=%s",
                     pore_roi_pixels,
-                    pose_pitch,
-                    pose_yaw,
+                    pore_response_mean,
+                    pore_spread,
                 )
             else:
-                logger.info(
-                    "PORE OMITTED reason=confidence_%s roi_pixels=%d",
-                    pore_confidence,
+                pore_confidence = _pore_signal_conf(
                     pore_roi_pixels,
+                    pore_spread,
                 )
+                confidence["pore_visibility"] = pore_confidence
+                raw_components["pore_hf_energy"] = round(float(pore_response_mean), 4)
+                raw_components["pore_spread"] = round(float(pore_spread), 4)
+
+                if pore_confidence != "low":
+                    pores = 100.0 / (1.0 + math.exp(-(pore_response_mean - 7.5) / 1.9))
+                    matrix["pore_visibility"] = round(float(np.clip(pores, 0.0, 100.0)), 1)
+                    pore_visibility_detected = True
+                    logger.info(
+                        "PORE SCORED value=%.1f confidence=%s roi_pixels=%d pitch=%.2f yaw=%.2f",
+                        matrix["pore_visibility"],
+                        pore_confidence,
+                        pore_roi_pixels,
+                        pose_pitch,
+                        pose_yaw,
+                    )
+                else:
+                    logger.info(
+                        "PORE OMITTED reason=confidence_%s roi_pixels=%d",
+                        pore_confidence,
+                        pore_roi_pixels,
+                    )
         else:
             confidence["pore_visibility"] = "low"
             logger.info("PORE OMITTED reason=empty_signal")
@@ -1999,16 +3131,29 @@ def _compute_canonical_patch_metrics(
         if cheek_a.size > 0 and cheek_b.size > 0:
             mean_a = float(np.mean(cheek_a))
             mean_b = float(np.mean(cheek_b))
+            # Deviation is measured from this cheek's own mean colour rather
+            # than a fixed grey point, which scored skin-tone warmth as pigment.
             chroma_dev = np.sqrt((cheek_a - mean_a) ** 2 + (cheek_b - mean_b) ** 2)
             pigment_dev = float(np.percentile(chroma_dev, 85)) if chroma_dev.size > 0 else 0.0
         else:
             pigment_dev = 0.0
 
         l_contrast = float(np.std(cheek_l)) if cheek_l.size > 0 else 0.0
-        pigment_signal = (0.72 * pigment_dev) + (0.28 * l_contrast)
-        # Shifted center/slope preserves rank ordering while reducing
-        # high-end clustering for common skin presentations.
-        pigment = 100.0 / (1.0 + math.exp(-(pigment_signal - 18.0) / 4.0))
+        pigment_signal = pigment_dev + (PIGMENT_LOAD_L_CONTRAST_WEIGHT * l_contrast)
+        pre_adjustment = 100.0 / (1.0 + math.exp(-(pigment_signal - PIGMENT_LOAD_SCORE_CENTER) / 4.0))
+        effective_signal = max(0.0, pigment_signal - PIGMENT_LOAD_DEAD_ZONE_SIGNAL)
+        # Provisional stretch: the old sigmoid compressed most real-world skin
+        # variation into the 88-100 band. A small dead zone and a wider slope
+        # preserve ranking while allowing actual differences to register.
+        pigment = compute_pigment_load(pigment_signal)
+        logger.info(
+            "PIGMENT_LOAD raw_signal=%.2f dead_zone=%.1f effective_signal=%.2f pre_adjustment=%.1f final=%.1f",
+            pigment_signal,
+            PIGMENT_LOAD_DEAD_ZONE_SIGNAL,
+            effective_signal,
+            pre_adjustment,
+            pigment,
+        )
         matrix["pigment_load"] = round(float(np.clip(pigment, 0.0, 100.0)), 1)
 
         confidence["pigment_load"] = _signal_conf(
@@ -2017,6 +3162,8 @@ def _compute_canonical_patch_metrics(
             low_spread=4.0,
             high_spread=8.5,
         )
+        if cheek_expand_no_skin_used and confidence["pigment_load"] == "high":
+            confidence["pigment_load"] = "medium"
         raw_components["pigment_chroma_dev_p85"] = round(float(pigment_dev), 4)
         raw_components["pigment_l_contrast"] = round(float(l_contrast), 4)
         raw_components["pigment_signal"] = round(float(pigment_signal), 4)
@@ -2104,34 +3251,6 @@ def _coalesce_metric_aliases(metrics: Dict[str, float]) -> Dict[str, float]:
     return out
 
 
-def _ensure_valid_metric_value(
-    metric_name: str,
-    value: float,
-    *,
-    fallback_value: float,
-    replace_zero_with_fallback: bool = True,
-) -> float:
-    candidate = value
-    if not isinstance(candidate, (int, float)) or not math.isfinite(float(candidate)):
-        logger.warning(
-            "Metric '%s' was non-finite (%s). Using fallback %.3f.",
-            metric_name,
-            value,
-            fallback_value,
-        )
-        candidate = fallback_value
-
-    candidate = float(np.clip(float(candidate), 0.0, 100.0))
-    if candidate <= 0.0 and replace_zero_with_fallback:
-        logger.warning(
-            "Metric '%s' resolved to %.3f. Using non-zero fallback from image signal.",
-            metric_name,
-            candidate,
-        )
-        candidate = float(np.clip(max(fallback_value, 0.1), 0.0, 100.0))
-    return round(candidate, 1)
-
-
 def _normalize_metric_payload_values(metrics: Dict[str, Any]) -> Dict[str, Any]:
     ten_point_keys = {
         "redness",
@@ -2151,6 +3270,7 @@ def _normalize_metric_payload_values(metrics: Dict[str, Any]) -> Dict[str, Any]:
     }
     normalized: Dict[str, Any] = {}
     for key, value in metrics.items():
+        raw_key = str(key).strip().lower()
         if value is None:
             normalized[key] = None
             continue
@@ -2162,11 +3282,657 @@ def _normalize_metric_payload_values(metrics: Dict[str, Any]) -> Dict[str, Any]:
             numeric = 0.0
 
         normalized_key = str(key).lower().replace("_", "")
-        if normalized_key in ten_point_keys and 0.0 <= numeric <= 10.0:
+        # Rosacea severity is already emitted on a calibrated 0-100 scale.
+        if normalized_key in ten_point_keys and 0.0 <= numeric <= 10.0 and raw_key != "rosacea_severity":
             numeric *= 10.0
 
         normalized[key] = round(float(np.clip(numeric, 0.0, 100.0)), 1)
     return normalized
+
+
+CANONICAL_METRIC_ORDER = [
+    "localized_redness",
+    "texture_smoothness",
+    "pigment_load",
+    "pore_visibility",
+    "wrinkle_load",
+    "breakout_activity",
+    "sebum_excess_oil_gloss",
+    "diffuse_flushing_erythema",
+    "skin_tone_radiance_evenness",
+    "glabellar_wrinkle_depth",
+    "under_eye_texture_density",
+    "under_eye_dark_circle_density",
+    "rosacea_severity",
+    "structural_firmness_elasticity",
+    "pore_contraction_index",
+    "skin_hydration",
+]
+
+HIGHER_IS_WORSE_METRICS = {
+    "rosacea_severity",
+    "localized_redness",
+    "diffuse_flushing_erythema",
+    "pigment_load",
+    "pore_visibility",
+    "wrinkle_load",
+    "glabellar_wrinkle_depth",
+    "breakout_activity",
+    "sebum_excess_oil_gloss",
+}
+
+HIGHER_IS_BETTER_METRICS = {
+    "skin_tone_radiance_evenness",
+    "structural_firmness_elasticity",
+    "texture_smoothness",
+    "skin_hydration",
+}
+
+HONESTY_STABLE_BAND_PCT = 8.0
+# Body silhouette comparisons are materially noisier than face metrics: in real validation,
+# two different full-body stock photos varied by ~56% in normalized_area_index purely due to
+# different people, poses, and framing. This means a body-area trend cannot be treated like a
+# face metric with a small 8% honesty band. The threshold below is intentionally conservative
+# and is a placeholder only.
+# IMPORTANT: this 60% band is calibrated from CROSS-PERSON noise, not real same-person
+# before/after variance. It is measuring "how much random unrelated photos differ" rather than
+# "how much a genuine healing change typically moves this metric." As a result, it is likely
+# far too conservative for detecting real change and may suppress legitimate trends entirely
+# until real same-person paired scan data exists. This is deliberately chosen to guarantee safety
+# (no false positives) at the likely cost of never showing a real trend at all until better data
+# is collected and re-calibrated.
+BODY_SILHOUETTE_HONESTY_BAND_PCT = 60.0
+# HARD gate: if the scale reference changes by more than 20%, the framing distance/pose is too
+# different to compare area meaningfully. This is stricter than a soft signal because body area
+# inherently drifts with capture distance and composition.
+BODY_SILHOUETTE_SCALE_MISMATCH_RATIO = 0.20
+BODY_SILHOUETTE_MIN_CONFIDENCE = 0.65
+BODY_SILHOUETTE_REQUIRED_CONSISTENT_SCANS = 2
+# PROVISIONAL: source dimensions above this per-axis difference are treated as
+# a different measurement setup until same-person resolution stability data exists.
+SOURCE_RESOLUTION_MISMATCH_RATIO = 0.20
+
+
+def _normalize_extraction_path_label(value: Any) -> str:
+    if value is None:
+        return "unknown"
+    text = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    if text in {
+        "cheek_primary",
+        "cheek_primary_no_skin_mask",
+        "full_face_fallback",
+        "full_face_yolo",
+        "laplacian_fallback",
+        "cheek_expand_no_skin",
+        "large_roi_fallback",
+        "approximate_face_bbox",
+        "tzone_landmark_fallback",
+        "tzone_face_fallback",
+        "primary_roi",
+        "fallback",
+    }:
+        return text
+    if text in {"primary_roi", "primary", "roi", "primaryroi"}:
+        return "primary_roi"
+    if text in {
+        "fallback",
+        "fallback_roi",
+        "bbox_fallback",
+        "fallbackroi",
+        "laplacian_fallback",
+        "large_roi_fallback",
+        "approximate_face_bbox",
+        "tzone_landmark_fallback",
+        "tzone_face_fallback",
+    }:
+        return "fallback"
+    if text in {"skipped", "omit", "omitted", "not_computed", "unavailable"}:
+        return "skipped"
+    return "unknown"
+
+
+def _normalize_metric_extraction_paths(raw: Any, metric_keys: list[str]) -> Dict[str, str]:
+    normalized = {key: "unknown" for key in metric_keys}
+    if raw is None:
+        return normalized
+
+    payload = raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return normalized
+        payload = json.loads(text)
+
+    if not isinstance(payload, dict):
+        return normalized
+
+    for key, value in payload.items():
+        canonical_map = _coalesce_metric_aliases({str(key): 1.0})
+        if not canonical_map:
+            continue
+        canonical_key = next(iter(canonical_map.keys()))
+        if canonical_key not in normalized:
+            continue
+        normalized[canonical_key] = _normalize_extraction_path_label(value)
+
+    return normalized
+
+
+def _normalize_capture_quality(value: Any) -> str:
+    if value is None:
+        return "unknown"
+    text = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    if not text:
+        return "unknown"
+    if text in {
+        "normal",
+        "low_light",
+        "face_offcenter",
+        "poor_angle",
+        "uneven_lighting",
+        "blurry",
+        "unknown",
+    }:
+        return text
+    return "unknown"
+
+
+def _compute_metric_extraction_paths(
+    metric_status: Dict[str, str],
+    raw_components: Dict[str, float],
+    metric_keys: list[str],
+) -> Dict[str, str]:
+    fallback_used = bool(raw_components.get("fallback_used", 0.0) > 0.5)
+    bbox_fallback_used = bool(raw_components.get("bbox_fallback_used", 0.0) > 0.5)
+    pore_fallback_used = bool(raw_components.get("pore_fallback_used", 0.0) > 0.5)
+
+    out: Dict[str, str] = {}
+    for key in metric_keys:
+        status = metric_status.get(key, "unavailable")
+        if status != "computed":
+            out[key] = "skipped"
+            continue
+
+        if key == "pore_visibility" and pore_fallback_used:
+            out[key] = "fallback"
+            continue
+
+        if key == "sebum_excess_oil_gloss":
+            if bool(raw_components.get("tzone_primary_used", 0.0) > 0.5):
+                out[key] = "primary_roi"
+            elif bool(raw_components.get("tzone_landmark_fallback_used", 0.0) > 0.5):
+                out[key] = "tzone_landmark_fallback"
+            elif bool(raw_components.get("tzone_face_fallback_used", 0.0) > 0.5):
+                out[key] = "tzone_face_fallback"
+            else:
+                out[key] = "fallback"
+            continue
+
+        if key == "localized_redness":
+            if bool(raw_components.get("localized_redness_cheek_primary_used", 0.0) > 0.5):
+                out[key] = "cheek_primary"
+            elif bool(raw_components.get("localized_redness_cheek_primary_no_skin_mask_used", 0.0) > 0.5):
+                out[key] = "cheek_primary_no_skin_mask"
+            elif bool(raw_components.get("localized_redness_full_face_fallback_used", 0.0) > 0.5):
+                out[key] = "full_face_fallback"
+            elif bool(raw_components.get("localized_redness_primary_used", 0.0) > 0.5):
+                out[key] = "cheek_primary"
+            elif bool(raw_components.get("localized_redness_bbox_fallback_used", 0.0) > 0.5):
+                out[key] = "full_face_fallback"
+            elif bool(raw_components.get("localized_redness_large_fallback_used", 0.0) > 0.5):
+                out[key] = "full_face_fallback"
+            else:
+                out[key] = "full_face_fallback" if (fallback_used or bbox_fallback_used) else "cheek_primary"
+            continue
+
+        if key == "pigment_load":
+            if bool(raw_components.get("pigment_cheek_primary_used", 0.0) > 0.5):
+                out[key] = "cheek_primary"
+            elif bool(raw_components.get("pigment_cheek_primary_no_skin_mask_used", 0.0) > 0.5):
+                out[key] = "cheek_primary_no_skin_mask"
+            elif bool(raw_components.get("pigment_full_face_fallback_used", 0.0) > 0.5):
+                out[key] = "full_face_fallback"
+            else:
+                out[key] = "full_face_fallback" if (fallback_used or bbox_fallback_used) else "cheek_primary"
+            continue
+
+        if key == "texture_smoothness":
+            if bool(raw_components.get("texture_cheek_expand_no_skin_used", 0.0) > 0.5):
+                out[key] = "cheek_expand_no_skin"
+                continue
+            if bool(raw_components.get("texture_laplacian_fallback_used", 0.0) > 0.5):
+                out[key] = "laplacian_fallback"
+            elif bool(raw_components.get("texture_primary_used", 0.0) > 0.5):
+                out[key] = "primary_roi"
+            elif bool(raw_components.get("texture_bbox_fallback_used", 0.0) > 0.5):
+                out[key] = "approximate_face_bbox"
+            elif bool(raw_components.get("texture_large_fallback_used", 0.0) > 0.5):
+                out[key] = "large_roi_fallback"
+            else:
+                out[key] = "fallback" if (fallback_used or bbox_fallback_used) else "primary_roi"
+            continue
+
+        if key == "wrinkle_load":
+            if bool(raw_components.get("texture_cheek_expand_no_skin_used", 0.0) > 0.5):
+                out[key] = "cheek_expand_no_skin"
+            elif bool(raw_components.get("texture_primary_used", 0.0) > 0.5):
+                out[key] = "primary_roi"
+            elif bool(raw_components.get("texture_large_fallback_used", 0.0) > 0.5):
+                out[key] = "large_roi_fallback"
+            elif bool(raw_components.get("texture_laplacian_fallback_used", 0.0) > 0.5):
+                out[key] = "laplacian_fallback"
+            elif bool(raw_components.get("texture_bbox_fallback_used", 0.0) > 0.5):
+                out[key] = "approximate_face_bbox"
+            else:
+                out[key] = "large_roi_fallback" if (fallback_used or bbox_fallback_used) else "primary_roi"
+            continue
+
+        if key == "breakout_activity":
+            out[key] = "full_face_yolo"
+            continue
+
+        if key in {
+            "localized_redness",
+            "texture_smoothness",
+            "pigment_load",
+            "wrinkle_load",
+            "breakout_activity",
+        } and (fallback_used or bbox_fallback_used):
+            out[key] = "fallback"
+            continue
+
+        out[key] = "primary_roi"
+
+    return out
+
+
+def _metric_higher_is_worse(metric_key: str) -> bool:
+    if metric_key in HIGHER_IS_BETTER_METRICS:
+        return False
+    if metric_key in HIGHER_IS_WORSE_METRICS:
+        return True
+    return True
+
+
+def _source_resolutions_comparable(
+    current_width: int | None,
+    current_height: int | None,
+    baseline_width: int | None,
+    baseline_height: int | None,
+) -> bool:
+    if None in (current_width, current_height, baseline_width, baseline_height):
+        return True
+    if min(current_width, current_height, baseline_width, baseline_height) <= 0:
+        return True
+    return (
+        abs(current_width - baseline_width) / baseline_width <= SOURCE_RESOLUTION_MISMATCH_RATIO
+        and abs(current_height - baseline_height) / baseline_height <= SOURCE_RESOLUTION_MISMATCH_RATIO
+    )
+
+
+def _trend_delta_and_status(
+    metric_key: str,
+    current: float,
+    baseline: float,
+    current_path: str,
+    baseline_path: str,
+    honesty_band_pct: float,
+    current_capture_quality: str = "unknown",
+    baseline_capture_quality: str = "unknown",
+    current_source_width: int | None = None,
+    current_source_height: int | None = None,
+    baseline_source_width: int | None = None,
+    baseline_source_height: int | None = None,
+) -> tuple[float, str]:
+    if abs(baseline) < 1e-9:
+        return 0.0, "stable"
+
+    current_quality = (
+        _normalize_capture_quality(current_capture_quality)
+        if current_capture_quality is not None
+        else "normal"
+    )
+    baseline_quality = (
+        _normalize_capture_quality(baseline_capture_quality)
+        if baseline_capture_quality is not None
+        else "normal"
+    )
+    if current_quality == "unknown" or baseline_quality == "unknown":
+        return 0.0, "stable"
+    if current_quality != "normal" or baseline_quality != "normal":
+        return 0.0, "stable"
+
+    if current_path == "unknown" or baseline_path == "unknown":
+        return 0.0, "stable"
+    if current_path != baseline_path:
+        return 0.0, "stable"
+    if not _source_resolutions_comparable(
+        current_source_width,
+        current_source_height,
+        baseline_source_width,
+        baseline_source_height,
+    ):
+        return 0.0, "stable"
+
+    denominator = abs(baseline)
+    if _metric_higher_is_worse(metric_key):
+        directional_delta = ((baseline - current) / denominator) * 100.0
+    else:
+        directional_delta = ((current - baseline) / denominator) * 100.0
+
+    if abs(directional_delta) < honesty_band_pct:
+        return 0.0, "stable"
+
+    rounded = round(directional_delta, 1)
+    if rounded > 0:
+        return rounded, "improved"
+    if rounded < 0:
+        return rounded, "worsened"
+    return 0.0, "stable"
+
+
+def _trend_lock_reason(
+    current_path: str,
+    baseline_path: str,
+    current_capture_quality: str = "unknown",
+    baseline_capture_quality: str = "unknown",
+    current_source_width: int | None = None,
+    current_source_height: int | None = None,
+    baseline_source_width: int | None = None,
+    baseline_source_height: int | None = None,
+) -> str | None:
+    """Purely-informational companion to _trend_delta_and_status.
+
+    Mirrors the SAME honesty-gate checks in the SAME order as
+    _trend_delta_and_status so the UI can explain *why* a metric was forced
+    to "stable", without altering any gating logic/thresholds. Returns None
+    whenever the gates above would not have forced a lock (including the
+    genuine, honest "stable" case where the real delta is just inside the
+    honesty band) — that case keeps its normal "steady" messaging.
+    """
+    current_quality = (
+        _normalize_capture_quality(current_capture_quality)
+        if current_capture_quality is not None
+        else "normal"
+    )
+    baseline_quality = (
+        _normalize_capture_quality(baseline_capture_quality)
+        if baseline_capture_quality is not None
+        else "normal"
+    )
+    if current_quality == "unknown" or baseline_quality == "unknown":
+        return "capture_quality_mismatch"
+    if current_quality != "normal" or baseline_quality != "normal":
+        return "capture_quality_mismatch"
+
+    if current_path == "unknown" or baseline_path == "unknown":
+        return "path_mismatch"
+    if current_path != baseline_path:
+        return "path_mismatch"
+
+    if not _source_resolutions_comparable(
+        current_source_width,
+        current_source_height,
+        baseline_source_width,
+        baseline_source_height,
+    ):
+        return "resolution_mismatch"
+
+    return None
+
+
+def _body_trend_delta_and_status(
+    metric_key: str,
+    current: float,
+    baseline: float,
+    current_scale_reference_pixels: float | None,
+    baseline_scale_reference_pixels: float | None,
+    current_confidence: float | None,
+    baseline_confidence: float | None,
+    current_capture_quality: str = "normal",
+    baseline_capture_quality: str = "normal",
+    honesty_band_pct: float = BODY_SILHOUETTE_HONESTY_BAND_PCT,
+    minimum_consistent_scans: int = BODY_SILHOUETTE_REQUIRED_CONSISTENT_SCANS,
+    current_capture_mode: str | None = None,
+    baseline_capture_mode: str | None = None,
+    current_source_width: int | None = None,
+    current_source_height: int | None = None,
+    baseline_source_width: int | None = None,
+    baseline_source_height: int | None = None,
+) -> tuple[float, str]:
+    # Body silhouette change is not comparable to face metrics until capture is highly controlled.
+    # Real different-person validation showed ~56% variance from framing alone; this metric should
+    # only ever show a real improved/worsened claim after multiple consistent measurements, not a
+    # single baseline/current pair. Until same-person paired data exists, the safe default is to
+    # degrade to stable/insufficient_signal unless the evidence is substantially stronger.
+    if abs(baseline) < 1e-9:
+        return 0.0, "insufficient_signal"
+
+    current_quality = (
+        _normalize_capture_quality(current_capture_quality)
+        if current_capture_quality is not None
+        else "normal"
+    )
+    baseline_quality = (
+        _normalize_capture_quality(baseline_capture_quality)
+        if baseline_capture_quality is not None
+        else "normal"
+    )
+    if current_quality == "unknown" or baseline_quality == "unknown":
+        return 0.0, "stable"
+    if current_quality != "normal" or baseline_quality != "normal":
+        return 0.0, "stable"
+    if not _source_resolutions_comparable(
+        current_source_width,
+        current_source_height,
+        baseline_source_width,
+        baseline_source_height,
+    ):
+        return 0.0, "stable"
+
+    if current_confidence is None or baseline_confidence is None:
+        return 0.0, "insufficient_signal"
+    if current_confidence < BODY_SILHOUETTE_MIN_CONFIDENCE or baseline_confidence < BODY_SILHOUETTE_MIN_CONFIDENCE:
+        return 0.0, "stable"
+
+    if (
+        current_scale_reference_pixels is None
+        or baseline_scale_reference_pixels is None
+        or baseline_scale_reference_pixels <= 0.0
+    ):
+        return 0.0, "insufficient_signal"
+
+    scale_ratio_delta = abs(
+        current_scale_reference_pixels - baseline_scale_reference_pixels
+    ) / max(abs(baseline_scale_reference_pixels), 1.0)
+    if scale_ratio_delta > BODY_SILHOUETTE_SCALE_MISMATCH_RATIO:
+        return 0.0, "stable"
+
+    # PROVISIONAL, same status as the rest of the body pipeline: a
+    # captureMode mismatch (mirror vs. assisted vs. timer) between baseline
+    # and current is treated as an honesty-gate signal analogous to the
+    # scale_reference_pixels mismatch check above. Rationale is the same —
+    # switching capture methods between scans can shift framing/depth
+    # characteristics independent of any real body change (e.g. a mirror
+    # capture's reflection adds real depth a direct assisted/timer shot
+    # doesn't have), so a real improved/worsened claim shouldn't be made
+    # across a method switch. Only gates when BOTH sides report a known,
+    # differing mode — missing/legacy data (pre-dates this field) is left
+    # ungated rather than forced to insufficient_signal, since that would
+    # silently break every existing body comparison the moment this field
+    # shipped.
+    normalized_current_mode = (current_capture_mode or "").strip().lower() or None
+    normalized_baseline_mode = (baseline_capture_mode or "").strip().lower() or None
+    if (
+        normalized_current_mode is not None
+        and normalized_baseline_mode is not None
+        and normalized_current_mode != normalized_baseline_mode
+    ):
+        return 0.0, "stable"
+
+    if minimum_consistent_scans > 1:
+        return 0.0, "insufficient_signal"
+
+    directional_delta = ((current - baseline) / abs(baseline)) * 100.0
+    if abs(directional_delta) < honesty_band_pct:
+        return 0.0, "stable"
+
+    rounded = round(directional_delta, 1)
+    if rounded > 0:
+        return rounded, "improved"
+    if rounded < 0:
+        return rounded, "worsened"
+    return 0.0, "stable"
+
+
+def _body_trend_lock_reason(
+    baseline: float,
+    current_scale_reference_pixels: float | None,
+    baseline_scale_reference_pixels: float | None,
+    current_confidence: float | None,
+    baseline_confidence: float | None,
+    current_capture_quality: str = "normal",
+    baseline_capture_quality: str = "normal",
+    current_capture_mode: str | None = None,
+    baseline_capture_mode: str | None = None,
+    current_source_width: int | None = None,
+    current_source_height: int | None = None,
+    baseline_source_width: int | None = None,
+    baseline_source_height: int | None = None,
+) -> str | None:
+    """Purely-informational companion to _body_trend_delta_and_status.
+
+    Mirrors the SAME honesty-gate checks in the SAME order so the UI can
+    explain *why* a body silhouette comparison was forced to "stable",
+    without altering any gating logic/thresholds. Returns None whenever the
+    gates below did not force the lock (e.g. genuinely insufficient signal,
+    or a real small delta inside the honesty band) — those keep their
+    existing messaging.
+    """
+    if abs(baseline) < 1e-9:
+        return None
+
+    current_quality = (
+        _normalize_capture_quality(current_capture_quality)
+        if current_capture_quality is not None
+        else "normal"
+    )
+    baseline_quality = (
+        _normalize_capture_quality(baseline_capture_quality)
+        if baseline_capture_quality is not None
+        else "normal"
+    )
+    if current_quality == "unknown" or baseline_quality == "unknown":
+        return "capture_quality_mismatch"
+    if current_quality != "normal" or baseline_quality != "normal":
+        return "capture_quality_mismatch"
+
+    if not _source_resolutions_comparable(
+        current_source_width,
+        current_source_height,
+        baseline_source_width,
+        baseline_source_height,
+    ):
+        return "resolution_mismatch"
+
+    if current_confidence is None or baseline_confidence is None:
+        return None
+    if current_confidence < BODY_SILHOUETTE_MIN_CONFIDENCE or baseline_confidence < BODY_SILHOUETTE_MIN_CONFIDENCE:
+        return None
+
+    if (
+        current_scale_reference_pixels is None
+        or baseline_scale_reference_pixels is None
+        or baseline_scale_reference_pixels <= 0.0
+    ):
+        return None
+
+    scale_ratio_delta = abs(
+        current_scale_reference_pixels - baseline_scale_reference_pixels
+    ) / max(abs(baseline_scale_reference_pixels), 1.0)
+    if scale_ratio_delta > BODY_SILHOUETTE_SCALE_MISMATCH_RATIO:
+        return "scale_mismatch"
+
+    normalized_current_mode = (current_capture_mode or "").strip().lower() or None
+    normalized_baseline_mode = (baseline_capture_mode or "").strip().lower() or None
+    if (
+        normalized_current_mode is not None
+        and normalized_baseline_mode is not None
+        and normalized_current_mode != normalized_baseline_mode
+    ):
+        return "capture_mode_mismatch"
+
+    return None
+
+
+def _coalesce_personal_lab_baseline(baseline: Dict[str, Any] | None) -> Dict[str, float]:
+    if not baseline:
+        return {}
+
+    def _maybe_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(numeric):
+            return None
+        return float(numeric)
+
+    alias_maps = {
+        "a_mean": ["a_mean", "mean_a", "a_star_mean", "a_star_mean_labs", "redness_a_mean"],
+        "a_p95": ["a_p95", "p95_a", "a_star_p95", "redness_a_p95"],
+        "b_mean": ["b_mean", "mean_b", "b_star_mean", "b_star_mean_labs"],
+        "b_p95": ["b_p95", "p95_b", "b_star_p95"],
+    }
+    output: Dict[str, float] = {}
+    for canonical, aliases in alias_maps.items():
+        for key in aliases:
+            value = _maybe_float(baseline.get(key))
+            if value is not None:
+                output[canonical] = value
+                break
+    return output
+
+
+def _compute_redness_from_personal_baseline(
+    current_values: Dict[str, Any],
+    baseline: Dict[str, float],
+) -> float:
+    if not baseline:
+        return 0.0
+
+    def _pick(*keys: str) -> float | None:
+        for key in keys:
+            value = safe_float(current_values.get(key))
+            if value is not None:
+                return float(value)
+        return None
+
+    signal = _pick("a_p95", "p95_a", "a_mean", "mean_a")
+    reference = _pick_personal_baseline_reference(baseline)
+    if signal is None or reference is None:
+        return 0.0
+    return float(np.clip(((signal - reference) / 30.0) * 100.0, 0.0, 100.0))
+
+
+def _pick_personal_baseline_reference(baseline: Dict[str, float]) -> float | None:
+    for key in ("a_mean", "mean_a", "a_star_mean", "redness_a_mean"):
+        value = safe_float(baseline.get(key))
+        if value is not None:
+            return float(value)
+    return None
+
+
+def _resolve_personal_lab_ctx(baseline_matrix: Dict[str, Any] | None) -> Dict[str, float]:
+    baseline = _coalesce_personal_lab_baseline(baseline_matrix or {})
+    return {
+        "a_mean": safe_float(baseline.get("a_mean")) if baseline.get("a_mean") is not None else 128.0,
+        "b_mean": safe_float(baseline.get("b_mean")) if baseline.get("b_mean") is not None else 128.0,
+        "a_p95": safe_float(baseline.get("a_p95")) if baseline.get("a_p95") is not None else 128.0,
+        "b_p95": safe_float(baseline.get("b_p95")) if baseline.get("b_p95") is not None else 128.0,
+    }
 
 
 def _parse_baseline_metric_matrix(raw: Any) -> Dict[str, float]:
@@ -2192,18 +3958,42 @@ def _parse_baseline_metric_matrix(raw: Any) -> Dict[str, float]:
     return _coalesce_metric_aliases(baseline)
 
 
-def _compute_trend_deltas(current_matrix: Dict[str, float], baseline_matrix: Dict[str, float]) -> Dict[str, float]:
+def _compute_trend_deltas(
+    current_matrix: Dict[str, float],
+    baseline_matrix: Dict[str, float],
+    *,
+    current_paths: Dict[str, str] | None = None,
+    baseline_paths: Dict[str, str] | None = None,
+    current_capture_quality: str | None = None,
+    baseline_capture_quality: str | None = None,
+    current_source_width: int | None = None,
+    current_source_height: int | None = None,
+    baseline_source_width: int | None = None,
+    baseline_source_height: int | None = None,
+    honesty_band_pct: float = HONESTY_STABLE_BAND_PCT,
+) -> Dict[str, float]:
     current_canonical = _coalesce_metric_aliases(current_matrix)
     baseline_canonical = _coalesce_metric_aliases(baseline_matrix)
     deltas: Dict[str, float] = {}
-    # Metric directionality:
-    # - Higher is better: positive deltas indicate improvement.
-    # - Lower is better: positive deltas indicate improvement (decrease in defect load).
-    higher_is_better = {
-        "texture_smoothness",
-        "skin_tone_radiance_evenness",
-        "structural_firmness_elasticity",
-    }
+
+    current_paths_norm = _normalize_metric_extraction_paths(
+        current_paths,
+        CANONICAL_METRIC_ORDER,
+    )
+    baseline_paths_norm = _normalize_metric_extraction_paths(
+        baseline_paths,
+        CANONICAL_METRIC_ORDER,
+    )
+    current_capture_quality_norm = (
+        _normalize_capture_quality(current_capture_quality)
+        if current_capture_quality is not None
+        else "normal"
+    )
+    baseline_capture_quality_norm = (
+        _normalize_capture_quality(baseline_capture_quality)
+        if baseline_capture_quality is not None
+        else "normal"
+    )
 
     for key, current_value in current_canonical.items():
         if key not in baseline_canonical:
@@ -2214,21 +4004,298 @@ def _compute_trend_deltas(current_matrix: Dict[str, float], baseline_matrix: Dic
         if current is None or baseline_value is None:
             continue
 
-        # Graceful zero-baseline handling: avoid synthetic +/-100% jumps
-        # or NaN/inf when no meaningful baseline exists.
-        if abs(baseline_value) < 1e-9:
-            deltas[key] = 0.0
+        current_path = current_paths_norm.get(key, "unknown")
+        baseline_path = baseline_paths_norm.get(key, "unknown")
+        delta_pct, _ = _trend_delta_and_status(
+            key,
+            current,
+            baseline_value,
+            current_path,
+            baseline_path,
+            honesty_band_pct,
+            current_capture_quality_norm,
+            baseline_capture_quality_norm,
+            current_source_width,
+            current_source_height,
+            baseline_source_width,
+            baseline_source_height,
+        )
+        deltas[key] = delta_pct
+    return deltas
+
+
+def _compute_trend_statuses(
+    current_matrix: Dict[str, float],
+    baseline_matrix: Dict[str, float],
+    *,
+    current_paths: Dict[str, str] | None = None,
+    baseline_paths: Dict[str, str] | None = None,
+    current_capture_quality: str | None = None,
+    baseline_capture_quality: str | None = None,
+    current_source_width: int | None = None,
+    current_source_height: int | None = None,
+    baseline_source_width: int | None = None,
+    baseline_source_height: int | None = None,
+    honesty_band_pct: float = HONESTY_STABLE_BAND_PCT,
+) -> Dict[str, str]:
+    current_canonical = _coalesce_metric_aliases(current_matrix)
+    baseline_canonical = _coalesce_metric_aliases(baseline_matrix)
+
+    current_paths_norm = _normalize_metric_extraction_paths(
+        current_paths,
+        CANONICAL_METRIC_ORDER,
+    )
+    baseline_paths_norm = _normalize_metric_extraction_paths(
+        baseline_paths,
+        CANONICAL_METRIC_ORDER,
+    )
+    current_capture_quality_norm = (
+        _normalize_capture_quality(current_capture_quality)
+        if current_capture_quality is not None
+        else "normal"
+    )
+    baseline_capture_quality_norm = (
+        _normalize_capture_quality(baseline_capture_quality)
+        if baseline_capture_quality is not None
+        else "normal"
+    )
+
+    out: Dict[str, str] = {}
+    for key, current_value in current_canonical.items():
+        if key not in baseline_canonical:
+            continue
+        current = safe_float(current_value)
+        baseline_value = safe_float(baseline_canonical[key])
+        if current is None or baseline_value is None:
             continue
 
-        denominator = abs(baseline_value)
-        if key in higher_is_better:
-            delta_pct = ((current - baseline_value) / denominator) * 100.0
-        else:
-            # Defect-like metrics: a decrease is an improvement.
-            delta_pct = ((baseline_value - current) / denominator) * 100.0
+        _, status = _trend_delta_and_status(
+            key,
+            current,
+            baseline_value,
+            current_paths_norm.get(key, "unknown"),
+            baseline_paths_norm.get(key, "unknown"),
+            honesty_band_pct,
+            current_capture_quality_norm,
+            baseline_capture_quality_norm,
+            current_source_width,
+            current_source_height,
+            baseline_source_width,
+            baseline_source_height,
+        )
+        out[key] = status
+    return out
 
-        deltas[key] = round(delta_pct, 1)
-    return deltas
+
+def _compute_trend_lock_reasons(
+    current_matrix: Dict[str, float],
+    baseline_matrix: Dict[str, float],
+    *,
+    current_paths: Dict[str, str] | None = None,
+    baseline_paths: Dict[str, str] | None = None,
+    current_capture_quality: str | None = None,
+    baseline_capture_quality: str | None = None,
+    current_source_width: int | None = None,
+    current_source_height: int | None = None,
+    baseline_source_width: int | None = None,
+    baseline_source_height: int | None = None,
+) -> Dict[str, str | None]:
+    """Per-metric companion to _compute_trend_statuses: explains WHY a metric
+    that came back "stable" was locked there, when it was a mismatch gate
+    rather than a genuine small delta. Purely additive/informational — does
+    not affect trend_status or trend_deltas in any way.
+    """
+    current_canonical = _coalesce_metric_aliases(current_matrix)
+    baseline_canonical = _coalesce_metric_aliases(baseline_matrix)
+
+    current_paths_norm = _normalize_metric_extraction_paths(
+        current_paths,
+        CANONICAL_METRIC_ORDER,
+    )
+    baseline_paths_norm = _normalize_metric_extraction_paths(
+        baseline_paths,
+        CANONICAL_METRIC_ORDER,
+    )
+    current_capture_quality_norm = (
+        _normalize_capture_quality(current_capture_quality)
+        if current_capture_quality is not None
+        else "normal"
+    )
+    baseline_capture_quality_norm = (
+        _normalize_capture_quality(baseline_capture_quality)
+        if baseline_capture_quality is not None
+        else "normal"
+    )
+
+    out: Dict[str, str | None] = {}
+    for key, current_value in current_canonical.items():
+        if key not in baseline_canonical:
+            continue
+        current = safe_float(current_value)
+        baseline_value = safe_float(baseline_canonical[key])
+        if current is None or baseline_value is None:
+            continue
+
+        out[key] = _trend_lock_reason(
+            current_paths_norm.get(key, "unknown"),
+            baseline_paths_norm.get(key, "unknown"),
+            current_capture_quality_norm,
+            baseline_capture_quality_norm,
+            current_source_width,
+            current_source_height,
+            baseline_source_width,
+            baseline_source_height,
+        )
+    return out
+
+
+def _compute_body_silhouette_trend(
+    current_result: Dict[str, Any],
+    baseline_result: Dict[str, Any] | None,
+    *,
+    current_capture_quality: str | None = None,
+    baseline_capture_quality: str | None = None,
+    current_consistent_scan_count: int | None = None,
+    baseline_consistent_scan_count: int | None = None,
+    current_capture_mode: str | None = None,
+    baseline_capture_mode: str | None = None,
+    current_source_width: int | None = None,
+    current_source_height: int | None = None,
+    baseline_source_width: int | None = None,
+    baseline_source_height: int | None = None,
+) -> tuple[Dict[str, float], Dict[str, str], float, int, Dict[str, str | None]]:
+    if baseline_result is None:
+        return (
+            {"normalized_area_index": 0.0},
+            {"normalized_area_index": "insufficient_signal"},
+            BODY_SILHOUETTE_HONESTY_BAND_PCT,
+            BODY_SILHOUETTE_REQUIRED_CONSISTENT_SCANS,
+            {"normalized_area_index": None},
+        )
+
+    current_value = safe_float(current_result.get("normalized_area_index"))
+    baseline_value = safe_float(baseline_result.get("normalized_area_index"))
+    current_scale = safe_float(current_result.get("scale_reference_pixels"))
+    baseline_scale = safe_float(baseline_result.get("scale_reference_pixels"))
+    current_confidence = safe_float(current_result.get("confidence"))
+    baseline_confidence = safe_float(baseline_result.get("confidence"))
+
+    # This comparison is intentionally conservative. A single baseline/current pair is not enough to
+    # claim real body change because framing and pose alone can produce large area swings. Require at
+    # least two consistent captures before allowing improved/worsened claims.
+    effective_current_count = max(
+        int(current_consistent_scan_count or current_result.get("consistent_scan_count") or 1),
+        1,
+    )
+    required_scans = BODY_SILHOUETTE_REQUIRED_CONSISTENT_SCANS
+
+    if current_value is None or baseline_value is None:
+        return (
+            {"normalized_area_index": 0.0},
+            {"normalized_area_index": "insufficient_signal"},
+            BODY_SILHOUETTE_HONESTY_BAND_PCT,
+            required_scans,
+            {"normalized_area_index": None},
+        )
+
+    delta_pct, status = _body_trend_delta_and_status(
+        "normalized_area_index",
+        current_value,
+        baseline_value,
+        current_scale,
+        baseline_scale,
+        current_confidence,
+        baseline_confidence,
+        current_capture_quality or "normal",
+        baseline_capture_quality or "normal",
+        minimum_consistent_scans=(
+            required_scans
+            if effective_current_count < required_scans
+            else 1
+        ),
+        current_capture_mode=current_capture_mode,
+        baseline_capture_mode=baseline_capture_mode,
+        current_source_width=current_source_width,
+        current_source_height=current_source_height,
+        baseline_source_width=baseline_source_width,
+        baseline_source_height=baseline_source_height,
+    )
+    lock_reason = _body_trend_lock_reason(
+        baseline_value,
+        current_scale,
+        baseline_scale,
+        current_confidence,
+        baseline_confidence,
+        current_capture_quality or "normal",
+        baseline_capture_quality or "normal",
+        current_capture_mode=current_capture_mode,
+        baseline_capture_mode=baseline_capture_mode,
+        current_source_width=current_source_width,
+        current_source_height=current_source_height,
+        baseline_source_width=baseline_source_width,
+        baseline_source_height=baseline_source_height,
+    )
+    return {
+        "normalized_area_index": round(float(delta_pct), 1),
+    }, {
+        "normalized_area_index": status,
+    }, BODY_SILHOUETTE_HONESTY_BAND_PCT, required_scans, {
+        "normalized_area_index": lock_reason,
+    }
+
+
+def _body_consistent_scan_count(
+    current_result: Dict[str, Any],
+    baseline_result: Dict[str, Any] | None,
+    *,
+    candidate_count: int,
+    current_capture_quality: str | None,
+    baseline_capture_quality: str | None,
+    current_capture_mode: str | None,
+    baseline_capture_mode: str | None,
+    current_source_width: int | None = None,
+    current_source_height: int | None = None,
+    baseline_source_width: int | None = None,
+    baseline_source_height: int | None = None,
+) -> int:
+    """Return the confirmed consecutive consistent-scan count for one procedure."""
+    if baseline_result is None:
+        return 1
+
+    current_quality = _normalize_capture_quality(current_capture_quality)
+    baseline_quality = _normalize_capture_quality(baseline_capture_quality)
+    if current_quality != "normal" or baseline_quality != "normal":
+        return 1
+    if not _source_resolutions_comparable(
+        current_source_width,
+        current_source_height,
+        baseline_source_width,
+        baseline_source_height,
+    ):
+        return 1
+
+    current_scale = safe_float(current_result.get("scale_reference_pixels"))
+    baseline_scale = safe_float(baseline_result.get("scale_reference_pixels"))
+    if current_scale is None or baseline_scale is None or baseline_scale <= 0.0:
+        return 1
+    if abs(current_scale - baseline_scale) / baseline_scale > BODY_SILHOUETTE_SCALE_MISMATCH_RATIO:
+        return 1
+
+    current_mode = (current_capture_mode or "").strip().lower() or None
+    baseline_mode = (baseline_capture_mode or "").strip().lower() or None
+    if current_mode is None or baseline_mode is None or current_mode != baseline_mode:
+        return 1
+
+    current_confidence = safe_float(current_result.get("confidence"))
+    baseline_confidence = safe_float(baseline_result.get("confidence"))
+    if (
+        current_confidence is None
+        or baseline_confidence is None
+        or current_confidence < BODY_SILHOUETTE_MIN_CONFIDENCE
+        or baseline_confidence < BODY_SILHOUETTE_MIN_CONFIDENCE
+    ):
+        return 1
+    return max(candidate_count, 1)
 
 
 # Clinical advice tuning constants
@@ -2558,13 +4625,22 @@ def generate_clinical_advice(
 def analyze_skin_patch(
     bgr_image: np.ndarray,
     baseline_matrix: Dict[str, float] | None = None,
+    baseline_extraction_paths: Dict[str, str] | None = None,
+    capture_quality: str | None = None,
+    baseline_capture_quality: str | None = None,
     quality_profile: Dict[str, Any] | None = None,
     baseline_image_bgr: np.ndarray | None = None,
+    source_image_width: int | None = None,
+    source_image_height: int | None = None,
+    baseline_source_image_width: int | None = None,
+    baseline_source_image_height: int | None = None,
 ) -> Dict[str, Any]:
     """Core math analytics processor combined with 0-100 linear calibration scoring."""
     ensure_pipeline_ready()
     if not hasattr(math, "exp"):
         raise RuntimeError("Python math.exp is unavailable for metric calibration.")
+
+    request_roi_cache = _RequestRoiCache()
 
     def _clamp_score(value: float) -> float:
         return float(max(0.0, min(100.0, value)))
@@ -2575,7 +4651,14 @@ def analyze_skin_patch(
         bgr_image.dtype,
     )
 
-    calibrated_image, calibration = apply_white_balance_calibration(bgr_image)
+    if ENABLE_WHITE_BALANCE_CALIBRATION:
+        calibrated_image, calibration = apply_white_balance_calibration(bgr_image)
+    else:
+        calibrated_image = bgr_image
+        calibration = {
+            "reference_found": False,
+            "reason": "disabled_for_capture_pipeline",
+        }
 
     rgb = cv2.cvtColor(calibrated_image, cv2.COLOR_BGR2RGB)
     primary_landmarks, primary_landmark_count, primary_source = _extract_primary_landmarks(rgb)
@@ -2615,6 +4698,7 @@ def analyze_skin_patch(
     baseline_ssim_face: float | None = None
     baseline_ssim_global: float | None = None
     baseline_landmark_count = 0
+    personal_lab_baseline = _resolve_personal_lab_ctx(baseline_matrix)
     if baseline_image_bgr is not None and baseline_image_bgr.size > 0:
         baseline_norm, baseline_landmark_count = _prepare_normalized_face_patch_for_ssim(
             baseline_image_bgr
@@ -2640,7 +4724,14 @@ def analyze_skin_patch(
             )
 
     try:
-        zone_metrics = _compute_zone_based_metrics(norm, mask, regions, norm_points)
+        zone_metrics = _compute_zone_based_metrics(
+            norm,
+            mask,
+            regions,
+            norm_points,
+            baseline_matrix=baseline_matrix,
+            roi_cache=request_roi_cache,
+        )
     except Exception as exc:
         logger.warning(
             "Zone-based feature extraction failed; using fallbacks. Details: %s",
@@ -2663,13 +4754,15 @@ def analyze_skin_patch(
 
     a_channel = lab[:, :, 1].astype(np.float32)
     p95_a = _percentile(a_channel, cv2.bitwise_or(regions["left_cheek"], regions["right_cheek"]), 95)
-    redness_logistic = 1.0 / (1.0 + math.exp(-0.35 * (p95_a - 136.0)))
+    baseline_a_ref = _resolve_personal_lab_ctx(baseline_matrix or {}).get("a_mean", 128.0)
+    redness_logistic = 1.0 / (1.0 + math.exp(-0.35 * (p95_a - (baseline_a_ref + 8.0))))
     calibrated_redness_score = (1.0 - redness_logistic) * 100.0
-    if p95_a <= 132.5:
-        calibrated_redness_score = max(96.0, 100.0 - (p95_a - 130.0))
+    if p95_a <= baseline_a_ref + 4.5:
+        calibrated_redness_score = max(96.0, 100.0 - (p95_a - baseline_a_ref + 2.0))
     calibrated_redness_score = _clamp_score(calibrated_redness_score)
 
     lap = cv2.Laplacian(gray, cv2.CV_64F, ksize=3)
+    lap_abs = np.abs(lap)
     raw_variance = float(np.var(lap))
     texture_logistic = 1.0 / (1.0 + math.exp(-0.025 * (raw_variance - 65.0)))
     calibrated_smoothness_score = (1.0 - texture_logistic) * 100.0
@@ -2687,6 +4780,7 @@ def analyze_skin_patch(
             mask,
             regions,
             norm_points,
+            roi_cache=request_roi_cache,
         )
     except Exception as exc:
         logger.warning(
@@ -2705,6 +4799,7 @@ def analyze_skin_patch(
             mask,
             regions,
             norm_points,
+            roi_cache=request_roi_cache,
         )
     except Exception as exc:
         logger.warning(
@@ -2724,6 +4819,8 @@ def analyze_skin_patch(
         norm_points,
         yolo_kept=yolo_kept,
         yolo_max_conf=yolo_max_conf,
+        baseline_matrix=baseline_matrix,
+        roi_cache=request_roi_cache,
     )
 
     # Confidence-aware gating using ROI support, landmark robustness, and signal sparsity.
@@ -2751,23 +4848,7 @@ def analyze_skin_patch(
             1,
         )
 
-    canonical_metric_order = [
-        "localized_redness",
-        "texture_smoothness",
-        "pigment_load",
-        "pore_visibility",
-        "wrinkle_load",
-        "breakout_activity",
-        "sebum_excess_oil_gloss",
-        "diffuse_flushing_erythema",
-        "skin_tone_radiance_evenness",
-        "glabellar_wrinkle_depth",
-        "under_eye_texture_density",
-        "under_eye_dark_circle_density",
-        "rosacea_severity",
-        "structural_firmness_elasticity",
-        "pore_contraction_index",
-    ]
+    canonical_metric_order = list(CANONICAL_METRIC_ORDER)
 
     confidence_rank = {"low": 0, "medium": 1, "high": 2}
 
@@ -2791,10 +4872,30 @@ def analyze_skin_patch(
         return "low"
 
     glabella_pixels = int(cv2.countNonZero(_glabella_region_mask(norm.shape[:2], norm_points, mask)))
+    glabella_pitch = float(_compute_pose_pitch_yaw_from_landmarks(norm_points)[0])
     left_under_eye = _under_eye_region_mask(norm.shape[:2], norm_points, mask, side="left")
     right_under_eye = _under_eye_region_mask(norm.shape[:2], norm_points, mask, side="right")
     under_eye_pixels = int(cv2.countNonZero(cv2.bitwise_or(left_under_eye, right_under_eye)))
-    full_face_pixels = int(raw_components.get("full_face_skin_pixels", cv2.countNonZero(mask)))
+    # A zero reading here is ambiguous (genuinely flawless vs. detector floor),
+    # so it is passed through as-is rather than substituted with a synthetic
+    # non-zero value; the emission loop below marks adequate-ROI zeros as an
+    # explicit "insufficient_signal" status instead of fabricating a score.
+    glabellar_conf_value = structural_metrics.get("glabellar_wrinkle_depth")
+    under_eye_texture_conf_value = zone_metrics.get("under_eye_texture_density")
+    under_eye_dark_conf_value = zone_metrics.get("under_eye_dark_circle_density")
+    logger.info(
+        "SMALL_ROI_PIXELS glabella=%d under_eye=%d",
+        glabella_pixels,
+        under_eye_pixels,
+    )
+    full_face_skin_intersected_pixels = int(
+        raw_components.get("full_face_skin_pixels", cv2.countNonZero(mask))
+    )
+    full_face_bbox_guard_pixels = 0
+    if norm_points.size > 0:
+        face_bbox_mask = _landmark_bbox_mask(norm.shape[:2], norm_points)
+        full_face_bbox_guard_pixels = int(cv2.countNonZero(face_bbox_mask) * 0.6)
+    full_face_pixels = max(full_face_skin_intersected_pixels, full_face_bbox_guard_pixels)
 
     supplemental_confidence = {
         "sebum_excess_oil_gloss": _conf_from_pixels_and_value(
@@ -2816,22 +4917,22 @@ def analyze_skin_patch(
             medium_pixels=3000,
         ),
         "glabellar_wrinkle_depth": _conf_from_pixels_and_value(
-            structural_metrics.get("glabellar_wrinkle_depth"),
+            glabellar_conf_value,
             glabella_pixels,
-            high_pixels=1200,
-            medium_pixels=600,
+            high_pixels=220,
+            medium_pixels=110,
         ),
         "under_eye_texture_density": _conf_from_pixels_and_value(
-            zone_metrics.get("under_eye_texture_density"),
+            under_eye_texture_conf_value,
             under_eye_pixels,
-            high_pixels=1500,
-            medium_pixels=700,
+            high_pixels=70,
+            medium_pixels=24,
         ),
         "under_eye_dark_circle_density": _conf_from_pixels_and_value(
-            zone_metrics.get("under_eye_dark_circle_density"),
+            under_eye_dark_conf_value,
             under_eye_pixels,
-            high_pixels=1500,
-            medium_pixels=700,
+            high_pixels=70,
+            medium_pixels=24,
         ),
         "rosacea_severity": _conf_from_pixels_and_value(
             zone_metrics.get("rosacea_severity"),
@@ -2890,74 +4991,178 @@ def analyze_skin_patch(
     )
 
     texture_force_write = False
-    texture_current = safe_float(canonical_metric_matrix.get("texture_smoothness"))
-    if texture_current is None:
-        var_p80 = safe_float(raw_components.get("texture_var_p80"))
-        lap_p80 = safe_float(raw_components.get("texture_lap_p80"))
-        texture_energy = safe_float(raw_components.get("texture_energy"))
-        texture_spread = safe_float(raw_components.get("texture_spread"))
-        signal_values = [v for v in (var_p80, lap_p80, texture_energy, texture_spread) if v is not None and math.isfinite(v)]
-        if signal_values:
-            var_term = max((var_p80 or 0.0) / 15.0, 0.0)
-            lap_term = max((lap_p80 or 0.0) / 4.0, 0.0)
-            smoothness = float(np.clip(100.0 - min(100.0, (var_term + lap_term) / 2.0), 0.0, 100.0))
-            canonical_metric_matrix["texture_smoothness"] = round(smoothness, 1)
-            texture_force_write = True
-            if face_count >= 1:
-                metric_confidence["texture_smoothness"] = _merge_confidence(
-                    metric_confidence.get("texture_smoothness", "low"),
-                    "medium",
-                )
-
     redness_force_write = False
     redness_forced_value: float | None = None
-    redness_current = safe_float(canonical_metric_matrix.get("localized_redness"))
-    texture_roi_pixels = int(raw_components.get("texture_roi_pixels", 0.0))
-    redness_needs_force = (
-        redness_current is None
-        or not math.isfinite(redness_current)
-        or redness_current <= 0.0
+    redness_path = "skipped"
+    metric_status: Dict[str, str] = {}
+    fallback_reason: Dict[str, str] = {}
+    forced_metric_values: Dict[str, float] = {}
+    forced_metric_paths: Dict[str, str] = {}
+    texture_current = safe_float(canonical_metric_matrix.get("texture_smoothness"))
+    logger.info(
+        "FORCE_SECTION_REACHED smooth=%s tex_roi=%s cheek=%s",
+        texture_current,
+        max(
+            int(raw_components.get("texture_roi_pixels", 0.0)),
+            int(raw_components.get("fallback_texture_roi_pixels", 0.0)),
+            roi_after_fallback_pixels,
+        ),
+        int(raw_components.get("primary_cheek_roi_pixels", 0.0)),
     )
-    if redness_needs_force and (roi_after_fallback_pixels > 3000 or texture_roi_pixels > 3000):
-        bbox_fallback_used = bool(raw_components.get("bbox_fallback_used", 0.0) > 0.5)
-        redness_roi = np.zeros(norm.shape[:2], dtype=np.uint8)
-        if bbox_fallback_used and norm_points.size > 0:
-            min_xy = np.floor(np.min(norm_points, axis=0)).astype(np.int32)
-            max_xy = np.ceil(np.max(norm_points, axis=0)).astype(np.int32)
-            bbox_w = max(1, int(max_xy[0] - min_xy[0]))
-            bbox_h = max(1, int(max_xy[1] - min_xy[1]))
-            pad_x = max(1, int(round(bbox_w * 0.12)))
-            pad_y = max(1, int(round(bbox_h * 0.12)))
-            x0 = max(0, int(min_xy[0] - pad_x))
-            y0 = max(0, int(min_xy[1] - pad_y))
-            x1 = min(norm.shape[1], int(max_xy[0] + pad_x))
-            y1 = min(norm.shape[0], int(max_xy[1] + pad_y))
-            if x1 > x0 and y1 > y0:
-                redness_roi[y0:y1, x0:x1] = 255
-        else:
-            _, fallback_skin_mask = _build_pore_roi_masks(
-                norm.shape[:2],
-                norm_points,
-                norm,
-                mask,
-            )
-            redness_roi = fallback_skin_mask
 
-        if int(cv2.countNonZero(redness_roi)) > 0:
-            redness_values = a_channel[redness_roi > 0]
-            if redness_values.size > 0:
-                mean_a = float(np.mean(redness_values))
-                redness = float(np.clip(((mean_a - 128.0) / 30.0) * 100.0, 0.0, 100.0))
-                canonical_metric_matrix["localized_redness"] = round(redness, 1)
-                redness_force_write = True
-                redness_forced_value = canonical_metric_matrix["localized_redness"]
-                if face_count >= 1:
-                    metric_confidence["localized_redness"] = _merge_confidence(
-                        metric_confidence.get("localized_redness", "low"),
-                        "medium",
-                    )
+    # Build large fallback ROIs once so forced core metrics can be emitted even
+    # when cheek/texture primary masks are too small in live capture.
+    mask_binary = _as_binary_mask(mask, norm.shape[:2])
+    # Clipped to the face oval at construction so neither downstream consumer
+    # (forced texture_smoothness below, forced localized_redness further
+    # down) can ever compute a score from the raw, un-clipped landmark
+    # bounding box -- see _landmark_bbox_mask's docstring-less note above:
+    # its rectangle corners fall outside the face oval and can include
+    # hair/ears/background.
+    bbox_mask = (
+        cv2.bitwise_and(
+            _landmark_bbox_mask(norm.shape[:2], norm_points),
+            _face_oval_mask(norm.shape[:2], norm_points),
+        )
+        if norm_points.size > 0
+        else np.zeros(norm.shape[:2], dtype=np.uint8)
+    )
+    _, fallback_skin_mask = _build_pore_roi_masks(
+        norm.shape[:2],
+        norm_points,
+        norm,
+        mask_binary,
+    )
+    fallback_skin_mask = _as_binary_mask(fallback_skin_mask, norm.shape[:2])
+    fallback_skin_pixels = int(cv2.countNonZero(fallback_skin_mask))
+    bbox_pixels = int(cv2.countNonZero(bbox_mask))
+
+    large_fallback_roi = fallback_skin_mask if fallback_skin_pixels >= bbox_pixels else bbox_mask
+    large_fallback_path = "large_roi_fallback" if fallback_skin_pixels >= bbox_pixels else "approximate_face_bbox"
+    large_fallback_pixels = int(cv2.countNonZero(large_fallback_roi))
+
+    # Target a broad face-support ROI (>=50k when available) to stabilize forced texture/redness.
+    if max(fallback_skin_pixels, bbox_pixels) >= 50000:
+        large_fallback_roi = fallback_skin_mask if fallback_skin_pixels >= 50000 else bbox_mask
+        large_fallback_path = "large_roi_fallback" if fallback_skin_pixels >= 50000 else "approximate_face_bbox"
+        large_fallback_pixels = int(cv2.countNonZero(large_fallback_roi))
+
+    texture_roi_support_pixels = max(
+        int(raw_components.get("texture_roi_pixels", 0.0)),
+        int(raw_components.get("fallback_texture_roi_pixels", 0.0)),
+        roi_after_fallback_pixels,
+    )
+    primary_cheek_pixels = int(raw_components.get("primary_cheek_roi_pixels", 0.0))
+    texture_needs_force = (
+        texture_current is None
+        or not math.isfinite(texture_current)
+        or texture_current <= 0.0
+        or texture_roi_support_pixels < 10000
+        or primary_cheek_pixels < 10000
+    )
+    if texture_needs_force and large_fallback_pixels >= 500:
+        local_mean = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), 1.4)
+        local_mean_sq = cv2.GaussianBlur((gray.astype(np.float32) ** 2), (0, 0), 1.4)
+        local_var_map = np.clip(local_mean_sq - (local_mean ** 2), 0.0, None)
+        local_var_vals = local_var_map[large_fallback_roi > 0]
+        lap_vals = lap_abs[large_fallback_roi > 0]
+        texture_vals = gray[large_fallback_roi > 0].astype(np.float32)
+
+        var_p80 = float(np.percentile(local_var_vals, 80)) if local_var_vals.size > 0 else 0.0
+        lap_p80 = float(np.percentile(lap_vals, 80)) if lap_vals.size > 0 else 0.0
+        texture_energy = (0.65 * np.sqrt(max(var_p80, 0.0))) + (0.35 * lap_p80)
+        texture_spread = float(np.std(texture_vals)) if texture_vals.size > 0 else 0.0
+
+        roughness_terms = [
+            float(np.clip(math.sqrt(max(var_p80, 0.0)) / 45.0, 0.0, 1.0)),
+            float(np.clip(max(lap_p80, 0.0) / 180.0, 0.0, 1.0)),
+            float(np.clip(max(texture_energy, 0.0) / 95.0, 0.0, 1.0)),
+            float(np.clip(max(texture_spread, 0.0) / 70.0, 0.0, 1.0)),
+        ]
+        roughness = sum(roughness_terms) / len(roughness_terms)
+        smoothness = float(np.clip(95.0 - (90.0 * roughness), 0.0, 100.0))
+        forced_metric_values["texture_smoothness"] = round(smoothness, 1)
+        forced_metric_paths["texture_smoothness"] = "laplacian_fallback"
+        metric_status["texture_smoothness"] = "computed"
+        fallback_reason["texture_smoothness"] = "laplacian_fallback"
+        texture_force_write = True
+        canonical_metric_matrix["texture_smoothness"] = forced_metric_values["texture_smoothness"]
+        metric_confidence["texture_smoothness"] = _merge_confidence(
+            metric_confidence.get("texture_smoothness", "low"),
+            "medium",
+        )
+        logger.info(
+            "TEXTURE_FALLBACK_EMIT value=%s path=laplacian_fallback roi_pixels=%d stats={var_p80=%s lap_p80=%s energy=%s spread=%s target50k=%s fallback_path=%s}",
+            forced_metric_values["texture_smoothness"],
+            large_fallback_pixels,
+            round(var_p80, 4),
+            round(lap_p80, 4),
+            round(float(texture_energy), 4),
+            round(float(texture_spread), 4),
+            large_fallback_pixels >= 50000,
+            large_fallback_path,
+        )
+
+    redness_current = safe_float(canonical_metric_matrix.get("localized_redness"))
+    redness_unset = is_redness_unset(redness_current)
+    redness_roi = np.zeros(norm.shape[:2], dtype=np.uint8)
+    redness_path = "skipped"
+    cheek_primary_usable = bool(raw_components.get("cheek_primary_usable", 0.0) > 0.5)
+    cheek_expand_no_skin_used = bool(raw_components.get("cheek_expand_no_skin_used", 0.0) > 0.5)
+    if cheek_primary_usable:
+        left_cheek = regions.get("left_cheek", np.zeros(norm.shape[:2], dtype=np.uint8))
+        right_cheek = regions.get("right_cheek", np.zeros(norm.shape[:2], dtype=np.uint8))
+        redness_roi = cv2.bitwise_or(left_cheek, right_cheek)
+        redness_path = "cheek_primary_no_skin_mask" if cheek_expand_no_skin_used else "cheek_primary"
+    elif large_fallback_pixels >= 500:
+        redness_roi = large_fallback_roi
+        redness_path = "full_face_fallback"
+
+    # NOTE (localized_redness naming): this is a mean-based statistic over the
+    # cheek ROI, matching _compute_canonical_patch_metrics. Elsewhere in this
+    # file, _compute_zone_based_metrics' "localized_redness" concept is
+    # p95-based (percentile/hot-spot flavored) under the same name. That
+    # naming tension is real and unresolved — reconcile deliberately later
+    # rather than rediscovering it. Do not let this fallback quietly drift
+    # back toward a percentile statistic without addressing that first.
+    redness_roi_pixels = int(cv2.countNonZero(redness_roi))
+    if redness_unset and redness_roi_pixels >= 500:
+        redness_values = a_channel[redness_roi > 0]
+        if redness_values.size > 0:
+            mean_a = float(np.mean(redness_values))
+            p90_a = float(np.percentile(redness_values, 90))
+            redness_signal = max(mean_a, p90_a)
+            redness_reference = personal_lab_baseline.get("a_mean", 128.0)
+            redness = float(
+                np.clip(((redness_signal - redness_reference) / 30.0) * 100.0, 0.0, 100.0)
+            )
+            forced_metric_values["localized_redness"] = round(redness, 1)
+            forced_metric_paths["localized_redness"] = redness_path
+            canonical_metric_matrix["localized_redness"] = forced_metric_values["localized_redness"]
+            redness_force_write = True
+            redness_forced_value = canonical_metric_matrix["localized_redness"]
+            metric_status["localized_redness"] = "computed"
+            fallback_reason["localized_redness"] = redness_path
+            metric_confidence["localized_redness"] = _merge_confidence(
+                metric_confidence.get("localized_redness", "low"),
+                "medium",
+            )
+            logger.info(
+                "REDNESS_FALLBACK_EMIT value=%s path=%s roi_pixels=%d cheek=%s",
+                forced_metric_values["localized_redness"],
+                redness_path,
+                redness_roi_pixels,
+                primary_cheek_pixels,
+            )
+        else:
+            metric_status["localized_redness"] = "unavailable"
+            fallback_reason["localized_redness"] = "non_usable_value"
+    elif redness_unset:
+        metric_status["localized_redness"] = "unavailable"
+        fallback_reason["localized_redness"] = "cheek_reject_no_fallback"
 
     raw_components["texture_force_write"] = 1.0 if texture_force_write else 0.0
+    raw_components["texture_laplacian_fallback_used"] = 1.0 if texture_force_write else 0.0
     raw_components["redness_force_write"] = 1.0 if redness_force_write else 0.0
 
     candidate_values: Dict[str, Any] = {
@@ -2977,6 +5182,141 @@ def analyze_skin_patch(
         "structural_firmness_elasticity": structural_metrics.get("structural_firmness_elasticity"),
         "pore_contraction_index": structural_metrics.get("pore_contraction_index"),
     }
+    rosacea_calibrated = safe_float(zone_metrics.get("rosacea_severity"))
+    if rosacea_calibrated is not None and math.isfinite(rosacea_calibrated):
+        candidate_values["rosacea_severity"] = round(
+            float(np.clip(rosacea_calibrated, 0.0, 100.0)),
+            1,
+        )
+
+    fallback_used = locals().get("fallback_used", False)
+    bbox_fallback_used = locals().get("bbox_fallback_used", False)
+    pigment_roi_pixels = int(raw_components.get("pigment_roi_pixels", 0.0))
+    force_metric_roi_usable: Dict[str, bool] = {
+        "localized_redness": redness_roi_pixels >= 500,
+        "texture_smoothness": large_fallback_pixels >= 500,
+        "pigment_load": pigment_roi_pixels >= 500,
+        "rosacea_severity": full_face_pixels >= 3000,
+        "skin_tone_radiance_evenness": full_face_pixels >= 3000,
+        "structural_firmness_elasticity": full_face_pixels >= 3000,
+    }
+
+    pigment_numeric = safe_float(candidate_values.get("pigment_load"))
+    pigment_path = (
+        "full_face_fallback"
+        if bool(raw_components.get("pigment_full_face_fallback_used", 0.0) > 0.5)
+        else "cheek_primary"
+    )
+    if (
+        pigment_numeric is not None
+        and math.isfinite(pigment_numeric)
+        and pigment_numeric > 0.0
+        and pigment_roi_pixels >= 500
+    ):
+        forced_metric_values["pigment_load"] = round(
+            float(np.clip(pigment_numeric, 0.0, 100.0)),
+            1,
+        )
+        forced_metric_paths["pigment_load"] = pigment_path
+        metric_status["pigment_load"] = "computed"
+        fallback_reason["pigment_load"] = forced_metric_paths["pigment_load"]
+        metric_confidence["pigment_load"] = _merge_confidence(
+            metric_confidence.get("pigment_load", "low"),
+            "medium",
+        )
+        logger.info(
+            "PIGMENT_FALLBACK_EMIT value=%s path=%s roi_pixels=%d",
+            forced_metric_values["pigment_load"],
+            forced_metric_paths["pigment_load"],
+            pigment_roi_pixels,
+        )
+
+    rosacea_numeric = safe_float(candidate_values.get("rosacea_severity"))
+    if (
+        rosacea_numeric is not None
+        and math.isfinite(rosacea_numeric)
+        and rosacea_numeric > 0.0
+        and full_face_pixels >= 3000
+    ):
+        forced_metric_values["rosacea_severity"] = round(
+            float(np.clip(rosacea_numeric, 0.0, 100.0)),
+            1,
+        )
+        forced_metric_paths["rosacea_severity"] = "primary_roi"
+        metric_status["rosacea_severity"] = "computed"
+        fallback_reason["rosacea_severity"] = "primary_roi"
+        metric_confidence["rosacea_severity"] = _merge_confidence(
+            metric_confidence.get("rosacea_severity", "low"),
+            "medium",
+        )
+        logger.info(
+            "ROSACEA_FALLBACK_EMIT value=%s path=primary_roi full_face_pixels=%d",
+            forced_metric_values["rosacea_severity"],
+            full_face_pixels,
+        )
+
+    skin_intersected_full_face_pixels = int(raw_components.get("full_face_skin_pixels", 0.0))
+    skin_mask_failed_path = bool(raw_components.get("skin_mask_failed", 0.0) > 0.5)
+    cheek_expand_no_skin_path = bool(raw_components.get("cheek_expand_no_skin_used", 0.0) > 0.5)
+    radiance_weak_or_fallback_path = bool(
+        fallback_used
+        or bbox_fallback_used
+        or skin_mask_failed_path
+        or cheek_expand_no_skin_path
+        or skin_intersected_full_face_pixels < 3000
+    )
+    radiance_numeric = safe_float(candidate_values.get("skin_tone_radiance_evenness"))
+    if (
+        radiance_numeric is not None
+        and math.isfinite(radiance_numeric)
+        and radiance_numeric > 0.0
+        and full_face_pixels >= 3000
+    ):
+        radiance_emit_value = round(
+            float(np.clip(radiance_numeric, 0.0, 100.0)),
+            1,
+        )
+        if not (radiance_emit_value >= 95.0 and radiance_weak_or_fallback_path):
+            forced_metric_values["skin_tone_radiance_evenness"] = radiance_emit_value
+            forced_metric_paths["skin_tone_radiance_evenness"] = "primary_roi"
+            metric_status["skin_tone_radiance_evenness"] = "computed"
+            fallback_reason["skin_tone_radiance_evenness"] = "primary_roi"
+            metric_confidence["skin_tone_radiance_evenness"] = _merge_confidence(
+                metric_confidence.get("skin_tone_radiance_evenness", "low"),
+                "medium",
+            )
+            logger.info(
+                "RADIANCE_FALLBACK_EMIT value=%s path=primary_roi full_face_pixels=%d",
+                forced_metric_values["skin_tone_radiance_evenness"],
+                full_face_pixels,
+            )
+        else:
+            metric_status.setdefault("skin_tone_radiance_evenness", "unavailable")
+            fallback_reason.setdefault("skin_tone_radiance_evenness", "radiance_fallback_cap")
+
+    firmness_numeric = safe_float(candidate_values.get("structural_firmness_elasticity"))
+    if (
+        firmness_numeric is not None
+        and math.isfinite(firmness_numeric)
+        and firmness_numeric > 0.0
+        and full_face_pixels >= 3000
+    ):
+        forced_metric_values["structural_firmness_elasticity"] = round(
+            float(np.clip(firmness_numeric, 0.0, 100.0)),
+            1,
+        )
+        forced_metric_paths["structural_firmness_elasticity"] = "primary_roi"
+        metric_status["structural_firmness_elasticity"] = "computed"
+        fallback_reason["structural_firmness_elasticity"] = "primary_roi"
+        metric_confidence["structural_firmness_elasticity"] = _merge_confidence(
+            metric_confidence.get("structural_firmness_elasticity", "low"),
+            "medium",
+        )
+        logger.info(
+            "FIRMNESS_FALLBACK_EMIT value=%s path=primary_roi full_face_pixels=%d",
+            forced_metric_values["structural_firmness_elasticity"],
+            full_face_pixels,
+        )
 
     core_emit_keys = {
         "localized_redness",
@@ -2988,68 +5328,227 @@ def analyze_skin_patch(
         "skin_tone_radiance_evenness",
         "rosacea_severity",
         "structural_firmness_elasticity",
+        "glabellar_wrinkle_depth",
+        "under_eye_texture_density",
+        "under_eye_dark_circle_density",
     }
 
-    if face_count >= 1 and roi_after_fallback_pixels >= 3000:
-        for key in core_emit_keys:
-            candidate_numeric = safe_float(candidate_values.get(key))
-            if candidate_numeric is None or not math.isfinite(candidate_numeric) or candidate_numeric <= 0.0:
-                continue
-            if metric_confidence.get(key, "low") == "low":
-                metric_confidence[key] = "medium"
+    # ROI pixel budgets used to distinguish an unusable ROI from an
+    # adequately-sized ROI that produced an ambiguous zero reading. A zero
+    # in the latter case is never promoted to a confident value or score
+    # here — see the "insufficient_signal" branch in the emission loop below.
+    small_roi_zero_floor_metrics = {
+        "glabellar_wrinkle_depth": {
+            "roi_pixels": glabella_pixels,
+            "min_roi_pixels": 110,
+        },
+        "under_eye_texture_density": {
+            "roi_pixels": under_eye_pixels,
+            "min_roi_pixels": 24,
+        },
+        "under_eye_dark_circle_density": {
+            "roi_pixels": under_eye_pixels,
+            "min_roi_pixels": 24,
+        },
+    }
+
+    for metric_key, cfg in small_roi_zero_floor_metrics.items():
+        metric_numeric = safe_float(candidate_values.get(metric_key))
+        has_positive_signal = (
+            metric_numeric is not None
+            and math.isfinite(metric_numeric)
+            and metric_numeric > 0.0
+        )
+        if has_positive_signal:
+            metric_confidence[metric_key] = _merge_confidence(
+                metric_confidence.get(metric_key, "low"),
+                "medium",
+            )
 
     pore_visibility_detected = "pore_visibility" in canonical_metric_matrix
     metric_matrix: Dict[str, Any] = {}
     emitted_metric_keys: list[str] = []
     omitted_metric_reasons: Dict[str, str] = {}
-    metric_status: Dict[str, str] = {}
-    fallback_reason: Dict[str, str] = {}
 
     for metric_key in canonical_metric_order:
+        if metric_key in forced_metric_values:
+            forced_numeric = safe_float(forced_metric_values.get(metric_key))
+            if forced_numeric is None or not math.isfinite(forced_numeric) or forced_numeric <= 0.0:
+                metric_status.setdefault(metric_key, "unavailable")
+                omitted_metric_reasons[metric_key] = "non_usable_forced_value"
+                fallback_reason.setdefault(metric_key, forced_metric_paths.get(metric_key, "fallback"))
+                continue
+
+            if (
+                metric_key == "skin_tone_radiance_evenness"
+                and forced_numeric >= 95.0
+                and radiance_weak_or_fallback_path
+            ):
+                metric_status.setdefault(metric_key, "unavailable")
+                omitted_metric_reasons[metric_key] = "radiance_fallback_cap"
+                fallback_reason.setdefault(metric_key, forced_metric_paths.get(metric_key, "fallback"))
+                continue
+
+            confidence_level = metric_confidence.get(metric_key, "low")
+            roi_usable = force_metric_roi_usable.get(metric_key, True)
+            if (confidence_level == "low" and not roi_usable) or not roi_usable:
+                omitted_metric_reasons[metric_key] = "weak_roi_force_write"
+                fallback_reason.setdefault(metric_key, forced_metric_paths.get(metric_key, "fallback"))
+                if metric_key not in metric_status:
+                    metric_status[metric_key] = "computed"
+                continue
+            forced_value = round(float(np.clip(forced_numeric, 0.0, 100.0)), 1)
+            metric_matrix[metric_key] = forced_value
+            emitted_metric_keys.append(metric_key)
+            metric_status[metric_key] = "computed"
+            omitted_metric_reasons.pop(metric_key, None)
+            fallback_reason.setdefault(metric_key, forced_metric_paths.get(metric_key, "fallback"))
+            continue
+
         raw_value = candidate_values.get(metric_key)
         numeric_value = safe_float(raw_value)
         confidence_level = metric_confidence.get(metric_key, "low")
 
+        small_roi_config = small_roi_zero_floor_metrics.get(metric_key)
+        if (
+            small_roi_config is not None
+            and numeric_value is not None
+            and math.isfinite(numeric_value)
+            and numeric_value <= 0.0
+        ):
+            roi_pixels = int(small_roi_config["roi_pixels"])
+            min_roi_pixels = int(small_roi_config["min_roi_pixels"])
+            if roi_pixels >= min_roi_pixels:
+                # Adequate ROI but a hard zero: genuinely flawless and a
+                # detector floor are indistinguishable here. Report that
+                # honestly instead of fabricating a non-zero score.
+                if metric_key == "glabellar_wrinkle_depth":
+                    logger.info(
+                        "GLABELLA_SIGNAL_LOG glabella_pixels=%d raw_computed_value=%s pitch=%.2f confidence=%s result=insufficient_signal",
+                        glabella_pixels,
+                        numeric_value,
+                        glabella_pitch,
+                        confidence_level,
+                    )
+                metric_status.setdefault(metric_key, "unavailable")
+                omitted_metric_reasons[metric_key] = "insufficient_signal"
+                fallback_reason.setdefault(metric_key, "insufficient_signal")
+                continue
+
         if metric_key == "pore_contraction_index" and "pore_contraction_index" not in structural_metrics:
-            metric_status[metric_key] = "unavailable"
+            metric_status.setdefault(metric_key, "unavailable")
             omitted_metric_reasons[metric_key] = "formula_not_available"
-            fallback_reason[metric_key] = "formula_not_available"
+            fallback_reason.setdefault(metric_key, "formula_not_available")
             continue
 
         if metric_key == "pore_visibility" and not pore_visibility_detected:
-            metric_status[metric_key] = "unavailable"
+            metric_status.setdefault(metric_key, "unavailable")
             omitted_metric_reasons[metric_key] = "pore_gate_not_usable"
-            fallback_reason[metric_key] = "pore_gate_not_usable"
+            fallback_reason.setdefault(metric_key, "pore_gate_not_usable")
             continue
 
         if numeric_value is None or not math.isfinite(numeric_value) or numeric_value <= 0.0:
-            metric_status[metric_key] = "unavailable"
+            metric_status.setdefault(metric_key, "unavailable")
             omitted_metric_reasons[metric_key] = "non_usable_value"
-            fallback_reason[metric_key] = "non_usable_value"
+            fallback_reason.setdefault(metric_key, "non_usable_value")
             continue
 
         is_usable_confidence = confidence_level == "high" or (
             confidence_level == "medium" and metric_key in core_emit_keys
         )
         if not is_usable_confidence:
-            metric_status[metric_key] = "unavailable"
+            metric_status.setdefault(metric_key, "unavailable")
             omitted_metric_reasons[metric_key] = f"confidence_{confidence_level}"
-            fallback_reason[metric_key] = f"confidence_{confidence_level}"
+            fallback_reason.setdefault(metric_key, f"confidence_{confidence_level}")
             continue
 
         rounded_value = round(float(np.clip(numeric_value, 0.0, 100.0)), 1)
         if rounded_value <= 0.0:
-            metric_status[metric_key] = "unavailable"
+            metric_status.setdefault(metric_key, "unavailable")
             omitted_metric_reasons[metric_key] = "rounded_to_floor"
-            fallback_reason[metric_key] = "rounded_to_floor"
+            fallback_reason.setdefault(metric_key, "rounded_to_floor")
+            continue
+
+        if (
+            metric_key == "skin_tone_radiance_evenness"
+            and rounded_value >= 95.0
+            and radiance_weak_or_fallback_path
+        ):
+            metric_status.setdefault(metric_key, "unavailable")
+            omitted_metric_reasons[metric_key] = "radiance_fallback_cap"
+            fallback_reason.setdefault(metric_key, "radiance_fallback_cap")
             continue
 
         metric_matrix[metric_key] = rounded_value
+        if metric_key == "glabellar_wrinkle_depth":
+            logger.info(
+                "GLABELLA_SIGNAL_LOG glabella_pixels=%d raw_computed_value=%s pitch=%.2f confidence=%s result=emitted",
+                glabella_pixels,
+                numeric_value,
+                glabella_pitch,
+                confidence_level,
+            )
         emitted_metric_keys.append(metric_key)
         metric_status[metric_key] = "computed"
-        fallback_reason[metric_key] = f"confidence_{confidence_level}"
+        fallback_reason.setdefault(metric_key, f"confidence_{confidence_level}")
+
+    localized_redness_emit = safe_float(metric_matrix.get("localized_redness"))
+    rosacea_emit_current = safe_float(metric_matrix.get("rosacea_severity"))
+    if (
+        localized_redness_emit is not None
+        and math.isfinite(localized_redness_emit)
+        and localized_redness_emit > 0.0
+        and (
+            rosacea_emit_current is None
+            or not math.isfinite(rosacea_emit_current)
+            or rosacea_emit_current <= 0.0
+        )
+    ):
+        diffuse_for_rosacea = safe_float(candidate_values.get("diffuse_flushing_erythema"))
+        diffuse_for_rosacea = (
+            float(np.clip(diffuse_for_rosacea, 0.0, 100.0))
+            if diffuse_for_rosacea is not None and math.isfinite(diffuse_for_rosacea)
+            else 0.0
+        )
+        rosacea_before_post = float(
+            np.clip(
+                (0.65 * diffuse_for_rosacea) + (0.35 * localized_redness_emit),
+                0.0,
+                100.0,
+            )
+        )
+        rosacea_post = rosacea_before_post
+        rosacea_post_reason = "unchanged"
+        rosacea_post_cap = max(
+            localized_redness_emit + 20.0,
+            localized_redness_emit * 2.5,
+            diffuse_for_rosacea * 0.45,
+        )
+        if localized_redness_emit <= 25.0 and rosacea_before_post > rosacea_post_cap:
+            rosacea_post = float(np.clip(rosacea_post_cap, 0.0, 100.0))
+            rosacea_post_reason = "cap_low_redness_divergence"
+        rosacea_post_rounded = round(float(np.clip(rosacea_post, 0.0, 100.0)), 1)
+        if rosacea_post_rounded > 0.0:
+            metric_matrix["rosacea_severity"] = rosacea_post_rounded
+            if "rosacea_severity" not in emitted_metric_keys:
+                emitted_metric_keys.append("rosacea_severity")
+            metric_status["rosacea_severity"] = "computed"
+            fallback_reason.setdefault("rosacea_severity", "post_force_calibration")
+            rosacea_calibrated = rosacea_post_rounded
+            logger.info(
+                "ROSACEA_CALIB_POST_FORCE redness=%.1f rosacea_before=%.1f rosacea_after=%.1f reason=%s",
+                localized_redness_emit,
+                rosacea_before_post,
+                rosacea_post_rounded,
+                rosacea_post_reason,
+            )
 
     metric_matrix = _normalize_metric_payload_values(metric_matrix)
+    if rosacea_calibrated is not None and math.isfinite(rosacea_calibrated):
+        rosacea_emit_value = round(float(np.clip(rosacea_calibrated, 0.0, 100.0)), 1)
+        if "rosacea_severity" in metric_matrix and rosacea_emit_value > 0.0:
+            metric_matrix["rosacea_severity"] = rosacea_emit_value
+            logger.info("ROSACEA_EMIT_FINAL value=%s source=calibrated", rosacea_emit_value)
     trend_metric_matrix = {
         key: value
         for key, value in metric_matrix.items()
@@ -3058,7 +5557,116 @@ def analyze_skin_patch(
     normalized_baseline_matrix = _normalize_metric_payload_values(
         baseline_matrix or {}
     )
-    trend_deltas = _compute_trend_deltas(trend_metric_matrix, normalized_baseline_matrix)
+    personal_lab_baseline = _coalesce_personal_lab_baseline(baseline_matrix or {})
+    current_lab_reference = {
+        "a_mean": float(np.mean(a_channel)) if a_channel.size > 0 else 128.0,
+        "b_mean": float(np.mean(lab[:, :, 2])) if lab.size > 0 else 128.0,
+        "a_p95": float(np.percentile(a_channel, 95)) if a_channel.size > 0 else 128.0,
+        "b_p95": float(np.percentile(lab[:, :, 2], 95)) if lab.size > 0 else 128.0,
+    }
+    if personal_lab_baseline:
+        baseline_redness = _compute_redness_from_personal_baseline(
+            current_lab_reference,
+            personal_lab_baseline,
+        )
+        if baseline_redness > 0.0:
+            zone_metrics["localized_redness"] = round(float(np.clip(baseline_redness, 0.0, 100.0)), 1)
+    metric_extraction_paths = _compute_metric_extraction_paths(
+        metric_status,
+        raw_components,
+        canonical_metric_order,
+    )
+    if texture_force_write:
+        metric_extraction_paths["texture_smoothness"] = "laplacian_fallback"
+    if redness_force_write:
+        metric_extraction_paths["localized_redness"] = redness_path
+
+    for emitted_key in list(metric_matrix.keys()):
+        metric_status[emitted_key] = "computed"
+        emitted_path = metric_extraction_paths.get(emitted_key, "primary_roi")
+        metric_extraction_paths[emitted_key] = _normalize_extraction_path_label(emitted_path)
+
+    if "localized_redness" in metric_matrix:
+        logger.info(
+            "REDNESS_EMIT_PATH value=%s path=%s roi_pixels=%d",
+            metric_matrix.get("localized_redness"),
+            metric_extraction_paths.get("localized_redness", "unknown"),
+            int(raw_components.get("localized_redness_roi_pixels", 0.0)),
+        )
+    if "pigment_load" in metric_matrix:
+        logger.info(
+            "PIGMENT_EMIT_PATH value=%s path=%s roi_pixels=%d",
+            metric_matrix.get("pigment_load"),
+            metric_extraction_paths.get("pigment_load", "unknown"),
+            int(raw_components.get("pigment_roi_pixels", 0.0)),
+        )
+
+    core_metric_8 = [
+        "localized_redness",
+        "texture_smoothness",
+        "pore_visibility",
+        "wrinkle_load",
+        "pigment_load",
+        "rosacea_severity",
+        "skin_tone_radiance_evenness",
+        "structural_firmness_elasticity",
+    ]
+    final_matrix_8_keys = [key for key in core_metric_8 if key in metric_matrix]
+    logger.info(
+        "FINAL_MATRIX_8 count=%d keys=%s",
+        len(final_matrix_8_keys),
+        final_matrix_8_keys,
+    )
+    normalized_baseline_paths = _normalize_metric_extraction_paths(
+        baseline_extraction_paths,
+        canonical_metric_order,
+    )
+    normalized_capture_quality = _normalize_capture_quality(capture_quality)
+    normalized_baseline_capture_quality = _normalize_capture_quality(
+        baseline_capture_quality
+    )
+    trend_deltas = _compute_trend_deltas(
+        trend_metric_matrix,
+        normalized_baseline_matrix,
+        current_paths=metric_extraction_paths,
+        baseline_paths=normalized_baseline_paths,
+        current_capture_quality=normalized_capture_quality,
+        baseline_capture_quality=normalized_baseline_capture_quality,
+        current_source_width=source_image_width,
+        current_source_height=source_image_height,
+        baseline_source_width=baseline_source_image_width,
+        baseline_source_height=baseline_source_image_height,
+        honesty_band_pct=HONESTY_STABLE_BAND_PCT,
+    )
+    trend_status = _compute_trend_statuses(
+        trend_metric_matrix,
+        normalized_baseline_matrix,
+        current_paths=metric_extraction_paths,
+        baseline_paths=normalized_baseline_paths,
+        current_capture_quality=normalized_capture_quality,
+        baseline_capture_quality=normalized_baseline_capture_quality,
+        current_source_width=source_image_width,
+        current_source_height=source_image_height,
+        baseline_source_width=baseline_source_image_width,
+        baseline_source_height=baseline_source_image_height,
+        honesty_band_pct=HONESTY_STABLE_BAND_PCT,
+    )
+    # Purely informational: explains WHY a "stable" trend_status was reached
+    # (a genuine small delta vs. one of the honesty-gate mismatches) so the
+    # UI can message the two cases differently. Does not affect trend_status
+    # or trend_deltas.
+    trend_lock_reasons = _compute_trend_lock_reasons(
+        trend_metric_matrix,
+        normalized_baseline_matrix,
+        current_paths=metric_extraction_paths,
+        baseline_paths=normalized_baseline_paths,
+        current_capture_quality=normalized_capture_quality,
+        baseline_capture_quality=normalized_baseline_capture_quality,
+        current_source_width=source_image_width,
+        current_source_height=source_image_height,
+        baseline_source_width=baseline_source_image_width,
+        baseline_source_height=baseline_source_image_height,
+    )
     trend_deltas = _stabilize_trend_deltas_for_near_identical_scan(
         trend_deltas,
         trend_metric_matrix,
@@ -3106,10 +5714,73 @@ def analyze_skin_patch(
         for k in canonical_metric_order
     }
 
+    emitted_path_log = {
+        key: metric_extraction_paths.get(key, "unknown")
+        for key in emitted_metric_keys
+    }
+    calibration_log_metrics = [
+        "localized_redness",
+        "pigment_load",
+        "rosacea_severity",
+        "under_eye_dark_circle_density",
+        "under_eye_texture_density",
+        "glabellar_wrinkle_depth",
+        "texture_smoothness",
+        "wrinkle_load",
+        "structural_firmness_elasticity",
+        "skin_tone_radiance_evenness",
+    ]
+    calibration_roi_pixels = {
+        "localized_redness": "localized_redness_roi_pixels",
+        "pigment_load": "pigment_roi_pixels",
+        "rosacea_severity": "full_face_skin_pixels",
+        "under_eye_dark_circle_density": "under_eye_pixels",
+        "under_eye_texture_density": "under_eye_pixels",
+        "glabellar_wrinkle_depth": "glabella_pixels",
+        "texture_smoothness": "texture_roi_pixels",
+        "wrinkle_load": "wrinkle_roi_pixels",
+        "structural_firmness_elasticity": "full_face_skin_pixels",
+        "skin_tone_radiance_evenness": "full_face_skin_pixels",
+    }
+    for metric_key in calibration_log_metrics:
+        if metric_key not in metric_matrix:
+            continue
+        value = metric_matrix.get(metric_key)
+        confidence = metric_confidence.get(metric_key, "low")
+        path = metric_extraction_paths.get(metric_key, "unknown")
+        capture_label = _normalize_capture_quality(capture_quality)
+        roi_key = calibration_roi_pixels.get(metric_key, "unknown")
+        if roi_key == "under_eye_pixels":
+            roi_pixels = under_eye_pixels
+        elif roi_key == "glabella_pixels":
+            roi_pixels = glabella_pixels
+        elif roi_key == "unknown":
+            roi_pixels = 0
+        else:
+            roi_pixels = int(raw_components.get(roi_key, 0.0))
+        logger.info(
+            "CALIBRATION_LOG metric=%s value=%s confidence=%s path=%s capture_quality=%s roi_pixels=%d",
+            metric_key,
+            value,
+            confidence,
+            path,
+            capture_label,
+            roi_pixels,
+        )
+    logger.info(
+        "ROI_PATH_SUMMARY cheek=%d tzone_skin=%d texture_roi=%d redness_path=%s pigment_path=%s texture_path=%s",
+        int(raw_components.get("primary_cheek_roi_pixels", 0.0)),
+        int(raw_components.get("primary_t_zone_skin_pixels", 0.0)),
+        int(raw_components.get("texture_roi_pixels", 0.0)),
+        metric_extraction_paths.get("localized_redness", "unknown"),
+        metric_extraction_paths.get("pigment_load", "unknown"),
+        metric_extraction_paths.get("texture_smoothness", "unknown"),
+    )
+    logger.info("METRICS emitted_paths=%s", emitted_path_log)
     logger.info("METRICS emitted_keys=%s", emitted_metric_keys)
     logger.info("METRICS omitted_keys=%s", omitted_metric_reasons)
     logger.info(
-        "METRICS roi_debug skin_mask_failed=%s bbox_fallback_used=%s roi_after_fallback=%d primary_roi_pixels={cheek:%d,tzone:%d,texture:%d,pigment:%d,pore:%d,breakout:%d} fallback_used=%s fallback_roi_pixels={texture:%d,pigment:%d,pore:%d,breakout:%d} smoothness=%s emitted_keys=%s matrix_keys=%s",
+        "METRICS roi_debug skin_mask_failed=%s bbox_fallback_used=%s roi_after_fallback=%d primary_roi_pixels={cheek:%d,tzone:%d,texture:%d,pigment:%d,pore:%d,breakout:%d} fallback_used=%s fallback_roi_pixels={texture:%d,pigment:%d,pore:%d,breakout:%d} smoothness=%s emitted_keys=%s emitted_paths=%s matrix_keys=%s",
         bool(raw_components.get("skin_mask_failed", 0.0) > 0.5),
         bool(raw_components.get("bbox_fallback_used", 0.0) > 0.5),
         int(raw_components.get("roi_after_fallback_pixels", 0.0)),
@@ -3126,6 +5797,7 @@ def analyze_skin_patch(
         int(raw_components.get("fallback_breakout_roi_pixels", 0.0)),
         metric_matrix.get("texture_smoothness"),
         emitted_metric_keys,
+        emitted_path_log,
         list(metric_matrix.keys()),
     )
     logger.info(
@@ -3142,6 +5814,9 @@ def analyze_skin_patch(
                 "skin_tone_radiance_evenness",
                 "rosacea_severity",
                 "structural_firmness_elasticity",
+                "glabellar_wrinkle_depth",
+                "under_eye_texture_density",
+                "under_eye_dark_circle_density",
             )
         },
     )
@@ -3216,6 +5891,14 @@ def analyze_skin_patch(
         "metric_confidence": metric_confidence,
         "metric_status": metric_status,
         "fallback_reason": fallback_reason,
+        "metric_extraction_paths": metric_extraction_paths,
+        "baseline_metric_extraction_paths": normalized_baseline_paths,
+        "capture_quality": normalized_capture_quality,
+        "baseline_capture_quality": normalized_baseline_capture_quality,
+        "source_image_width": source_image_width,
+        "source_image_height": source_image_height,
+        "baseline_source_image_width": baseline_source_image_width,
+        "baseline_source_image_height": baseline_source_image_height,
         "confidence_score": confidence_score,
         "confidence_hints": confidence_hints if confidence_score < 0.65 else [],
         "image_quality": quality_profile or {},
@@ -3223,6 +5906,17 @@ def analyze_skin_patch(
         "calibration": calibration,
         "metric_matrix": metric_matrix,
         "trend_deltas": trend_deltas,
+        "trend_status": trend_status,
+        "trend_lock_reasons": trend_lock_reasons,
+        "metric_polarity": {
+            key: (
+                "higher_is_worse"
+                if _metric_higher_is_worse(key)
+                else "higher_is_better"
+            )
+            for key in canonical_metric_order
+        },
+        "honesty_band_percent": HONESTY_STABLE_BAND_PCT,
         "low_confidence_majority": low_confidence_majority,
         "low_confidence_count": low_conf_count,
         "model_debug": {
@@ -3429,39 +6123,162 @@ def validate_camera_hardware_qa(bgr_image: np.ndarray) -> None:
         )
 
 
-def _compute_timeline_metrics(face_bgr: np.ndarray) -> dict:
-    if not hasattr(math, "exp"):
-        raise RuntimeError("Python math.exp is unavailable for metric calibration.")
+@app.post("/api/body/analyze-silhouette")
+async def analyze_body_silhouette_endpoint(request: Request):
+    try:
+        ensure_body_pipeline_ready()
+        body = await request.json()
+        image_b64 = body.get("imageBytes") or body.get("image_bytes") or body.get("image")
+        if not image_b64:
+            raise HTTPException(status_code=422, detail="Missing image data (imageBytes / image_bytes / image)")
 
-    def _clamp_score(value: float) -> float:
-        return float(max(0.0, min(100.0, value)))
+        image_data = base64.b64decode(image_b64)
+        image_bgr = _decode_image_bytes(image_data)
+        if image_bgr is None or image_bgr.size == 0:
+            raise HTTPException(status_code=400, detail="Decoded image is empty for body silhouette analysis.")
 
-    lab = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2LAB)
-    a_channel = lab[:, :, 1].astype(np.float32)
-    redness_p95 = float(np.percentile(a_channel, 95))
+        current_capture_quality = _normalize_capture_quality(
+            body.get("captureQuality") or body.get("capture_quality")
+        )
+        baseline_capture_quality = _normalize_capture_quality(
+            body.get("baselineCaptureQuality") or body.get("baseline_capture_quality")
+        )
+        current_source_width = safe_float(
+            body.get("sourceImageWidth") or body.get("source_image_width")
+        )
+        current_source_height = safe_float(
+            body.get("sourceImageHeight") or body.get("source_image_height")
+        )
+        baseline_source_width = safe_float(
+            body.get("baselineSourceImageWidth") or body.get("baseline_source_image_width")
+        )
+        baseline_source_height = safe_float(
+            body.get("baselineSourceImageHeight") or body.get("baseline_source_image_height")
+        )
+        # PROVISIONAL, same as the rest of this endpoint: which real-world
+        # setup (mirror / assisted / timer) produced each photo. Only used
+        # as a mismatch signal in _body_trend_delta_and_status — not
+        # normalized/validated against a fixed enum here, matching how
+        # capture_quality tags are handled loosely at this layer too.
+        current_capture_mode_raw = body.get("captureMode") or body.get("capture_mode")
+        current_capture_mode = (
+            str(current_capture_mode_raw).strip().lower() or None
+            if current_capture_mode_raw is not None
+            else None
+        )
+        baseline_capture_mode_raw = body.get("baselineCaptureMode") or body.get("baseline_capture_mode")
+        baseline_payload = body.get("baselineResult") or body.get("baseline_result")
+        if baseline_payload is None:
+            baseline_payload = body.get("baselineMetricMatrix") or body.get("baseline_metric_matrix")
+        if baseline_payload is None:
+            baseline_payload = body.get("baselineMetrics") or body.get("baseline_metrics")
 
-    gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
-    lap = cv2.Laplacian(gray, cv2.CV_64F, ksize=3)
-    texture_variance = float(np.var(lap))
+        if isinstance(baseline_payload, str):
+            try:
+                baseline_payload = json.loads(baseline_payload)
+            except json.JSONDecodeError:
+                baseline_payload = None
 
-    redness_logistic = 1.0 / (1.0 + math.exp(-0.35 * (redness_p95 - 136.0)))
-    calibrated_redness = (1.0 - redness_logistic) * 100.0
-    if redness_p95 <= 132.5:
-        calibrated_redness = max(96.0, 100.0 - (redness_p95 - 130.0))
-    calibrated_redness = _clamp_score(calibrated_redness)
+        if isinstance(baseline_payload, dict) and not baseline_payload.get("normalized_area_index") and not baseline_payload.get("area_index"):
+            baseline_payload = {
+                "normalized_area_index": baseline_payload.get("normalizedAreaIndex") or baseline_payload.get("normalized_area_index") or baseline_payload.get("area_index"),
+                "scale_reference_pixels": baseline_payload.get("scaleReferencePixels") or baseline_payload.get("scale_reference_pixels"),
+                "roi_pixel_count": baseline_payload.get("roiPixelCount") or baseline_payload.get("roi_pixel_count"),
+                "confidence": baseline_payload.get("confidence"),
+                "capture_mode": baseline_payload.get("captureMode") or baseline_payload.get("capture_mode"),
+            }
 
-    texture_logistic = 1.0 / (1.0 + math.exp(-0.025 * (texture_variance - 65.0)))
-    calibrated_smoothness = (1.0 - texture_logistic) * 100.0
-    if texture_variance <= 25.0:
-        calibrated_smoothness = max(94.0, 100.0 - (texture_variance * 0.15))
-    calibrated_smoothness = _clamp_score(calibrated_smoothness)
+        baseline_result = None
+        if baseline_payload is not None and isinstance(baseline_payload, dict):
+            baseline_result = {
+                "normalized_area_index": safe_float(baseline_payload.get("normalized_area_index"))
+                if baseline_payload.get("normalized_area_index") is not None
+                else safe_float(baseline_payload.get("normalizedAreaIndex")),
+                "scale_reference_pixels": safe_float(baseline_payload.get("scale_reference_pixels"))
+                if baseline_payload.get("scale_reference_pixels") is not None
+                else safe_float(baseline_payload.get("scaleReferencePixels")),
+                "roi_pixel_count": safe_float(baseline_payload.get("roi_pixel_count"))
+                if baseline_payload.get("roi_pixel_count") is not None
+                else safe_float(baseline_payload.get("roiPixelCount")),
+                "confidence": safe_float(baseline_payload.get("confidence")),
+                "consistent_scan_count": int(
+                    body.get("baselineConsistentScanCount")
+                    or body.get("baseline_consistent_scan_count")
+                    or baseline_payload.get("consistent_scan_count")
+                    or baseline_payload.get("consistentScanCount")
+                    or 1
+                ),
+                "capture_mode": (
+                    baseline_capture_mode_raw
+                    or baseline_payload.get("capture_mode")
+                    or baseline_payload.get("captureMode")
+                ),
+            }
 
-    return {
-        "redness_a_star_p95": round(redness_p95, 4),
-        "texture_laplacian_variance": round(texture_variance, 4),
-        "calibrated_redness_score": round(calibrated_redness, 1),
-        "calibrated_smoothness_score": round(calibrated_smoothness, 1),
-    }
+        result = analyze_body_silhouette(image_bgr)
+        candidate_consistent_scan_count = int(
+            body.get("currentConsistentScanCount")
+            or body.get("current_consistent_scan_count")
+            or body.get("consistentScanCount")
+            or body.get("consistent_scan_count")
+            or result.get("consistent_scan_count")
+            or 1
+        )
+        baseline_capture_mode_value = baseline_result.get("capture_mode") if baseline_result else None
+        baseline_capture_mode = (
+            str(baseline_capture_mode_value).strip().lower() or None
+            if baseline_capture_mode_value is not None
+            else None
+        )
+        current_consistent_scan_count = _body_consistent_scan_count(
+            result,
+            baseline_result,
+            candidate_count=candidate_consistent_scan_count,
+            current_capture_quality=current_capture_quality,
+            baseline_capture_quality=baseline_capture_quality,
+            current_capture_mode=current_capture_mode,
+            baseline_capture_mode=baseline_capture_mode,
+            current_source_width=int(current_source_width) if current_source_width else None,
+            current_source_height=int(current_source_height) if current_source_height else None,
+            baseline_source_width=int(baseline_source_width) if baseline_source_width else None,
+            baseline_source_height=int(baseline_source_height) if baseline_source_height else None,
+        )
+        result["consistent_scan_count"] = current_consistent_scan_count
+        trend_deltas, trend_status, honesty_band_pct, required_consistent_scans, trend_lock_reasons = _compute_body_silhouette_trend(
+            result,
+            baseline_result,
+            current_capture_quality=current_capture_quality,
+            baseline_capture_quality=baseline_capture_quality,
+            current_consistent_scan_count=current_consistent_scan_count,
+            baseline_consistent_scan_count=(baseline_result.get("consistent_scan_count") if baseline_result else 1),
+            current_capture_mode=current_capture_mode,
+            baseline_capture_mode=baseline_capture_mode,
+            current_source_width=int(current_source_width) if current_source_width else None,
+            current_source_height=int(current_source_height) if current_source_height else None,
+            baseline_source_width=int(baseline_source_width) if baseline_source_width else None,
+            baseline_source_height=int(baseline_source_height) if baseline_source_height else None,
+        )
+
+        response = {
+            "status": "success",
+            "text": "Body silhouette analysis complete.",
+            "modelUsed": "mediapipe-pose+selfie-segmentation",
+            "result": result,
+            "trend_deltas": trend_deltas,
+            "trend_status": trend_status,
+            "trend_lock_reasons": trend_lock_reasons,
+            "honesty_band_percent": honesty_band_pct,
+            "consistent_scan_requirement": required_consistent_scans,
+            "consistent_scan_count": current_consistent_scan_count,
+            "source_image_width": int(current_source_width) if current_source_width else None,
+            "source_image_height": int(current_source_height) if current_source_height else None,
+        }
+        return response
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Body silhouette endpoint failed")
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/health")
@@ -3488,6 +6305,28 @@ async def analyze_skin(request: Request):
         baseline_matrix = _parse_baseline_metric_matrix(
             body.get("baselineMetricMatrix") or body.get("baseline_metric_matrix") or body.get("baselineMetrics")
         )
+        baseline_extraction_paths = _normalize_metric_extraction_paths(
+            body.get("baselineExtractionPaths") or body.get("baseline_extraction_paths"),
+            CANONICAL_METRIC_ORDER,
+        )
+        capture_quality = _normalize_capture_quality(
+            body.get("captureQuality") or body.get("capture_quality")
+        )
+        baseline_capture_quality = _normalize_capture_quality(
+            body.get("baselineCaptureQuality") or body.get("baseline_capture_quality")
+        )
+        current_source_width = safe_float(
+            body.get("sourceImageWidth") or body.get("source_image_width")
+        )
+        current_source_height = safe_float(
+            body.get("sourceImageHeight") or body.get("source_image_height")
+        )
+        baseline_source_width = safe_float(
+            body.get("baselineSourceImageWidth") or body.get("baseline_source_image_width")
+        )
+        baseline_source_height = safe_float(
+            body.get("baselineSourceImageHeight") or body.get("baseline_source_image_height")
+        )
 
         if not image_b64:
             raise HTTPException(status_code=422, detail="Missing image data (imageBytes / image_bytes / image)")
@@ -3512,8 +6351,15 @@ async def analyze_skin(request: Request):
         result = analyze_skin_patch(
             normalized_image,
             baseline_matrix=baseline_matrix,
+            baseline_extraction_paths=baseline_extraction_paths,
+            capture_quality=capture_quality,
+            baseline_capture_quality=baseline_capture_quality,
             quality_profile=quality_profile,
             baseline_image_bgr=baseline_image_bgr,
+            source_image_width=int(current_source_width) if current_source_width else None,
+            source_image_height=int(current_source_height) if current_source_height else None,
+            baseline_source_image_width=int(baseline_source_width) if baseline_source_width else None,
+            baseline_source_image_height=int(baseline_source_height) if baseline_source_height else None,
         )
         debug = result.get("model_debug", {})
         logger.info(
@@ -3584,6 +6430,8 @@ async def analyze_skin_single(
     image: UploadFile = File(...),
     baseline_image: UploadFile | None = File(None),
     procedure_type: str | None = Form(None),
+    capture_quality: str | None = Form(None),
+    baseline_capture_quality: str | None = Form(None),
     days_post_op: str | None = Form(None),
     skin_profile_note: str | None = Form(None),
     selected_skin_profile_note: str | None = Form(None),
@@ -3591,11 +6439,24 @@ async def analyze_skin_single(
     sensitivity_score: str | None = Form(None),
     compromised_barrier: str | None = Form(None),
     baseline_metric_matrix: str | None = Form(None),
+    baseline_extraction_paths: str | None = Form(None),
+    source_image_width: int | None = Form(None),
+    source_image_height: int | None = Form(None),
+    baseline_source_image_width: int | None = Form(None),
+    baseline_source_image_height: int | None = Form(None),
 ):
     try:
         ensure_pipeline_ready()
 
         parsed_baseline_matrix = _parse_baseline_metric_matrix(baseline_metric_matrix)
+        parsed_baseline_paths = _normalize_metric_extraction_paths(
+            baseline_extraction_paths,
+            CANONICAL_METRIC_ORDER,
+        )
+        parsed_capture_quality = _normalize_capture_quality(capture_quality)
+        parsed_baseline_capture_quality = _normalize_capture_quality(
+            baseline_capture_quality
+        )
 
         contents = await image.read()
         if not contents:
@@ -3622,8 +6483,15 @@ async def analyze_skin_single(
         results = analyze_skin_patch(
             img_bgr,
             baseline_matrix=parsed_baseline_matrix,
+            baseline_extraction_paths=parsed_baseline_paths,
+            capture_quality=parsed_capture_quality,
+            baseline_capture_quality=parsed_baseline_capture_quality,
             quality_profile=quality_profile,
             baseline_image_bgr=baseline_image_bgr,
+            source_image_width=source_image_width,
+            source_image_height=source_image_height,
+            baseline_source_image_width=baseline_source_image_width,
+            baseline_source_image_height=baseline_source_image_height,
         )
         debug = results.get("model_debug", {})
         logger.info(
@@ -3805,8 +6673,24 @@ async def analyze_skin_single(
             "metric_confidence": results.get("metric_confidence", {}),
             "metric_status": results.get("metric_status", {}),
             "fallback_reason": results.get("fallback_reason", {}),
+            "metric_extraction_paths": results.get("metric_extraction_paths", {}),
+            "baseline_metric_extraction_paths": results.get(
+                "baseline_metric_extraction_paths",
+                {},
+            ),
+            "capture_quality": results.get("capture_quality", "unknown"),
+            "baseline_capture_quality": results.get(
+                "baseline_capture_quality",
+                "unknown",
+            ),
             "metric_matrix": results.get("metric_matrix", {}),
             "trend_deltas": results.get("trend_deltas", {}),
+            "trend_status": results.get("trend_status", {}),
+            "metric_polarity": results.get("metric_polarity", {}),
+            "honesty_band_percent": results.get(
+                "honesty_band_percent",
+                HONESTY_STABLE_BAND_PCT,
+            ),
             "yolo_boxes": int(results.get("model_debug", {}).get("yolo_boxes", 0)),
             "yolo_max_conf": float(results.get("model_debug", {}).get("yolo_max_conf", 0.0)),
             "opencv_metrics": opencv_metrics,

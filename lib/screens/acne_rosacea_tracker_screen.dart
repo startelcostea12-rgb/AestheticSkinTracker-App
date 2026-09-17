@@ -6772,8 +6772,12 @@ class _PhotoAnalysisResultScreenState
       if (aiUsed) info.name,
       if (aiUsed && conf != null) '${(conf * 100).round()}% conf',
       if (yoloUsed) '$detCount lesions detected',
+      // Bounding-box-area / full-image-area -- a different denominator
+      // than the live capture guide's percentage (which divides by a
+      // fixed 68%x84% guide box), so label explicitly to avoid reading
+      // as directly comparable to that number.
       if (meshUsed && widget.faceCoverage != null)
-        'face ${(widget.faceCoverage! * 100).round()}% of frame',
+        'full-frame face coverage ${(widget.faceCoverage! * 100).round()}%',
       if (meshUsed && widget.symmetryScore != null)
         'symmetry ${(widget.symmetryScore! * 100).round()}%',
       if (!aiUsed && !meshUsed)

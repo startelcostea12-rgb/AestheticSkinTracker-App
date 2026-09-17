@@ -12,6 +12,7 @@ import 'active_skincare_details_screen.dart';
 import 'package:aesthetic_skin_tracker/features/procedures/presentation/procedure_profiles_screen.dart';
 import '../widgets/clinical_section_header.dart';
 import '../widgets/luxe_report_layout.dart';
+import '../utils/skin_scan_coach_copy.dart';
 import '../utils/ai_product_recommendation_engine.dart';
 import '../utils/report_flow.dart';
 import '../widgets/product_recommendation_card.dart';
@@ -222,9 +223,9 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
         final latest = scans.reduce(
           (a, b) => a.timestamp.isAfter(b.timestamp) ? a : b,
         );
-        final estimated = latest.estimatedSkinAge > 0
+        final estimated = latest.hasTrustworthyEstimatedSkinAge
             ? latest.estimatedSkinAge
-            : estimateVisualSkinAgeFromAiMetrics(latest.metrics);
+            : null;
         skinAge = estimated?.round();
       }
 
@@ -385,7 +386,11 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
           baselineValue.isFinite &&
           latestValue.isFinite &&
           baselineValue > 0.0 &&
-          latestValue > 0.0;
+          latestValue > 0.0 &&
+          ScanHistoryEntry.scanEnginesComparable(
+            baseline.scanEngine,
+            latest.scanEngine,
+          );
       final delta = latestValue - baselineValue;
       final higherIsBetter = ScanDetailScreen._higherIsBetterMetric(
         latestRow.key,
@@ -424,7 +429,9 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
         return (
           icon: Icons.spa_rounded,
           label: 'Skincare',
-          color: AppColors.mutedSage,
+          // Scan-category label, not a metric status — must not borrow the
+          // reserved improved/worsened green.
+          color: AppColors.champagneGold,
         );
       default:
         return (
@@ -1045,7 +1052,7 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
           'Skincare Logs',
           '${skincareScans.length} captured',
           Icons.spa_rounded,
-          AppColors.mutedSage,
+          AppColors.champagneGold,
           () => _openScansTab(2),
         ),
         const SizedBox(height: 10),
@@ -1454,14 +1461,18 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
+                    // "Completed" is a genuine positive milestone (status
+                    // green is appropriate); "Active" is a neutral lifecycle
+                    // state, not a worsened signal, so it uses the brand
+                    // accent rather than borrowing status-worsened.
                     color: proc.isCompleted
-                        ? AppColors.mutedSage.withValues(alpha: 0.12)
-                        : MyApp.roseGold.withValues(alpha: 0.12),
+                        ? AppColors.kMetricImprovedColor.withValues(alpha: 0.12)
+                        : AppColors.brandAccent.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(999),
                     border: Border.all(
                       color: proc.isCompleted
-                          ? AppColors.mutedSage.withValues(alpha: 0.35)
-                          : MyApp.roseGold.withValues(alpha: 0.32),
+                          ? AppColors.kMetricImprovedColor.withValues(alpha: 0.35)
+                          : AppColors.brandAccent.withValues(alpha: 0.32),
                     ),
                   ),
                   child: Text(
@@ -1470,8 +1481,8 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
                       color: proc.isCompleted
-                          ? AppColors.mutedSage
-                          : MyApp.roseGold,
+                          ? AppColors.kMetricImprovedColor
+                          : AppColors.brandAccent,
                     ),
                   ),
                 ),
@@ -2837,7 +2848,11 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
           baselineValue.isFinite &&
           latestValue.isFinite &&
           baselineValue > 0.0 &&
-          latestValue > 0.0;
+          latestValue > 0.0 &&
+          ScanHistoryEntry.scanEnginesComparable(
+            baseline.scanEngine,
+            latest.scanEngine,
+          );
       final delta = latestValue - baselineValue;
       final higherIsBetter = ScanDetailScreen._higherIsBetterMetric(
         latestRow.key,
@@ -2885,7 +2900,7 @@ class ScanDetailScreen extends StatelessWidget {
         return (
           icon: Icons.spa_rounded,
           label: 'Skincare Log',
-          color: AppColors.mutedSage,
+          color: AppColors.champagneGold,
         );
       default:
         return (
@@ -2915,10 +2930,15 @@ class ScanDetailScreen extends StatelessWidget {
     final metrics = _displayMetrics;
     final insightRows = _insightRows(metrics);
     final qualityRows = <({String label, String value})>[
-      if (scan.estimatedSkinAge > 0)
+      if (scan.hasTrustworthyEstimatedSkinAge)
         (
           label: 'Estimated Skin Age',
           value: scan.estimatedSkinAge.toStringAsFixed(0),
+        )
+      else if (scan.estimatedSkinAge > 0)
+        (
+          label: 'Estimated Skin Age',
+          value: 'Estimate unavailable',
         ),
       if (scan.lightingConfidence != null)
         (
@@ -2938,6 +2958,15 @@ class ScanDetailScreen extends StatelessWidget {
           value: '${scan.headTiltAngle!.toStringAsFixed(1)} deg',
         ),
     ];
+      final archivedAiPayload = scan.isAiAnalysisScan
+        ? _buildLuxePayloadForAiScan()
+        : const <String, dynamic>{};
+      final archivedAiHistoryCount = scan.isAiAnalysisScan
+        ? _archivePayloadHistoryCount(archivedAiPayload)
+        : 0;
+      final archivedAiHasComparison = scan.isAiAnalysisScan
+        ? _archiveHasResolvedComparison(archivedAiPayload)
+        : false;
 
     return Scaffold(
       appBar: AppBar(
@@ -3030,7 +3059,7 @@ class ScanDetailScreen extends StatelessWidget {
                       _noticeChip(
                         Icons.star_rounded,
                         'Preferred reference',
-                        AppColors.mutedSage,
+                        AppColors.champagneGold,
                       ),
                     if (scan.makeupPresent)
                       _noticeChip(
@@ -3038,6 +3067,8 @@ class ScanDetailScreen extends StatelessWidget {
                         'Makeup/product noted',
                         AppColors.softTerracotta,
                       ),
+                    if (_engineChip(scan.scanEngine) != null)
+                      _engineChip(scan.scanEngine)!,
                   ],
                 ),
               ],
@@ -3056,14 +3087,23 @@ class ScanDetailScreen extends StatelessWidget {
             _qualityGrid(qualityRows),
           ],
           const SizedBox(height: 18),
-          if (scan.isAiAnalysisScan && scan.isBaseline) ...[
-            _sectionTitle(Icons.flag_rounded, 'Baseline Captured'),
+          if (scan.isAiAnalysisScan) ...[
+            _sectionTitle(Icons.insights_rounded, 'AI Deep Analysis'),
             const SizedBox(height: 10),
-            _baselineComparisonPendingCard(),
-          ] else if (scan.isAiAnalysisScan) ...[
-            _sectionTitle(Icons.insights_rounded, 'AI Deep Analysis Metrics'),
+            LuxeReportLayout(
+              rawPayload: archivedAiPayload,
+              localHistoryCount: archivedAiHistoryCount,
+              isFollowUp: archivedAiHasComparison,
+              gateReason: archivedAiHasComparison
+                  ? 'archived follow-up rendered from resolved baseline data'
+                  : 'archived baseline rendered in read-only mode',
+            ),
+            const SizedBox(height: 18),
+            _sectionTitle(Icons.psychology_rounded, 'AI Coach Insight'),
             const SizedBox(height: 10),
-            LuxeReportLayout(rawPayload: _buildLuxePayloadForAiScan()),
+            _coachInsightCard(archivedAiPayload: archivedAiPayload),
+            const SizedBox(height: 14),
+            _coachRoutineCard(archivedAiPayload: archivedAiPayload),
           ] else ...[
             _sectionTitle(Icons.insights_rounded, 'Metrics'),
             const SizedBox(height: 10),
@@ -3111,6 +3151,26 @@ class ScanDetailScreen extends StatelessWidget {
       mergedPayload['trend_deltas'] = {
         ...asMap(mergedPayload['trend_deltas']),
         ...asMap(liveLuxePayload['trend_deltas']),
+      };
+      mergedPayload['trend_status'] = {
+        ...asMap(mergedPayload['trend_status']),
+        ...asMap(liveLuxePayload['trend_status']),
+      };
+      // The addAll above just overwrote metric_extraction_paths /
+      // baseline_metric_extraction_paths with liveLuxePayload's copies
+      // (nested under rawPayload['luxePayload'], written once at save
+      // time and never updated again). rawPayloadMap's top-level copies
+      // are the ones kept in sync by _mergePayloadForPersistence, so they
+      // must win here the same way the four fields above are reconciled
+      // -- otherwise every metric's extraction path silently reads from a
+      // stale nested duplicate instead of the maintained top-level field.
+      mergedPayload['metric_extraction_paths'] = {
+        ...asMap(liveLuxePayload['metric_extraction_paths']),
+        ...asMap(rawPayloadMap['metric_extraction_paths']),
+      };
+      mergedPayload['baseline_metric_extraction_paths'] = {
+        ...asMap(liveLuxePayload['baseline_metric_extraction_paths']),
+        ...asMap(rawPayloadMap['baseline_metric_extraction_paths']),
       };
     }
 
@@ -3184,21 +3244,50 @@ class ScanDetailScreen extends StatelessWidget {
 
     final initialBaseline = payloadScans.length == 1;
 
+    final topLevelTrendDeltas = asMap(mergedPayload['trend_deltas']);
+    final topLevelTrendStatus = asMap(mergedPayload['trend_status']);
     final trendDeltas = <String, dynamic>{};
+    final trendStatus = <String, dynamic>{};
     for (final key in currentMatrix.keys) {
-      final baselineValue = (baselineMatrix[key] as num?)?.toDouble();
-      final currentValue = (currentMatrix[key] as num?)?.toDouble();
-      if (initialBaseline || baselineValue == null || currentValue == null) continue;
-      if (baselineValue <= 0.0 || currentValue <= 0.0) continue;
-      final raw = ((currentValue - baselineValue) / baselineValue) * 100.0;
-      if (raw.isFinite) {
-        trendDeltas[key] = raw;
+      final rawDelta = topLevelTrendDeltas[key];
+      final parsedDelta = rawDelta is num
+          ? rawDelta.toDouble()
+          : double.tryParse(rawDelta?.toString() ?? '');
+      final rawStatus = topLevelTrendStatus[key]?.toString().trim();
+      final hasBackendTrendDelta = parsedDelta != null && parsedDelta.isFinite;
+      final hasBackendTrendStatus = rawStatus != null && rawStatus.isNotEmpty;
+
+      if (hasBackendTrendDelta && hasBackendTrendStatus) {
+        trendDeltas[key] = parsedDelta;
+        trendStatus[key] = rawStatus;
+      } else if (!initialBaseline) {
+        debugPrint(
+          'ARCHIVE TREND FALLBACK [$key]: missing payload.trend_deltas/trend_status entry; Luxe parser will recompute for legacy payload.',
+        );
       }
     }
+
+    final rawMetricExtractionPaths = asMap(rawPayloadMap['metric_extraction_paths']);
+    final mergedMetricExtractionPaths = asMap(mergedPayload['metric_extraction_paths']);
+    final metricExtractionPaths = rawMetricExtractionPaths.isNotEmpty
+        ? rawMetricExtractionPaths
+        : mergedMetricExtractionPaths;
+    final rawBaselineExtractionPaths = asMap(
+      rawPayloadMap['baseline_metric_extraction_paths'],
+    );
+    final mergedBaselineExtractionPaths = asMap(
+      mergedPayload['baseline_metric_extraction_paths'],
+    );
+    final baselineMetricExtractionPaths = rawBaselineExtractionPaths.isNotEmpty
+        ? rawBaselineExtractionPaths
+        : mergedBaselineExtractionPaths;
 
     return {
       'metric_matrix': matrix,
       'trend_deltas': trendDeltas,
+      'trend_status': trendStatus,
+      'metric_extraction_paths': metricExtractionPaths,
+      'baseline_metric_extraction_paths': baselineMetricExtractionPaths,
       'baseline': {'metric_matrix': baselineMatrix},
       'current': {'metric_matrix': currentMatrix},
       'initial_baseline': initialBaseline,
@@ -3206,8 +3295,238 @@ class ScanDetailScreen extends StatelessWidget {
       'metrics': {
         'metric_matrix': matrix,
         'trend_deltas': trendDeltas,
+        'trend_status': trendStatus,
       },
     };
+  }
+
+  int _archivePayloadHistoryCount(Map<String, dynamic> payload) {
+    final scansNode = payload['_scans'];
+    if (scansNode is List) {
+      return scansNode.length;
+    }
+    return 1;
+  }
+
+  bool _archiveHasResolvedComparison(Map<String, dynamic> payload) {
+    final baselineNode = _asMap(payload['baseline']);
+    final baselineMatrix = _asMap(baselineNode['metric_matrix']);
+    return baselineMatrix.isNotEmpty;
+  }
+
+  Map<String, dynamic> _asMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return const <String, dynamic>{};
+  }
+
+  Map<String, double> _archivedCoachScores() {
+    final backend = ScanDetailScreen.backendMetricSource(scan.metrics);
+    double? read(String key) {
+      final value = backend[key];
+      if (value == null || !value.isFinite) return null;
+      return (value / 10.0).clamp(0.0, 10.0).toDouble();
+    }
+
+    final scores = <String, double>{};
+    final redness = read('localized_redness');
+    if (redness != null) scores['redness'] = redness;
+
+    final textureSmoothness = backend['texture_smoothness'];
+    if (textureSmoothness != null && textureSmoothness.isFinite) {
+      scores['texture'] = ((100.0 - textureSmoothness) / 10.0)
+          .clamp(0.0, 10.0)
+          .toDouble();
+    }
+
+    final pore = read('pore_visibility');
+    if (pore != null) scores['pore'] = pore;
+
+    final breakout = read('breakout_activity');
+    if (breakout != null) scores['acne_severity'] = breakout;
+
+    final pigment = read('pigment_load');
+    if (pigment != null) scores['pigment'] = pigment;
+
+    final wrinkle = read('wrinkle_load');
+    if (wrinkle != null) scores['wrinkle'] = wrinkle;
+
+    final rosacea = read('rosacea_severity');
+    if (rosacea != null) scores['rosacea_intensity'] = rosacea;
+
+    return scores;
+  }
+
+  Map<String, double> _archivedTrendDeltas() {
+    final raw = scan.rawPayload ?? const <String, dynamic>{};
+    final trendNode = <String, dynamic>{
+      ..._asMap(raw['trend_deltas']),
+      ..._asMap(raw['metrics']),
+    };
+    final out = <String, double>{};
+    for (final entry in trendNode.entries) {
+      final value = entry.value;
+      final parsed = value is num ? value.toDouble() : double.tryParse(value.toString());
+      if (parsed == null || !parsed.isFinite) continue;
+      out[entry.key.toString()] = parsed;
+    }
+    return out;
+  }
+
+  Widget _coachInsightCard({Map<String, dynamic>? archivedAiPayload}) {
+    final scores = _archivedCoachScores();
+    final payload = archivedAiPayload ?? _buildLuxePayloadForAiScan();
+    final trendDeltas = _archivedTrendDeltas();
+    final sensitivitySignal = <double>[
+      scores['redness'] ?? 0,
+      scores['rosacea_intensity'] ?? 0,
+      scores['texture'] ?? 0,
+    ].reduce((a, b) => a > b ? a : b);
+    final barrierStressed = sensitivitySignal >= 4.0;
+    final insight = SkinScanCoachCopy.buildInsight(
+      scores: scores,
+      metricMatrix: _asMap(payload['metric_matrix']),
+      trendDeltas: trendDeltas,
+      isFollowUp: _archiveHasResolvedComparison(payload),
+      sensitivitySignal: sensitivitySignal,
+    );
+    final routineHeader = SkinScanCoachCopy.buildRoutineHeader(
+      scores: scores,
+      isFollowUp: _archiveHasResolvedComparison(payload),
+      barrierStressed: barrierStressed,
+      sensitivitySignal: sensitivitySignal,
+    );
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: AppColors.champagneGold.withValues(alpha: 0.18),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.refinedSlate.withValues(alpha: 0.06),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            insight,
+            style: const TextStyle(
+              fontSize: 13.6,
+              height: 1.48,
+              fontWeight: FontWeight.w600,
+              color: AppColors.refinedSlate,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            routineHeader,
+            style: TextStyle(
+              fontSize: 12.8,
+              height: 1.45,
+              fontWeight: FontWeight.w700,
+              color: AppColors.refinedSlate.withValues(alpha: 0.88),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _coachRoutineCard({Map<String, dynamic>? archivedAiPayload}) {
+    final scores = _archivedCoachScores();
+    final payload = archivedAiPayload ?? _buildLuxePayloadForAiScan();
+    final sensitivitySignal = <double>[
+      scores['redness'] ?? 0,
+      scores['rosacea_intensity'] ?? 0,
+      scores['texture'] ?? 0,
+    ].reduce((a, b) => a > b ? a : b);
+    final barrierStressed = sensitivitySignal >= 4.0;
+    final routine = SkinScanCoachCopy.buildRoutine(
+      scores: scores,
+      isFollowUp: _archiveHasResolvedComparison(payload),
+      sensitivitySignal: sensitivitySignal,
+      barrierStressed: barrierStressed,
+    );
+
+    return ExpansionTile(
+      initiallyExpanded: _archiveHasResolvedComparison(payload),
+      tilePadding: const EdgeInsets.symmetric(horizontal: 4),
+      childrenPadding: const EdgeInsets.only(bottom: 8),
+      iconColor: AppColors.champagneGold,
+      collapsedIconColor: AppColors.champagneGold,
+      title: const Text(
+        'Suggested routine',
+        style: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w800,
+          color: AppColors.refinedSlate,
+        ),
+      ),
+      children: [
+        // AM/PM is a schedule label, not a metric status — PM previously
+        // (mis)used the worsened/status brick color; both now use the
+        // brand accent, distinguished by opacity instead of hue.
+        _routineColumn('AM', routine.amSteps, AppColors.brandAccent),
+        const SizedBox(height: 8),
+        _routineColumn(
+          'PM',
+          routine.pmSteps,
+          AppColors.brandAccent.withValues(alpha: 0.68),
+        ),
+      ],
+    );
+  }
+
+  Widget _routineColumn(String label, List<String> steps, Color accent) {
+    if (steps.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: accent.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$label ROUTINE',
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.8,
+              color: accent,
+            ),
+          ),
+          const SizedBox(height: 10),
+          for (final step in steps)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                '• $step',
+                style: const TextStyle(
+                  fontSize: 12.8,
+                  height: 1.38,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.refinedSlate,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   List<Widget> _buildMetricRows(Color accent) {
@@ -3647,47 +3966,6 @@ class ScanDetailScreen extends StatelessWidget {
     );
   }
 
-  Widget _baselineComparisonPendingCard() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.cardBackground,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.borders),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.history_rounded, size: 16, color: AppColors.champagneGold),
-              SizedBox(width: 8),
-              Text(
-                'Baseline scan captured',
-                style: TextStyle(
-                  color: AppColors.refinedSlate,
-                  fontSize: 13.2,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 9),
-          Text(
-            'Comparison metrics unlock after a second scan is recorded. '
-            'Take another scan in 2-4 weeks to view before/after cards and progress summary.',
-            style: TextStyle(
-              color: AppColors.refinedSlate.withValues(alpha: 0.74),
-              fontSize: 11.8,
-              fontWeight: FontWeight.w700,
-              height: 1.4,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _badge(IconData icon, String label, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
@@ -3738,6 +4016,28 @@ class ScanDetailScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// Badge distinguishing which analysis engine produced this scan's
+  /// metrics, so users understand why some scans don't chart trends
+  /// against each other (see ScanHistoryEntry.scanEnginesComparable).
+  Widget? _engineChip(String scanEngine) {
+    switch (scanEngine) {
+      case ScanHistoryEntry.engineLocalTflite:
+        return _noticeChip(
+          Icons.bolt_rounded,
+          'Quick on-device scan',
+          AppColors.champagneGold,
+        );
+      case ScanHistoryEntry.engineBackendOpencv:
+        return _noticeChip(
+          Icons.cloud_done_rounded,
+          'Full AI analysis',
+          AppColors.champagneGold,
+        );
+      default:
+        return null;
+    }
   }
 
   Widget _scanImage(String? path) {

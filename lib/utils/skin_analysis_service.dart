@@ -86,6 +86,7 @@ class SkinAnalysisService {
     Uint8List bytes, {
     String? filename,
     Map<String, dynamic>? baselineMetricMatrix,
+    Map<String, String>? baselineExtractionPaths,
     bool allowBackend = false,
   }) async {
     _ensureBackendAllowed(allowBackend);
@@ -102,6 +103,8 @@ class SkinAnalysisService {
           if (filename != null) 'filename': filename,
           if (baselineMetricMatrix != null && baselineMetricMatrix.isNotEmpty)
             'baselineMetricMatrix': baselineMetricMatrix,
+          if (baselineExtractionPaths != null && baselineExtractionPaths.isNotEmpty)
+            'baselineExtractionPaths': baselineExtractionPaths,
         }),
       ).timeout(_requestTimeout);
 
@@ -142,11 +145,91 @@ class SkinAnalysisService {
     }
   }
 
+  /// Submits a body-procedure capture to `/api/body/analyze-silhouette`.
+  ///
+  /// Unlike [analyzeImageFromBytes]/[uploadSingleImageFile] (user-initiated
+  /// "Deep Analysis" actions that should surface a failure), this runs as
+  /// part of the automatic post-capture save for body-region scans — a
+  /// network hiccup here shouldn't block saving the scan itself, so this
+  /// returns null on any failure (bad status, timeout, no connection)
+  /// instead of throwing. Not gated by [_ensureBackendAllowed]: that gate
+  /// protects the user-initiated face "Deep Analysis" flow specifically;
+  /// this is a distinct, deliberate submission path with no equivalent
+  /// consent-gated screen of its own.
+  /// [httpClient] is injectable purely for tests — production callers omit
+  /// it and get the default top-level [http.post]. This lets a test supply
+  /// a `package:http/testing.dart` `MockClient` to capture and assert on
+  /// the exact request built (headers, URL, JSON body) without reaching a
+  /// real backend.
+  static Future<Map<String, dynamic>?> analyzeBodySilhouette({
+    required Uint8List bytes,
+    String? captureMode,
+    String? captureQuality,
+    Map<String, dynamic>? baselineResult,
+    String? baselineCaptureMode,
+    String? baselineCaptureQuality,
+    int? currentConsistentScanCount,
+    int? baselineConsistentScanCount,
+    int? sourceImageWidth,
+    int? sourceImageHeight,
+    int? baselineSourceImageWidth,
+    int? baselineSourceImageHeight,
+    http.Client? httpClient,
+  }) async {
+    final uri = BackendConfig.analyzeBodySilhouetteUri;
+    debugPrint('[SkinAnalysisService] POST $uri (body silhouette)');
+    try {
+      final poster = httpClient?.post ?? http.post;
+      final response = await poster(
+        uri,
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'imageBytes': base64Encode(bytes),
+          if (captureMode != null) 'captureMode': captureMode,
+          if (captureQuality != null) 'captureQuality': captureQuality,
+          if (baselineResult != null && baselineResult.isNotEmpty)
+            'baselineResult': baselineResult,
+          if (baselineCaptureMode != null)
+            'baselineCaptureMode': baselineCaptureMode,
+          if (baselineCaptureQuality != null)
+            'baselineCaptureQuality': baselineCaptureQuality,
+          if (currentConsistentScanCount != null)
+            'currentConsistentScanCount': currentConsistentScanCount,
+          if (baselineConsistentScanCount != null)
+            'baselineConsistentScanCount': baselineConsistentScanCount,
+          if (sourceImageWidth != null) 'sourceImageWidth': sourceImageWidth,
+          if (sourceImageHeight != null) 'sourceImageHeight': sourceImageHeight,
+          if (baselineSourceImageWidth != null)
+            'baselineSourceImageWidth': baselineSourceImageWidth,
+          if (baselineSourceImageHeight != null)
+            'baselineSourceImageHeight': baselineSourceImageHeight,
+        }),
+      ).timeout(_requestTimeout);
+
+      if (response.statusCode != 200) {
+        debugPrint(
+          '[SkinAnalysisService] Body silhouette backend HTTP ${response.statusCode}: ${response.body}',
+        );
+        return null;
+      }
+      if (response.body.trim().isEmpty) return null;
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      return null;
+    } catch (e) {
+      debugPrint('[SkinAnalysisService] Body silhouette request failed: $e');
+      return null;
+    }
+  }
+
   static Future<Map<String, dynamic>> uploadSingleImageFile({
     required XFile? image,
     Uri? uri,
     Map<String, String> fields = const {},
     Map<String, dynamic>? baselineMetricMatrix,
+    Map<String, String>? baselineExtractionPaths,
     bool allowBackend = false,
   }) async {
     _ensureBackendAllowed(allowBackend);
@@ -174,6 +257,13 @@ class SkinAnalysisService {
         baselineMetricMatrix.isNotEmpty &&
         !_hasNonEmptyField(mergedFields, 'baseline_metric_matrix')) {
       mergedFields['baseline_metric_matrix'] = jsonEncode(baselineMetricMatrix);
+    }
+    if (baselineExtractionPaths != null &&
+        baselineExtractionPaths.isNotEmpty &&
+        !_hasNonEmptyField(mergedFields, 'baseline_extraction_paths')) {
+      mergedFields['baseline_extraction_paths'] = jsonEncode(
+        baselineExtractionPaths,
+      );
     }
 
     final request = http.MultipartRequest('POST', targetUri)

@@ -93,6 +93,12 @@ class SkinAnalysisService {
   /// Compatibility helper used by UI flows that expect a backend-shaped
   /// analysis payload. Keeps those flows offline by mapping the local
   /// analysis output into the same structure.
+  ///
+  /// The returned `metric_matrix` is currently empty (see `_toBackendShape`'s
+  /// doc comment) — this on-device model's estimates for the app's
+  /// verified clinical metrics have zero real-user validation and are
+  /// deliberately withheld from the clinical report display until that
+  /// changes. `fullMetrics` still carries the model's raw [0, 1] output.
   static Future<Map<String, dynamic>> uploadSingleImageFile({
     required XFile? image,
     Uri? uri,
@@ -121,39 +127,50 @@ class SkinAnalysisService {
     return uploadSingleImageFile(image: image, baselineMetricMatrix: baselineMetricMatrix);
   }
 
+  /// `pigment`, `redness`, `texture`, `wrinkle`, and `acne_severity` are
+  /// deliberately NOT surfaced into `metric_matrix` (or the legacy
+  /// `calibrated_*_score` fields) below, even though the on-device model
+  /// estimates all of them — this app already has extensively-verified,
+  /// honesty-gate-hardened formula metrics under `pigment_load`,
+  /// `localized_redness`, `texture_smoothness`, `wrinkle_load`, and
+  /// `breakout_activity` (see main.py), and this model's estimates for
+  /// those same clinical concepts have zero real-user validation.
+  /// Writing them into the same key names would silently swap the
+  /// trusted formula output for unverified model output the next time
+  /// this on-device path runs — exactly what must not happen.
+  ///
+  /// `acne_severity` and `rosacea_intensity` were also considered for a
+  /// distinctly-named `metric_matrix` entry (there's no formula metric
+  /// literally named either of those — the formula analogs are
+  /// `breakout_activity` and `rosacea_severity`), but a corrected-
+  /// normalization probe against 5 reference photos (see
+  /// skin_analysis_service_io.dart's `_allMetrics` doc comment) found the
+  /// model's output does not track visible redness/rosacea severity in a
+  /// sensible order on any index — including a severe clinical rosacea
+  /// photo scoring lower than clear-skin references. Wiring them into a
+  /// user-facing report — "Beta" label or not — isn't justified by that
+  /// evidence, so they stay out of `metric_matrix` until a real index
+  /// mapping is confirmed against labeled data.
   static Map<String, dynamic> _toBackendShape(Map<String, double> metrics) {
-    double pctFromConcern(double value) => (value.clamp(0.0, 1.0) * 100.0);
-
-    final metricMatrix = <String, dynamic>{
-      if (metrics['redness'] != null)
-        'localized_redness': pctFromConcern(metrics['redness']!),
-      if (metrics['texture'] != null)
-        'texture_smoothness': (100.0 - pctFromConcern(metrics['texture']!)).clamp(0.0, 100.0),
-      if (metrics['pore'] != null)
-        'pore_visibility': pctFromConcern(metrics['pore']!),
-      if (metrics['acne_severity'] != null)
-        'breakout_activity': pctFromConcern(metrics['acne_severity']!),
-      if (metrics['pigment'] != null)
-        'pigment_load': pctFromConcern(metrics['pigment']!),
-      if (metrics['wrinkle'] != null)
-        'wrinkle_load': pctFromConcern(metrics['wrinkle']!),
-    };
+    // Intentionally empty for now — see the doc comment above. The raw
+    // model output is still returned in `fullMetrics` below so it isn't
+    // lost, just not yet displayed as a trustworthy clinical score.
+    final metricMatrix = <String, dynamic>{};
 
     return <String, dynamic>{
       'status': 'success',
       'success': true,
       'modelUsed': 'local-tflite',
       'metrics': <String, dynamic>{
-        if (metrics['redness'] != null)
-          'calibrated_redness_score': (100.0 - pctFromConcern(metrics['redness']!)).clamp(0.0, 100.0),
-        if (metrics['texture'] != null)
-          'calibrated_smoothness_score': (100.0 - pctFromConcern(metrics['texture']!)).clamp(0.0, 100.0),
         'metric_matrix': metricMatrix,
         'trend_deltas': <String, double>{},
       },
       'metric_matrix': metricMatrix,
       'trend_deltas': <String, double>{},
       'serverTrendDeltas': <String, double>{},
+      // Raw [0, 1] model output for every metric the on-device model
+      // estimates — kept for transparency/debugging/future recalibration
+      // even though none of it is surfaced into `metric_matrix` yet.
       'fullMetrics': metrics,
     };
   }

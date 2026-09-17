@@ -621,11 +621,17 @@ String _getProductInsight(TrackedProduct product, {ScanAiReport? report}) {
   final concernList =
       report?.metricInsights
           .where(
-            (i) => i.isConcerning || i.level == MetricClinicalLevel.moderate,
+            (i) {
+              final score100 = _unifiedMetricScore100(i);
+              final status = _statusFromUnifiedScore(score100);
+              return i.isConcerning || status == 'Worsened';
+            },
           )
           .toList() ??
       [];
-  concernList.sort((a, b) => b.value.compareTo(a.value));
+  concernList.sort(
+    (a, b) => _unifiedMetricScore100(a).compareTo(_unifiedMetricScore100(b)),
+  );
   final topMetric = concernList.isNotEmpty ? concernList.first : null;
 
   if (lowerName.contains('niacinamide') ||
@@ -946,8 +952,9 @@ Widget _buildAiNarrativeCard(
 }
 
 Widget _buildAiMetricCard(MetricInsight insight) {
-  final levelLabel = _metricLevelChipLabel(insight.level);
-  final chipColor = insight.color;
+  final score100 = _unifiedMetricScore100(insight);
+  final statusLabel = _statusFromUnifiedScore(score100);
+  final chipColor = _statusColor(statusLabel);
 
   return Container(
     margin: const EdgeInsets.only(bottom: 12),
@@ -1010,11 +1017,11 @@ Widget _buildAiMetricCard(MetricInsight insight) {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    insight.value.toStringAsFixed(1),
+                    score100.toStringAsFixed(0),
                     style: TextStyle(
                       fontWeight: FontWeight.w900,
                       fontSize: 22,
-                      color: insight.color,
+                      color: chipColor,
                     ),
                   ),
                   Container(
@@ -1030,12 +1037,21 @@ Widget _buildAiMetricCard(MetricInsight insight) {
                       ),
                     ),
                     child: Text(
-                      levelLabel,
+                      statusLabel,
                       style: TextStyle(
                         fontSize: 10.5,
                         color: chipColor,
                         fontWeight: FontWeight.w700,
                       ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  const Text(
+                    '/100',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.black54,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
@@ -1353,16 +1369,36 @@ Widget _aiChip(String label, Color color) {
   );
 }
 
-String _metricLevelChipLabel(MetricClinicalLevel level) {
-  switch (level) {
-    case MetricClinicalLevel.optimal:
-      return 'Optimal';
-    case MetricClinicalLevel.mild:
-      return 'Mild';
-    case MetricClinicalLevel.moderate:
-      return 'Moderate';
-    case MetricClinicalLevel.elevated:
-      return 'Elevated';
+double _unifiedMetricScore100(MetricInsight insight) {
+  final raw10 = insight.value.clamp(0.0, 10.0).toDouble();
+  final raw100 = raw10 * 10.0;
+  final normalizedLabel = insight.label.toLowerCase().trim();
+  final higherIsBetter = {
+    'elasticity',
+    'firmness',
+    'skin laxity',
+    'skin tone uniformity',
+    'skin hydration level',
+    'global skin quality score',
+  }.contains(normalizedLabel);
+  final score = higherIsBetter ? raw100 : (100.0 - raw100);
+  return score.clamp(0.0, 100.0).toDouble();
+}
+
+String _statusFromUnifiedScore(double score100) {
+  if (score100 >= 67.0) return 'Improved';
+  if (score100 >= 34.0) return 'Stable';
+  return 'Worsened';
+}
+
+Color _statusColor(String status) {
+  switch (status) {
+    case 'Improved':
+      return const Color(0xFF2E7D32);
+    case 'Worsened':
+      return const Color(0xFFE65100);
+    default:
+      return const Color(0xFF8C6D3A);
   }
 }
 

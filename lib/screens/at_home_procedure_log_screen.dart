@@ -15,7 +15,7 @@ import '../utils/procedure_intelligence.dart';
 import '../widgets/local_image_preview.dart';
 import '../widgets/paywall_screen.dart';
 import 'ai_recovery_coach_screen.dart';
-import 'ai_skincare_coach_screen.dart';
+import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 
 class AtHomeProcedureLogScreen extends ConsumerStatefulWidget {
   const AtHomeProcedureLogScreen({super.key});
@@ -1067,7 +1067,7 @@ class _AtHomeProcedureLogScreenState
                   },
                   style: MyApp.primaryGoldButton,
                   icon: const Icon(Icons.auto_awesome_outlined),
-                  label: const Text('Ask Coach about this'),
+                  label: Text(_logFollowUpActionLabel(log)),
                 ),
                 const SizedBox(height: 10),
                 TextButton(
@@ -1085,11 +1085,21 @@ class _AtHomeProcedureLogScreenState
     );
   }
 
-  /// Routes "Ask Coach about this" to the correct coach for the logged
+  String _logFollowUpActionLabel(ProcedureLog log) {
+    final category = ProcedureIntelligence.categoryFor(log.procedureType);
+    final isRecoveryProcedure =
+        category == ProcedureCategory.bodyContouring ||
+        category == ProcedureCategory.surgicalFace ||
+        category == ProcedureCategory.hairTransplant;
+    return isRecoveryProcedure ? 'Open Recovery Coach' : 'Open Skin Scan';
+  }
+
+  /// Routes skincare-oriented logs into the unified Skin Scan flow and keeps
+  /// recovery-specific procedures on the existing recovery coach surface.
   /// procedure. Surgical / body-contouring / hair-transplant procedures (e.g.
   /// liposuction, BBL, facelift) belong to the Recovery Coach, which is built
   /// for procedure recovery and aftercare. Skincare / laser / injectable
-  /// procedures stay with the Skincare Coach.
+  /// procedures now go to the combined Skin Scan flow.
   void _openCoachForLog(ProcedureLog log) {
     final category = ProcedureIntelligence.categoryFor(log.procedureType);
     final isRecoveryProcedure =
@@ -1119,7 +1129,7 @@ class _AtHomeProcedureLogScreenState
     Navigator.push(
       context,
       MaterialPageRoute<void>(
-        builder: (_) => AISkincareCoachScreen(initialLog: log),
+        builder: (_) => const SkinAiAnalysisScreen(),
       ),
     );
   }

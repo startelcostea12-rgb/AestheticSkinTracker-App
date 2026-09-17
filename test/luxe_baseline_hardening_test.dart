@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
 
+import 'package:aesthetic_skin_tracker/theme/app_colors.dart';
 import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 
 void main() {
@@ -124,6 +125,17 @@ void main() {
           'metric_confidence': <String, dynamic>{
             'pigment_load': 'low',
           },
+          // Real backend payloads always carry these (see
+          // skin_ai_analysis_screen.dart's _mergePayloadForPersistence);
+          // matching, known paths on both sides so the path-mismatch
+          // honesty guard doesn't preempt the confidence/swing checks
+          // this test is actually exercising.
+          'metric_extraction_paths': <String, dynamic>{
+            'pigment_load': 'primary_roi',
+          },
+          'baseline_metric_extraction_paths': <String, dynamic>{
+            'pigment_load': 'primary_roi',
+          },
         };
 
         await tester.pumpWidget(
@@ -157,6 +169,12 @@ void main() {
           },
           'metric_confidence': <String, dynamic>{
             'pigment_load': 'medium',
+          },
+          'metric_extraction_paths': <String, dynamic>{
+            'pigment_load': 'primary_roi',
+          },
+          'baseline_metric_extraction_paths': <String, dynamic>{
+            'pigment_load': 'primary_roi',
           },
         };
 
@@ -192,6 +210,12 @@ void main() {
           'metric_confidence': <String, dynamic>{
             'rosacea_severity': 'medium',
           },
+          'metric_extraction_paths': <String, dynamic>{
+            'rosacea_severity': 'primary_roi',
+          },
+          'baseline_metric_extraction_paths': <String, dynamic>{
+            'rosacea_severity': 'primary_roi',
+          },
         };
 
         await tester.pumpWidget(
@@ -207,7 +231,133 @@ void main() {
         expect(find.byIcon(Icons.trending_down_rounded), findsWidgets);
 
         final worsenedLabel = tester.widget<Text>(find.text('Worsened').first);
-        expect(worsenedLabel.style?.color, const Color(0xFFC76A55));
+        expect(worsenedLabel.style?.color, AppColors.kMetricWorsenedColor);
+      },
+    );
+
+    testWidgets(
+      'a genuine backend "stable" (no trend_lock_reason) keeps the plain '
+      '"Stable - change within tracking noise" wording',
+      (tester) async {
+        final payload = <String, dynamic>{
+          'is_follow_up': true,
+          'local_history_count': 2,
+          'metric_matrix': <String, dynamic>{
+            'pigment_load': 51.0,
+          },
+          'baseline_metric_matrix': <String, dynamic>{
+            'pigment_load': 50.0,
+          },
+          'metric_extraction_paths': <String, dynamic>{
+            'pigment_load': 'primary_roi',
+          },
+          'baseline_metric_extraction_paths': <String, dynamic>{
+            'pigment_load': 'primary_roi',
+          },
+          'trend_deltas': <String, dynamic>{'pigment_load': 0.0},
+          'trend_status': <String, dynamic>{'pigment_load': 'stable'},
+        };
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: LuxeReportLayout(rawPayload: payload),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('Stable - change within tracking noise'),
+          findsOneWidget,
+        );
+        expect(find.textContaining('Standalone entry'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'a backend "stable" forced by capture_quality_mismatch shows a '
+      'distinct standalone-entry label instead of generic "Stable"',
+      (tester) async {
+        final payload = <String, dynamic>{
+          'is_follow_up': true,
+          'local_history_count': 2,
+          'metric_matrix': <String, dynamic>{
+            'pigment_load': 80.0,
+          },
+          'baseline_metric_matrix': <String, dynamic>{
+            'pigment_load': 50.0,
+          },
+          'metric_extraction_paths': <String, dynamic>{
+            'pigment_load': 'primary_roi',
+          },
+          'baseline_metric_extraction_paths': <String, dynamic>{
+            'pigment_load': 'primary_roi',
+          },
+          'trend_deltas': <String, dynamic>{'pigment_load': 0.0},
+          'trend_status': <String, dynamic>{'pigment_load': 'stable'},
+          'trend_lock_reasons': <String, dynamic>{
+            'pigment_load': 'capture_quality_mismatch',
+          },
+        };
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: LuxeReportLayout(rawPayload: payload),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('Stable - change within tracking noise'),
+          findsNothing,
+        );
+        expect(find.textContaining('Standalone entry'), findsWidgets);
+      },
+    );
+
+    testWidgets(
+      'a backend "stable" forced by resolution_mismatch shows a distinct '
+      'standalone-entry label instead of generic "Stable"',
+      (tester) async {
+        final payload = <String, dynamic>{
+          'is_follow_up': true,
+          'local_history_count': 2,
+          'metric_matrix': <String, dynamic>{
+            'pigment_load': 80.0,
+          },
+          'baseline_metric_matrix': <String, dynamic>{
+            'pigment_load': 50.0,
+          },
+          'metric_extraction_paths': <String, dynamic>{
+            'pigment_load': 'primary_roi',
+          },
+          'baseline_metric_extraction_paths': <String, dynamic>{
+            'pigment_load': 'primary_roi',
+          },
+          'trend_deltas': <String, dynamic>{'pigment_load': 0.0},
+          'trend_status': <String, dynamic>{'pigment_load': 'stable'},
+          'trend_lock_reasons': <String, dynamic>{
+            'pigment_load': 'resolution_mismatch',
+          },
+        };
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: LuxeReportLayout(rawPayload: payload),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('Stable - change within tracking noise'),
+          findsNothing,
+        );
+        expect(find.textContaining('Standalone entry'), findsWidgets);
       },
     );
   });

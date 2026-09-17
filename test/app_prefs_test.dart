@@ -59,6 +59,16 @@ void main() {
       expect(prefs.getString(AppPrefs.trackedProcedureKey), null);
     });
 
+    test('reminder notifications toggle persists and defaults off', () async {
+      expect(await AppPrefs.getNotificationsEnabled(), isFalse);
+
+      await AppPrefs.setNotificationsEnabled(true);
+      expect(await AppPrefs.getNotificationsEnabled(), isTrue);
+
+      await AppPrefs.setNotificationsEnabled(false);
+      expect(await AppPrefs.getNotificationsEnabled(), isFalse);
+    });
+
     test(
       'first procedure photo remains the only baseline across later uploads',
       () async {

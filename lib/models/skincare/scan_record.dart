@@ -19,6 +19,7 @@ class ScanRecord {
   final double? lightingConfidence;
   final double? expressionConfidence;
   final double? distanceEstimate;
+  final String? captureQuality;
   final bool isBaseline;
   final bool preferredReference;
   final String notes;
@@ -40,6 +41,7 @@ class ScanRecord {
     this.lightingConfidence,
     this.expressionConfidence,
     this.distanceEstimate,
+    this.captureQuality,
     this.isBaseline = false,
     this.preferredReference = false,
     this.notes = '',
@@ -66,6 +68,8 @@ class ScanRecord {
       lightingConfidence: _readDouble(json['lightingConfidence']),
       expressionConfidence: _readDouble(json['expressionConfidence']),
       distanceEstimate: _readDouble(json['distanceEstimate']),
+        captureQuality: _readNullableString(json['captureQuality']) ??
+          _readNullableString(json['capture_quality']),
       isBaseline: json['isBaseline'] as bool? ?? false,
       preferredReference: json['preferredReference'] as bool? ?? false,
       notes: _readString(json['notes']),
@@ -89,6 +93,8 @@ class ScanRecord {
     'lightingConfidence': lightingConfidence,
     'expressionConfidence': expressionConfidence,
     'distanceEstimate': distanceEstimate,
+    'captureQuality': captureQuality,
+    'capture_quality': captureQuality,
     'isBaseline': isBaseline,
     'preferredReference': preferredReference,
     'notes': notes,
@@ -116,6 +122,7 @@ class ScanRecord {
     bool clearExpressionConfidence = false,
     double? distanceEstimate,
     bool clearDistanceEstimate = false,
+    String? captureQuality,
     bool? isBaseline,
     bool? preferredReference,
     String? notes,
@@ -143,6 +150,7 @@ class ScanRecord {
       distanceEstimate: clearDistanceEstimate
           ? null
           : distanceEstimate ?? this.distanceEstimate,
+        captureQuality: captureQuality ?? this.captureQuality,
       isBaseline: isBaseline ?? this.isBaseline,
       preferredReference: preferredReference ?? this.preferredReference,
       notes: notes ?? this.notes,

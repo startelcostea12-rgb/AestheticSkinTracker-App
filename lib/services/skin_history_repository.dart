@@ -150,6 +150,16 @@ class SkinHistoryRepository {
     }
     final computedSkinAge = estimateVisualSkinAgeFromAiMetrics(stored);
 
+    // The only caller of saveScan is the remote-backend AI Analysis flow
+    // (_SkinAiAnalysisScreenState._runAnalysis), which posts to
+    // /api/skin/analyze-single. That endpoint doesn't currently emit a
+    // `modelUsed` tag (unlike its sibling /api/analyze-skin), so fall back
+    // to the known engine for this call path rather than "unknown".
+    final resolvedScanEngine = ScanHistoryEntry.resolveScanEngine(
+      payloadMap,
+      fallback: ScanHistoryEntry.engineBackendOpencv,
+    );
+
     final entry = ScanHistoryEntry(
       id: ScanHistoryEntry.generateId(ts, imagePath),
       timestamp: ts,
@@ -168,6 +178,7 @@ class SkinHistoryRepository {
           : computedSkinAge ?? 0,
       metrics: stored,
       rawPayload: rawPayload,
+      scanEngine: resolvedScanEngine,
     );
 
     final hasProcedureId =

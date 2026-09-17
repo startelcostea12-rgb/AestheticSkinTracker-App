@@ -13,6 +13,8 @@ class BackendConfig {
   static const String aiCoachEndpoint = '/api/coach';
   static const String analyzeSkinEndpoint = '/api/analyze-skin';
   static const String analyzeSingleSkinEndpoint = '/api/skin/analyze-single';
+  static const String analyzeBodySilhouetteEndpoint =
+      '/api/body/analyze-silhouette';
 
   static String get baseUrl {
     final configured = _configuredBaseUrl.trim();
@@ -30,6 +32,9 @@ class BackendConfig {
   static Uri get analyzeSkinUri => buildUri(analyzeSkinEndpoint);
 
   static Uri get analyzeSingleSkinUri => buildUri(analyzeSingleSkinEndpoint);
+
+  static Uri get analyzeBodySilhouetteUri =>
+      buildUri(analyzeBodySilhouetteEndpoint);
 
   static String _withoutTrailingSlash(String value) {
     return value.endsWith('/') ? value.substring(0, value.length - 1) : value;

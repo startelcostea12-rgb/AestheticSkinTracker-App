@@ -5,7 +5,6 @@ import 'dart:typed_data';
 
 import 'package:before_after/before_after.dart';
 import 'package:image/image.dart' as img;
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
@@ -337,8 +336,6 @@ class ScarHealingTrackerScreen extends StatefulWidget {
 }
 
 class _ScarHealingTrackerScreenState extends State<ScarHealingTrackerScreen> {
-  static const String _prefsKey = 'scar_healing_entries_v1';
-
   final List<ScarPhotoEntry> _entries = [];
   double _compareSliderValue = 0.5;
   bool _metricsExpanded = false;
@@ -369,14 +366,11 @@ class _ScarHealingTrackerScreenState extends State<ScarHealingTrackerScreen> {
 
   Future<void> _loadEntries() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getStringList(_prefsKey) ?? [];
+      final raw = await AppPrefs.getScarHealingEntriesRaw();
       final loaded = raw
           .map((s) {
             try {
-              return ScarPhotoEntry.fromJson(
-                jsonDecode(s) as Map<String, dynamic>,
-              );
+              return ScarPhotoEntry.fromJson(s);
             } catch (_) {
               return null;
             }
@@ -389,9 +383,9 @@ class _ScarHealingTrackerScreenState extends State<ScarHealingTrackerScreen> {
 
   Future<void> _saveEntries() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final raw = _entries.map((e) => jsonEncode(e.toJson())).toList();
-      await prefs.setStringList(_prefsKey, raw);
+      await AppPrefs.saveScarHealingEntriesRaw(
+        _entries.map((entry) => entry.toJson()).toList(growable: false),
+      );
     } catch (_) {}
   }
 

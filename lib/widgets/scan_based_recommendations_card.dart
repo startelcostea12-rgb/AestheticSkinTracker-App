@@ -16,6 +16,7 @@ class ScanBasedRecommendationsCard extends StatefulWidget {
   final String? procedureType;
   final Map<String, double>? latestBody;
   final Map<String, double>? baselineBody;
+  final List<AIProductRecommendation> aiCoachProducts;
 
   const ScanBasedRecommendationsCard({
     super.key,
@@ -24,6 +25,7 @@ class ScanBasedRecommendationsCard extends StatefulWidget {
     this.procedureType,
     this.latestBody,
     this.baselineBody,
+    this.aiCoachProducts = const <AIProductRecommendation>[],
   });
 
   @override
@@ -35,10 +37,12 @@ class _ScanBasedRecommendationsCardState
     extends State<ScanBasedRecommendationsCard> {
   int _selected = 0; // 0 = peptides, 1 = procedures, 2 = products
 
-  static const _rose = AppColors.champagneGold;
-  static const _gold = AppColors.mutedSage;
-  static const _textBrown = AppColors.refinedSlate;
-  static const _muted = AppColors.refinedSlate;
+  static const _rose = AppColors.brandAccent;
+  // Decorative accent (gradient, icons, borders) — was aliased to the
+  // status-improved green, which it never actually represented.
+  static const _gold = AppColors.brandAccent;
+  static const _textBrown = AppColors.textStructure;
+  static const _muted = AppColors.textStructure;
   static const _surface = AppColors.cardBackground;
 
   @override
@@ -50,11 +54,12 @@ class _ScanBasedRecommendationsCardState
       latestBody: widget.latestBody,
       baselineBody: widget.baselineBody,
     );
+    final products = widget.aiCoachProducts;
 
     final hasAnything =
         rec.peptides.isNotEmpty ||
         rec.procedures.isNotEmpty ||
-        rec.products.isNotEmpty;
+        products.isNotEmpty;
     if (!hasAnything) return const SizedBox.shrink();
 
     return Container(
@@ -84,10 +89,10 @@ class _ScanBasedRecommendationsCardState
           _header(rec),
           _summary(rec),
           if (rec.bodyDeltas.isNotEmpty) _bodyDeltasStrip(rec),
-          _segmented(rec),
+          _segmented(rec, products.length),
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
-            child: _body(rec),
+            child: _body(rec, products),
           ),
         ],
       ),
@@ -137,7 +142,7 @@ class _ScanBasedRecommendationsCardState
                 Text(
                   rec.headline,
                   style: TextStyle(
-                    color: _textBrown.withValues(alpha: 0.70),
+                    color: AppColors.textStructure.withValues(alpha: 0.78),
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
                   ),
@@ -173,10 +178,13 @@ class _ScanBasedRecommendationsCardState
       child: Container(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         decoration: BoxDecoration(
-          color: AppColors.softTerracotta.withValues(alpha: 0.07),
+          // Section header framing (decorative), not a status indicator —
+          // the individual delta tiles inside carry the real
+          // improved/worsened coloring (see _bodyDeltaTile below).
+          color: AppColors.brandAccent.withValues(alpha: 0.07),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: AppColors.softTerracotta.withValues(alpha: 0.22),
+            color: AppColors.brandAccent.withValues(alpha: 0.22),
           ),
         ),
         child: Column(
@@ -187,7 +195,7 @@ class _ScanBasedRecommendationsCardState
                 Icon(
                   Icons.fitness_center_rounded,
                   size: 14,
-                  color: AppColors.softTerracotta,
+                  color: AppColors.brandAccent,
                 ),
                 SizedBox(width: 6),
                 Text(
@@ -195,7 +203,7 @@ class _ScanBasedRecommendationsCardState
                   style: TextStyle(
                     fontSize: 11.5,
                     fontWeight: FontWeight.w900,
-                    color: AppColors.softTerracotta,
+                    color: AppColors.brandAccent,
                     letterSpacing: 0.3,
                   ),
                 ),
@@ -265,11 +273,11 @@ class _ScanBasedRecommendationsCardState
     );
   }
 
-  Widget _segmented(ScanRecommendations rec) {
+  Widget _segmented(ScanRecommendations rec, int productsCount) {
     final tabs = [
       ('Peptides', rec.peptides.length, Icons.science_outlined),
       ('Procedures', rec.procedures.length, Icons.medical_services_outlined),
-      ('Products', rec.products.length, Icons.shopping_bag_outlined),
+      ('Products', productsCount, Icons.shopping_bag_outlined),
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
@@ -327,14 +335,17 @@ class _ScanBasedRecommendationsCardState
     );
   }
 
-  Widget _body(ScanRecommendations rec) {
+  Widget _body(
+    ScanRecommendations rec,
+    List<AIProductRecommendation> products,
+  ) {
     switch (_selected) {
       case 0:
         return _peptidesBody(rec);
       case 1:
         return _proceduresBody(rec);
       default:
-        return _productsBody(rec);
+        return _productsBody(products);
     }
   }
 
@@ -499,7 +510,7 @@ class _ScanBasedRecommendationsCardState
                   p.category,
                   style: const TextStyle(
                     fontSize: 10,
-                    color: Color(0xFF8A5D17),
+                    color: AppColors.brandAccent,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 0.3,
                   ),
@@ -553,14 +564,14 @@ class _ScanBasedRecommendationsCardState
     );
   }
 
-  Widget _productsBody(ScanRecommendations rec) {
-    if (rec.products.isEmpty) {
+  Widget _productsBody(List<AIProductRecommendation> products) {
+    if (products.isEmpty) {
       return _emptyState(
         'No product recommendations available for this scan profile.',
       );
     }
     return Column(
-      children: rec.products
+      children: products
           .map(
             (p) => Padding(
               padding: const EdgeInsets.only(top: 8),
@@ -661,16 +672,19 @@ class _ScanBasedRecommendationsCardState
   }
 
   Widget _tierBadge(String tier) {
+    // Product ranking tiers, not a metric status — kept entirely within
+    // the brand accent family (distinguished by opacity) rather than
+    // borrowing the reserved improved/worsened colors.
     Color bg;
     Color fg;
     switch (tier) {
       case 'Tier 1':
-        bg = AppColors.mutedSage.withValues(alpha: 0.12);
-        fg = AppColors.mutedSage;
+        bg = AppColors.brandAccent.withValues(alpha: 0.14);
+        fg = AppColors.brandAccent;
         break;
       case 'Tier 2':
-        bg = AppColors.champagneGold.withValues(alpha: 0.14);
-        fg = AppColors.champagneGold;
+        bg = AppColors.brandAccent.withValues(alpha: 0.08);
+        fg = AppColors.brandAccent.withValues(alpha: 0.75);
         break;
       default:
         bg = const Color(0xFFF3EAE3);

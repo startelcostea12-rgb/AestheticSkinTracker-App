@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
+import '../../models/scan_history.dart';
 import '../../models/skin_profile.dart';
 import '../../utils/app_prefs.dart';
+import '../../features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import 'widgets/skin_onboarding_widgets.dart';
 
 class SkinOnboardingScreen extends StatefulWidget {
@@ -309,6 +311,44 @@ class _SkinOnboardingScreenState extends State<SkinOnboardingScreen> {
       );
 
       if (!mounted) return;
+      if (isSkipped) {
+        Navigator.of(context).pushReplacementNamed('/welcome-tour');
+        return;
+      }
+
+      final scanEntries = await AppPrefs.getScanEntries();
+      final aiScans = scanEntries
+          .where((scan) =>
+              scan.resolvedScanType == ScanHistoryEntry.scanTypeAiAnalysis)
+          .toList();
+
+      bool hasBaseline = aiScans.any((scan) => scan.isBaseline);
+      if (!hasBaseline) {
+        for (final scan in aiScans) {
+          final procedureId = (scan.procedureId ?? '').trim();
+          if (procedureId.isEmpty) continue;
+          final comparison = await AppPrefs.getProcedurePhotoComparison(
+            procedureId,
+          );
+          final baselineId = (comparison['baselineScanId'] ?? '').trim();
+          if (baselineId.isNotEmpty) {
+            hasBaseline = true;
+            break;
+          }
+        }
+      }
+
+      final hasHistory = aiScans.isNotEmpty;
+      final shouldOpenFirstRunAnalysis = !hasHistory && !hasBaseline;
+      if (!mounted) return;
+      if (shouldOpenFirstRunAnalysis) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const SkinAiAnalysisScreen()),
+          (_) => false,
+        );
+        return;
+      }
+
       Navigator.of(context).pushReplacementNamed('/welcome-tour');
     } catch (_) {
       if (!mounted) return;

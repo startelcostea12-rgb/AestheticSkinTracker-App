@@ -93,6 +93,7 @@ def run_smoke_test(image_path: Path):
         "diffuse_flushing_erythema",
         "glabellar_11_lines_depth",
         "under_eye_dark_circle_density",
+        "rosacea_severity",
     ]
 
     result.update(
@@ -102,10 +103,80 @@ def run_smoke_test(image_path: Path):
             "confidence_score": top.get("confidence_score", payload.get("confidence_score")),
             "confidence_hints": top.get("confidence_hints", payload.get("confidence_hints")),
             "image_quality": top.get("image_quality", payload.get("image_quality")),
+            "calibration": top.get("calibration", payload.get("calibration")),
             "metric_matrix_subset": {k: metric_matrix.get(k) for k in keys},
         }
     )
     return result
+
+
+def run_smoke_test_bypass_qa(image_path: Path) -> dict:
+    """Calibration-only path: calls analyze_skin_patch() directly, skipping
+    validate_camera_hardware_qa()'s fill-ratio/framing checks entirely.
+
+    This exists ONLY for offline testing against non-representative
+    reference images (e.g. tightly-cropped clinical photos) that would
+    correctly fail the real camera-capture QA gate. It does not touch
+    validate_camera_hardware_qa(), the /api/skin/analyze-single endpoint,
+    or any capture_quality/honesty gating logic -- it simply never calls
+    the QA function, using the exact same assess_and_normalize_image() +
+    analyze_skin_patch() calls the real endpoint uses for everything after
+    that gate.
+    """
+    print(
+        "WARNING: camera QA bypassed — this result does not reflect real "
+        "capture-pipeline validation, for calibration testing only."
+    )
+
+    image = _load_image(image_path)
+    ok, buffer = cv2.imencode(".jpg", image)
+    if not ok:
+        raise RuntimeError("OpenCV failed to encode image to JPEG")
+    image_bytes = buffer.tobytes()
+
+    normalized_image, quality_profile = main.assess_and_normalize_image(image_bytes)
+    # Deliberately NOT calling main.validate_camera_hardware_qa(normalized_image)
+    # here -- that is the entire point of this bypass path.
+    result = main.analyze_skin_patch(
+        normalized_image,
+        quality_profile=quality_profile,
+    )
+
+    output = {
+        "image_path": str(image_path),
+        "camera_qa_bypassed": True,
+        "success": "error" not in result,
+    }
+
+    if "error" in result:
+        output["error"] = result["error"]
+        return output
+
+    keys = [
+        "texture_smoothness",
+        "pore_visibility",
+        "breakout_activity",
+        "sebum_excess_oil_gloss",
+        "skin_tone_radiance_evenness",
+        "localized_redness",
+        "diffuse_flushing_erythema",
+        "glabellar_11_lines_depth",
+        "under_eye_dark_circle_density",
+        "rosacea_severity",
+    ]
+    metric_matrix = result.get("metric_matrix") or {}
+
+    output.update(
+        {
+            "confidence_score": result.get("confidence_score"),
+            "confidence_hints": result.get("confidence_hints"),
+            "image_quality": result.get("image_quality", quality_profile),
+            "metric_matrix_subset": {
+                k: metric_matrix.get(k, result.get(k)) for k in keys
+            },
+        }
+    )
+    return output
 
 
 def main_cli():
@@ -121,6 +192,18 @@ def main_cli():
         action="store_true",
         help="Download a default public face image if --image does not exist",
     )
+    parser.add_argument(
+        "--skip-camera-qa",
+        action="store_true",
+        default=False,
+        help=(
+            "Calibration-only bypass: call analyze_skin_patch() directly, "
+            "skipping validate_camera_hardware_qa()'s fill-ratio/framing "
+            "checks. For offline testing against non-representative "
+            "reference images (e.g. tightly-cropped clinical photos) only "
+            "-- does not affect the real capture pipeline or endpoint."
+        ),
+    )
     args = parser.parse_args()
 
     image_path = args.image
@@ -129,7 +212,10 @@ def main_cli():
             raise SystemExit(f"Image does not exist: {image_path}")
         urlretrieve(DEFAULT_FACE_URL, str(image_path))
 
-    result = run_smoke_test(image_path)
+    if args.skip_camera_qa:
+        result = run_smoke_test_bypass_qa(image_path)
+    else:
+        result = run_smoke_test(image_path)
     print(json.dumps(result, indent=2))
 
     if not result.get("success"):

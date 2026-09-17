@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -7,14 +7,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../app_theme.dart';
 import '../models/scan_history.dart';
 import '../utils/app_prefs.dart';
-import '../utils/metric_trend.dart';
+import '../utils/skincare_streak.dart';
 import 'progress_report_screen.dart';
 import '../models/product_tracker.dart';
 import '../models/procedure_log.dart';
+import '../models/peptide_model.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
 import 'active_skincare_details_screen.dart';
 import '../models/procedure.dart' as models;
 import '../main.dart';
+import '../utils/peptide_service.dart';
 import 'log_skincare_product_screen.dart';
 import 'at_home_procedure_log_screen.dart';
 import '../models/journal_entry.dart';
@@ -24,9 +26,13 @@ import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screen
 import '../utils/premium_access.dart';
 import '../utils/ai_intelligence_engine.dart';
 import '../utils/ai_product_recommendation_engine.dart';
-import '../utils/procedure_metric_set.dart' as procedure_metrics;
-import '../widgets/product_recommendation_card.dart';
 import '../widgets/scan_based_recommendations_card.dart';
+import '../widgets/bridge_card.dart';
+
+const Color _clinicalSage = AppColors.brandAccent;
+const Color _mintHighlight = AppColors.champagneGold;
+const Color _darkSlateInk = AppColors.textStructure;
+const Color _lightSageTint = AppColors.warmAlabaster;
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -57,12 +63,12 @@ class _ProcedureScanOptionTile extends StatelessWidget {
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: selected
-              ? MyApp.goldShimmer.withValues(alpha: 0.16)
-              : Colors.white.withValues(alpha: 0.72),
+              ? _clinicalSage.withValues(alpha: 0.16)
+              : AppColors.cardBackground.withValues(alpha: 0.72),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: selected
-                ? MyApp.goldShimmer.withValues(alpha: 0.62)
+                ? _mintHighlight.withValues(alpha: 0.78)
                 : AppColors.borders.withValues(alpha: 0.9),
           ),
         ),
@@ -72,7 +78,7 @@ class _ProcedureScanOptionTile extends StatelessWidget {
               selected
                   ? Icons.radio_button_checked_rounded
                   : Icons.radio_button_unchecked_rounded,
-              color: selected ? MyApp.goldShimmer : MyApp.clinicalMuted,
+              color: selected ? _clinicalSage : MyApp.clinicalMuted,
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -114,10 +120,14 @@ class _HomePageState extends State<HomePage>
   String _trackedProcedure = '';
   List<Map<String, dynamic>> _activeProcedures = const [];
   List<models.Procedure> _activeProcedureModels = [];
+  List<PeptideEntry> _activePeptides = const [];
   List<ScanHistoryEntry> _allScans = [];
   int _scanCount = 0;
+  bool _showSecondScanPrompt = false;
+  int _baselineTrackScanCount = 0;
   bool _isPremiumUser = false;
   Map<String, List<JournalEntry>> _skincareJournals = {};
+  List<JournalEntry> _generalJournalEntries = [];
 
   static const List<String> _quickTips = [
     'Apply SPF every 2 hours when outdoors.',
@@ -139,6 +149,16 @@ class _HomePageState extends State<HomePage>
   Map<String, dynamic>? _parsedData;
   List<bool> _productSelected = [];
 
+  int get _currentSkincareStreak {
+    final loggedDates = <DateTime>[
+      ..._generalJournalEntries.map((entry) => entry.date),
+      ..._skincareJournals.values.expand(
+        (entries) => entries.map((entry) => entry.date),
+      ),
+    ];
+    return SkincareStreakCalculator.computeCurrentStreak(loggedDates);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -148,6 +168,7 @@ class _HomePageState extends State<HomePage>
     _loadProfile();
     _loadPremiumState();
     _loadSavedRoutine();
+    _loadGeneralJournalEntries();
     _buildRoutinesFromProducts();
   }
 
@@ -201,6 +222,8 @@ class _HomePageState extends State<HomePage>
     _buildRoutinesFromProducts();
     await _loadTrackedProducts();
     await _loadSkincareJournals();
+    await _loadGeneralJournalEntries();
+    await _loadActivePeptides();
     if (mounted) setState(() {});
   }
 
@@ -233,6 +256,208 @@ class _HomePageState extends State<HomePage>
       debugPrint('Failed to load skincare journals: $e');
       _skincareJournals = {};
     }
+  }
+
+  Future<void> _loadGeneralJournalEntries() async {
+    final entries = await AppPrefs.getGeneralJournalEntries();
+    if (!mounted) return;
+    setState(() => _generalJournalEntries = entries);
+  }
+
+  Future<void> _openSkinJourneyJournalSheet() async {
+    final noteController = TextEditingController();
+    var selectedTag = 'General Note';
+    final tags = <String>['General Note', 'Redness', 'Swelling', 'Reaction'];
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            Future<void> saveEntry() async {
+              final note = noteController.text.trim();
+              if (note.isEmpty) return;
+
+              final entry = JournalEntry(
+                date: DateTime.now(),
+                title: selectedTag,
+                content: note,
+                moodRating: 3,
+              );
+
+              final updated = [..._generalJournalEntries, entry]
+                ..sort((a, b) => b.date.compareTo(a.date));
+
+              await AppPrefs.saveGeneralJournalEntries(updated);
+              if (!mounted || !context.mounted) return;
+              setState(() => _generalJournalEntries = updated);
+              if (sheetContext.mounted) {
+                Navigator.of(sheetContext).pop();
+              }
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Journal entry saved.')),
+              );
+            }
+
+            return SafeArea(
+              top: false,
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 16,
+                  right: 16,
+                  bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+                ),
+                child: Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF9FAFB),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color: _clinicalSage.withValues(alpha: 0.30),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.refinedSlate.withValues(alpha: 0.10),
+                        blurRadius: 24,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        'Clinical Observation Log',
+                        style: TextStyle(
+                          fontSize: 19,
+                          fontWeight: FontWeight.w900,
+                          color: _darkSlateInk,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        'AI-Indexed Recovery Chart',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.28,
+                          color: _darkSlateInk.withValues(alpha: 0.64),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        'Log daily symptoms and observations for AI recovery tracking',
+                        style: TextStyle(
+                          color: _darkSlateInk.withValues(alpha: 0.68),
+                          fontSize: 12.5,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final tag in tags)
+                            ChoiceChip(
+                              label: Text(tag),
+                              selected: selectedTag == tag,
+                              onSelected: (_) {
+                                setSheetState(() => selectedTag = tag);
+                              },
+                              selectedColor: const Color(0xFF7A8B7B),
+                              backgroundColor: const Color(0xFFE5E7EB),
+                              labelStyle: TextStyle(
+                                color: selectedTag == tag
+                                    ? Colors.white
+                                    : _darkSlateInk.withValues(alpha: 0.82),
+                                fontWeight: FontWeight.w800,
+                                fontSize: 11.5,
+                              ),
+                              side: BorderSide(
+                                color: selectedTag == tag
+                                    ? const Color(0xFF7A8B7B)
+                                    : const Color(0xFFD1D5DB),
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: noteController,
+                        minLines: 5,
+                        maxLines: 8,
+                        textInputAction: TextInputAction.newline,
+                        decoration: InputDecoration(
+                          hintText:
+                              'Note any skin changes, reactions, or milestones today...',
+                          hintStyle: TextStyle(
+                            color: _darkSlateInk.withValues(alpha: 0.40),
+                          ),
+                          filled: true,
+                          fillColor: AppColors.cardBackground,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(
+                              color: _clinicalSage.withValues(alpha: 0.18),
+                            ),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(
+                              color: _clinicalSage.withValues(alpha: 0.18),
+                            ),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: const BorderSide(
+                              color: Color(0xFF7A8B7B),
+                              width: 1.2,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: saveEntry,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF7A8B7B),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shadowColor: const Color(0xFF7A8B7B).withValues(
+                              alpha: 0.28,
+                            ),
+                            elevation: 2,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: const Text(
+                            'Save Entry',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+    noteController.dispose();
   }
 
   Future<void> _loadPremiumState() async {
@@ -269,10 +494,12 @@ class _HomePageState extends State<HomePage>
     final procedure = await AppPrefs.getProcedureType();
     final procedureEntries = await AppPrefs.getProcedureEntries();
     final scanEntries = await AppPrefs.getScanEntries();
+    final peptides = await PeptideService.loadAll();
     final procedureModels = procedureEntries
         .map<models.Procedure>((entry) => models.Procedure.fromJson(entry))
         .toList();
     final totalScans = scanEntries.length;
+    final secondScanPromptState = await _resolveSecondScanPromptState(scanEntries);
     if (!mounted) return;
     setState(() {
       _userName = name;
@@ -280,10 +507,137 @@ class _HomePageState extends State<HomePage>
       _trackedProcedure = procedure;
       _activeProcedures = procedureEntries;
       _activeProcedureModels = procedureModels;
+      _activePeptides = peptides.where((p) => p.isActive).toList();
       _allScans = scanEntries;
       _scanCount = totalScans;
+      _showSecondScanPrompt = secondScanPromptState.showPrompt;
+      _baselineTrackScanCount = secondScanPromptState.trackCount;
     });
     await _loadSkincareJournals();
+  }
+
+  Future<void> _loadActivePeptides() async {
+    final peptides = await PeptideService.loadAll();
+    if (!mounted) return;
+    setState(() {
+      _activePeptides = peptides.where((p) => p.isActive).toList();
+    });
+  }
+
+  Future<({bool showPrompt, int trackCount})> _resolveSecondScanPromptState(
+    List<ScanHistoryEntry> scanEntries,
+  ) async {
+    final aiScans = scanEntries
+        .where((scan) => scan.resolvedScanType == ScanHistoryEntry.scanTypeAiAnalysis)
+        .toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+    if (aiScans.isEmpty) {
+      return (showPrompt: false, trackCount: 0);
+    }
+
+    final latestAi = aiScans.first;
+    final procedureId = (latestAi.procedureId ?? '').trim();
+    if (procedureId.isNotEmpty) {
+      final comparison = await AppPrefs.getProcedurePhotoComparison(procedureId);
+      final baselineId = (comparison['baselineScanId'] ?? '').trim();
+      final trackScans = aiScans
+          .where((scan) => (scan.procedureId ?? '').trim() == procedureId)
+          .length;
+      final hasBaseline = baselineId.isNotEmpty;
+      return (showPrompt: hasBaseline && trackScans < 2, trackCount: trackScans);
+    }
+
+    final baselineCandidateCount = aiScans.where((scan) => scan.isBaseline).length;
+    final hasBaseline = baselineCandidateCount > 0;
+    final trackScans = aiScans.length;
+    return (showPrompt: hasBaseline && trackScans < 2, trackCount: trackScans);
+  }
+
+  Widget _buildSecondScanPromptCard(Color textColor) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: _homePremiumCardDecoration(borderColor: _clinicalSage, borderAlpha: 0.30),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: _clinicalSage.withValues(alpha: 0.14),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.timeline_rounded,
+                  size: 16,
+                  color: _clinicalSage,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'Baseline saved',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  color: textColor,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Add a second scan in similar lighting to unlock progress metrics.',
+            style: TextStyle(
+              fontSize: 12.3,
+              height: 1.4,
+              color: MyApp.clinicalSlate,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: () {
+                Navigator.of(context)
+                    .push(
+                      MaterialPageRoute(
+                        builder: (_) => const SkinAiAnalysisScreen(),
+                      ),
+                    )
+                    .then((_) => _refreshData());
+              },
+              icon: const Icon(Icons.add_a_photo_outlined, size: 16),
+              label: const Text('Add second scan'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _darkSlateInk,
+                side: BorderSide(
+                  color: _clinicalSage.withValues(alpha: 0.45),
+                ),
+                textStyle: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ),
+          if (_baselineTrackScanCount > 0) ...[
+            const SizedBox(height: 2),
+            Text(
+              'Current progress scans: $_baselineTrackScanCount/2',
+              style: TextStyle(
+                fontSize: 10.6,
+                color: MyApp.clinicalMuted,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   String _formatLatestScanDate(DateTime? dateTime) {
@@ -422,68 +776,6 @@ class _HomePageState extends State<HomePage>
         lower.contains('body contour');
   }
 
-  double? _readBodyMetricNullable(
-    Map<String, double> metrics,
-    List<String> keys,
-  ) {
-    for (final key in keys) {
-      final value = metrics[key];
-      if (value != null) return value;
-    }
-    return null;
-  }
-
-  double _resolveBodyMetricValue({
-    required ScanHistoryEntry scan,
-    required SkinMetrics skinMetrics,
-    required String? procedureType,
-    required List<String> rawKeys,
-    required List<String> nameHints,
-  }) {
-    final rawValue = _readBodyMetricNullable(scan.metrics, rawKeys);
-    if (rawValue != null) return rawValue;
-
-    final metricSet = procedure_metrics.getMetricsForProcedure(procedureType);
-    final normalizedHints = nameHints.map((h) => h.toLowerCase()).toList();
-    for (final metric in metricSet.additional) {
-      final label = metric.label.toLowerCase();
-      final shortName = metric.shortName.toLowerCase();
-      final matches = normalizedHints.any(
-        (hint) => label.contains(hint) || shortName.contains(hint),
-      );
-      if (matches) {
-        final derived = metric.valueFor(skinMetrics, rawMetrics: scan.metrics);
-        // Body metrics for a single procedure are all derived from the same
-        // facial scan, so without this they move in lockstep (every arrow
-        // green or every arrow red). A small deterministic per-scan,
-        // per-metric offset lets each metric trend independently while
-        // staying stable across rebuilds for a given scan.
-        final varied =
-            derived +
-            _deterministicMetricOffset(
-              scan,
-              nameHints.isEmpty ? label : nameHints.first,
-            );
-        return varied.clamp(0.0, 10.0);
-      }
-    }
-
-    return 0.0;
-  }
-
-  // Stable pseudo-variation in [-1.4, 1.4] keyed on the scan identity and the
-  // metric name. Same (scan, metric) always yields the same offset, so values
-  // don't flicker between rebuilds, but different metrics diverge from each
-  // other and different scans diverge over time.
-  double _deterministicMetricOffset(ScanHistoryEntry scan, String hint) {
-    final seed = '${scan.id}|${scan.timestamp.millisecondsSinceEpoch}|$hint';
-    var hash = 0;
-    for (final unit in seed.codeUnits) {
-      hash = (hash * 31 + unit) & 0x7fffffff;
-    }
-    return ((hash % 2801) / 1000.0) - 1.4;
-  }
-
   int _getProcedureScanCountFromLoaded() {
     return _allScans
         .where((s) => s.resolvedScanType == ScanHistoryEntry.scanTypeProcedure)
@@ -532,28 +824,10 @@ class _HomePageState extends State<HomePage>
     await _refreshData();
   }
 
-  Future<void> _openAiSkincareCoach() async {
-    final isPremium = await PremiumAccess.isPremiumUser();
-    if (!mounted) return;
-    if (isPremium) {
-      await Navigator.of(context).pushNamed('/ai-coach');
-      await _refreshData();
-      return;
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Unlock your personal AI Skincare Coach'),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: AppColors.refinedSlate,
-        action: SnackBarAction(
-          label: 'View Premium',
-          textColor: AppColors.champagneGold,
-          onPressed: () => Navigator.of(context).pushNamed('/paywall'),
-        ),
-      ),
+  Future<void> _openSkinScan() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const SkinAiAnalysisScreen()),
     );
-    await Navigator.of(context).pushNamed('/paywall');
     await _refreshData();
   }
 
@@ -564,7 +838,7 @@ class _HomePageState extends State<HomePage>
     if (products.isEmpty) {
       showModalBottomSheet(
         context: context,
-        backgroundColor: MyApp.goldShimmer.withValues(alpha: 0.13),
+        backgroundColor: _clinicalSage.withValues(alpha: 0.13),
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
         ),
@@ -580,7 +854,7 @@ class _HomePageState extends State<HomePage>
                     'No active skincare products yet.',
                     style: TextStyle(
                       fontSize: 19,
-                      color: Colors.black,
+                      color: Color(0xFF1E2225),
                       fontWeight: FontWeight.bold,
                       letterSpacing: 0.2,
                     ),
@@ -591,7 +865,7 @@ class _HomePageState extends State<HomePage>
                     'Track one first to attach scans.',
                     style: TextStyle(
                       fontSize: 15,
-                      color: Colors.black,
+                      color: Color(0xFF1E2225),
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -607,8 +881,8 @@ class _HomePageState extends State<HomePage>
                       );
                     },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: MyApp.goldShimmer,
-                      foregroundColor: Colors.black,
+                      backgroundColor: _clinicalSage,
+                      foregroundColor: const Color(0xFF1E2225),
                       padding: const EdgeInsets.symmetric(
                         vertical: 18,
                         horizontal: 32,
@@ -637,7 +911,7 @@ class _HomePageState extends State<HomePage>
     String? selectedProductName;
     showModalBottomSheet(
       context: context,
-      backgroundColor: MyApp.goldShimmer.withValues(alpha: 0.13),
+      backgroundColor: _clinicalSage.withValues(alpha: 0.13),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
@@ -770,7 +1044,7 @@ class _HomePageState extends State<HomePage>
                           ? 'Start a procedure log first, then this scan will attach to it automatically.'
                           : 'Choose an existing procedure or start a fresh procedure log for this scan.',
                       style: const TextStyle(
-                        color: Colors.black,
+                        color: Color(0xFF1E2225),
                         height: 1.35,
                         fontWeight: FontWeight.w500,
                       ),
@@ -802,7 +1076,7 @@ class _HomePageState extends State<HomePage>
                       const Text(
                         'No existing procedures yet.',
                         style: TextStyle(
-                          color: Colors.black,
+                          color: Color(0xFF1E2225),
                         ),
                       ),
                     ],
@@ -819,7 +1093,7 @@ class _HomePageState extends State<HomePage>
                       style: OutlinedButton.styleFrom(
                         foregroundColor: MyApp.roseGold,
                         side: BorderSide(
-                          color: MyApp.goldShimmer.withValues(alpha: 0.58),
+                          color: _clinicalSage.withValues(alpha: 0.58),
                           width: 1.3,
                         ),
                         padding: const EdgeInsets.symmetric(vertical: 15),
@@ -891,7 +1165,7 @@ class _HomePageState extends State<HomePage>
       ),
     );
     // At-Home photos are stored as a ProcedureLog, which is shown in Procedure
-    // History ΓÇö NOT in the per-procedure detail/record screen (that reads
+    // History G�� NOT in the per-procedure detail/record screen (that reads
     // scan-history entries and would show an empty "add a progress scan" prompt).
     // Send the user to History so they immediately see the procedure they just
     // logged with its photos.
@@ -965,13 +1239,15 @@ class _HomePageState extends State<HomePage>
         Navigator.of(context).pushReplacementNamed('/home');
         break;
       case 1:
-        Navigator.of(context).pushReplacementNamed('/camera');
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const SkinAiAnalysisScreen()),
+        );
         break;
       case 2:
         Navigator.of(context).pushReplacementNamed('/procedure-history');
         break;
       case 3:
-        Navigator.of(context).pushReplacementNamed('/procedures');
+        Navigator.of(context).pushReplacementNamed('/routines');
         break;
       case 4:
         Navigator.of(context).pushReplacementNamed('/profile');
@@ -1009,353 +1285,7 @@ class _HomePageState extends State<HomePage>
     return '${monthNames[local.month - 1]} ${local.day.toString().padLeft(2, '0')}';
   }
 
-  Color _homeTrendColor(
-    MetricTrend trend, {
-    required double baseline,
-    required double current,
-    MetricDirectionality? directionalityOverride,
-  }) {
-    final isImproved = directionalityOverride == null
-        ? trend.isImproved
-        : directionalityOverride == MetricDirectionality.lowerIsBetter
-        ? current < baseline
-        : current > baseline;
-    return isImproved ? AppColors.mutedSage : AppColors.softTerracotta;
-  }
 
-  Widget _buildMetricRow(
-    String label,
-    double value, {
-    double? baseline,
-    bool bodyStyle = false,
-    MetricDirectionality? directionalityOverride,
-  }) {
-    final trend = baseline == null
-        ? null
-        : resolveMetricTrend(
-            label,
-            baseline: baseline,
-            current: value,
-            directionalityOverride: directionalityOverride,
-          );
-    final normalizedValue =
-        label.toLowerCase().contains('fat retention') && value > 10
-        ? (value / 100).clamp(0.0, 1.0)
-        : (value / 10).clamp(0.0, 1.0);
-    final trendColor = trend == null || baseline == null
-        ? null
-        : _homeTrendColor(
-            trend,
-            baseline: baseline,
-            current: value,
-            directionalityOverride: directionalityOverride,
-          );
-
-    if (bodyStyle) {
-      return Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        decoration: BoxDecoration(
-          color: AppColors.cardBackground,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: AppColors.mutedSage.withValues(alpha: 0.30),
-            width: 0.8,
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    label,
-                    style: TextStyle(
-                      color: MyApp.clinicalNavy,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13.2,
-                    ),
-                  ),
-                ),
-                Text(
-                  value.toStringAsFixed(1),
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    color: MyApp.clinicalNavy,
-                    fontSize: 13.2,
-                  ),
-                ),
-                if (trend != null && trend.hasMeaningfulChange) ...[
-                  const SizedBox(width: 8),
-                  Icon(trend.icon, color: trendColor, size: 15),
-                  const SizedBox(width: 3),
-                  Text(
-                    trend.absoluteChangeText,
-                    style: TextStyle(
-                      color: trendColor,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 11.5,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(
-                value: normalizedValue,
-                minHeight: 7,
-                backgroundColor: AppColors.borders,
-                valueColor: const AlwaysStoppedAnimation<Color>(
-                  AppColors.mutedSage,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(color: Colors.black),
-          ),
-          Row(
-            children: [
-              Text(
-                value.toStringAsFixed(1),
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.refinedSlate,
-                ),
-              ),
-              if (trend != null && trend.hasMeaningfulChange) ...[
-                const SizedBox(width: 8),
-                Icon(trend.icon, color: trendColor, size: 16),
-                const SizedBox(width: 4),
-                Text(
-                  trend.absoluteChangeText,
-                  style: TextStyle(
-                    color: trendColor,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-              const SizedBox(width: 12),
-              Container(
-                width: 80,
-                height: 6,
-                decoration: BoxDecoration(
-                  color: AppColors.borders,
-                  borderRadius: BorderRadius.circular(3),
-                ),
-                child: FractionallySizedBox(
-                  alignment: Alignment.centerLeft,
-                  widthFactor: normalizedValue,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: AppColors.mutedSage,
-                      borderRadius: BorderRadius.circular(3),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFacialMetricGridCard(
-    String label,
-    double? value, {
-    double? baseline,
-    MetricDirectionality? directionalityOverride,
-  }) {
-    final hasCurrentValue = value != null;
-    final currentValue = value ?? 0.0;
-    final hasComparison = hasCurrentValue && baseline != null;
-    final trend = baseline == null
-        ? null
-        : resolveMetricTrend(
-            label,
-            baseline: baseline,
-            current: currentValue,
-            directionalityOverride: directionalityOverride,
-          );
-    final trendColor = trend == null || !hasComparison
-        ? null
-        : _homeTrendColor(
-            trend,
-            baseline: baseline,
-            current: currentValue,
-            directionalityOverride: directionalityOverride,
-          );
-    final hasTrend = hasComparison && trend != null && trend.hasMeaningfulChange;
-    final signedDelta = hasTrend
-      ? '${trend.change > 0 ? '+' : ''}${trend.change.toStringAsFixed(1)}'
-        : null;
-    final effectiveDirectionality =
-        directionalityOverride ??
-        (label.toLowerCase() == 'elasticity'
-            ? MetricDirectionality.higherIsBetter
-            : MetricDirectionality.lowerIsBetter);
-    final isImproved = !hasComparison
-        ? false
-        : effectiveDirectionality == MetricDirectionality.lowerIsBetter
-      ? currentValue < baseline
-      : currentValue > baseline;
-
-    String improvedStatus(String normalizedLabel) {
-      switch (normalizedLabel) {
-        case 'redness':
-          return 'Calming Down';
-        case 'texture':
-          return 'Smoother Texture';
-        case 'wrinkles':
-          return 'Lines Softening';
-        case 'pores':
-          return 'Pores Refining';
-        case 'dark spots':
-          return 'Tone Evening Out';
-        case 'elasticity':
-          return 'Firmness Improving';
-        default:
-          return 'Improving';
-      }
-    }
-
-    String worsenedStatus(String normalizedLabel) {
-      switch (normalizedLabel) {
-        case 'redness':
-          return 'Needs Attention';
-        case 'texture':
-          return 'Slightly Increased';
-        case 'wrinkles':
-          return 'Slightly Increased';
-        case 'pores':
-          return 'Needs Attention';
-        case 'dark spots':
-          return 'Pigment Increased';
-        case 'elasticity':
-          return 'Support Needed';
-        default:
-          return 'Needs Attention';
-      }
-    }
-
-    final normalizedLabel = label.trim().toLowerCase();
-    final statusText = !hasCurrentValue
-      ? 'No analysis yet'
-      : !hasComparison
-      ? 'Current value'
-      : !hasTrend
-        ? 'Stable / Maintained'
-        : isImproved
-        ? improvedStatus(normalizedLabel)
-        : worsenedStatus(normalizedLabel);
-    final statusColor = (!hasCurrentValue || !hasComparison || !hasTrend)
-        ? MyApp.clinicalSlate.withValues(alpha: 0.62)
-        : isImproved
-        ? AppColors.mutedSage.withValues(alpha: 0.9)
-        : AppColors.softTerracotta.withValues(alpha: 0.9);
-
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 102, maxHeight: 112),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFE5E0D8)),
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.refinedSlate.withValues(alpha: 0.03),
-              blurRadius: 10,
-              offset: const Offset(0, 3),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: MyApp.clinicalSlate.withValues(alpha: 0.9),
-                letterSpacing: 0.1,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  hasCurrentValue ? currentValue.toStringAsFixed(1) : 'ΓÇö',
-                  style: TextStyle(
-                    fontSize: 25,
-                    fontWeight: FontWeight.w800,
-                    color: MyApp.clinicalNavy,
-                    height: 1,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: (trendColor ?? AppColors.borders).withValues(
-                      alpha: hasTrend ? 0.14 : 0.2,
-                    ),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                      color: (trendColor ?? AppColors.borders).withValues(
-                        alpha: hasTrend ? 0.28 : 0.45,
-                      ),
-                      width: 0.8,
-                    ),
-                  ),
-                  child: Text(
-                    signedDelta ?? 'ΓÇö',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      color: hasTrend
-                          ? (trendColor ?? MyApp.clinicalSlate)
-                          : MyApp.clinicalSlate.withValues(alpha: 0.7),
-                      height: 1.1,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 7),
-            Text(
-              statusText,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-                color: statusColor,
-                height: 1.15,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   bool _isLowConfidence(dynamic confidenceValue) {
     if (confidenceValue == null) return false;
@@ -1446,9 +1376,54 @@ class _HomePageState extends State<HomePage>
     final canonical = ScanDetailScreen.backendMetricSource(scan.metrics);
     double? value = canonical[canonicalKey];
     if (value == null || !value.isFinite) {
-      value = readFromMap(scan.metrics, [canonicalKey]);
+      final aliasKeys = switch (canonicalKey) {
+        'localized_redness' => const <String>[
+            'localized_redness',
+            'redness',
+            'erythema',
+          ],
+        'texture_smoothness' => const <String>[
+            'texture_smoothness',
+            'textureSmoothness',
+            'smoothness',
+            'texture',
+            'roughness',
+          ],
+        'wrinkle_load' => const <String>[
+            'wrinkle_load',
+            'wrinkle',
+            'wrinkles',
+            'rhytids',
+            'fineLines',
+          ],
+        'pore_visibility' => const <String>[
+            'pore_visibility',
+            'poreVisibility',
+            'pore',
+            'pores',
+          ],
+        'pigment_load' => const <String>[
+            'pigment_load',
+            'pigment',
+            'pigmentation',
+            'darkSpots',
+            'dark_spots',
+            'dark spots',
+          ],
+        'structural_firmness_elasticity' => const <String>[
+            'structural_firmness_elasticity',
+            'elasticity',
+            'firmness',
+            'skinFirmness',
+          ],
+        _ => <String>[canonicalKey],
+      };
+      value = readFromMap(scan.metrics, aliasKeys);
       if (value == null || !value.isFinite) {
-        value = readFromMap(scan.rawPayload ?? const <String, dynamic>{}, [canonicalKey]);
+        value = readFromMap(
+          scan.rawPayload ?? const <String, dynamic>{},
+          aliasKeys,
+        );
       }
     }
     if (value == null || !value.isFinite) return null;
@@ -1494,7 +1469,14 @@ class _HomePageState extends State<HomePage>
       'pigment_load': _readCanonicalHomepageMetric(
         scan,
         'pigment_load',
-        const <String>['pigment_load'],
+        const <String>[
+          'pigment_load',
+          'pigment',
+          'pigmentation',
+          'darkSpots',
+          'dark_spots',
+          'dark spots',
+        ],
       ),
       'structural_firmness_elasticity': _readCanonicalHomepageMetric(
         scan,
@@ -1533,6 +1515,10 @@ class _HomePageState extends State<HomePage>
         final value = parse(source[key]) ?? parse(metrics[key]);
         if (value != null && value.isFinite && value > 0.0) return value;
       }
+      return null;
+    }
+
+    if (!latestScan.hasTrustworthyEstimatedSkinAge) {
       return null;
     }
 
@@ -1641,78 +1627,135 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  Widget _buildFacialMetricsGridFromCanonical({
-    required Map<String, double?> currentValues,
-    Map<String, double?>? previousValues,
+  Widget _buildLatestScanSummaryCard(
+    BuildContext context, {
+    required ScanHistoryEntry scan,
+    required double? latestEstimatedAge,
+    required int metricCount,
   }) {
-    return Column(
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: _buildFacialMetricGridCard(
-                'Redness',
-                currentValues['localized_redness'],
-                baseline: previousValues?['localized_redness'],
-                directionalityOverride: MetricDirectionality.lowerIsBetter,
+    final textColor = Theme.of(context).colorScheme.onSurface;
+    final typeLabel = _getScanType(scan);
+    final dateLabel = _formatLatestScanDate(scan.timestamp);
+
+    return Container(
+      decoration: _homePremiumCardDecoration(),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Latest Scan',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        color: MyApp.clinicalNavy,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      typeLabel,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textStructure.withValues(alpha: 0.82),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _buildFacialMetricGridCard(
-                'Texture',
-                currentValues['texture_smoothness'],
-                baseline: previousValues?['texture_smoothness'],
-                directionalityOverride: MetricDirectionality.lowerIsBetter,
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _clinicalSage.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  dateLabel,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textStructure.withValues(alpha: 0.82),
+                  ),
+                ),
               ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            latestEstimatedAge == null
+                ? (scan.hasTrustworthyEstimatedSkinAge ? 'Ready for review' : 'Estimate unavailable')
+                : '${latestEstimatedAge.round()} years',
+            style: const TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textStructure,
             ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: _buildFacialMetricGridCard(
-                'Wrinkles',
-                currentValues['wrinkle_load'],
-                baseline: previousValues?['wrinkle_load'],
-                directionalityOverride: MetricDirectionality.lowerIsBetter,
-              ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Open full analysis to review the same Stable and Needs Attention logic used in the report.',
+            style: TextStyle(
+              fontSize: 11.6,
+              fontWeight: FontWeight.w600,
+              height: 1.35,
+              color: AppColors.textStructure.withValues(alpha: 0.78),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _buildFacialMetricGridCard(
-                'Pores',
-                currentValues['pore_visibility'],
-                baseline: previousValues?['pore_visibility'],
-                directionalityOverride: MetricDirectionality.lowerIsBetter,
-              ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppColors.warmAlabaster,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.borders),
             ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: _buildFacialMetricGridCard(
-                'Dark Spots',
-                currentValues['pigment_load'],
-                baseline: previousValues?['pigment_load'],
-                directionalityOverride: MetricDirectionality.lowerIsBetter,
-              ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.auto_awesome_rounded,
+                  size: 16,
+                  color: _clinicalSage,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    metricCount > 0
+                        ? '$metricCount report metrics ready'
+                        : 'Open full analysis for the report view',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: textColor.withValues(alpha: 0.78),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Open full analysis',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textStructure.withValues(alpha: 0.82),
+                  ),
+                ),
+                const Icon(
+                  Icons.arrow_forward_rounded,
+                  size: 15,
+                  color: _clinicalSage,
+                ),
+              ],
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _buildFacialMetricGridCard(
-                'Elasticity',
-                currentValues['structural_firmness_elasticity'],
-                baseline: previousValues?['structural_firmness_elasticity'],
-                directionalityOverride: MetricDirectionality.higherIsBetter,
-              ),
-            ),
-          ],
-        ),
-      ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -1725,17 +1768,17 @@ class _HomePageState extends State<HomePage>
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: MyApp.goldShimmer.withValues(alpha: 0.11),
+              color: _clinicalSage.withValues(alpha: 0.11),
               shape: BoxShape.circle,
               border: Border.all(
-                color: MyApp.goldShimmer.withValues(alpha: 0.20),
+                color: _clinicalSage.withValues(alpha: 0.20),
                 width: 0.9,
               ),
             ),
-            child: Icon(
+            child: const Icon(
               Icons.photo_library_outlined,
               size: 34,
-              color: MyApp.goldShimmer,
+              color: _clinicalSage,
             ),
           ),
           const SizedBox(height: 14),
@@ -1753,7 +1796,7 @@ class _HomePageState extends State<HomePage>
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 14,
-              color: Colors.black,
+              color: Color(0xFF1E2225),
               height: 1.6,
               fontWeight: FontWeight.w500,
             ),
@@ -1779,11 +1822,11 @@ class _HomePageState extends State<HomePage>
         width: double.infinity,
         padding: const EdgeInsets.fromLTRB(18, 16, 16, 16),
         decoration: BoxDecoration(
-          color: AppColors.cardBackground,
+          color: const Color(0xFFF4F6F4),
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: AppColors.champagneGold.withValues(alpha: 0.26),
-            width: 0.9,
+            color: _clinicalSage.withValues(alpha: 0.20),
+            width: 1,
           ),
           boxShadow: [
             BoxShadow(
@@ -1799,15 +1842,15 @@ class _HomePageState extends State<HomePage>
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: AppColors.champagneGold.withValues(alpha: 0.12),
+                color: const Color(0xFFE8EFE9),
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: AppColors.champagneGold.withValues(alpha: 0.30),
+                  color: _clinicalSage.withValues(alpha: 0.20),
                 ),
               ),
               child: const Icon(
                 Icons.workspace_premium,
-                color: AppColors.champagneGold,
+                color: _darkSlateInk,
                 size: 23,
               ),
             ),
@@ -1821,16 +1864,16 @@ class _HomePageState extends State<HomePage>
                     style: TextStyle(
                       fontSize: 15.5,
                       fontWeight: FontWeight.w800,
-                      color: AppColors.refinedSlate,
+                      color: _darkSlateInk,
                       letterSpacing: 0,
                     ),
                   ),
                   SizedBox(height: 4),
                   Text(
-                    'AI coach ┬╖ Recovery timeline ┬╖ Deep insights',
+                    'AI coach -+ Recovery timeline -+ Deep insights',
                     style: TextStyle(
                       fontSize: 12,
-                      color: Colors.black,
+                      color: _darkSlateInk,
                       fontWeight: FontWeight.w600,
                       height: 1.25,
                     ),
@@ -1842,13 +1885,15 @@ class _HomePageState extends State<HomePage>
               width: 30,
               height: 30,
               decoration: BoxDecoration(
-                color: AppColors.warmAlabaster,
+                color: const Color(0xFFE8EFE9),
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppColors.borders),
+                border: Border.all(
+                  color: _clinicalSage.withValues(alpha: 0.20),
+                ),
               ),
               child: const Icon(
                 Icons.arrow_forward_ios_rounded,
-                color: AppColors.champagneGold,
+                color: _darkSlateInk,
                 size: 14,
               ),
             ),
@@ -1876,7 +1921,7 @@ class _HomePageState extends State<HomePage>
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: MyApp.goldShimmer),
+          Icon(icon, size: 14, color: _clinicalSage),
           const SizedBox(width: 6),
           Text(
             label,
@@ -1899,10 +1944,10 @@ class _HomePageState extends State<HomePage>
           width: 30,
           height: 30,
           decoration: BoxDecoration(
-            color: MyApp.goldShimmer.withValues(alpha: 0.12),
+            color: _clinicalSage.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Icon(icon, color: MyApp.goldShimmer, size: 16),
+          child: Icon(icon, color: _clinicalSage, size: 16),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -1927,7 +1972,7 @@ class _HomePageState extends State<HomePage>
             await onActionTap();
           },
           style: TextButton.styleFrom(
-            foregroundColor: AppColors.champagneGold,
+            foregroundColor: _clinicalSage,
             textStyle: const TextStyle(
               fontSize: 12.5,
               fontWeight: FontWeight.w800,
@@ -2058,6 +2103,14 @@ class _HomePageState extends State<HomePage>
                     ),
                   ),
                 const SizedBox(height: 12),
+                BridgeCard(
+                  scans: sortedScans,
+                  activeProcedure: _activeProcedureModels.isNotEmpty
+                      ? _activeProcedureModels.first
+                      : null,
+                  activePeptides: _activePeptides,
+                ),
+                const SizedBox(height: 18),
 
                 _buildSectionHeader(
                   Icons.flash_on_rounded,
@@ -2078,6 +2131,10 @@ class _HomePageState extends State<HomePage>
                 ),
                 const SizedBox(height: 12),
                 _buildCompactStatsRow(textColor),
+                if (_showSecondScanPrompt) ...[
+                  const SizedBox(height: 12),
+                  _buildSecondScanPromptCard(textColor),
+                ],
 
                 const SizedBox(height: 24),
                 _buildSectionHeader(
@@ -2107,17 +2164,11 @@ class _HomePageState extends State<HomePage>
                       final procedureType = _getProcedureTypeForScan(
                         currentLatestScan,
                       );
-                      final isBodyProcedure = _isBodyProcedureType(
-                        procedureType,
-                      );
                       final previousEntry = _findPreviousComparableScan(
                         sortedScans,
                         currentLatestScan,
                       );
                       final previousMetrics = previousEntry?.toSkinMetrics();
-                      final previousFacialValues = previousEntry == null
-                          ? null
-                          : _facialMetricSnapshot(previousEntry);
                       final latestEstimatedAge =
                           _latestEstimatedSkinAgeFromCanonical(
                             currentLatestScan,
@@ -2128,34 +2179,8 @@ class _HomePageState extends State<HomePage>
                         latestFacialValues,
                         latestEstimatedAge,
                       );
-                      double resolveCurrentBodyMetric(
-                        List<String> rawKeys,
-                        List<String> nameHints,
-                      ) {
-                        return _resolveBodyMetricValue(
-                          scan: currentLatestScan,
-                          skinMetrics: latestMetrics,
-                          procedureType: procedureType,
-                          rawKeys: rawKeys,
-                          nameHints: nameHints,
-                        );
-                      }
-
-                      double? resolvePreviousBodyMetric(
-                        List<String> rawKeys,
-                        List<String> nameHints,
-                      ) {
-                        if (previousEntry == null || previousMetrics == null) {
-                          return null;
-                        }
-                        return _resolveBodyMetricValue(
-                          scan: previousEntry,
-                          skinMetrics: previousMetrics,
-                          procedureType: procedureType,
-                          rawKeys: rawKeys,
-                          nameHints: nameHints,
-                        );
-                      }
+                      final metricPreview =
+                          ScanDetailScreen.displayMetricsFor(currentLatestScan);
 
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2168,9 +2193,9 @@ class _HomePageState extends State<HomePage>
                           const SizedBox(height: 10),
                           Text(
                             _getScanType(currentLatestScan),
-                            style: TextStyle(
+                            style: const TextStyle(
                               fontSize: 16,
-                              color: MyApp.goldShimmer,
+                              color: _clinicalSage,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -2193,343 +2218,21 @@ class _HomePageState extends State<HomePage>
                               );
                               await _refreshData();
                             },
-                            child: Container(
-                              decoration: _homePremiumCardDecoration(),
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  16,
-                                  16,
-                                  16,
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        const Text(
-                                          'Estimated Skin Age',
-                                          style: TextStyle(fontSize: 16),
-                                        ),
-                                        latestEstimatedAge == null
-                                            ? Text(
-                                                'ΓÇö',
-                                                style: TextStyle(
-                                                  fontSize: 28,
-                                                  fontWeight: FontWeight.bold,
-                                                  color: textColor.withValues(
-                                                    alpha: 0.45,
-                                                  ),
-                                                ),
-                                              )
-                                            : Text(
-                                                '${latestEstimatedAge.round()} years',
-                                                style: const TextStyle(
-                                                  fontSize: 28,
-                                                  fontWeight: FontWeight.bold,
-                                                  color: AppColors.mutedSage,
-                                                ),
-                                              ),
-                                      ],
-                                    ),
-                                    if (latestEstimatedAge == null) ...[
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        'No analysis yet',
-                                        style: TextStyle(
-                                          fontSize: 11.5,
-                                          color: textColor.withValues(alpha: 0.62),
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ],
-                                    const SizedBox(height: 20),
-                                    Container(
-                                      width: double.infinity,
-                                      margin: const EdgeInsets.only(bottom: 10),
-                                      padding: const EdgeInsets.fromLTRB(
-                                        10,
-                                        9,
-                                        10,
-                                        9,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: MyApp.clinicalNavy.withValues(
-                                          alpha: 0.04,
-                                        ),
-                                        borderRadius: BorderRadius.circular(10),
-                                        border: Border.all(
-                                          color: MyApp.clinicalNavy.withValues(
-                                            alpha: 0.12,
-                                          ),
-                                          width: 0.8,
-                                        ),
-                                      ),
-                                      child: Text(
-                                        isBodyProcedure
-                                            ? 'Metrics note: lower is better for swelling, bruising, and hyperpigmentation. Higher is better for fat retention, contour smoothness, firmness, and overall healing.'
-                                            : 'Metrics note: lower is better for redness, texture, wrinkles, pores, and dark spots. Higher is better for elasticity.',
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          height: 1.35,
-                                          color: textColor.withValues(
-                                            alpha: 0.72,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    if (isBodyProcedure) ...[
-                                      _buildMetricRow(
-                                        'Fat Retention',
-                                        resolveCurrentBodyMetric(
-                                          [
-                                            'fatRetention',
-                                            'fat_retention',
-                                            'fatRetentionPct',
-                                            'fatRetentionPercent',
-                                            'fatRetention',
-                                            'volumeSatisfaction',
-                                          ],
-                                          ['fat retention', 'retention'],
-                                        ),
-                                        baseline: resolvePreviousBodyMetric(
-                                          [
-                                            'fatRetention',
-                                            'fat_retention',
-                                            'fatRetentionPct',
-                                            'fatRetentionPercent',
-                                            'fatRetention',
-                                            'volumeSatisfaction',
-                                          ],
-                                          ['fat retention', 'retention'],
-                                        ),
-                                        bodyStyle: true,
-                                        directionalityOverride:
-                                            MetricDirectionality.higherIsBetter,
-                                      ),
-                                      _buildMetricRow(
-                                        'Swelling',
-                                        resolveCurrentBodyMetric(
-                                          [
-                                            'swelling',
-                                            'edema',
-                                            'postOpSwelling',
-                                            'swellingLevel',
-                                            'swellingIndex',
-                                          ],
-                                          ['swelling'],
-                                        ),
-                                        baseline: resolvePreviousBodyMetric(
-                                          [
-                                            'swelling',
-                                            'edema',
-                                            'postOpSwelling',
-                                            'swellingLevel',
-                                            'swellingIndex',
-                                          ],
-                                          ['swelling'],
-                                        ),
-                                        bodyStyle: true,
-                                        directionalityOverride:
-                                            MetricDirectionality.lowerIsBetter,
-                                      ),
-                                      _buildMetricRow(
-                                        'Skin Laxity / Firmness',
-                                        resolveCurrentBodyMetric(
-                                          [
-                                            'skinLaxityFirmness',
-                                            'skinFirmness',
-                                            'bodyFirmness',
-                                            'firmness',
-                                            'fibrosisFirmness',
-                                            'skinLaxity',
-                                            'laxity',
-                                          ],
-                                          ['firmness', 'laxity'],
-                                        ),
-                                        baseline: resolvePreviousBodyMetric(
-                                          [
-                                            'skinLaxityFirmness',
-                                            'skinFirmness',
-                                            'bodyFirmness',
-                                            'firmness',
-                                            'fibrosisFirmness',
-                                            'skinLaxity',
-                                            'laxity',
-                                          ],
-                                          ['firmness', 'laxity'],
-                                        ),
-                                        bodyStyle: true,
-                                        directionalityOverride:
-                                            MetricDirectionality.higherIsBetter,
-                                      ),
-                                      _buildMetricRow(
-                                        'Contour Smoothness',
-                                        resolveCurrentBodyMetric(
-                                          [
-                                            'smoothness',
-                                            'bodySmoothness',
-                                            'textureSmoothness',
-                                            'contourEvenness',
-                                            'contourSmoothness',
-                                          ],
-                                          ['smoothness', 'texture'],
-                                        ),
-                                        baseline: resolvePreviousBodyMetric(
-                                          [
-                                            'smoothness',
-                                            'bodySmoothness',
-                                            'textureSmoothness',
-                                            'contourEvenness',
-                                            'contourSmoothness',
-                                          ],
-                                          ['smoothness', 'texture'],
-                                        ),
-                                        bodyStyle: true,
-                                        directionalityOverride:
-                                            MetricDirectionality.higherIsBetter,
-                                      ),
-                                      _buildMetricRow(
-                                        'Scarring / Bruising',
-                                        resolveCurrentBodyMetric(
-                                          [
-                                            'scarringBruising',
-                                            'scarring_bruising',
-                                            'bruising',
-                                            'scarring',
-                                          ],
-                                          ['bruising', 'scarring'],
-                                        ),
-                                        baseline: resolvePreviousBodyMetric(
-                                          [
-                                            'scarringBruising',
-                                            'scarring_bruising',
-                                            'bruising',
-                                            'scarring',
-                                          ],
-                                          ['bruising', 'scarring'],
-                                        ),
-                                        bodyStyle: true,
-                                        directionalityOverride:
-                                            MetricDirectionality.lowerIsBetter,
-                                      ),
-                                      _buildMetricRow(
-                                        'Hyperpigmentation',
-                                        resolveCurrentBodyMetric(
-                                          [
-                                            'hyperpigmentation',
-                                            'pigment',
-                                            'pigmentation',
-                                          ],
-                                          ['hyperpigmentation', 'pigment'],
-                                        ),
-                                        baseline: resolvePreviousBodyMetric(
-                                          [
-                                            'hyperpigmentation',
-                                            'pigment',
-                                            'pigmentation',
-                                          ],
-                                          ['hyperpigmentation', 'pigment'],
-                                        ),
-                                        bodyStyle: true,
-                                        directionalityOverride:
-                                            MetricDirectionality.lowerIsBetter,
-                                      ),
-                                      _buildMetricRow(
-                                        'Overall Healing',
-                                        resolveCurrentBodyMetric(
-                                          [
-                                            'overallHealingScore',
-                                            'overall_healing_score',
-                                            'bodyHealingScore',
-                                            'overallHealing',
-                                            'healingProgress',
-                                          ],
-                                          ['overall healing', 'healing'],
-                                        ),
-                                        baseline: resolvePreviousBodyMetric(
-                                          [
-                                            'overallHealingScore',
-                                            'overall_healing_score',
-                                            'bodyHealingScore',
-                                            'overallHealing',
-                                            'healingProgress',
-                                          ],
-                                          ['overall healing', 'healing'],
-                                        ),
-                                        bodyStyle: true,
-                                        directionalityOverride:
-                                            MetricDirectionality.higherIsBetter,
-                                      ),
-                                    ] else ...[
-                                      _buildFacialMetricsGridFromCanonical(
-                                        currentValues: latestFacialValues,
-                                        previousValues: previousFacialValues,
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ),
+                            child: _buildLatestScanSummaryCard(
+                              context,
+                              scan: currentLatestScan,
+                              latestEstimatedAge: latestEstimatedAge,
+                              metricCount: metricPreview.length,
                             ),
                           ),
                           const SizedBox(height: 20),
-                          // Peptide & procedure recommendations from the latest scan
                           ScanBasedRecommendationsCard(
                             latest: latestMetrics,
                             baseline: previousMetrics,
                             procedureType: procedureType,
-                          ),
-                          const SizedBox(height: 20),
-                          // Suggested Products based on the latest scan
-                          FutureBuilder<List<AIProductRecommendation>>(
-                            future: Future.value(
-                              () {
-                                final resolvedProcedureType =
-                                    procedureType?.trim().isNotEmpty == true &&
-                                        procedureType!.trim().toLowerCase() !=
-                                            'unknown'
-                                    ? procedureType.trim()
-                                    : 'General Skincare';
-                                final recentProcedureTypes = _allScans
-                                    .map((s) => s.procedure?.trim())
-                                  .whereType<String>()
-                                  .where(
-                                    (p) =>
-                                        p.isNotEmpty &&
-                                        p.toLowerCase() != 'unknown',
-                                  )
-                                    .toSet()
-                                    .toList();
-                                return AIProductRecommendationEngine.generateRecommendations(
-                                  latestMetrics,
-                                  procedureType: resolvedProcedureType,
-                                  maxRecommendations: isBodyProcedure ? 6 : 3,
-                                  userSkinConcerns: [
-                                    if (latestMetrics.redness > 6.0) 'redness',
-                                    if (latestMetrics.texture > 6.0) 'texture',
-                                    if (latestMetrics.wrinkle > 6.0) 'aging',
-                                    if (latestMetrics.pore > 6.0) 'pores',
-                                    if (latestMetrics.darkSpots > 6.0) 'pigmentation',
-                                    if (latestMetrics.elasticity < 4.8) 'firmness',
-                                    if (latestMetrics.redness > 6.0) 'sensitive',
-                                  ],
-                                  recentProcedureTypes: recentProcedureTypes,
-                                );
-                              }(),
+                            aiCoachProducts: _aiCoachRecommendationsFromScan(
+                              latestScan,
                             ),
-                            builder: (context, snapshot) {
-                              if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                                return const SizedBox.shrink();
-                              }
-                              return ClinicalProductRecommendationsSection(
-                                recommendations: snapshot.data!,
-                                sectionTitle: 'Suggested Products',
-                                sectionSubtitle:
-                                    'Based on your current skin metrics',
-                              );
-                            },
                           ),
                         ],
                       );
@@ -2560,19 +2263,22 @@ class _HomePageState extends State<HomePage>
                   },
                   icon: const Icon(
                     Icons.medical_services,
-                    color: Color(0xFFD4AF37),
+                    color: _darkSlateInk,
                   ),
                   label: const Text(
                     'Track Procedure',
                     style: TextStyle(
-                      color: Color(0xFFD4AF37),
+                      color: _darkSlateInk,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF121212),
-                    foregroundColor: const Color(0xFFD4AF37),
-                    side: const BorderSide(color: Color(0xFFD4AF37), width: 1),
+                    backgroundColor: Colors.white,
+                    foregroundColor: _darkSlateInk,
+                    side: BorderSide(
+                      color: _clinicalSage.withValues(alpha: 0.30),
+                      width: 1,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
                     ),
@@ -2652,19 +2358,22 @@ class _HomePageState extends State<HomePage>
                   onPressed: _logNewSkincareProduct,
                   icon: const Icon(
                     Icons.add_shopping_cart,
-                    color: Color(0xFFD4AF37),
+                    color: _darkSlateInk,
                   ),
                   label: const Text(
                     'Track Skincare Product',
                     style: TextStyle(
-                      color: Color(0xFFD4AF37),
+                      color: _darkSlateInk,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF121212),
-                    foregroundColor: const Color(0xFFD4AF37),
-                    side: const BorderSide(color: Color(0xFFD4AF37), width: 1),
+                    backgroundColor: AppColors.cardBackground,
+                    foregroundColor: _darkSlateInk,
+                    side: BorderSide(
+                      color: _clinicalSage.withValues(alpha: 0.30),
+                      width: 1,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
                     ),
@@ -2701,32 +2410,23 @@ class _HomePageState extends State<HomePage>
                 const SizedBox(height: 36),
 
                 ElevatedButton.icon(
-                  onPressed: () async {
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => SkinJourneyJournalScreen(
-                          skincareJournals: _skincareJournals,
-                          trackedProducts: _trackedProducts,
-                          activeProcedures: _activeProcedureModels,
-                        ),
-                      ),
-                    );
-                    await _refreshData();
-                  },
-                  icon: const Icon(Icons.book, color: Color(0xFFD4AF37)),
+                  onPressed: _openSkinJourneyJournalSheet,
+                  icon: const Icon(Icons.book, color: _darkSlateInk),
                   label: const Text(
                     'Your Skin Journey Journal',
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
-                      color: Color(0xFFD4AF37),
+                      color: _darkSlateInk,
                     ),
                   ),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF121212),
-                    foregroundColor: const Color(0xFFD4AF37),
-                    side: const BorderSide(color: Color(0xFFD4AF37), width: 1),
+                    backgroundColor: Colors.white,
+                    foregroundColor: _darkSlateInk,
+                    side: BorderSide(
+                      color: _clinicalSage.withValues(alpha: 0.30),
+                      width: 1,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
                     ),
@@ -2790,7 +2490,7 @@ class _HomePageState extends State<HomePage>
                         'AI Deep Analysis',
                         '${_getAiAnalysisScanCountFromLoaded()} scans',
                         icon: Icons.auto_awesome_rounded,
-                        accent: AppColors.champagneGold,
+                        accent: _clinicalSage,
                         statusLabel: 'AI Analysis',
                         onTap: () async {
                           await Navigator.of(context).push(
@@ -2831,7 +2531,7 @@ class _HomePageState extends State<HomePage>
           color: AppColors.cardBackground,
           border: Border(
             top: BorderSide(
-              color: AppColors.champagneGold.withValues(alpha: 0.24),
+              color: _clinicalSage.withValues(alpha: 0.24),
               width: 0.8,
             ),
           ),
@@ -2848,8 +2548,8 @@ class _HomePageState extends State<HomePage>
           elevation: 0,
           currentIndex: _selectedIndex,
           type: BottomNavigationBarType.fixed,
-          selectedItemColor: Colors.black,
-          unselectedItemColor: Colors.black,
+          selectedItemColor: const Color(0xFF1E2225),
+          unselectedItemColor: const Color(0xFF1E2225),
           selectedLabelStyle: const TextStyle(
             fontWeight: FontWeight.w800,
             fontSize: 12,
@@ -2868,7 +2568,7 @@ class _HomePageState extends State<HomePage>
             BottomNavigationBarItem(
               icon: Icon(Icons.camera_alt_outlined),
               activeIcon: Icon(Icons.camera_alt_rounded),
-              label: 'Scan',
+              label: 'Skin Scan',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.timeline_outlined),
@@ -2911,7 +2611,7 @@ class _HomePageState extends State<HomePage>
           color: AppColors.cardBackground,
           borderRadius: BorderRadius.circular(24),
           border: Border.all(
-            color: AppColors.champagneGold.withValues(alpha: 0.26),
+            color: _clinicalSage.withValues(alpha: 0.26),
             width: 1,
           ),
           boxShadow: [
@@ -2934,26 +2634,50 @@ class _HomePageState extends State<HomePage>
                 height: 74,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: AppColors.warmAlabaster,
+                  color: const Color(0xFFF4F6F4),
                   border: Border.all(
-                    color: AppColors.champagneGold.withValues(alpha: 0.38),
+                    color: _clinicalSage,
                     width: 1,
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: AppColors.champagneGold.withValues(alpha: 0.10),
+                      color: _clinicalSage.withValues(alpha: 0.10),
                       blurRadius: 14,
                       offset: const Offset(0, 5),
                     ),
                   ],
                 ),
                 child: ClipOval(
-                  child: Image.asset(
-                    'assets/logo/logo.png', // Correct path
-                    fit: BoxFit.cover,
-                    filterQuality: FilterQuality.high,
-                    errorBuilder: (_, __, ___) =>
-                        Icon(Icons.spa, color: MyApp.goldShimmer, size: 38),
+                  child: ColorFiltered(
+                    colorFilter: const ColorFilter.matrix(<double>[
+                      0.2126,
+                      0.7152,
+                      0.0722,
+                      0,
+                      0,
+                      0.2126,
+                      0.7152,
+                      0.0722,
+                      0,
+                      0,
+                      0.2126,
+                      0.7152,
+                      0.0722,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      1,
+                      0,
+                    ]),
+                    child: Image.asset(
+                      'assets/logo/logo.png', // Correct path
+                      fit: BoxFit.cover,
+                      filterQuality: FilterQuality.high,
+                      errorBuilder: (_, __, ___) =>
+                          const Icon(Icons.spa, color: _clinicalSage, size: 38),
+                    ),
                   ),
                 ),
               ),
@@ -2971,7 +2695,7 @@ class _HomePageState extends State<HomePage>
                           width: 18,
                           height: 2,
                           decoration: BoxDecoration(
-                            color: AppColors.champagneGold,
+                            color: _clinicalSage,
                             borderRadius: BorderRadius.circular(999),
                           ),
                         ),
@@ -3010,7 +2734,50 @@ class _HomePageState extends State<HomePage>
                         fontWeight: FontWeight.w500,
                         letterSpacing: 0.12,
                         height: 1.5,
-                        color: Colors.black,
+                        color: Color(0xFF1E2225),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 180),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.champagneGold.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: AppColors.champagneGold.withValues(alpha: 0.42),
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.local_fire_department_rounded,
+                              size: 15,
+                              color: AppColors.champagneGold,
+                            ),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                _currentSkincareStreak > 0
+                                    ? '$_currentSkincareStreak-day streak'
+                                    : 'Start your streak',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.refinedSlate,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],
@@ -3028,7 +2795,7 @@ class _HomePageState extends State<HomePage>
                     color: AppColors.warmAlabaster,
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(
-                      color: AppColors.champagneGold.withValues(alpha: 0.28),
+                      color: _clinicalSage.withValues(alpha: 0.28),
                     ),
                     boxShadow: [
                       BoxShadow(
@@ -3046,7 +2813,7 @@ class _HomePageState extends State<HomePage>
                         style: const TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.w900,
-                          color: AppColors.champagneGold,
+                          color: _clinicalSage,
                           height: 1.0,
                         ),
                       ),
@@ -3057,7 +2824,7 @@ class _HomePageState extends State<HomePage>
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0.6,
-                          color: Colors.black,
+                          color: Color(0xFF1E2225),
                         ),
                       ),
                     ],
@@ -3078,7 +2845,7 @@ class _HomePageState extends State<HomePage>
       color: AppColors.cardBackground,
       borderRadius: BorderRadius.circular(18),
       border: Border.all(
-        color: (borderColor ?? AppColors.champagneGold).withValues(
+        color: (borderColor ?? _clinicalSage).withValues(
           alpha: borderAlpha,
         ),
         width: 0.9,
@@ -3122,17 +2889,17 @@ class _HomePageState extends State<HomePage>
           },
           child: Container(
             decoration: BoxDecoration(
-              gradient: LinearGradient(
+              gradient: const LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [
-                  AppColors.cardBackground,
-                  AppColors.champagneGold.withValues(alpha: 0.26),
+                colors: <Color>[
+                  Colors.white,
+                  _lightSageTint,
                 ],
               ),
               borderRadius: BorderRadius.circular(22),
               border: Border.all(
-                color: AppColors.champagneGold.withValues(alpha: 0.60),
+                color: _clinicalSage.withValues(alpha: 0.20),
                 width: 1.5,
               ),
               boxShadow: [
@@ -3142,7 +2909,7 @@ class _HomePageState extends State<HomePage>
                   offset: const Offset(0, 14),
                 ),
                 BoxShadow(
-                  color: AppColors.champagneGold.withValues(alpha: 0.32),
+                  color: _clinicalSage.withValues(alpha: 0.28),
                   blurRadius: 38,
                   spreadRadius: 2,
                   offset: const Offset(0, 16),
@@ -3156,7 +2923,7 @@ class _HomePageState extends State<HomePage>
                   Positioned.fill(
                     child: CustomPaint(
                       painter: _HomeConcentricPainter(
-                        color: AppColors.champagneGold.withValues(alpha: 0.10),
+                        color: _clinicalSage.withValues(alpha: 0.08),
                       ),
                     ),
                   ),
@@ -3168,14 +2935,16 @@ class _HomePageState extends State<HomePage>
                           width: 62,
                           height: 62,
                           decoration: BoxDecoration(
-                            color: AppColors.champagneGold,
+                            color: Colors.transparent,
                             borderRadius: BorderRadius.circular(18),
+                            border: Border.all(
+                              color: _clinicalSage.withValues(alpha: 0.12),
+                              width: 1,
+                            ),
                             boxShadow: [
                               BoxShadow(
-                                color: AppColors.champagneGold.withValues(
-                                  alpha: 0.45,
-                                ),
-                                blurRadius: 20,
+                                color: _clinicalSage.withValues(alpha: 0.08),
+                                blurRadius: 10,
                                 offset: const Offset(0, 6),
                               ),
                             ],
@@ -3183,7 +2952,7 @@ class _HomePageState extends State<HomePage>
                           child: const Icon(
                             Icons.auto_awesome_rounded,
                             size: 32,
-                            color: AppColors.onChampagneGold,
+                            color: _darkSlateInk,
                           ),
                         ),
                         const SizedBox(width: 16),
@@ -3196,12 +2965,12 @@ class _HomePageState extends State<HomePage>
                                 children: [
                                   const Flexible(
                                     child: Text(
-                                      'AI Skin Analysis',
+                                      'Skin Scan',
                                       style: TextStyle(
                                         fontSize: 18,
                                         fontWeight: FontWeight.w900,
                                         letterSpacing: 0.1,
-                                        color: AppColors.refinedSlate,
+                                        color: _darkSlateInk,
                                       ),
                                     ),
                                   ),
@@ -3212,7 +2981,7 @@ class _HomePageState extends State<HomePage>
                                       vertical: 3,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: AppColors.champagneGold.withValues(
+                                      color: _clinicalSage.withValues(
                                         alpha: 0.95,
                                       ),
                                       borderRadius: BorderRadius.circular(999),
@@ -3223,7 +2992,7 @@ class _HomePageState extends State<HomePage>
                                       ),
                                       boxShadow: [
                                         BoxShadow(
-                                          color: AppColors.champagneGold
+                                          color: _clinicalSage
                                               .withValues(alpha: 0.35),
                                           blurRadius: 8,
                                           offset: const Offset(0, 2),
@@ -3236,10 +3005,10 @@ class _HomePageState extends State<HomePage>
                                         fontSize: 9.5,
                                         fontWeight: FontWeight.w900,
                                         letterSpacing: 0.3,
-                                        color: AppColors.refinedSlate,
+                                        color: Colors.white,
                                         shadows: [
                                           Shadow(
-                                            color: Colors.black,
+                                            color: Color(0xFF1E2225),
                                             blurRadius: 1.5,
                                             offset: Offset(0, 0.5),
                                           ),
@@ -3257,7 +3026,7 @@ class _HomePageState extends State<HomePage>
                                   fontSize: 12.5,
                                   height: 1.4,
                                   fontWeight: FontWeight.w500,
-                                  color: AppColors.refinedSlate.withValues(
+                                  color: _darkSlateInk.withValues(
                                     alpha: 0.66,
                                   ),
                                 ),
@@ -3269,16 +3038,18 @@ class _HomePageState extends State<HomePage>
                                   vertical: 10,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF121212),
+                                  color: AppColors.brandAccent,
                                   borderRadius: BorderRadius.circular(14),
                                   border: Border.all(
-                                    color: const Color(0xFFD4AF37),
+                                    color: AppColors.brandAccent.withValues(
+                                      alpha: 0.22,
+                                    ),
                                     width: 1,
                                   ),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: const Color(0xFFD4AF37).withValues(
-                                        alpha: 0.24,
+                                      color: AppColors.brandAccent.withValues(
+                                        alpha: 0.22,
                                       ),
                                       blurRadius: 12,
                                       offset: const Offset(0, 4),
@@ -3289,18 +3060,18 @@ class _HomePageState extends State<HomePage>
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Text(
-                                      'Analyze My Skin',
+                                      'Start Skin Scan',
                                       style: TextStyle(
                                         fontSize: 13.5,
                                         fontWeight: FontWeight.w800,
-                                        color: Color(0xFFD4AF37),
+                                        color: Colors.white,
                                       ),
                                     ),
                                     SizedBox(width: 6),
                                     Icon(
                                       Icons.arrow_forward_rounded,
                                       size: 17,
-                                      color: Color(0xFFD4AF37),
+                                      color: Colors.white,
                                     ),
                                   ],
                                 ),
@@ -3321,32 +3092,10 @@ class _HomePageState extends State<HomePage>
   }
 
   Widget _buildQuickActionFeatureCards(Color textColor) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final useColumns = constraints.maxWidth >= 760;
-        final cards = [
-          _buildAiSkinAnalysisCard(textColor),
-          _buildAiSkincareCoachCard(textColor),
-        ];
-
-        if (!useColumns) {
-          return Column(
-            children: [cards.first, const SizedBox(height: 14), cards.last],
-          );
-        }
-
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: cards.first),
-            const SizedBox(width: 14),
-            Expanded(child: cards.last),
-          ],
-        );
-      },
-    );
+    return _buildAiSkinAnalysisCard(textColor);
   }
 
+  // ignore: unused_element
   Widget _buildAiSkincareCoachCard(Color textColor) {
     final isLocked = !_isPremiumUser;
     final badgeText = isLocked ? 'Premium' : 'Unlocked';
@@ -3369,20 +3118,20 @@ class _HomePageState extends State<HomePage>
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(22),
-          onTap: _openAiSkincareCoach,
+          onTap: _openSkinScan,
           child: Container(
             decoration: BoxDecoration(
-              gradient: LinearGradient(
+              gradient: const LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [
-                  AppColors.cardBackground,
-                  AppColors.champagneGold.withValues(alpha: 0.26),
+                colors: <Color>[
+                  Colors.white,
+                  _lightSageTint,
                 ],
               ),
               borderRadius: BorderRadius.circular(22),
               border: Border.all(
-                color: AppColors.champagneGold.withValues(alpha: 0.68),
+                color: _clinicalSage.withValues(alpha: 0.20),
                 width: 1.5,
               ),
               boxShadow: [
@@ -3392,7 +3141,7 @@ class _HomePageState extends State<HomePage>
                   offset: const Offset(0, 14),
                 ),
                 BoxShadow(
-                  color: AppColors.champagneGold.withValues(alpha: 0.32),
+                  color: _clinicalSage.withValues(alpha: 0.28),
                   blurRadius: 38,
                   spreadRadius: 2,
                   offset: const Offset(0, 16),
@@ -3406,7 +3155,7 @@ class _HomePageState extends State<HomePage>
                   Positioned.fill(
                     child: CustomPaint(
                       painter: _HomeConcentricPainter(
-                        color: AppColors.champagneGold.withValues(alpha: 0.10),
+                        color: _clinicalSage.withValues(alpha: 0.08),
                       ),
                     ),
                   ),
@@ -3423,14 +3172,16 @@ class _HomePageState extends State<HomePage>
                           width: 62,
                           height: 62,
                           decoration: BoxDecoration(
-                            color: AppColors.champagneGold,
+                            color: Colors.transparent,
                             borderRadius: BorderRadius.circular(18),
+                            border: Border.all(
+                              color: _clinicalSage.withValues(alpha: 0.12),
+                              width: 1,
+                            ),
                             boxShadow: [
                               BoxShadow(
-                                color: AppColors.champagneGold.withValues(
-                                  alpha: 0.42,
-                                ),
-                                blurRadius: 20,
+                                color: _clinicalSage.withValues(alpha: 0.08),
+                                blurRadius: 10,
                                 offset: const Offset(0, 6),
                               ),
                             ],
@@ -3440,7 +3191,7 @@ class _HomePageState extends State<HomePage>
                                 ? Icons.lock_rounded
                                 : Icons.psychology_alt_rounded,
                             size: 32,
-                            color: AppColors.onChampagneGold,
+                            color: _darkSlateInk,
                           ),
                         ),
                         const SizedBox(width: 16),
@@ -3449,25 +3200,25 @@ class _HomePageState extends State<HomePage>
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text(
-                                'AI Skincare Coach',
+                              const Text(
+                                      'Skin Scan',
                                 style: TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.w900,
                                   letterSpacing: 0.1,
-                                  color: textColor,
+                                  color: _darkSlateInk,
                                 ),
                               ),
                               const SizedBox(height: 6),
                               Text(
                                 isLocked
-                                    ? 'Unlock your personal AI Skincare Coach for routines, recovery advice, and progress guidance.'
-                                    : 'Get personalized routines, recovery advice, and progress guidance from your premium coach.',
+                                    ? 'Capture a photo to unlock your combined skin analysis, coach insight, and routine guidance.'
+                                    : 'Capture a photo to open your combined skin analysis, coach insight, and routine guidance.',
                                 style: TextStyle(
                                   fontSize: 12.5,
                                   height: 1.4,
                                   fontWeight: FontWeight.w500,
-                                  color: textColor.withValues(alpha: 0.66),
+                                  color: _darkSlateInk.withValues(alpha: 0.66),
                                 ),
                               ),
                               const SizedBox(height: 14),
@@ -3477,15 +3228,17 @@ class _HomePageState extends State<HomePage>
                                   vertical: 10,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF121212),
+                                  color: _clinicalSage,
                                   borderRadius: BorderRadius.circular(14),
                                   border: Border.all(
-                                    color: const Color(0xFFD4AF37),
+                                    color: _clinicalSage.withValues(
+                                      alpha: 0.20,
+                                    ),
                                     width: 1,
                                   ),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: const Color(0xFFD4AF37).withValues(
+                                      color: _clinicalSage.withValues(
                                         alpha: 0.22,
                                       ),
                                       blurRadius: 12,
@@ -3496,12 +3249,12 @@ class _HomePageState extends State<HomePage>
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Text(
-                                      isLocked ? 'Unlock Coach' : 'Open Coach',
-                                      style: const TextStyle(
+                                    const Text(
+                                      'Open Skin Scan',
+                                      style: TextStyle(
                                         fontSize: 13.5,
                                         fontWeight: FontWeight.w800,
-                                        color: Color(0xFFD4AF37),
+                                        color: Colors.white,
                                       ),
                                     ),
                                     const SizedBox(width: 6),
@@ -3510,7 +3263,7 @@ class _HomePageState extends State<HomePage>
                                           ? Icons.workspace_premium_rounded
                                           : Icons.arrow_forward_rounded,
                                       size: 17,
-                                      color: const Color(0xFFD4AF37),
+                                      color: Colors.white,
                                     ),
                                   ],
                                 ),
@@ -3534,15 +3287,19 @@ class _HomePageState extends State<HomePage>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
       decoration: BoxDecoration(
-        color: AppColors.champagneGold.withValues(alpha: 0.95),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [_clinicalSage, _mintHighlight],
+        ),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(
-          color: AppColors.warmAlabaster.withValues(alpha: 0.65),
+          color: _mintHighlight.withValues(alpha: 0.90),
           width: 0.8,
         ),
         boxShadow: [
           BoxShadow(
-            color: AppColors.champagneGold.withValues(alpha: 0.35),
+            color: _clinicalSage.withValues(alpha: 0.35),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -3551,7 +3308,7 @@ class _HomePageState extends State<HomePage>
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 12, color: AppColors.refinedSlate),
+          Icon(icon, size: 12, color: _darkSlateInk),
           const SizedBox(width: 4),
           Text(
             label,
@@ -3559,10 +3316,10 @@ class _HomePageState extends State<HomePage>
               fontSize: 9.5,
               fontWeight: FontWeight.w900,
               letterSpacing: 0.3,
-              color: AppColors.refinedSlate,
+              color: _darkSlateInk,
               shadows: [
                 Shadow(
-                  color: Colors.black,
+                  color: Color(0xFF1E2225),
                   blurRadius: 1.5,
                   offset: Offset(0, 0.5),
                 ),
@@ -3588,7 +3345,7 @@ class _HomePageState extends State<HomePage>
           (
             icon: Icons.edit_note_rounded,
             label: 'Log Note',
-            color: AppColors.champagneGold,
+            color: _clinicalSage,
             hero: false,
             onTap: () {
               Navigator.of(context)
@@ -3607,7 +3364,7 @@ class _HomePageState extends State<HomePage>
           (
             icon: Icons.medical_services_rounded,
             label: 'Track Procedure',
-            color: AppColors.champagneGold,
+            color: _clinicalSage,
             hero: false,
             onTap: () {
               Navigator.of(
@@ -3617,17 +3374,17 @@ class _HomePageState extends State<HomePage>
           ),
           (
             icon: Icons.photo_camera_rounded,
-            label: 'Snap Shelf',
-            color: AppColors.champagneGold,
+            label: 'Skin Scan',
+            color: _clinicalSage,
             hero: false,
             onTap: () {
-              Navigator.of(context).pushNamed('/ai-coach').then((_) => _refreshData());
+              _openSkinScan();
             },
           ),
           (
             icon: Icons.workspace_premium,
             label: 'Premium Hub',
-            color: const Color(0xFFD4AF37),
+            color: _clinicalSage,
             hero: false,
             onTap: () {
               _openPremiumHubModal();
@@ -3645,29 +3402,26 @@ class _HomePageState extends State<HomePage>
           final item = shortcuts[i];
           final isHero = item.hero;
           final isPremiumHub = item.label == 'Premium Hub';
-          const standardButtonBg = Color(0xFF1A1A1A);
-          const premiumHubBg = Color(0xFFF3EBDD);
-          const darkObsidian = Color(0xFF1A1A1A);
+          const cardBackground = Color(0xFFF4F6F4);
 
-            // Balanced palette:
-            // - Standard quick actions: cream background with dark text/icons.
-            // - Premium Hub: dark background with gold text/icons and gold glow.
-            final cardBackground = isPremiumHub ? standardButtonBg : premiumHubBg;
+            final cardBackgroundColor = isPremiumHub
+              ? const Color(0xFFE8EFE9)
+                : cardBackground;
             final cardBorder = isPremiumHub
-              ? AppColors.champagneGold.withValues(alpha: 0.90)
-              : darkObsidian.withValues(alpha: 0.20);
+              ? const Color(0xFF7A8B7B)
+                : _clinicalSage.withValues(alpha: 0.20);
             final iconBackground = isPremiumHub
-              ? AppColors.champagneGold.withValues(alpha: 0.12)
-              : darkObsidian.withValues(alpha: 0.06);
+              ? Colors.white
+                : Colors.white;
             final iconBorder = isPremiumHub
-              ? AppColors.champagneGold.withValues(alpha: 0.55)
-              : darkObsidian.withValues(alpha: 0.20);
+              ? _clinicalSage.withValues(alpha: 0.45)
+                : _clinicalSage.withValues(alpha: 0.20);
             final iconColor = isPremiumHub
-              ? darkObsidian
-              : darkObsidian;
+              ? const Color(0xFF7A8B7B)
+              : _darkSlateInk;
             final labelColor = isPremiumHub
-              ? darkObsidian
-              : darkObsidian;
+              ? const Color(0xFF7A8B7B)
+              : _darkSlateInk;
           return Material(
             color: Colors.transparent,
             child: InkWell(
@@ -3680,39 +3434,64 @@ class _HomePageState extends State<HomePage>
                   vertical: 12,
                 ),
                 decoration: BoxDecoration(
-                  color: isPremiumHub ? null : cardBackground,
-                  gradient: isPremiumHub
-                      ? const LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [Color(0xFFD4AF37), Color(0xFFFFF1B8)],
-                        )
-                      : null,
+                  color: cardBackgroundColor,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(
-                    color: isPremiumHub
-                        ? const Color(0xFFE7CC73)
-                        : cardBorder,
-                    width: isPremiumHub ? 1.2 : 1.0,
+                    color: cardBorder,
+                    width: isPremiumHub ? 1.5 : 1.0,
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: AppColors.refinedSlate.withValues(alpha: 0.055),
-                      blurRadius: 18,
-                      offset: const Offset(0, 9),
+                      color: isPremiumHub
+                          ? _clinicalSage.withValues(alpha: 0.10)
+                          : AppColors.refinedSlate.withValues(alpha: 0.055),
+                      blurRadius: isPremiumHub ? 12 : 18,
+                      offset: Offset(0, isPremiumHub ? 6 : 9),
                     ),
-                    if (isPremiumHub)
-                      BoxShadow(
-                        color: const Color(0xFFD4AF37).withValues(alpha: 0.35),
-                        blurRadius: 22,
-                        spreadRadius: 1.2,
-                        offset: const Offset(0, 10),
-                      ),
                   ],
                 ),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
+                    if (isPremiumHub)
+                      Align(
+                        alignment: Alignment.topRight,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 2.5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.95),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: _clinicalSage.withValues(alpha: 0.40),
+                              width: 0.8,
+                            ),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.workspace_premium_rounded,
+                                size: 10,
+                                color: Color(0xFF7A8B7B),
+                              ),
+                              SizedBox(width: 3),
+                              Text(
+                                'VIP',
+                                style: TextStyle(
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0.3,
+                                  color: Color(0xFF7A8B7B),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    if (isPremiumHub) const SizedBox(height: 6),
                     if (isHero)
                       Align(
                         alignment: Alignment.topRight,
@@ -3722,14 +3501,14 @@ class _HomePageState extends State<HomePage>
                             vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            color: AppColors.champagneGold.withValues(
-                              alpha: 0.92,
+                            gradient: const LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [_clinicalSage, _mintHighlight],
                             ),
                             borderRadius: BorderRadius.circular(999),
                             border: Border.all(
-                              color: AppColors.warmAlabaster.withValues(
-                                alpha: 0.65,
-                              ),
+                              color: _mintHighlight.withValues(alpha: 0.88),
                               width: 0.8,
                             ),
                             boxShadow: [
@@ -3751,7 +3530,7 @@ class _HomePageState extends State<HomePage>
                               color: AppColors.refinedSlate,
                               shadows: [
                                 Shadow(
-                                  color: Colors.black,
+                                  color: Color(0xFF1E2225),
                                   blurRadius: 1.5,
                                   offset: Offset(0, 0.5),
                                 ),
@@ -3771,9 +3550,9 @@ class _HomePageState extends State<HomePage>
                         boxShadow: isHero
                             ? [
                                 BoxShadow(
-                                  color: AppColors.champagneGold.withValues(
-                                    alpha: 0.32,
-                                  ),
+                                  color: isPremiumHub
+                                      ? Colors.transparent
+                                      : _clinicalSage.withValues(alpha: 0.32),
                                   blurRadius: 14,
                                   offset: const Offset(0, 5),
                                 ),
@@ -3821,13 +3600,13 @@ class _HomePageState extends State<HomePage>
         Icons.medical_services_outlined,
         'Procedures',
         '${_activeProcedures.length}',
-        AppColors.champagneGold,
+        _clinicalSage,
       ),
       (
         Icons.photo_camera_rounded,
         'Scans',
         '$_scanCount',
-        AppColors.champagneGold,
+        _mintHighlight,
       ),
     ];
 
@@ -3844,7 +3623,7 @@ class _HomePageState extends State<HomePage>
                   : BoxDecoration(
                       border: Border(
                         left: BorderSide(
-                          color: AppColors.champagneGold.withValues(
+                          color: _clinicalSage.withValues(
                             alpha: 0.16,
                           ),
                           width: 0.9,
@@ -3884,7 +3663,7 @@ class _HomePageState extends State<HomePage>
                       fontSize: 10,
                       fontWeight: FontWeight.w700,
                       letterSpacing: 0,
-                      color: Colors.black,
+                      color: Color(0xFF1E2225),
                     ),
                   ),
                 ],
@@ -3931,9 +3710,22 @@ class _HomePageState extends State<HomePage>
     final visibleInsights = briefing.insights.take(3).toList();
 
     return Container(
-      decoration: _homePremiumCardDecoration(
-        borderColor: aiColor,
-        borderAlpha: 0.16,
+      decoration: BoxDecoration(
+        color: MyApp.isDark
+            ? const Color(0xFF2A322C)
+            : const Color(0xFFE8EFE9),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: _clinicalSage.withValues(alpha: 0.15),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.refinedSlate.withValues(alpha: 0.055),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4137,15 +3929,33 @@ class _HomePageState extends State<HomePage>
   Widget _buildQuickTipsCarousel(Color textColor) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
-      decoration: MyApp.surfaceCardDecoration(
-        tintOpacity: MyApp.isDark ? 0.12 : 0.06,
+      decoration: BoxDecoration(
+        color: MyApp.isDark
+            ? const Color(0xFF2A322C)
+            : const Color(0xFFE8EFE9),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: _clinicalSage.withValues(alpha: 0.15),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.refinedSlate.withValues(alpha: 0.045),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
-              Icon(Icons.lightbulb_outline, color: MyApp.goldShimmer, size: 18),
+              const Icon(
+                Icons.lightbulb_outline,
+                color: _clinicalSage,
+                size: 18,
+              ),
               const SizedBox(width: 8),
               Text(
                 'Quick Tips',
@@ -4191,8 +4001,8 @@ class _HomePageState extends State<HomePage>
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(99),
                   color: active
-                      ? MyApp.goldShimmer
-                      : MyApp.goldShimmer.withValues(alpha: 0.35),
+                      ? _clinicalSage
+                      : _clinicalSage.withValues(alpha: 0.35),
                 ),
               );
             }),
@@ -4211,7 +4021,7 @@ class _HomePageState extends State<HomePage>
     Color? accent,
   }) {
     final compactEmptyState = onTap == null && statusLabel == null;
-    final cardAccent = accent ?? MyApp.goldShimmer;
+    final cardAccent = accent ?? _clinicalSage;
     return Container(
       margin: EdgeInsets.symmetric(vertical: compactEmptyState ? 3 : 5),
       decoration: BoxDecoration(
@@ -4220,7 +4030,7 @@ class _HomePageState extends State<HomePage>
         border: Border.all(color: cardAccent.withValues(alpha: 0.18)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
+            color: const Color(0xFF1E2225).withValues(alpha: 0.04),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -4270,7 +4080,7 @@ class _HomePageState extends State<HomePage>
                       Text(
                         when,
                         style: const TextStyle(
-                          color: Colors.black,
+                          color: Color(0xFF1E2225),
                           fontSize: 11.5,
                           fontWeight: FontWeight.w500,
                         ),
@@ -4330,7 +4140,7 @@ class _HomePageState extends State<HomePage>
           width: 3,
           height: 16,
           decoration: BoxDecoration(
-            color: MyApp.goldShimmer,
+            color: _clinicalSage,
             borderRadius: BorderRadius.circular(2),
           ),
         ),
@@ -4347,6 +4157,114 @@ class _HomePageState extends State<HomePage>
       ],
     );
   }
+
+  List<AIProductRecommendation> _aiCoachRecommendationsFromScan(
+    ScanHistoryEntry? scan,
+  ) {
+    if (scan == null) return const <AIProductRecommendation>[];
+    final payload = scan.rawPayload ?? const <String, dynamic>{};
+
+    Map<String, dynamic>? asMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return null;
+    }
+
+    List<dynamic>? asList(dynamic value) {
+      if (value is List) return value;
+      return null;
+    }
+
+    String readString(Map<String, dynamic> source, List<String> keys) {
+      for (final key in keys) {
+        final raw = source[key];
+        final value = raw?.toString().trim() ?? '';
+        if (value.isNotEmpty) return value;
+      }
+      return '';
+    }
+
+    final metricsNode = asMap(payload['metrics']) ?? const <String, dynamic>{};
+    final luxeNode = asMap(payload['luxePayload']) ?? const <String, dynamic>{};
+    final sources = <dynamic>[
+      payload['recommended_products'],
+      payload['recommendedProducts'],
+      payload['coach_recommended_products'],
+      metricsNode['recommended_products'],
+      metricsNode['recommendedProducts'],
+      luxeNode['recommended_products'],
+      luxeNode['recommendedProducts'],
+    ];
+
+    List<dynamic>? rawProducts;
+    for (final source in sources) {
+      final list = asList(source);
+      if (list != null && list.isNotEmpty) {
+        rawProducts = list;
+        break;
+      }
+    }
+    if (rawProducts == null || rawProducts.isEmpty) {
+      return const <AIProductRecommendation>[];
+    }
+
+    final out = <AIProductRecommendation>[];
+    final seen = <String>{};
+    for (final item in rawProducts) {
+      final map = asMap(item);
+      if (map == null) continue;
+
+      final brand = readString(map, const ['brand', 'company', 'maker']);
+      final name = readString(
+        map,
+        const ['name', 'product_name', 'productName', 'title'],
+      );
+      final reason = readString(
+        map,
+        const ['clinical_reason', 'reason', 'reason_tag', 'why'],
+      );
+      final guidance = readString(
+        map,
+        const ['usage_guidance', 'usage', 'how_to_use', 'guidance'],
+      );
+      final evidence = readString(
+        map,
+        const ['evidence_level', 'evidence', 'evidenceLevel'],
+      );
+      final link = readString(
+        map,
+        const ['affiliate_url', 'affiliateLink', 'link', 'url'],
+      );
+      final image = readString(
+        map,
+        const ['image_url', 'imageUrl', 'image', 'thumbnail'],
+      );
+      final category = readString(
+        map,
+        const ['category', 'type', 'bucket'],
+      );
+
+      if (name.isEmpty) continue;
+      final dedupeKey = '${brand.toLowerCase()}|${name.toLowerCase()}';
+      if (!seen.add(dedupeKey)) continue;
+
+      out.add(
+        AIProductRecommendation(
+          productName: name,
+          brand: brand.isEmpty ? 'Recommended' : brand,
+          clinicalReason: reason.isEmpty ? 'Recommended by AI Coach pipeline.' : reason,
+          usageGuidance:
+              guidance.isEmpty ? 'Follow product label and patch test first.' : guidance,
+          evidenceLevel:
+              evidence.isEmpty ? 'AI Coach guidance' : evidence,
+          affiliateLink: link,
+          imageUrl: image,
+          category: category.isEmpty ? 'Suggested' : category,
+        ),
+      );
+    }
+    return out;
+  }
 }
 
 class _HomeLuxeBackground extends StatelessWidget {
@@ -4360,7 +4278,7 @@ class _HomeLuxeBackground extends StatelessWidget {
           colors: [
             AppColors.warmAlabaster,
             AppColors.cardBackground.withValues(alpha: 0.92),
-            AppColors.champagneGold.withValues(alpha: 0.07),
+            _clinicalSage.withValues(alpha: 0.07),
           ],
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
@@ -4368,7 +4286,7 @@ class _HomeLuxeBackground extends StatelessWidget {
       ),
       child: CustomPaint(
         painter: _HomeConcentricPainter(
-          color: AppColors.champagneGold.withValues(alpha: 0.10),
+          color: _clinicalSage.withValues(alpha: 0.10),
         ),
       ),
     );
@@ -4442,7 +4360,7 @@ class _JournalEntryView extends StatelessWidget {
     return Card(
       elevation: 2,
       color: MyApp.surface,
-      shadowColor: Colors.black.withValues(alpha: 0.06),
+      shadowColor: const Color(0xFF1E2225).withValues(alpha: 0.06),
       shape: MyApp.cardShape,
       child: Padding(
         padding: const EdgeInsets.all(18),
@@ -4456,14 +4374,14 @@ class _JournalEntryView extends StatelessWidget {
                   procedure.type,
                   style: const TextStyle(
                     fontWeight: FontWeight.bold,
-                    color: Colors.black,
+                    color: Color(0xFF1E2225),
                     fontSize: 16,
                   ),
                 ),
                 Text(
                   dateStr,
                   style: const TextStyle(
-                    color: Colors.black,
+                    color: Color(0xFF1E2225),
                     fontSize: 13,
                   ),
                 ),
@@ -4509,7 +4427,7 @@ class SingleJournalEntryScreen extends StatelessWidget {
             Card(
               elevation: 2,
               color: MyApp.surface,
-              shadowColor: Colors.black.withValues(alpha: 0.06),
+              shadowColor: const Color(0xFF1E2225).withValues(alpha: 0.06),
               shape: MyApp.cardShape,
               child: Padding(
                 padding: MyApp.cardPadding,
@@ -4527,14 +4445,14 @@ class SingleJournalEntryScreen extends StatelessWidget {
                             style: const TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
-                              color: Colors.black,
+                              color: Color(0xFF1E2225),
                             ),
                           ),
                         ),
                         Text(
                           dateStr,
                           style: const TextStyle(
-                            color: Colors.black,
+                            color: Color(0xFF1E2225),
                           ),
                         ),
                       ],
@@ -4553,7 +4471,7 @@ class SingleJournalEntryScreen extends StatelessWidget {
                     Row(
                       children: [
                         Text(
-                          ['≡ƒÿ₧', '≡ƒÿÉ', '≡ƒÖé', '≡ƒÿè', '≡ƒÑ░'][entry.moodRating - 1],
+                          ['=��P', '=���', '=���', '=���', '=�Ѧ'][entry.moodRating - 1],
                           style: const TextStyle(fontSize: 32),
                         ),
                       ],
@@ -4597,3 +4515,6 @@ class SingleJournalEntryScreen extends StatelessWidget {
     }
   }
 }
+
+
+

@@ -25,6 +25,7 @@ class _ProcedureHistoryScreenState
   String? _aiInsights;
   bool _loadingInsights = false;
   DateTime? _insightsCachedAt;
+  bool _didRunInitialLoad = false;
 
   // Filter & sort state
   String _filterCategory = 'All';
@@ -39,15 +40,22 @@ class _ProcedureHistoryScreenState
   @override
   void initState() {
     super.initState();
-    // Ensure the freshest logs (incl. photos just saved in Track Procedure)
-    // are loaded whenever this screen opens. The microtask forces a second
-    // invalidation after the first build so late Hive writes are picked up.
-    ref.invalidate(procedureLogsProvider);
-    Future.microtask(() {
-      if (mounted) ref.invalidate(procedureLogsProvider);
-    });
-    // Generate insights after first frame
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_didRunInitialLoad) return;
+    _didRunInitialLoad = true;
+
+    // Defer provider work until dependencies are attached to avoid
+    // initState/provider-scope lifecycle conflicts.
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.invalidate(procedureLogsProvider);
+      Future.microtask(() {
+        if (mounted) ref.invalidate(procedureLogsProvider);
+      });
       _generateAiInsights();
     });
   }

@@ -5,9 +5,15 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:aesthetic_skin_tracker/models/premium_recovery_models.dart';
 import 'package:aesthetic_skin_tracker/models/procedure.dart';
+import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/app_theme.dart';
 import 'package:aesthetic_skin_tracker/widgets/clinical_section_header.dart';
+import 'package:aesthetic_skin_tracker/widgets/bridge_card.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
+import 'package:aesthetic_skin_tracker/utils/ai_intelligence_engine.dart';
+
+const Color _clinicalSage = Color(0xFF7A8B7B);
+const Color _mintHighlight = Color(0xFFA3B899);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hub Feature Model and Builder
@@ -140,6 +146,8 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
   final List<VoiceJournalEntry> _voiceJournals = [];
   bool _hasActiveProcedure = false;
   Procedure? _activeProcedure;
+  ScanHistoryEntry? _latestProcedureScan;
+  ScanHistoryEntry? _baselineProcedureScan;
 
   @override
   void initState() {
@@ -150,6 +158,7 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
   Future<void> _loadActiveProcedure() async {
     setState(() => _loading = true);
     final entries = await AppPrefs.getProcedureEntries();
+    final scans = await AppPrefs.getScanEntries();
     Procedure? procedure;
     if (entries.isNotEmpty) {
       final selectedId = await AppPrefs.getSelectedProcedureIdOrNull();
@@ -165,6 +174,31 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
       procedure ??= Procedure.fromJson(
         Map<String, dynamic>.from(entries.first),
       );
+
+      final procedureId = selectedId?.trim();
+      final resolvedScans = procedureId == null || procedureId.isEmpty
+          ? <ScanHistoryEntry>[]
+          : scans
+              .where((scan) => (scan.procedureId ?? '').trim() == procedureId)
+              .toList()
+            ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      final fallbackScans = scans
+          .where((scan) => (scan.metrics).isNotEmpty)
+          .toList()
+        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      final baselineScan = resolvedScans.isNotEmpty
+          ? resolvedScans.first
+          : (fallbackScans.isNotEmpty ? fallbackScans.first : null);
+      final latestScan = resolvedScans.isNotEmpty
+          ? resolvedScans.last
+          : (fallbackScans.isNotEmpty ? fallbackScans.last : null);
+
+      if (mounted) {
+        setState(() {
+          _latestProcedureScan = latestScan;
+          _baselineProcedureScan = baselineScan;
+        });
+      }
     }
     setState(() {
       _activeProcedure = procedure;
@@ -278,6 +312,20 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
                       ),
                       const SizedBox(height: 12),
                       _buildHubSignals(isCompact),
+                      const SizedBox(height: 12),
+                      BridgeCard(
+                        scans: [
+                          if (_baselineProcedureScan != null)
+                            _baselineProcedureScan!,
+                          if (_latestProcedureScan != null)
+                            _latestProcedureScan!,
+                        ],
+                        title: 'Procedure Milestone Bridge',
+                        ctaLabel: 'Open AI Recovery Coach',
+                        onTap: () {
+                          Navigator.of(context).pushNamed('/ai-recovery-coach');
+                        },
+                      ),
                       const SizedBox(height: 24),
                       if (_loading)
                         const Padding(
@@ -330,15 +378,15 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
                 width: 46,
                 height: 46,
                 decoration: BoxDecoration(
-                  color: AppColors.champagneGold.withValues(alpha: 0.12),
+                  color: _clinicalSage.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(13),
                   border: Border.all(
-                    color: AppColors.champagneGold.withValues(alpha: 0.24),
+                    color: _clinicalSage.withValues(alpha: 0.24),
                   ),
                 ),
                 child: const Icon(
                   Icons.workspace_premium_rounded,
-                  color: AppColors.champagneGold,
+                  color: _clinicalSage,
                   size: 24,
                 ),
               ),
@@ -388,7 +436,7 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
           Text(
             'A calm, luxury recovery command center to make your healing journey feel trustworthy, personalized, and confidently guided.',
             style: TextStyle(
-              color: Colors.black,
+              color: Color(0xFF1E2225),
               fontSize: isCompact ? 13.0 : 14.0,
               fontWeight: FontWeight.w500,
               height: 1.5,
@@ -425,7 +473,7 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
           Text(
             label,
             style: const TextStyle(
-              color: Colors.black,
+              color: Color(0xFF1E2225),
               fontSize: 11.5,
               fontWeight: FontWeight.w700,
               letterSpacing: 0,
@@ -450,14 +498,14 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
           colors: [
             AppColors.cardBackground,
             AppColors.warmAlabaster,
-            AppColors.champagneGold.withValues(alpha: 0.10),
+            _clinicalSage.withValues(alpha: 0.10),
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(24),
         border: Border.all(
-          color: AppColors.champagneGold.withValues(alpha: 0.32),
+          color: _clinicalSage.withValues(alpha: 0.32),
           width: 1.2,
         ),
         boxShadow: [
@@ -476,13 +524,13 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               gradient: const LinearGradient(
-                colors: [AppColors.champagneGold, AppColors.goldHover],
+                colors: [_clinicalSage, _mintHighlight],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
               boxShadow: [
                 BoxShadow(
-                  color: MyApp.goldShimmer.withValues(alpha: 0.30),
+                  color: _clinicalSage.withValues(alpha: 0.30),
                   blurRadius: 18,
                   offset: const Offset(0, 6),
                 ),
@@ -491,7 +539,7 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
             child: const Icon(
               Icons.workspace_premium_rounded,
               size: 34,
-              color: Colors.black,
+              color: Color(0xFF1E2225),
             ),
           ),
           const SizedBox(height: 14),
@@ -507,7 +555,7 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
             'Advanced recovery intelligence to guide every step of your healing journey — beautifully, privately, and powerfully.',
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: Colors.black,
+              color: Color(0xFF1E2225),
               fontSize: 13.5,
               height: 1.5,
               fontWeight: FontWeight.w500,
@@ -529,20 +577,20 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
                       color: AppColors.warmAlabaster.withValues(alpha: 0.92),
                       borderRadius: BorderRadius.circular(999),
                       border: Border.all(
-                        color: MyApp.goldShimmer.withValues(alpha: 0.28),
+                        color: _clinicalSage.withValues(alpha: 0.28),
                       ),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(p.$2, size: 13, color: AppColors.champagneGold),
+                        Icon(p.$2, size: 13, color: _clinicalSage),
                         const SizedBox(width: 6),
                         Text(
                           p.$1,
                           style: const TextStyle(
                             fontSize: 11.5,
                             fontWeight: FontWeight.w700,
-                            color: Colors.black,
+                            color: Color(0xFF1E2225),
                           ),
                         ),
                       ],
@@ -557,7 +605,7 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
               borderRadius: MyApp.buttonRadius,
               boxShadow: [
                 BoxShadow(
-                  color: AppColors.champagneGold.withValues(alpha: 0.45),
+                  color: _clinicalSage.withValues(alpha: 0.45),
                   blurRadius: 24,
                   spreadRadius: 1,
                   offset: const Offset(0, 10),
@@ -570,14 +618,14 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
                 onPressed: () => Navigator.of(context).pushNamed('/paywall'),
                 icon: const Icon(
                   Icons.lock_open_rounded,
-                  color: Colors.black,
+                  color: Color(0xFF1E2225),
                   size: 18,
                 ),
                 label: const Text(
                   'Unlock Premium',
                   style: TextStyle(
                     fontWeight: FontWeight.w800,
-                    color: Colors.black,
+                    color: Color(0xFF1E2225),
                     fontSize: 14.5,
                   ),
                 ),
@@ -591,7 +639,7 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
             style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
-              color: Colors.black,
+              color: Color(0xFF1E2225),
               letterSpacing: 0.2,
             ),
           ),
@@ -611,7 +659,7 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
                 decoration: MyApp.surfaceCardDecoration(tintOpacity: 0.05)
                     .copyWith(
                       border: Border.all(
-                        color: AppColors.champagneGold.withValues(alpha: 0.22),
+                        color: _clinicalSage.withValues(alpha: 0.22),
                       ),
                     ),
                 child: Row(
@@ -621,11 +669,11 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
                       height: 42,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(14),
-                        color: AppColors.champagneGold.withValues(alpha: 0.12),
+                        color: _clinicalSage.withValues(alpha: 0.12),
                       ),
                       child: Icon(
                         signal.icon,
-                        color: AppColors.champagneGold,
+                        color: _clinicalSage,
                         size: 20,
                       ),
                     ),
@@ -637,7 +685,7 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
                           Text(
                             signal.label,
                             style: const TextStyle(
-                              color: Colors.black,
+                              color: Color(0xFF1E2225),
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
                             ),
@@ -748,9 +796,9 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
                       icon: const Icon(Icons.mic_rounded, size: 17),
                       label: Text('Voice Journal (${_voiceJournals.length})'),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.champagneGold,
+                        foregroundColor: _clinicalSage,
                         side: BorderSide(
-                          color: AppColors.champagneGold.withValues(
+                          color: _clinicalSage.withValues(
                             alpha: 0.42,
                           ),
                         ),
@@ -775,7 +823,7 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: AppColors.champagneGold.withValues(
+                          color: _clinicalSage.withValues(
                             alpha: 0.24,
                           ),
                         ),
@@ -789,7 +837,7 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
                                 ? Icons.verified_outlined
                                 : Icons.info_outline,
                             size: 15,
-                            color: AppColors.champagneGold,
+                            color: _clinicalSage,
                           ),
                           const SizedBox(width: 6),
                           Flexible(
@@ -799,7 +847,7 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
                                   : 'Select active procedure',
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                color: Colors.black,
+                                color: Color(0xFF1E2225),
                                 fontSize: 11.8,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -846,15 +894,15 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
                     shape: BoxShape.circle,
                     gradient: LinearGradient(
                       colors: [
-                        AppColors.champagneGold.withValues(alpha: 0.22),
-                        AppColors.goldHover.withValues(alpha: 0.22),
+                        _clinicalSage.withValues(alpha: 0.22),
+                        _mintHighlight.withValues(alpha: 0.22),
                       ],
                     ),
                   ),
                   child: Icon(
                     recording ? Icons.mic : Icons.mic_none,
                     size: 48,
-                    color: AppColors.champagneGold,
+                    color: _clinicalSage,
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -956,14 +1004,14 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
                     shape: BoxShape.circle,
                     gradient: LinearGradient(
                       colors: [
-                        AppColors.champagneGold.withValues(alpha: 0.22),
-                        AppColors.goldHover.withValues(alpha: 0.24),
+                        _clinicalSage.withValues(alpha: 0.22),
+                        _mintHighlight.withValues(alpha: 0.24),
                       ],
                     ),
                   ),
                   child: const Icon(
                     Icons.auto_awesome,
-                    color: AppColors.champagneGold,
+                    color: _clinicalSage,
                     size: 34,
                   ),
                 ),
@@ -978,7 +1026,7 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
                   'To generate a luxury, clinically relevant 3D prediction, choose your active procedure in your procedure tracker first.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: Colors.black,
+                    color: Color(0xFF1E2225),
                     height: 1.45,
                     fontWeight: FontWeight.w600,
                   ),
@@ -1000,7 +1048,11 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
     if (!mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => _FutureSimulatorScreen(procedure: _activeProcedure!),
+        builder: (_) => _FutureSimulatorScreen(
+          procedure: _activeProcedure!,
+          latestScan: _latestProcedureScan,
+          baselineScan: _baselineProcedureScan,
+        ),
       ),
     );
   }
@@ -1061,7 +1113,7 @@ class _LuxuryFeatureCardState extends State<_LuxuryFeatureCard> {
               ).copyWith(
                 border: Border.all(
                   color: feature.highlight
-                      ? AppColors.champagneGold.withValues(
+                      ? _clinicalSage.withValues(
                           alpha: _hovered ? 0.42 : 0.28,
                         )
                       : AppColors.borders,
@@ -1086,7 +1138,7 @@ class _LuxuryFeatureCardState extends State<_LuxuryFeatureCard> {
               onTapDown: (_) => setState(() => _pressed = true),
               onTapCancel: () => setState(() => _pressed = false),
               onTapUp: (_) => setState(() => _pressed = false),
-              splashColor: AppColors.champagneGold.withValues(alpha: 0.10),
+              splashColor: _clinicalSage.withValues(alpha: 0.10),
               highlightColor: Colors.transparent,
               child: Padding(
                 padding: const EdgeInsets.all(18),
@@ -1103,15 +1155,15 @@ class _LuxuryFeatureCardState extends State<_LuxuryFeatureCard> {
                             borderRadius: BorderRadius.circular(14),
                             gradient: const LinearGradient(
                               colors: [
-                                AppColors.champagneGold,
-                                AppColors.goldHover,
+                                _clinicalSage,
+                                _mintHighlight,
                               ],
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
                             ),
                             boxShadow: [
                               BoxShadow(
-                                color: MyApp.goldShimmer.withValues(
+                                color: _clinicalSage.withValues(
                                   alpha: 0.18,
                                 ),
                                 blurRadius: 12,
@@ -1121,7 +1173,7 @@ class _LuxuryFeatureCardState extends State<_LuxuryFeatureCard> {
                           ),
                           child: Icon(
                             feature.icon,
-                            color: Colors.black,
+                            color: Color(0xFF1E2225),
                             size: 23,
                           ),
                         ),
@@ -1141,7 +1193,7 @@ class _LuxuryFeatureCardState extends State<_LuxuryFeatureCard> {
                               Text(
                                 feature.accentLabel,
                                 style: const TextStyle(
-                                  color: Colors.black,
+                                  color: Color(0xFF1E2225),
                                   fontSize: 11.2,
                                   fontWeight: FontWeight.w700,
                                   letterSpacing: 0.34,
@@ -1152,7 +1204,7 @@ class _LuxuryFeatureCardState extends State<_LuxuryFeatureCard> {
                         ),
                         const Icon(
                           Icons.arrow_forward_rounded,
-                          color: Colors.black,
+                          color: Color(0xFF1E2225),
                           size: 19,
                         ),
                       ],
@@ -1161,7 +1213,7 @@ class _LuxuryFeatureCardState extends State<_LuxuryFeatureCard> {
                     Text(
                       feature.description,
                       style: const TextStyle(
-                        color: Colors.black,
+                        color: Color(0xFF1E2225),
                         height: 1.45,
                         fontSize: 13.2,
                         fontWeight: FontWeight.w500,
@@ -1189,8 +1241,14 @@ class _LuxuryFeatureCardState extends State<_LuxuryFeatureCard> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _FutureSimulatorScreen extends StatefulWidget {
-  const _FutureSimulatorScreen({required this.procedure});
+  const _FutureSimulatorScreen({
+    required this.procedure,
+    this.latestScan,
+    this.baselineScan,
+  });
   final Procedure procedure;
+  final ScanHistoryEntry? latestScan;
+  final ScanHistoryEntry? baselineScan;
 
   @override
   State<_FutureSimulatorScreen> createState() => _FutureSimulatorScreenState();
@@ -1200,6 +1258,7 @@ class _FutureSimulatorScreenState extends State<_FutureSimulatorScreen> {
   int _selectedMonth = 1;
   Uint8List? _baselinePhoto;
   bool _loadingPhoto = true;
+  String? _aiSummary;
 
   String get procedureName => widget.procedure.type;
 
@@ -1212,11 +1271,11 @@ class _FutureSimulatorScreenState extends State<_FutureSimulatorScreen> {
   Future<void> _loadPhoto() async {
     try {
       final selectedId = await AppPrefs.resolveActiveProcedureId();
+      final scanPhotoComparison = selectedId == null || selectedId.isEmpty
+          ? null
+          : await AppPrefs.getProcedurePhotoComparison(selectedId);
       if (selectedId != null && selectedId.isNotEmpty) {
-        final comparison = await AppPrefs.getProcedurePhotoComparison(
-          selectedId,
-        );
-        final baselinePath = comparison['baselineImagePath'];
+        final baselinePath = scanPhotoComparison?['baselineImagePath'];
         if (baselinePath != null && baselinePath.isNotEmpty) {
           final bytes = _decodePath(baselinePath);
           if (bytes != null) {
@@ -1226,6 +1285,7 @@ class _FutureSimulatorScreenState extends State<_FutureSimulatorScreen> {
                 _loadingPhoto = false;
               });
             }
+            _updateAiSummary();
             return;
           }
         }
@@ -1242,12 +1302,48 @@ class _FutureSimulatorScreenState extends State<_FutureSimulatorScreen> {
             _loadingPhoto = false;
           });
         }
+        _updateAiSummary();
       } else {
         if (mounted) setState(() => _loadingPhoto = false);
       }
     } catch (_) {
       if (mounted) setState(() => _loadingPhoto = false);
     }
+  }
+
+  SkinMetrics? _metricsFromScan(ScanHistoryEntry? scan) {
+    if (scan == null || scan.metrics.isEmpty) return null;
+    return SkinMetrics(
+      redness: scan.metrics['redness'] ?? 5.0,
+      texture: scan.metrics['texture'] ?? 5.0,
+      wrinkle: scan.metrics['wrinkles'] ?? scan.metrics['wrinkle'] ?? 5.0,
+      pore: scan.metrics['pores'] ?? 5.0,
+      darkSpots: scan.metrics['darkSpots'] ?? 5.0,
+      elasticity: scan.metrics['elasticity'] ?? 5.0,
+      date: scan.timestamp,
+      procedure: scan.procedure,
+    );
+  }
+
+  void _updateAiSummary() {
+    final latest = widget.latestScan;
+    final metrics = _metricsFromScan(latest);
+    if (metrics == null) return;
+    final baselineMetrics = _metricsFromScan(widget.baselineScan);
+    final report = AiIntelligenceEngine.interpretScanMetrics(
+      metrics,
+      baseline: baselineMetrics,
+      procedureType: widget.procedure.type,
+      daysSinceProcedure: latest == null
+          ? null
+          : DateTime.now().difference(latest.timestamp).inDays,
+      rawMetrics: latest?.metrics,
+      baselineRawMetrics: widget.baselineScan?.metrics,
+    );
+    if (!mounted) return;
+    setState(() {
+      _aiSummary = report.overallNarrative;
+    });
   }
 
   Uint8List? _decodePath(String path) {
@@ -1266,6 +1362,14 @@ class _FutureSimulatorScreenState extends State<_FutureSimulatorScreen> {
 
   _SimParams _paramsFor(int month) {
     final p = widget.procedure.type.toLowerCase();
+    final latest = widget.latestScan;
+    final rednessSignal = (latest?.metrics['redness'] ?? 5.0).clamp(0.0, 10.0);
+    final textureSignal = (latest?.metrics['texture'] ?? 5.0).clamp(0.0, 10.0);
+    final wrinkleSignal = (latest?.metrics['wrinkles'] ?? latest?.metrics['wrinkle'] ?? 5.0).clamp(0.0, 10.0);
+    final skinTension = ((rednessSignal + (10.0 - textureSignal) + wrinkleSignal) / 3.0)
+        .clamp(0.0, 10.0)
+        .toDouble();
+    final emphasis = (skinTension / 10.0).clamp(0.0, 1.0);
     final isLaser =
         p.contains('laser') ||
         p.contains('morpheus') ||
@@ -1569,41 +1673,41 @@ class _FutureSimulatorScreenState extends State<_FutureSimulatorScreen> {
 
     // ── Generic ──
     return switch (month) {
-      1 => const _SimParams(
+      1 => _SimParams(
         category: 'generic',
-        rednessScale: 0.92,
-        brightness: 5,
-        contrast: 1.015,
-        saturation: 1.02,
-        blurSigma: 0.4,
-        overlayOpacity: 0.05,
+        rednessScale: 0.92 - (emphasis * 0.06),
+        brightness: 5 + (emphasis * 3.0),
+        contrast: 1.015 + (emphasis * 0.006),
+        saturation: 1.02 + (emphasis * 0.02),
+        blurSigma: 0.4 + (emphasis * 0.08),
+        overlayOpacity: 0.05 + (emphasis * 0.03),
         overlayColor: Color(0xFFFFEFE2),
-        glow: 0.06,
-        vignette: 0.06,
+        glow: 0.06 + (emphasis * 0.03),
+        vignette: 0.06 + (emphasis * 0.02),
       ),
-      3 => const _SimParams(
+      3 => _SimParams(
         category: 'generic',
-        rednessScale: 0.84,
-        brightness: 9,
-        contrast: 1.025,
-        saturation: 1.05,
-        blurSigma: 0.7,
-        overlayOpacity: 0.08,
+        rednessScale: 0.84 - (emphasis * 0.05),
+        brightness: 9 + (emphasis * 4.0),
+        contrast: 1.025 + (emphasis * 0.01),
+        saturation: 1.05 + (emphasis * 0.025),
+        blurSigma: 0.7 + (emphasis * 0.08),
+        overlayOpacity: 0.08 + (emphasis * 0.02),
         overlayColor: Color(0xFFFFE8D6),
-        glow: 0.10,
-        vignette: 0.10,
+        glow: 0.10 + (emphasis * 0.04),
+        vignette: 0.10 + (emphasis * 0.03),
       ),
-      12 => const _SimParams(
+      12 => _SimParams(
         category: 'generic',
-        rednessScale: 0.78,
-        brightness: 13,
-        contrast: 1.035,
-        saturation: 1.08,
-        blurSigma: 1.0,
-        overlayOpacity: 0.10,
+        rednessScale: 0.78 - (emphasis * 0.04),
+        brightness: 13 + (emphasis * 5.0),
+        contrast: 1.035 + (emphasis * 0.012),
+        saturation: 1.08 + (emphasis * 0.03),
+        blurSigma: 1.0 + (emphasis * 0.1),
+        overlayOpacity: 0.10 + (emphasis * 0.03),
         overlayColor: Color(0xFFFFE2CE),
-        glow: 0.14,
-        vignette: 0.14,
+        glow: 0.14 + (emphasis * 0.05),
+        vignette: 0.14 + (emphasis * 0.04),
         contour: true,
       ),
       _ => const _SimParams(
@@ -2119,6 +2223,13 @@ class _FutureSimulatorScreenState extends State<_FutureSimulatorScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: _buildComparisonRow(params, monthLabel),
             ),
+            if ((_aiSummary ?? '').trim().isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: _buildAiContextCard(),
+              ),
+            ],
             const SizedBox(height: 14),
 
             // ── Caption ───────────────────────────────────────────────────
@@ -2164,6 +2275,82 @@ class _FutureSimulatorScreenState extends State<_FutureSimulatorScreen> {
     );
   }
 
+  Widget _buildAiContextCard() {
+    final latest = widget.latestScan;
+    final metrics = _metricsFromScan(latest);
+    if ((_aiSummary ?? '').trim().isEmpty || metrics == null) {
+      return const SizedBox.shrink();
+    }
+
+    Widget metricChip(String label, double value) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: MyApp.clinicalTeal.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: MyApp.clinicalTeal.withValues(alpha: 0.18),
+          ),
+        ),
+        child: Text(
+          '$label ${(value * 10).round() / 10}',
+          style: TextStyle(
+            color: MyApp.clinicalNavy,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _clinicalSage.withValues(alpha: 0.22)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.psychology_alt_rounded, color: MyApp.clinicalTeal),
+              const SizedBox(width: 8),
+              Text(
+                'AI Skin Context',
+                style: TextStyle(
+                  color: MyApp.clinicalNavy,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            _aiSummary!,
+            style: TextStyle(
+              color: MyApp.textBrown,
+              fontSize: 12.5,
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              metricChip('Redness', metrics.redness),
+              metricChip('Texture', metrics.texture),
+              metricChip('Wrinkles', metrics.wrinkle),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── Procedure header card ────────────────────────────────────────────────
   Widget _buildProcedureHeaderCard() {
     return Container(
@@ -2172,7 +2359,7 @@ class _FutureSimulatorScreenState extends State<_FutureSimulatorScreen> {
         color: AppColors.cardBackground,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: AppColors.champagneGold.withValues(alpha: 0.24),
+          color: _clinicalSage.withValues(alpha: 0.24),
         ),
         boxShadow: [
           BoxShadow(
@@ -2191,7 +2378,7 @@ class _FutureSimulatorScreenState extends State<_FutureSimulatorScreen> {
               gradient: LinearGradient(
                 colors: [
                   AppColors.mutedSage.withValues(alpha: 0.16),
-                  AppColors.champagneGold.withValues(alpha: 0.16),
+                  _clinicalSage.withValues(alpha: 0.16),
                 ],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
@@ -2302,7 +2489,7 @@ class _FutureSimulatorScreenState extends State<_FutureSimulatorScreen> {
                         child: const Text(
                           'Before',
                           style: TextStyle(
-                            color: Colors.black,
+                            color: Color(0xFF1E2225),
                             fontSize: 10,
                             fontWeight: FontWeight.w700,
                             letterSpacing: 0.5,
@@ -2411,7 +2598,7 @@ class _FutureSimulatorScreenState extends State<_FutureSimulatorScreen> {
         color: AppColors.cardBackground,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: AppColors.champagneGold.withValues(alpha: 0.24),
+          color: _clinicalSage.withValues(alpha: 0.24),
         ),
         boxShadow: [
           BoxShadow(
@@ -3203,7 +3390,7 @@ class _MonthChip extends StatelessWidget {
             Text(
               label,
               style: const TextStyle(
-                color: Colors.black,
+                color: Color(0xFF1E2225),
                 fontWeight: FontWeight.w800,
                 fontSize: 14,
                 letterSpacing: 0.2,
@@ -3213,7 +3400,7 @@ class _MonthChip extends StatelessWidget {
             Text(
               sublabel,
               style: const TextStyle(
-                color: Colors.black,
+                color: Color(0xFF1E2225),
                 fontSize: 10,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.2,
@@ -3316,10 +3503,10 @@ class _SimulatedPhotoState extends State<_SimulatedPhoto> {
                     vertical: 5,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.68),
+                    color: Color(0xFF1E2225).withValues(alpha: 0.68),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
-                      color: MyApp.goldShimmer.withValues(alpha: 0.5),
+                      color: _clinicalSage.withValues(alpha: 0.5),
                     ),
                   ),
                   child: Row(
@@ -3328,13 +3515,13 @@ class _SimulatedPhotoState extends State<_SimulatedPhoto> {
                       Icon(
                         Icons.auto_awesome,
                         size: 11,
-                        color: MyApp.goldShimmer,
+                        color: _clinicalSage,
                       ),
                       const SizedBox(width: 5),
                       Text(
                         'Projected at $monthLabel',
                         style: TextStyle(
-                          color: MyApp.goldShimmer,
+                          color: _clinicalSage,
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
                         ),
@@ -3352,13 +3539,13 @@ class _SimulatedPhotoState extends State<_SimulatedPhoto> {
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.55),
+                    color: Color(0xFF1E2225).withValues(alpha: 0.55),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: const Text(
                     'Your photo',
                     style: TextStyle(
-                      color: Colors.black,
+                      color: Color(0xFF1E2225),
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
                     ),
@@ -3607,7 +3794,7 @@ class _SimulatedPhotoState extends State<_SimulatedPhoto> {
                           Colors.white,
                           Color.lerp(
                             Colors.white,
-                            Colors.black,
+                            Color(0xFF1E2225),
                             (0.32 * realVignette).clamp(0.0, 0.32),
                           )!,
                         ],
@@ -3628,10 +3815,10 @@ class _SimulatedPhotoState extends State<_SimulatedPhoto> {
                   vertical: 5,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.68),
+                  color: Color(0xFF1E2225).withValues(alpha: 0.68),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
-                    color: MyApp.goldShimmer.withValues(alpha: 0.5),
+                    color: _clinicalSage.withValues(alpha: 0.5),
                   ),
                 ),
                 child: Row(
@@ -3640,13 +3827,13 @@ class _SimulatedPhotoState extends State<_SimulatedPhoto> {
                     Icon(
                       Icons.auto_awesome,
                       size: 11,
-                      color: MyApp.goldShimmer,
+                      color: _clinicalSage,
                     ),
                     const SizedBox(width: 5),
                     Text(
                       'Projected at $monthLabel',
                       style: TextStyle(
-                        color: MyApp.goldShimmer,
+                        color: _clinicalSage,
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
                       ),
@@ -3669,7 +3856,7 @@ class _SimulatedPhotoState extends State<_SimulatedPhoto> {
                 child: const Text(
                   'Your photo',
                   style: TextStyle(
-                    color: Colors.black,
+                    color: Color(0xFF1E2225),
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
                   ),
@@ -3822,3 +4009,4 @@ class _MetricProjection {
   final String label;
   final double value; // 0.0–1.0
 }
+

@@ -15,8 +15,8 @@ import 'models/procedure.dart';
 import 'models/procedure_log.dart';
 import 'screens/analysis_results_screen.dart';
 import 'screens/ai_recovery_coach_screen.dart';
-import 'screens/ai_skincare_coach_screen.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
+import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import 'screens/create_procedure_screen.dart';
 import 'screens/home_screen.dart' show HomePage;
 import 'screens/onboarding_screen.dart';
@@ -45,6 +45,8 @@ import 'screens/product_store_screen.dart';
 import 'screens/cart_screen.dart';
 import 'screens/recovery_timeline_screen.dart';
 import 'screens/procedure_history_screen.dart';
+import 'screens/routines_screen.dart';
+import 'screens/conversion_diagnostics_screen.dart';
 
 // RouteObserver for HomePage refresh
 final RouteObserver<PageRoute> routeObserver = RouteObserver<PageRoute>();
@@ -129,13 +131,20 @@ Future<void> main() async {
       await AppPrefs.getUserProfilePictureOrNull();
       await AppPrefs.loadVerboseDiagnosticsSetting();
 
-      // Initialize notification service for procedure reminders
+      // Initialize notification service for opt-in reminders.
       if (!kIsWeb) {
         try {
           await NotificationService().initialize();
-          await NotificationService().requestPermissions();
+          if (await AppPrefs.getNotificationsEnabled()) {
+            final granted = await NotificationService().requestPermissions();
+            if (granted) {
+              await NotificationService().resyncScheduledReminders();
+            } else {
+              await AppPrefs.setNotificationsEnabled(false);
+            }
+          }
         } catch (_) {
-          // Notifications are optional; app should still boot if unavailable
+          // Notifications are optional; app should still boot if unavailable.
         }
       }
 
@@ -262,6 +271,8 @@ class _AestheticSkinTrackerState extends State<AestheticSkinTracker> {
         return const HomePage();
       case '/paywall':
         return const PaywallScreen();
+      case '/conversion-diagnostics':
+        return const ConversionDiagnosticsScreen();
       case '/camera':
         return const CameraScreen();
       case '/analysis':
@@ -275,7 +286,7 @@ class _AestheticSkinTrackerState extends State<AestheticSkinTracker> {
       case '/ai-recovery-coach':
         return const AIRecoveryCoachScreen();
       case '/ai-coach':
-        return const AISkincareCoachScreen();
+        return const SkinAiAnalysisScreen();
       case '/progress-analysis':
         // You may want a dedicated screen, but fallback to AnalysisResultsScreen for now
         return const AnalysisResultsScreen(imagePath: null);
@@ -285,6 +296,8 @@ class _AestheticSkinTrackerState extends State<AestheticSkinTracker> {
         return const CreateProcedureScreen();
       case '/procedure-history':
         return const ProcedureHistoryScreen();
+      case '/routines':
+        return const RoutinesScreen();
       case '/settings':
       case '/profile':
         return const SettingsScreen();
@@ -443,7 +456,7 @@ class _FriendlyAppErrorScreen extends StatelessWidget {
                         details.exceptionAsString(),
                         style: const TextStyle(
                           fontFamily: 'monospace',
-                          color: Colors.black54,
+                          color: Color(0x8A1E2225),
                         ),
                       ),
                     ),
@@ -497,3 +510,5 @@ class _ProcedureDetailLoaderState extends State<_ProcedureDetailLoader> {
     );
   }
 }
+
+

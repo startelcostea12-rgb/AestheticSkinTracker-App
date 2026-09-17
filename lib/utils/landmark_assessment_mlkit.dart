@@ -235,16 +235,40 @@ Future<LandmarkAssessment> _assessFace(
   });
   final face = faces.first;
   final imageSize = inputImage.metadata?.size;
-  final imageWidth = imageSize?.width ?? face.boundingBox.width;
-  final imageHeight = imageSize?.height ?? face.boundingBox.height;
+
+  // The raw camera frame can arrive in landscape sensor dimensions even when the
+  // preview is shown in portrait orientation. Use the metadata size as the
+  // actual preview coordinate system, and account for rotation so the face box
+  // and target mask share the same coordinate space.
+  double imageWidth = imageSize?.width ?? face.boundingBox.width;
+  double imageHeight = imageSize?.height ?? face.boundingBox.height;
+  final rotation = inputImage.metadata?.rotation ?? InputImageRotation.rotation0deg;
+  final requiresSwap = rotation == InputImageRotation.rotation90deg ||
+      rotation == InputImageRotation.rotation270deg;
+  if (requiresSwap) {
+    final swapped = imageWidth;
+    imageWidth = imageHeight;
+    imageHeight = swapped;
+  }
+
+  const guideCenterX = 0.5;
+  const guideCenterY = 0.48;
+  const guideWidthRatio = 0.68;
+  const guideHeightRatio = 0.84;
+
   final faceCenterX = face.boundingBox.center.dx / imageWidth;
   final faceCenterY = face.boundingBox.center.dy / imageHeight;
-  final imageArea = (imageWidth * imageHeight).clamp(1.0, double.infinity);
+  final guideArea =
+      (imageWidth * imageHeight * guideWidthRatio * guideHeightRatio)
+          .clamp(1.0, double.infinity);
   final faceArea =
-      (face.boundingBox.width * face.boundingBox.height).clamp(0.0, imageArea);
-  final faceFillRatio = (faceArea / imageArea).clamp(0.0, 1.0).toDouble();
-  final centerOffsetX = faceCenterX - 0.5;
-  final centerOffsetY = faceCenterY - 0.43;
+      (face.boundingBox.width * face.boundingBox.height).clamp(0.0, guideArea);
+  final faceFillRatio = (faceArea / guideArea).clamp(0.0, 1.0).toDouble();
+
+  final centerOffsetX =
+      (faceCenterX - guideCenterX).clamp(-1.0, 1.0).toDouble();
+  final centerOffsetY =
+      (faceCenterY - guideCenterY).clamp(-1.0, 1.0).toDouble();
   final yaw = face.headEulerAngleY ?? 0;
   final pitch = face.headEulerAngleX ?? 0;
   final roll = face.headEulerAngleZ ?? 0;
@@ -278,6 +302,10 @@ Future<LandmarkAssessment> _assessFace(
       (roll.abs() * 0.8) +
       (eyeTilt.abs() * 0.6);
   final quality = (100 - centerPenalty - posePenalty).clamp(0, 100).toDouble();
+
+  print(
+    '[MLKIT FACE POSE] poseTemplate=$poseTemplate yaw=${yaw.toStringAsFixed(2)}° pitch=${pitch.toStringAsFixed(2)}° roll=${roll.toStringAsFixed(2)}° eyeTilt=${eyeTilt.toStringAsFixed(2)}° centerOffsetX=${centerOffsetX.toStringAsFixed(3)} centerOffsetY=${centerOffsetY.toStringAsFixed(3)} faceFillRatio=${faceFillRatio.toStringAsFixed(3)} targetYaw=${targetYaw.toStringAsFixed(2)}° yawDelta=${yawDelta.toStringAsFixed(2)}°',
+  );
 
   String primary;
   if (centerOffsetX.abs() > 0.08) {
@@ -362,8 +390,12 @@ Future<LandmarkAssessment> _assessBody(
       (leftShoulder.x + rightShoulder.x + leftHip.x + rightHip.x) / 4;
   final centerY =
       (leftShoulder.y + rightShoulder.y + leftHip.y + rightHip.y) / 4;
-  final centerOffsetX = (centerX / inputImage.metadata!.size.width) - 0.5;
-  final centerOffsetY = (centerY / inputImage.metadata!.size.height) - 0.52;
+  final centerOffsetX = ((centerX / inputImage.metadata!.size.width) - 0.5)
+      .clamp(-0.5, 0.5)
+      .toDouble();
+  final centerOffsetY = ((centerY / inputImage.metadata!.size.height) - 0.5)
+      .clamp(-0.5, 0.5)
+      .toDouble();
   final shoulderTilt =
       math.atan2(
         rightShoulder.y - leftShoulder.y,
@@ -374,6 +406,28 @@ Future<LandmarkAssessment> _assessBody(
   final shoulderWidth = (rightShoulder.x - leftShoulder.x).abs();
   final hipWidth = (rightHip.x - leftHip.x).abs().clamp(1, double.infinity);
   final widthRatio = shoulderWidth / hipWidth;
+  final imageWidth = inputImage.metadata?.size.width ?? 1.0;
+  final imageHeight = inputImage.metadata?.size.height ?? 1.0;
+  final shoulderMidX = ((leftShoulder.x + rightShoulder.x) / 2.0) / imageWidth;
+  final shoulderMidY = ((leftShoulder.y + rightShoulder.y) / 2.0) / imageHeight;
+  final hipMidX = ((leftHip.x + rightHip.x) / 2.0) / imageWidth;
+  final hipMidY = ((leftHip.y + rightHip.y) / 2.0) / imageHeight;
+  final shoulderWidthNorm = (shoulderWidth / imageWidth).clamp(0.0, 1.0);
+  final hipWidthNorm = (hipWidth / imageWidth).clamp(0.0, 1.0);
+  final shoulderToHipRatio = hipWidthNorm > 0 ? shoulderWidthNorm / hipWidthNorm : 0.0;
+  final dx = (shoulderMidX - hipMidX) * imageWidth;
+  final dy = (shoulderMidY - hipMidY) * imageHeight;
+  final shoulderToHipDistance = math.sqrt((dx * dx) + (dy * dy));
+  final scaleNorm = (shoulderToHipDistance * 1.25 / math.max(imageWidth, imageHeight))
+      .clamp(0.0, 1.0);
+  final roiX0Norm = ((math.min(leftHip.x, rightHip.x) / imageWidth) - (0.5 * scaleNorm))
+      .clamp(0.0, 1.0);
+  final roiX1Norm = ((math.max(leftHip.x, rightHip.x) / imageWidth) + (0.5 * scaleNorm))
+      .clamp(0.0, 1.0);
+  final roiY0Norm = ((math.min(leftHip.y, rightHip.y) / imageHeight) - (0.35 * scaleNorm))
+      .clamp(0.0, 1.0);
+  final roiY1Norm = ((math.max(leftHip.y, rightHip.y) / imageHeight) + (0.85 * scaleNorm))
+      .clamp(0.0, 1.0);
 
   final targetRatio = switch (poseTemplate) {
     'Front' => 1.0,
@@ -422,5 +476,20 @@ Future<LandmarkAssessment> _assessBody(
     poseSimilarity: (100 - posePenalty).clamp(0, 100).toDouble(),
     rotationProxy: rotationProxy,
     mode: 'body',
+    bodyReferenceGeometry: {
+      'shoulderMidX': shoulderMidX,
+      'shoulderMidY': shoulderMidY,
+      'hipMidX': hipMidX,
+      'hipMidY': hipMidY,
+      'shoulderWidthNorm': shoulderWidthNorm,
+      'hipWidthNorm': hipWidthNorm,
+      'shoulderToHipRatio': shoulderToHipRatio,
+      'roiX0Norm': roiX0Norm,
+      'roiX1Norm': roiX1Norm,
+      'roiY0Norm': roiY0Norm,
+      'roiY1Norm': roiY1Norm,
+      'centerOffsetX': centerOffsetX,
+      'centerOffsetY': centerOffsetY,
+    },
   );
 }

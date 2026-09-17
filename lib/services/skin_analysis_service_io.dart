@@ -6,13 +6,26 @@
 // `dart:ffi` are available — i.e. Android, iOS, macOS, Windows, Linux.
 //
 //   1. Main skin-analysis model  (`skin_analysis_model.tflite`)
-//      → outputs 4 metrics: pigment, redness, texture, wrinkle
+//      → outputs 4 or 6 metrics: pigment, redness, texture, wrinkle
+//        [, acne_severity, rosacea_intensity]
 //   2. Acne + Rosacea specialist (`acne_rosacea_model.tflite`)
 //      → outputs 2 metrics: acne_severity, rosacea_intensity
+//        (only loaded when #1 is the legacy 4-output variant)
 //
-// Both models share the same input contract: a 224×224 RGB image,
-// float32, normalised to the [0, 1] range, laid out as a 4-D tensor
-// of shape [1, 224, 224, 3].
+// Both models take a 224×224 RGB image, float32, laid out as a 4-D
+// tensor of shape [1, 224, 224, 3]. NORMALIZATION: `skin_analysis_model
+// .tflite` is converted (see tool/convert_skin_model_to_tflite.py) from a
+// Keras model built on `tf.keras.applications.MobileNetV2` — confirmed by
+// inspecting the .h5's layer names (Conv1/bn_Conv1/block_N_expand.../
+// Conv_1/Conv_1_bn, the exact names MobileNetV2 hard-codes) — which was
+// pretrained expecting MobileNetV2's own preprocessing convention:
+// `(pixel - 127.5) / 127.5`, producing [-1, 1], NOT the naive [0, 1] a
+// generic image-classifier contract might assume. Feeding [0, 1] pixels
+// into a model expecting [-1, 1] silently produces meaningless output
+// (every input looks like a uniform mid-gray to the network), so this
+// must stay in sync with whatever `skin_analysis_model.tflite` actually
+// is — re-verify if that asset is ever regenerated from a differently
+// preprocessed source model.
 
 import 'dart:io';
 
@@ -42,6 +55,28 @@ class IoSkinAnalysisBackend implements SkinAnalysisBackend {
   /// "inflammatory" head. A 6-output model produces all of them; a
   /// 4-output model produces only the first four (the specialist model
   /// then supplies the remaining two).
+  ///
+  /// ⚠ UNVERIFIED, AND CURRENT EVIDENCE ARGUES AGAINST TRUSTING IT: this
+  /// order comes only from a training-script comment (see
+  /// tool/convert_skin_model_to_tflite.py's METRIC_NAMES_6), not from
+  /// inspecting the model's actual output semantics — a Dense(6, sigmoid)
+  /// layer carries no label metadata for its units. A corrected-
+  /// normalization probe against 5 reference photos (clear-skin stock
+  /// photo, a neutral stock portrait, a mild-redness portrait, a severe
+  /// clinical rosacea photo, and a second clear-skin portrait) found NO
+  /// output index — under either [0,1] or the correct [-1,1]
+  /// normalization — that ranks those photos by visible redness/rosacea
+  /// severity in a sensible order. The severe clinical rosacea photo
+  /// scored LOWEST of all five on output[1] ("redness") under the
+  /// corrected normalization (0.43, vs. 0.75-0.91 for the clear-skin/mild
+  /// photos), and tied with the clearest-skin photo on output[5]
+  /// ("rosacea_intensity") — i.e. the assumed mapping does not merely
+  /// need confirming, it is actively contradicted by the one unambiguous
+  /// test case available. Do not wire this array's values into any
+  /// user-facing display as if the labels were confirmed; `runFullAnalysis`
+  /// still returns them (now correctly preprocessed) for transparency and
+  /// future recalibration, but no caller in this codebase currently
+  /// treats them as trustworthy per-label scores.
   static const List<String> _allMetrics = [
     'pigment',
     'redness',
@@ -260,8 +295,16 @@ class IoSkinAnalysisBackend implements SkinAnalysisBackend {
     return decoded;
   }
 
-  /// Resizes to 224×224, drops alpha, and normalises each RGB channel
-  /// to [0, 1], producing a [1, 224, 224, 3] float32 tensor.
+  /// Resizes to 224×224, drops alpha, and normalises each RGB channel to
+  /// [-1, 1] via `(pixel - 127.5) / 127.5` — the MobileNetV2 preprocessing
+  /// convention `skin_analysis_model.tflite` was trained on (see the file
+  /// header). Producing a [1, 224, 224, 3] float32 tensor.
+  ///
+  /// NOTE: this was previously (incorrectly) `pixel / 255.0` → [0, 1],
+  /// which does not match the model's training preprocessing and made its
+  /// output meaningless. Fixed after confirming the [-1, 1] range directly
+  /// against the model's own architecture (MobileNetV2 backbone) rather
+  /// than assuming a generic contract.
   List<List<List<List<double>>>> _preprocess(img.Image image) {
     final resized = img.copyResize(
       image,
@@ -275,7 +318,11 @@ class IoSkinAnalysisBackend implements SkinAnalysisBackend {
         _inputSize,
         (y) => List.generate(_inputSize, (x) {
           final p = resized.getPixel(x, y);
-          return [p.r / 255.0, p.g / 255.0, p.b / 255.0];
+          return [
+            (p.r - 127.5) / 127.5,
+            (p.g - 127.5) / 127.5,
+            (p.b - 127.5) / 127.5,
+          ];
         }),
       ),
     );

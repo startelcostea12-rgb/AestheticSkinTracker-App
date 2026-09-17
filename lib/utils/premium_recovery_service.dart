@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../models/premium_recovery_models.dart';
 import '../models/procedure.dart';
 import '../models/scan_history.dart';
+import '../models/journal_entry.dart';
 import 'app_prefs.dart';
 import 'app_logger.dart';
 import 'ai_intelligence_engine.dart';
@@ -518,6 +519,7 @@ class PremiumRecoveryService {
         activeProcedure ?? await _resolveActiveProcedureFromPrefs();
     final scans = scopedScans ?? await _loadScansScopedToProcedure(procedure);
     final procedures = await AppPrefs.getProcedureEntries();
+    final generalJournalEntries = await AppPrefs.getGeneralJournalEntries();
     final procedureType = _resolveProcedureType(
       explicit: appProcedureType,
       activeProcedure: procedure,
@@ -534,6 +536,7 @@ class PremiumRecoveryService {
       scans: scans,
       procedures: procedures,
       skincareJournalRaw: journalsRaw,
+      generalJournalEntries: generalJournalEntries,
     );
     final day = procedure?.startDate == null
         ? 0
@@ -951,6 +954,7 @@ class PremiumRecoveryService {
     required List<ScanHistoryEntry> scans,
     required List<Map<String, dynamic>> procedures,
     required String? skincareJournalRaw,
+    required List<JournalEntry> generalJournalEntries,
   }) {
     final procedureType = (procedure?.type ?? 'your procedure').trim().isEmpty
         ? 'your procedure'
@@ -1118,6 +1122,17 @@ class PremiumRecoveryService {
         ? 'No additional recent journal highlights.'
         : 'Recent journal highlights: ${recentJournalHighlights.join(' | ')}.';
 
+    final recentUserJournalNotes = generalJournalEntries
+        .where(
+          (entry) =>
+              entry.content.trim().isNotEmpty || entry.title.trim().isNotEmpty,
+        )
+        .toList()
+      ..sort((a, b) => b.date.compareTo(a.date));
+    final generalJournalLine = recentUserJournalNotes.isEmpty
+        ? 'No recent general journal notes.'
+        : 'Recent user journal notes: ${recentUserJournalNotes.take(3).map((entry) => entry.content.trim().isNotEmpty ? entry.content.trim() : entry.title.trim()).where((text) => text.isNotEmpty).join(' | ')}.';
+
     // Build AI metric context from scan data
     final scanMetricContext = AiIntelligenceEngine.buildCoachMetricContext(
       scans: scans,
@@ -1137,6 +1152,7 @@ class PremiumRecoveryService {
       journalSummary: journalSummary,
       procedureJournalLine: journalLine,
       journalHighlightsLine: journalHighlightsLine,
+      generalJournalLine: generalJournalLine,
       scanMetricContext: scanMetricContext,
     );
   }
@@ -1165,6 +1181,7 @@ class _CoachContextSnapshot {
     required this.journalSummary,
     required this.procedureJournalLine,
     required this.journalHighlightsLine,
+    required this.generalJournalLine,
     this.scanMetricContext,
   });
 
@@ -1180,6 +1197,7 @@ class _CoachContextSnapshot {
   final String journalSummary;
   final String procedureJournalLine;
   final String journalHighlightsLine;
+  final String generalJournalLine;
   final String? scanMetricContext;
 
   String get summaryForPrompt {
@@ -1194,6 +1212,7 @@ class _CoachContextSnapshot {
       timelineProgressLine,
       procedureJournalLine,
       journalHighlightsLine,
+      generalJournalLine,
       'Procedure records: $procedureSummary',
       journalSummary,
       if (scanMetricContext != null && scanMetricContext!.isNotEmpty)

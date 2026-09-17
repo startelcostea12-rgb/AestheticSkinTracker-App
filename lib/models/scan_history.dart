@@ -52,6 +52,41 @@ class ScanHistoryEntry {
   static const String scanTypeSkincare = 'skincare';
   static const String scanTypeAiAnalysis = 'ai_analysis';
 
+  /// On-device TFLite analysis (SkinAnalysisService in lib/services/).
+  static const String engineLocalTflite = 'local-tflite';
+
+  /// Remote backend analysis (main.py /api/skin/analyze-single or
+  /// /api/analyze-skin, reached via lib/utils/skin_analysis_service.dart).
+  static const String engineBackendOpencv = 'backend_opencv';
+
+  /// Legacy scans saved before scan provenance was tracked, or scans with
+  /// no engine-identifying data (e.g. manually-entered body metrics).
+  static const String engineUnknown = 'unknown';
+
+  /// Resolves a scan's analysis engine from a raw result payload's
+  /// `modelUsed` (or `model_used`) tag, falling back to [fallback] when the
+  /// payload carries no such tag.
+  static String resolveScanEngine(
+    Map<String, dynamic>? payload, {
+    String fallback = engineUnknown,
+  }) {
+    final raw = payload?['modelUsed'] ?? payload?['model_used'];
+    final text = raw?.toString().trim();
+    return (text == null || text.isEmpty) ? fallback : text;
+  }
+
+  /// True only when [a] and [b] are the same known engine. Different
+  /// engines (or either being [engineUnknown]) measure metrics with
+  /// different instruments and are not directly comparable — callers
+  /// computing trend deltas between two scans should force "stable" /
+  /// insufficient-comparison instead of reporting a real delta when this
+  /// returns false, same principle as the capture-quality/path-mismatch
+  /// honesty guard.
+  static bool scanEnginesComparable(String a, String b) {
+    if (a == engineUnknown || b == engineUnknown) return false;
+    return a == b;
+  }
+
   final String id;
   final DateTime timestamp;
   final String? imagePath;
@@ -73,6 +108,7 @@ class ScanHistoryEntry {
   final double? lightingConfidence;
   final bool preferredReference;
   final bool isBaseline; // TRUE if this is the first photo for a procedure
+  final Map<String, double>? bodyReferenceGeometry;
 
   /// True if the user disclosed that they were wearing makeup, sunscreen, or
   /// active skincare products at capture time. Clinical accuracy is reduced
@@ -91,6 +127,36 @@ class ScanHistoryEntry {
   /// Confidence (0..1) that the subject's expression was neutral and the
   /// face was acceptably visible at capture.
   final double? expressionConfidence;
+
+  /// Capture-time quality tag: normal | low_light | face_offcenter |
+  /// partial_body_framing | poor_angle | uneven_lighting | blurry.
+  final String? captureQuality;
+
+  /// Which analysis engine produced [metrics]: [engineLocalTflite],
+  /// [engineBackendOpencv], or [engineUnknown] for legacy/manual scans.
+  /// Scans from different engines are not directly comparable — see
+  /// trend-delta guards in progress_report_screen.dart.
+  final String scanEngine;
+
+  /// Real-world capture setup for body-region scans: [captureModeMirror],
+  /// [captureModeAssisted], or [captureModeTimer]. Null for face/general
+  /// scans and for legacy body scans predating this field. A mirror-mode
+  /// scan's photo is left-right flipped back to normal orientation before
+  /// being saved, so this does not affect metric comparability the way
+  /// [scanEngine] does — it exists so a captureMode MISMATCH between a
+  /// baseline and a later scan can be treated as an honesty-gate signal
+  /// (same principle as a scale_reference_pixels mismatch), since switching
+  /// capture methods can shift framing/depth even with correct orientation.
+  static const String captureModeMirror = 'mirror';
+  static const String captureModeAssisted = 'assisted';
+  static const String captureModeTimer = 'timer';
+
+  final String? captureMode;
+
+  /// Original camera/gallery image dimensions before the manual crop.
+  /// Null for scans saved before resolution provenance was introduced.
+  final int? sourceImageWidth;
+  final int? sourceImageHeight;
 
   const ScanHistoryEntry({
     required this.id,
@@ -111,12 +177,17 @@ class ScanHistoryEntry {
     this.lightingConfidence,
     this.preferredReference = false,
     this.isBaseline = false,
+    this.bodyReferenceGeometry,
     this.makeupPresent = false,
     this.distanceEstimate,
     this.headTiltAngle,
     this.expressionConfidence,
+    this.captureQuality,
+    this.scanEngine = engineUnknown,
+    this.captureMode,
+    this.sourceImageWidth,
+    this.sourceImageHeight,
   });
-
   factory ScanHistoryEntry.fromJson(Map<String, dynamic> json) {
     Map<String, dynamic>? asDynamicMap(dynamic value) {
       if (value is Map<String, dynamic>) return value;
@@ -142,11 +213,30 @@ class ScanHistoryEntry {
       if (parsed == null || !parsed.isFinite) continue;
       numericMetrics[entry.key] = parsed;
     }
+    final migratedMetrics = migrateMetricsForLuxe(numericMetrics);
 
     final payload =
         asDynamicMap(json['rawPayload']) ??
         asDynamicMap(json['extraMetrics']) ??
         Map<String, dynamic>.from(json);
+
+    final bodyReferenceGeometry = (() {
+      final raw = json['bodyReferenceGeometry'] ?? json['body_reference_geometry'];
+      if (raw is Map) {
+        final out = <String, double>{};
+        for (final entry in raw.entries) {
+          final value = entry.value;
+          if (value is num) {
+            out[entry.key.toString()] = value.toDouble();
+          } else if (value is String) {
+            final parsed = double.tryParse(value);
+            if (parsed != null) out[entry.key.toString()] = parsed;
+          }
+        }
+        return out.isEmpty ? null : out;
+      }
+      return null;
+    })();
 
     return ScanHistoryEntry(
       id: json['id'] as String,
@@ -156,8 +246,8 @@ class ScanHistoryEntry {
       parentBaselineId: json['parentBaselineId'] as String?,
       scanType: _normalizeScanType(json['scanType'] as String?),
       peptideId: json['peptideId'] as String?,
-      estimatedSkinAge: (json['estimatedSkinAge'] as num).toDouble(),
-      metrics: numericMetrics,
+      estimatedSkinAge: (json['estimatedSkinAge'] as num?)?.toDouble() ?? 0,
+      metrics: migratedMetrics,
       rawPayload: payload,
       procedure: json['procedure'] as String?,
       productName: json['productName'] as String?,
@@ -170,11 +260,106 @@ class ScanHistoryEntry {
       lightingConfidence: (json['lightingConfidence'] as num?)?.toDouble(),
       preferredReference: json['preferredReference'] as bool? ?? false,
       isBaseline: json['isBaseline'] as bool? ?? false,
+      bodyReferenceGeometry: bodyReferenceGeometry,
       makeupPresent: json['makeupPresent'] as bool? ?? false,
       distanceEstimate: (json['distanceEstimate'] as num?)?.toDouble(),
       headTiltAngle: (json['headTiltAngle'] as num?)?.toDouble(),
       expressionConfidence: (json['expressionConfidence'] as num?)?.toDouble(),
+      captureQuality: (json['captureQuality'] as String?)?.trim().isNotEmpty == true
+        ? (json['captureQuality'] as String).trim()
+        : ((json['capture_quality'] as String?)?.trim().isNotEmpty == true
+          ? (json['capture_quality'] as String).trim()
+          : null),
+      scanEngine: (json['scanEngine'] as String?)?.trim().isNotEmpty == true
+          ? (json['scanEngine'] as String).trim()
+          : engineUnknown,
+      captureMode: (json['captureMode'] as String?)?.trim().isNotEmpty == true
+          ? (json['captureMode'] as String).trim()
+          : null,
+        sourceImageWidth: (json['sourceImageWidth'] as num?)?.toInt() ??
+          (json['source_image_width'] as num?)?.toInt(),
+        sourceImageHeight: (json['sourceImageHeight'] as num?)?.toInt() ??
+          (json['source_image_height'] as num?)?.toInt(),
     );
+  }
+
+  /// Backward-compatible metric migration:
+  /// preserves old keys while adding unified 0-100 Luxe keys used by newer UI.
+  static Map<String, double> migrateMetricsForLuxe(Map<String, double> source) {
+    final migrated = Map<String, double>.from(source);
+
+    double? pick(List<String> keys) {
+      for (final key in keys) {
+        final value = migrated[key];
+        if (value == null || value.isNaN || value.isInfinite) continue;
+        return value;
+      }
+      return null;
+    }
+
+    double toPercentConcern(double value) {
+      if (value <= 1.2) return (value * 100).clamp(0.0, 100.0).toDouble();
+      if (value <= 10.0) return (value * 10).clamp(0.0, 100.0).toDouble();
+      return value.clamp(0.0, 100.0).toDouble();
+    }
+
+    double toPercentBenefit(double value) {
+      if (value <= 1.2) return (value * 100).clamp(0.0, 100.0).toDouble();
+      if (value <= 10.0) return (value * 10).clamp(0.0, 100.0).toDouble();
+      return value.clamp(0.0, 100.0).toDouble();
+    }
+
+    final redness = pick(['redness', 'erythema']);
+    final textureConcern = pick(['texture', 'roughness']);
+    final smoothness = pick(['smoothness', 'texture_smoothness']);
+    final wrinkle = pick(['wrinkle', 'wrinkles', 'rhytids', 'fineLines']);
+    final pigment = pick(['darkSpots', 'pigmentation', 'pigment']);
+    final elasticity = pick(['elasticity', 'firmness']);
+
+    if (!migrated.containsKey('localized_redness') && redness != null) {
+      migrated['localized_redness'] = toPercentConcern(redness);
+    }
+
+    if (!migrated.containsKey('texture_smoothness')) {
+      if (smoothness != null) {
+        migrated['texture_smoothness'] = toPercentBenefit(smoothness);
+      } else if (textureConcern != null) {
+        final concern01 = (toPercentConcern(textureConcern) / 100.0).clamp(
+          0.0,
+          1.0,
+        );
+        migrated['texture_smoothness'] = ((1.0 - concern01) * 100.0)
+            .clamp(0.0, 100.0)
+            .toDouble();
+      }
+    }
+
+    if (!migrated.containsKey('wrinkle_load') && wrinkle != null) {
+      migrated['wrinkle_load'] = toPercentConcern(wrinkle);
+    }
+
+    if (!migrated.containsKey('pigment_load') && pigment != null) {
+      migrated['pigment_load'] = toPercentConcern(pigment);
+    }
+
+    if (!migrated.containsKey('structural_firmness_elasticity') &&
+        elasticity != null) {
+      migrated['structural_firmness_elasticity'] = toPercentBenefit(elasticity);
+    }
+
+    // Explicit LuxeMetricGrid-aligned keys (concern-style 0-100) used by
+    // migrated displays while preserving older aliases.
+    if (!migrated.containsKey('luxe_redness_score') && redness != null) {
+      migrated['luxe_redness_score'] = toPercentConcern(redness);
+    }
+    if (!migrated.containsKey('luxe_texture_score') && textureConcern != null) {
+      migrated['luxe_texture_score'] = toPercentConcern(textureConcern);
+    }
+    if (!migrated.containsKey('luxe_wrinkle_depth_score') && wrinkle != null) {
+      migrated['luxe_wrinkle_depth_score'] = toPercentConcern(wrinkle);
+    }
+
+    return migrated;
   }
 
   Map<String, dynamic> toJson() {
@@ -197,16 +382,117 @@ class ScanHistoryEntry {
       'lightingConfidence': lightingConfidence,
       'preferredReference': preferredReference,
       'isBaseline': isBaseline,
+      'bodyReferenceGeometry': bodyReferenceGeometry,
+      'body_reference_geometry': bodyReferenceGeometry,
       'makeupPresent': makeupPresent,
       'distanceEstimate': distanceEstimate,
       'headTiltAngle': headTiltAngle,
       'expressionConfidence': expressionConfidence,
+      'captureQuality': captureQuality,
+      'capture_quality': captureQuality,
+      'scanEngine': scanEngine,
+      'captureMode': captureMode,
+      'sourceImageWidth': sourceImageWidth,
+      'sourceImageHeight': sourceImageHeight,
+      'source_image_width': sourceImageWidth,
+      'source_image_height': sourceImageHeight,
     };
   }
 
   /// Relative weight this scan should carry in trend averaging. Makeup-present
   /// scans receive half weight to reflect their reduced clinical reliability.
   double get trendWeight => makeupPresent ? 0.5 : 1.0;
+
+  bool get hasTrustworthyEstimatedSkinAge {
+    final normalizedQuality = (captureQuality ?? '').trim().toLowerCase();
+    if (normalizedQuality.isNotEmpty && normalizedQuality != 'normal') {
+      return false;
+    }
+
+    final confidenceValues = _metricConfidenceValues;
+    if (confidenceValues.isNotEmpty &&
+        confidenceValues.values.any((value) => value < 0.65)) {
+      return false;
+    }
+
+    return estimatedSkinAge > 0;
+  }
+
+  double? get trustworthyEstimatedSkinAge {
+    return hasTrustworthyEstimatedSkinAge ? estimatedSkinAge : null;
+  }
+
+  Map<String, double> get _metricConfidenceValues {
+    final extracted = <String, double>{};
+
+    void addFrom(dynamic value, String key) {
+      if (value is num) {
+        final numeric = value.toDouble();
+        if (numeric.isFinite) extracted[key] = numeric.clamp(0.0, 1.0);
+        return;
+      }
+      if (value is String) {
+        final normalized = value.trim().toLowerCase();
+        if (normalized == 'low') {
+          extracted[key] = 0.45;
+        } else if (normalized == 'medium') {
+          extracted[key] = 0.72;
+        } else if (normalized == 'high') {
+          extracted[key] = 0.9;
+        } else {
+          final parsed = double.tryParse(normalized);
+          if (parsed != null && parsed.isFinite) {
+            extracted[key] = parsed.clamp(0.0, 1.0);
+          }
+        }
+      }
+    }
+
+    final payloadMap = rawPayload ?? const <String, dynamic>{};
+    final metricsMap = metrics;
+
+    void addConfidenceEntries(Map<dynamic, dynamic>? confidenceData) {
+      if (confidenceData == null) return;
+      for (final entry in confidenceData.entries) {
+        final key = entry.key;
+        if (key is String) {
+          addFrom(entry.value, key);
+        }
+      }
+    }
+
+    addConfidenceEntries(payloadMap['metric_confidence'] as Map<dynamic, dynamic>?);
+    addConfidenceEntries(metricsMap['metric_confidence'] as Map<dynamic, dynamic>?);
+
+    final relevantKeys = <String>{
+      'redness',
+      'texture',
+      'wrinkle',
+      'wrinkles',
+      'pore',
+      'pores',
+      'darkSpots',
+      'dark_spots',
+      'elasticity',
+      'localized_redness',
+      'texture_smoothness',
+      'wrinkle_load',
+      'pore_visibility',
+      'pigment_load',
+      'structural_firmness_elasticity',
+    };
+
+    for (final key in relevantKeys) {
+      if (metricsMap.containsKey(key)) {
+        final value = metricsMap[key];
+        if (value != null) {
+          extracted[key] = value.toDouble().clamp(0.0, 1.0);
+        }
+      }
+    }
+
+    return extracted;
+  }
 
   String get resolvedScanType {
     final explicit = _normalizeScanType(scanType);
@@ -263,14 +549,35 @@ class ScanHistoryEntry {
     }
     if (preferredReference != other.preferredReference) return false;
     if (isBaseline != other.isBaseline) return false;
+    final refGeo = bodyReferenceGeometry ?? const <String, double>{};
+    final otherGeo = other.bodyReferenceGeometry ?? const <String, double>{};
+    final geoKeys = {...refGeo.keys, ...otherGeo.keys};
+    for (final key in geoKeys) {
+      if (!close(refGeo[key] ?? 0, otherGeo[key] ?? 0)) return false;
+    }
     if (makeupPresent != other.makeupPresent) return false;
     if (!close(estimatedSkinAge, other.estimatedSkinAge)) return false;
-    final keys = {...metrics.keys, ...other.metrics.keys};
+    // Canonicalize both sides through the same backward-compat migration
+    // fromJson applies before comparing. migrateMetricsForLuxe is a pure,
+    // idempotent, additive backfill (it only ever adds a derived key when
+    // absent, never overwrites), so this doesn't hide real metric
+    // differences — it just stops an unmigrated map (e.g. a freshly
+    // constructed entry) and its already-migrated counterpart (e.g. after
+    // a toJson/fromJson round-trip) from registering as "different" when
+    // their underlying source metrics are identical.
+    final migratedMetrics = migrateMetricsForLuxe(metrics);
+    final otherMigratedMetrics = migrateMetricsForLuxe(other.metrics);
+    final keys = {...migratedMetrics.keys, ...otherMigratedMetrics.keys};
     for (final key in keys) {
-      if (!close(metrics[key] ?? 0, other.metrics[key] ?? 0)) {
+      if (!close(migratedMetrics[key] ?? 0, otherMigratedMetrics[key] ?? 0)) {
         return false;
       }
     }
+    if ((captureQuality ?? '') != (other.captureQuality ?? '')) return false;
+    if (scanEngine != other.scanEngine) return false;
+    if ((captureMode ?? '') != (other.captureMode ?? '')) return false;
+    if (sourceImageWidth != other.sourceImageWidth) return false;
+    if (sourceImageHeight != other.sourceImageHeight) return false;
     return true;
   }
 

@@ -509,7 +509,9 @@ class SkincareRepositoryImpl implements SkincareRepository {
 
   Future<void> _writeCoreScanHistory(List<ScanRecord> scans) async {
     final prefs = await SharedPreferences.getInstance();
-    final entries = scans.map(_toLegacyScanMap).toList(growable: false);
+    final entries = scans
+        .map(_toUnifiedScanHistoryStorageMap)
+        .toList(growable: false);
     await prefs.setString(AppPrefs.scanHistoryKey, jsonEncode(entries));
     await prefs.reload();
   }
@@ -562,7 +564,7 @@ class SkincareRepositoryImpl implements SkincareRepository {
 
     final scans = await AppPrefs.getScanEntries();
     final mapped = scans
-        .map((scan) => coreById[scan.id] ?? _toCoreScanRecord(scan))
+      .map((scan) => coreById[scan.id] ?? _toScanRecord(scan))
         .toList();
     mapped.sort((a, b) => b.capturedAt.compareTo(a.capturedAt));
     return mapped;
@@ -777,35 +779,36 @@ class SkincareRepositoryImpl implements SkincareRepository {
     return parts.where((item) => item.trim().isNotEmpty).join(' | ');
   }
 
-  ScanRecord _toCoreScanRecord(legacy_scan.ScanHistoryEntry scan) {
+  ScanRecord _toScanRecord(legacy_scan.ScanHistoryEntry scan) {
+    final skin = scan.toSkinMetrics();
+    final visibleFindings = _readVisibleFindings(scan);
+    final aiSummary = _readSummary(scan);
     return ScanRecord(
       id: scan.id,
       capturedAt: scan.timestamp,
-      source: _scanSourceFor(scan),
+      source: _scanSourceFromEntry(scan),
       imagePath: scan.imagePath,
       procedureId: scan.procedureId,
       productIds: [
         if ((scan.peptideId ?? '').trim().isNotEmpty) scan.peptideId!,
       ],
       metrics: SkinMetricSet(
-        redness: _metric(scan.metrics, ['redness', 'erythema']) ?? 0,
-        texture: _metric(scan.metrics, ['texture', 'roughness']) ?? 0,
-        fineLines:
-            _metric(scan.metrics, ['fineLines', 'wrinkles', 'wrinkle']) ?? 0,
-        pores: _metric(scan.metrics, ['pores', 'pore']) ?? 0,
-        pigmentation:
-            _metric(scan.metrics, ['pigmentation', 'pigment', 'darkSpots']) ??
-            0,
-        firmness: _metric(scan.metrics, ['firmness', 'elasticity']) ?? 0,
+        redness: skin.redness,
+        texture: skin.texture,
+        fineLines: skin.wrinkle,
+        pores: skin.pore,
+        pigmentation: skin.darkSpots,
+        firmness: skin.elasticity,
       ),
-      visibleFindings: _visibleFindingsForScan(scan),
-      aiSummary: _summaryForScan(scan),
+      visibleFindings: visibleFindings,
+      aiSummary: aiSummary,
       poseTemplate: scan.poseTemplate ?? '',
       focusArea: scan.focusArea ?? '',
       makeupPresent: scan.makeupPresent,
       lightingConfidence: scan.lightingConfidence,
       expressionConfidence: scan.expressionConfidence,
       distanceEstimate: scan.distanceEstimate,
+      captureQuality: scan.captureQuality,
       isBaseline: scan.isBaseline,
       preferredReference: scan.preferredReference,
       notes: scan.customDescription ?? '',
@@ -813,23 +816,37 @@ class SkincareRepositoryImpl implements SkincareRepository {
     );
   }
 
-  Map<String, dynamic> _toLegacyScanMap(ScanRecord scan) {
+  Map<String, dynamic> _toUnifiedScanHistoryStorageMap(ScanRecord scan) {
+    final metrics = {
+      'redness': scan.metrics.redness,
+      'texture': scan.metrics.texture,
+      'wrinkle': scan.metrics.fineLines,
+      'wrinkles': scan.metrics.fineLines,
+      'pore': scan.metrics.pores,
+      'pores': scan.metrics.pores,
+      'pigment': scan.metrics.pigmentation,
+      'pigmentation': scan.metrics.pigmentation,
+      'darkSpots': scan.metrics.pigmentation,
+      'firmness': scan.metrics.firmness,
+      'elasticity': scan.metrics.firmness,
+      // Unified 0-100 canonical keys for Luxe metric consumers.
+      'localized_redness': (scan.metrics.redness * 10).clamp(0.0, 100.0),
+      'texture_smoothness': ((10 - scan.metrics.texture) * 10).clamp(0.0, 100.0),
+      'wrinkle_load': (scan.metrics.fineLines * 10).clamp(0.0, 100.0),
+      'pigment_load': (scan.metrics.pigmentation * 10).clamp(0.0, 100.0),
+      'structural_firmness_elasticity':
+          (scan.metrics.firmness * 10).clamp(0.0, 100.0),
+    };
+
     final map = legacy_scan.ScanHistoryEntry(
       id: scan.id,
       timestamp: scan.capturedAt,
       imagePath: scan.imagePath,
       procedureId: scan.procedureId,
-      scanType: _legacyScanType(scan.source),
+      scanType: _scanTypeForSource(scan.source),
       peptideId: scan.productIds.isEmpty ? null : scan.productIds.first,
       estimatedSkinAge: 0,
-      metrics: {
-        'redness': scan.metrics.redness,
-        'texture': scan.metrics.texture,
-        'wrinkles': scan.metrics.fineLines,
-        'pores': scan.metrics.pores,
-        'darkSpots': scan.metrics.pigmentation,
-        'elasticity': scan.metrics.firmness,
-      },
+      metrics: metrics,
       customDescription: scan.notes.isNotEmpty ? scan.notes : scan.aiSummary,
       poseTemplate: scan.poseTemplate.isEmpty ? null : scan.poseTemplate,
       focusArea: scan.focusArea.isEmpty ? null : scan.focusArea,
@@ -838,6 +855,7 @@ class SkincareRepositoryImpl implements SkincareRepository {
       isBaseline: scan.isBaseline,
       makeupPresent: scan.makeupPresent,
       distanceEstimate: scan.distanceEstimate,
+      captureQuality: scan.captureQuality,
       expressionConfidence: scan.expressionConfidence,
     ).toJson();
     map['coreScanRecord'] = scan.toJson();
@@ -1081,14 +1099,14 @@ class SkincareRepositoryImpl implements SkincareRepository {
     };
   }
 
-  ScanSource _scanSourceFor(legacy_scan.ScanHistoryEntry scan) {
+  ScanSource _scanSourceFromEntry(legacy_scan.ScanHistoryEntry scan) {
     if (scan.isAiAnalysisScan) return ScanSource.aiAnalysis;
     if (scan.isSkincareScan) return ScanSource.routine;
     if (scan.isProcedureScan) return ScanSource.procedure;
     return ScanSource.progress;
   }
 
-  String _legacyScanType(ScanSource source) {
+  String _scanTypeForSource(ScanSource source) {
     return switch (source) {
       ScanSource.procedure => legacy_scan.ScanHistoryEntry.scanTypeProcedure,
       ScanSource.routine => legacy_scan.ScanHistoryEntry.scanTypeSkincare,
@@ -1097,58 +1115,41 @@ class SkincareRepositoryImpl implements SkincareRepository {
     };
   }
 
-  List<String> _visibleFindingsForScan(legacy_scan.ScanHistoryEntry scan) {
-    final findings = <String>[];
-    void addIfHigh(String label, List<String> keys) {
-      final value = _metric(scan.metrics, keys);
-      if (value != null && value >= 6) findings.add(label);
+  List<String> _readVisibleFindings(legacy_scan.ScanHistoryEntry scan) {
+    final payload = scan.rawPayload;
+    if (payload != null) {
+      final fromPayload = payload['visibleFindings'] ?? payload['visible_findings'];
+      if (fromPayload is Iterable) {
+        return fromPayload
+            .map((item) => item?.toString().trim() ?? '')
+            .where((item) => item.isNotEmpty)
+            .toList(growable: false);
+      }
     }
 
-    addIfHigh('visible redness', ['redness', 'erythema']);
-    addIfHigh('texture unevenness', ['texture', 'roughness']);
-    addIfHigh('visible pores', ['pores', 'pore']);
-    addIfHigh('fine lines/wrinkles', ['fineLines', 'wrinkles', 'wrinkle']);
-    addIfHigh('uneven pigment', ['pigmentation', 'pigment', 'darkSpots']);
+    final skin = scan.toSkinMetrics();
+    final findings = <String>[];
+    if (skin.redness >= 6) findings.add('visible redness');
+    if (skin.texture >= 6) findings.add('texture unevenness');
+    if (skin.pore >= 6) findings.add('visible pores');
+    if (skin.wrinkle >= 6) findings.add('fine lines/wrinkles');
+    if (skin.darkSpots >= 6) findings.add('uneven pigment');
     if ((scan.focusArea ?? '').trim().isNotEmpty) {
       findings.add('focus area: ${scan.focusArea}');
     }
     return findings;
   }
 
-  String _summaryForScan(legacy_scan.ScanHistoryEntry scan) {
-    final metrics = scan.metrics;
-    if (metrics['coachProgressPhoto'] == 1.0) {
-      return 'Progress photo saved ${_relativeDate(scan.timestamp)} and available for AI coaching context.';
+  String _readSummary(legacy_scan.ScanHistoryEntry scan) {
+    final payload = scan.rawPayload;
+    if (payload != null) {
+      final value = payload['summary'] ?? payload['aiSummary'] ?? payload['ai_summary'];
+      final text = value?.toString().trim() ?? '';
+      if (text.isNotEmpty) return text;
     }
-    if (metrics.isEmpty) return 'Scan saved ${_relativeDate(scan.timestamp)}.';
-    final redness = _metric(metrics, [
-      'redness',
-      'erythema',
-      'rosaceaSeverity',
-    ]);
-    final texture = _metric(metrics, ['texture', 'roughness', 'smoothness']);
-    final pigment = _metric(metrics, ['pigment', 'pigmentation', 'darkSpots']);
-    return 'Scan ${_relativeDate(scan.timestamp)}: redness ${_scoreText(redness)}, texture ${_scoreText(texture)}, pigment ${_scoreText(pigment)}.';
-  }
-
-  double? _metric(Map<String, double> metrics, List<String> keys) {
-    for (final key in keys) {
-      final value = metrics[key];
-      if (value != null) return value <= 1 ? value * 10 : value;
-    }
-    return null;
-  }
-
-  String _scoreText(double? value) {
-    if (value == null) return 'not tracked';
-    return '${value.clamp(0, 10).toStringAsFixed(1)}/10';
-  }
-
-  String _relativeDate(DateTime date) {
-    final days = DateTime.now().difference(date).inDays;
-    if (days <= 0) return 'today';
-    if (days == 1) return 'yesterday';
-    return '$days days ago';
+    final notes = scan.customDescription?.trim() ?? '';
+    if (notes.isNotEmpty) return notes;
+    return 'Scan saved.';
   }
 
   SkinType _toCoreSkinType(legacy_profile.SkinType skinType) {

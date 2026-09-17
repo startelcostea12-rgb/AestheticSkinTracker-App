@@ -14,6 +14,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../app_theme.dart';
 import '../main.dart' show RestartWidget;
 import '../providers/procedure_logs_provider.dart';
+import '../services/notification_service.dart';
 import '../utils/app_prefs.dart';
 import '../utils/premium_access.dart';
 import '../widgets/clinical_metric_label.dart';
@@ -43,6 +44,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _testingModeAvailable = false;
   bool _testingPremiumActive = false;
   bool _verboseDiagnosticsEnabled = false;
+  bool _notificationsEnabled = false;
   final ImagePicker _imagePicker = ImagePicker();
   final List<String> _ageRanges = const [
     '18-24',
@@ -137,6 +139,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final profilePicture = await AppPrefs.getUserProfilePictureOrNull();
     final scanEntries = await AppPrefs.getScanEntries();
     final verboseDiagnostics = await AppPrefs.getVerboseDiagnosticsEnabled();
+    final notificationsEnabled = await AppPrefs.getNotificationsEnabled();
     if (!mounted) return;
     setState(() {
       _savedName = name;
@@ -148,7 +151,56 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _savedScanCount = scanEntries.length;
       _lastScanAt = scanEntries.isEmpty ? null : scanEntries.first.timestamp;
       _verboseDiagnosticsEnabled = verboseDiagnostics;
+      _notificationsEnabled = notificationsEnabled;
     });
+  }
+
+  Future<void> _toggleNotifications(bool value) async {
+    await AppPrefs.setNotificationsEnabled(value);
+    if (!mounted) return;
+    setState(() => _notificationsEnabled = value);
+
+    if (!kIsWeb) {
+      try {
+        await NotificationService().initialize();
+        if (value) {
+          final granted = await NotificationService().requestPermissions();
+          if (!granted) {
+            await AppPrefs.setNotificationsEnabled(false);
+            if (!mounted) return;
+            setState(() => _notificationsEnabled = false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text(
+                  'Notification permission was denied. You can re-enable reminders later in Settings.',
+                ),
+                backgroundColor: MyApp.clinicalTeal,
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+            return;
+          }
+          await NotificationService().resyncScheduledReminders();
+        } else {
+          await NotificationService().cancelAllReminders();
+        }
+      } catch (_) {
+        // Notification features are optional; never block the rest of settings
+      }
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          value
+              ? 'Recovery and routine reminders enabled.'
+              : 'Recovery and routine reminders disabled.',
+        ),
+        backgroundColor: MyApp.clinicalTeal,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   Future<void> _toggleVerboseDiagnostics(bool value) async {
@@ -1007,7 +1059,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
           ),
           content: Text(
-            'This will remove stored scan history and reset trend/delta tracking.',
+            'This will remove stored AI/procedure scans, baseline links, and progress comparison pointers for testing first-run scan flow. Your skin profile and onboarding stay intact.',
             style: TextStyle(color: textColor.withValues(alpha: 0.82)),
           ),
           actions: [
@@ -1029,12 +1081,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     if (confirmed != true) return;
-    await AppPrefs.clearScanHistory();
+    await AppPrefs.clearAllScanHistoryAndBaselines();
     await _loadProfilePrefs();
     if (!mounted) return;
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(const SnackBar(content: Text('Scan history cleared.')));
+    ).showSnackBar(
+      const SnackBar(
+        content: Text('Scan history and baselines cleared (dev).'),
+      ),
+    );
 
     // Force refresh any screens showing scan data
     setState(() {});
@@ -1309,14 +1365,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ),
                       title: Text(
-                        'AI Skincare Coach',
+                        'Skin Scan',
                         style: TextStyle(
                           color: textColor,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
                       subtitle: Text(
-                        'Personalized routines & recovery advice',
+                        'Capture a photo and open your combined report',
                         style: TextStyle(
                           color: textColor.withValues(alpha: 0.72),
                           fontWeight: FontWeight.w600,
@@ -1845,7 +1901,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         color: MyApp.goldShimmer,
                       ),
                       label: Text(
-                        'Clear Scan History',
+                        'Clear scan history (dev)',
                         style: TextStyle(
                           color: textColor,
                           fontWeight: FontWeight.w700,
@@ -1967,6 +2023,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ],
                   const SizedBox(height: 28),
                   const ClinicalSectionHeader(
+                    icon: Icons.notifications_active_outlined,
+                    title: 'Reminders',
+                    eyebrow: 'Local check-ins',
+                  ),
+                  const SizedBox(height: 14),
+                  _buildReminderCard(textColor),
+                  const SizedBox(height: 28),
+                  const ClinicalSectionHeader(
                     icon: Icons.workspace_premium_outlined,
                     title: 'Subscription',
                     eyebrow: 'Membership status',
@@ -1998,6 +2062,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildReminderCard(Color textColor) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+      decoration: BoxDecoration(
+        color: MyApp.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: MyApp.clinicalSlate.withValues(alpha: 0.22),
+          width: 0.8,
+        ),
+      ),
+      child: SwitchListTile.adaptive(
+        contentPadding: EdgeInsets.zero,
+        value: _notificationsEnabled,
+        onChanged: _toggleNotifications,
+        activeThumbColor: MyApp.clinicalTeal,
+        activeTrackColor: MyApp.clinicalTeal.withValues(alpha: 0.35),
+        title: Text(
+          'Recovery + routine reminders',
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            color: textColor,
+            fontSize: 14,
+          ),
+        ),
+        subtitle: Text(
+          'Local alerts for upcoming treatment windows and peptide routines. '
+          'This is off by default until you opt in.',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            color: textColor.withValues(alpha: 0.72),
+            height: 1.45,
+          ),
+        ),
       ),
     );
   }

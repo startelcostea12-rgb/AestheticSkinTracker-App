@@ -16,6 +16,7 @@ import '../models/procedure_log.dart';
 import '../models/skincare/skincare_models.dart' as core;
 import '../repositories/skincare_repository_impl.dart';
 import '../services/ai_llm_service.dart';
+import '../utils/app_prefs.dart';
 import '../utils/ai_skin_advisor_prompt.dart';
 import '../widgets/clinical_section_header.dart';
 import '../widgets/local_image_preview.dart';
@@ -807,6 +808,7 @@ Analyze the uploaded skin photo following the structured format. Reference the u
 
       if (!mounted) return;
       final visibleRoutinesReply = _displayableAnalysisReply(routinesReply);
+      await _saveGeneratedRoutine(visibleRoutinesReply);
       final finalReply = [
         visibleAnalysisReply,
         visibleRoutinesReply,
@@ -857,6 +859,76 @@ Analyze the uploaded skin photo following the structured format. Reference the u
       });
       _scrollToBottom();
     }
+  }
+
+  Future<void> _saveGeneratedRoutine(String routinesReply) async {
+    final parsed = _extractAmPmRoutineSteps(routinesReply);
+    final morning = parsed['morning'] ?? const <String>[];
+    final evening = parsed['evening'] ?? const <String>[];
+    if (morning.isEmpty && evening.isEmpty) return;
+
+    final now = DateTime.now();
+    final payload = <String, dynamic>{
+      'id': 'ai_${now.millisecondsSinceEpoch}',
+      'source': 'ai_skincare_coach',
+      'generatedAt': now.toIso8601String(),
+      'morningSteps': morning,
+      'eveningSteps': evening,
+    };
+    await AppPrefs.saveActiveAiRoutine(payload);
+  }
+
+  Map<String, List<String>> _extractAmPmRoutineSteps(String text) {
+    final morning = <String>[];
+    final evening = <String>[];
+    String section = '';
+
+    void addStep(String step) {
+      final normalized = step.trim();
+      if (normalized.length < 3) return;
+      if (section == 'morning' && !morning.contains(normalized)) {
+        morning.add(normalized);
+      } else if (section == 'evening' && !evening.contains(normalized)) {
+        evening.add(normalized);
+      }
+    }
+
+    final lines = text.split(RegExp(r'\r?\n'));
+    for (final rawLine in lines) {
+      final line = rawLine.trim();
+      if (line.isEmpty) continue;
+      final lower = line.toLowerCase();
+
+      if (lower.contains('morning routine')) {
+        section = 'morning';
+        continue;
+      }
+      if (lower.contains('evening routine') || lower.contains('night routine')) {
+        section = 'evening';
+        continue;
+      }
+
+      if (section.isEmpty) continue;
+
+      final looksLikeHeading = RegExp(r'^[a-zA-Z\s]{3,}:$').hasMatch(line) ||
+          lower.contains('strong recommendation:') ||
+          lower.contains('medical disclaimer') ||
+          lower.contains('priority focus') ||
+          lower.contains('weekly') ||
+          lower.contains('as needed');
+      if (looksLikeHeading) continue;
+
+      final step = line
+          .replaceFirst(RegExp(r'^[-*•]+\s*'), '')
+          .replaceFirst(RegExp(r'^\d+[\).:-]?\s*'), '')
+          .trim();
+      addStep(step);
+    }
+
+    return {
+      'morning': morning,
+      'evening': evening,
+    };
   }
 
   Future<String> _buildCoachPayloadJson() async {

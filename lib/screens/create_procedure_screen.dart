@@ -108,6 +108,117 @@ const List<String> atHomeProcedureTypes = [
 const String medicalAestheticCategory = 'Medical Procedures';
 const String cosmeticCategory = 'Cosmetic Procedures';
 const String atHomeCategory = 'At-Home Procedures';
+const String faceProceduresLabel = 'Face Procedures';
+const String bodyProceduresLabel = 'Body Procedures';
+
+const List<String> _allProcedureTypes = <String>[
+  ...medicalAestheticProcedureTypes,
+  ...cosmeticProcedureTypes,
+  ...atHomeProcedureTypes,
+];
+
+List<String> buildVisibleProcedureTypesForSelection({
+  required ProcedureBodyRegion bodyRegion,
+  required String category,
+}) {
+  final uniqueTypes = <String>[];
+  final seen = <String>{};
+
+  for (final procedureType in _allProcedureTypes) {
+    if (procedureSelectionGroupForType(procedureType) != bodyRegion) {
+      continue;
+    }
+
+    // Category membership must be checked against the RAW display string,
+    // not its alias-canonicalized form: _allProcedureTypes is a straight
+    // concatenation of these three lists, so a raw entry always belongs to
+    // exactly the list it came from. Canonicalizing first (e.g. "At-Home
+    // Microneedling (RF)" -> "Microneedling" via the shared alias table)
+    // made this check fail for any At-Home item whose canonical alias
+    // doesn't literally appear in atHomeProcedureTypes, silently dropping
+    // it from the visible list even though _defaultProcedureTypeForCategory
+    // (which filters by region only, not category membership) could still
+    // pick it as the default — producing a value with zero matching items.
+    final matchesCategory = switch (category) {
+      cosmeticCategory => cosmeticProcedureTypes.contains(procedureType),
+      atHomeCategory => atHomeProcedureTypes.contains(procedureType),
+      _ => medicalAestheticProcedureTypes.contains(procedureType),
+    };
+
+    if (!matchesCategory || !seen.add(procedureType)) {
+      continue;
+    }
+
+    uniqueTypes.add(procedureType);
+  }
+
+  return uniqueTypes.isNotEmpty ? uniqueTypes : const ['Other'];
+}
+
+/// Body Procedures skips the Medical/Cosmetic/At-Home category sub-step
+/// entirely, so this pulls every Body-region-tagged type directly from
+/// [_allProcedureTypes] regardless of which source list it lives in —
+/// no category filter is applied. 'Other' is classified as Face by
+/// [procedureSelectionGroupForType]'s short-circuit, so it's appended
+/// explicitly rather than relying on the region filter to include it.
+List<String> buildBodyProcedureTypes() {
+  final uniqueTypes = <String>[];
+  final seen = <String>{};
+
+  for (final procedureType in _allProcedureTypes) {
+    if (procedureSelectionGroupForType(procedureType) != ProcedureBodyRegion.body) {
+      continue;
+    }
+    if (!seen.add(procedureType)) {
+      continue;
+    }
+    uniqueTypes.add(procedureType);
+  }
+
+  if (!uniqueTypes.contains('Other')) {
+    uniqueTypes.add('Other');
+  }
+
+  return uniqueTypes;
+}
+
+ProcedureBodyRegion procedureSelectionGroupForType(String procedureType) {
+  final canonical = canonicalProcedureType(procedureType);
+  if (canonical.isEmpty || canonical == 'Other') {
+    return ProcedureBodyRegion.face;
+  }
+
+  final region = procedureBodyRegionForType(canonical);
+  return region == ProcedureBodyRegion.general
+      ? ProcedureBodyRegion.face
+      : region;
+}
+
+class _BodyRegionOption {
+  final ProcedureBodyRegion value;
+  final String title;
+  final String subtitle;
+  final IconData icon;
+
+  const _BodyRegionOption({
+    required this.value,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+  });
+}
+
+class _CategoryFilterOption {
+  final String value;
+  final String title;
+  final IconData icon;
+
+  const _CategoryFilterOption({
+    required this.value,
+    required this.title,
+    required this.icon,
+  });
+}
 
 List<String> buildProcedureBarrierRecoveryReminders(String procedureType) {
   final canonicalType = canonicalProcedureType(procedureType);
@@ -172,6 +283,7 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
   ];
 
   String selectedCategory = medicalAestheticCategory;
+  ProcedureBodyRegion selectedBodyRegion = ProcedureBodyRegion.face;
   String? selectedType;
   String? selectedFocusArea;
   bool _focusAreaUserEdited = false;
@@ -193,11 +305,15 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
   bool get _usesBodyFocusAreas => usesBodyFocusAreas(_effectiveProcedureType());
   bool get _requiresFocusArea => _focusAreaOptions.isNotEmpty;
   bool get _hasFocusAreaSelection => _focusAreaForSave != null;
-  List<String> get _visibleProcedureTypes => switch (selectedCategory) {
-    cosmeticCategory => cosmeticProcedureTypes,
-    atHomeCategory => atHomeProcedureTypes,
-    _ => medicalAestheticProcedureTypes,
-  };
+  List<String> get _visibleProcedureTypes {
+    if (selectedBodyRegion == ProcedureBodyRegion.body) {
+      return buildBodyProcedureTypes();
+    }
+    return buildVisibleProcedureTypesForSelection(
+      bodyRegion: selectedBodyRegion,
+      category: selectedCategory,
+    );
+  }
   bool get _showsSessionField {
     final procedureType = _effectiveProcedureType();
     if (procedureType.isEmpty && _isOtherSelected) {
@@ -207,12 +323,62 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
   }
 
   String _defaultProcedureTypeForCategory(String category) {
+    if (selectedBodyRegion == ProcedureBodyRegion.body) {
+      // Body skips the category sub-step entirely, so the default is just
+      // the first real item in the full body-region list, ignoring category.
+      final bodyTypes = buildBodyProcedureTypes();
+      return bodyTypes.firstWhere((type) => type != 'Other', orElse: () => 'Other');
+    }
     final options = switch (category) {
       cosmeticCategory => cosmeticProcedureTypes,
       atHomeCategory => atHomeProcedureTypes,
       _ => medicalAestheticProcedureTypes,
     };
-    return options.firstWhere((type) => type != 'Other', orElse: () => 'Other');
+    final filtered = options
+        .where(
+          (type) => procedureSelectionGroupForType(type) == selectedBodyRegion,
+        )
+        .toList();
+    if (filtered.isNotEmpty) {
+      return filtered.firstWhere((type) => type != 'Other', orElse: () => 'Other');
+    }
+    final fallback = options.firstWhere((type) => type != 'Other', orElse: () => 'Other');
+    return procedureSelectionGroupForType(fallback) == selectedBodyRegion
+        ? fallback
+        : 'Other';
+  }
+
+  void _selectBodyRegion(ProcedureBodyRegion region) {
+    setState(() {
+      selectedBodyRegion = region;
+      if (region == ProcedureBodyRegion.body) {
+        // The category chips are hidden for Body, so selectedCategory is no
+        // longer user-controlled here. Reset it to a neutral default rather
+        // than leaving a stale value (e.g. a leftover atHomeCategory from
+        // Face) that would silently make _isAtHome true and hide the
+        // Provider field for what's actually a surgical body procedure.
+        selectedCategory = medicalAestheticCategory;
+      }
+      if (selectedType == null) {
+        selectedType = _defaultProcedureTypeForCategory(selectedCategory);
+      } else if (!_visibleProcedureTypes.contains(selectedType)) {
+        // The previously-selected type may not exist under the new region
+        // (e.g. a Body-only type after switching to Face) — clear it rather
+        // than substituting a computed default, since that default is drawn
+        // from a different source list and isn't guaranteed to appear in
+        // _visibleProcedureTypes either.
+        selectedType = null;
+        _customProcedureController.clear();
+        selectedFocusArea = null;
+        _focusAreaUserEdited = false;
+      }
+      if (!_showsSessionField) {
+        numSessions = 1;
+      } else if (numSessions < 1) {
+        numSessions = 1;
+      }
+      _refreshFocusAreaForProcedureChange();
+    });
   }
 
   String _categoryForProcedureType(String procedureType) {
@@ -241,7 +407,10 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
       if (selectedType == null) {
         selectedType = _defaultProcedureTypeForCategory(category);
       } else if (!_visibleProcedureTypes.contains(selectedType)) {
-        selectedType = _defaultProcedureTypeForCategory(category);
+        // Same rationale as _selectBodyRegion: clear rather than substitute
+        // a computed default, since that default isn't guaranteed to be a
+        // member of the freshly-filtered _visibleProcedureTypes either.
+        selectedType = null;
         _customProcedureController.clear();
         selectedFocusArea = null;
         _focusAreaUserEdited = false;
@@ -408,6 +577,9 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
     selectedCategory = existingType.isEmpty
         ? medicalAestheticCategory
         : _categoryForProcedureType(existingType);
+    selectedBodyRegion = existingType.isEmpty
+        ? ProcedureBodyRegion.face
+        : procedureSelectionGroupForType(existingType);
 
     selectedType = procedureTypes.contains(existingType)
         ? existingType
@@ -476,18 +648,25 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
             _buildHeader(),
             const SizedBox(height: 22),
 
-            // ===== Category (visual cards) =====
-            _fieldLabel('Procedure Category', required: true),
+            // ===== Body region (primary grouping) =====
+            _fieldLabel('Procedure Area', required: true),
             const SizedBox(height: 8),
-            _buildCategoryCards(),
-            const SizedBox(height: 6),
-            Text(
-              _categoryDescription(selectedCategory),
-              style: TextStyle(
-                color: textColor.withValues(alpha: 0.6),
-                fontSize: 12,
+            _buildBodyRegionCards(),
+            // The Medical/Cosmetic/At-Home split isn't meaningful for Body
+            // procedures — the full body procedure list is short enough to
+            // show directly, so skip the category sub-step for that branch.
+            if (selectedBodyRegion != ProcedureBodyRegion.body) ...[
+              const SizedBox(height: 12),
+              _buildSecondaryCategoryFilter(),
+              const SizedBox(height: 6),
+              Text(
+                _categoryDescription(selectedCategory),
+                style: TextStyle(
+                  color: textColor.withValues(alpha: 0.6),
+                  fontSize: 12,
+                ),
               ),
-            ),
+            ],
 
             const SizedBox(height: 18),
 
@@ -742,36 +921,183 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
     );
   }
 
-  Widget _buildCategoryCards() {
+  Widget _buildBodyRegionCards() {
+    final regions = <_BodyRegionOption>[
+      _BodyRegionOption(
+        value: ProcedureBodyRegion.face,
+        title: faceProceduresLabel,
+        subtitle: 'Facial lasers, injectables, peels',
+        icon: Icons.face_rounded,
+      ),
+      _BodyRegionOption(
+        value: ProcedureBodyRegion.body,
+        title: bodyProceduresLabel,
+        subtitle: 'Body contouring, sculpting, lifting',
+        icon: Icons.accessibility_new_rounded,
+      ),
+    ];
+
     return Row(
-      children: [
-        Expanded(
-          child: _categoryCard(
-            value: medicalAestheticCategory,
-            title: 'Medical',
-            subtitle: 'Resurfacing, collagen, lasers',
-            icon: Icons.medical_services_rounded,
+      children: regions
+          .map(
+            (option) => Expanded(
+              child: _bodyRegionCard(
+                value: option.value,
+                title: option.title,
+                subtitle: option.subtitle,
+                icon: option.icon,
+              ),
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  Widget _buildSecondaryCategoryFilter() {
+    final filters = [
+      _CategoryFilterOption(
+        value: medicalAestheticCategory,
+        title: 'Medical',
+        icon: Icons.medical_services_rounded,
+      ),
+      _CategoryFilterOption(
+        value: cosmeticCategory,
+        title: 'Cosmetic',
+        icon: Icons.auto_awesome_rounded,
+      ),
+      _CategoryFilterOption(
+        value: atHomeCategory,
+        title: 'At-Home',
+        icon: Icons.home_repair_service_rounded,
+      ),
+    ];
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: filters.map((filter) {
+        final selected = selectedCategory == filter.value;
+        return ChoiceChip(
+          label: Text(filter.title),
+          avatar: Icon(filter.icon, size: 16),
+          selected: selected,
+          onSelected: (_) => _selectCategory(filter.value),
+          backgroundColor: AppColors.cardBackground,
+          selectedColor: AppColors.champagneGold.withValues(alpha: 0.18),
+          labelStyle: TextStyle(
+            color: selected ? AppColors.refinedSlate : AppColors.refinedSlate,
+            fontWeight: FontWeight.w700,
+          ),
+          side: BorderSide(
+            color: selected ? AppColors.champagneGold : AppColors.borders,
+            width: selected ? 1.2 : 1,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(999),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _bodyRegionCard({
+    required ProcedureBodyRegion value,
+    required String title,
+    required String subtitle,
+    required IconData icon,
+  }) {
+    final selected = selectedBodyRegion == value;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: InkWell(
+        onTap: () => _selectBodyRegion(value),
+        borderRadius: BorderRadius.circular(16),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.fromLTRB(10, 12, 10, 12),
+          decoration: BoxDecoration(
+            gradient: selected
+                ? LinearGradient(
+                    colors: [
+                      AppColors.champagneGold.withValues(alpha: 0.18),
+                      AppColors.warmAlabaster,
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  )
+                : null,
+            color: selected ? null : AppColors.cardBackground,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: selected ? AppColors.champagneGold : AppColors.borders,
+              width: selected ? 1.4 : 1,
+            ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: AppColors.champagneGold.withValues(alpha: 0.14),
+                      blurRadius: 14,
+                      offset: const Offset(0, 6),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? AppColors.warmAlabaster
+                          : AppColors.champagneGold.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                    child: Icon(
+                      icon,
+                      size: 20,
+                      color: selected
+                          ? AppColors.champagneGold
+                          : AppColors.refinedSlate,
+                    ),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    selected
+                        ? Icons.check_circle_rounded
+                        : Icons.radio_button_unchecked,
+                    color: selected
+                        ? AppColors.champagneGold
+                        : AppColors.refinedSlate.withValues(alpha: 0.30),
+                    size: 22,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.refinedSlate,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: AppColors.refinedSlate.withValues(alpha: 0.65),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
           ),
         ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _categoryCard(
-            value: cosmeticCategory,
-            title: 'Cosmetic',
-            subtitle: 'Botox, fillers, surgery',
-            icon: Icons.auto_awesome_rounded,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _categoryCard(
-            value: atHomeCategory,
-            title: 'At-Home',
-            subtitle: 'RF, SkinPen, LED',
-            icon: Icons.home_repair_service_rounded,
-          ),
-        ),
-      ],
+      ),
     );
   }
 
@@ -885,6 +1211,13 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
   }
 
   Widget _buildTypeDropdown() {
+    if (selectedType != null && !_visibleProcedureTypes.contains(selectedType)) {
+      debugPrint(
+        'WARNING: selectedType="$selectedType" is not in visibleTypes for '
+        'region=$selectedBodyRegion category=$selectedCategory — '
+        'DropdownButton is about to crash.',
+      );
+    }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6),
       decoration: BoxDecoration(
@@ -946,9 +1279,18 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
                 ),
               )
               .toList(),
-          items: _visibleProcedureTypes
-              .map((t) => DropdownMenuItem<String>(value: t, child: Text(t)))
-              .toList(),
+          items: () {
+            final items = _visibleProcedureTypes;
+            if (selectedBodyRegion == ProcedureBodyRegion.body &&
+                selectedCategory == atHomeCategory) {
+              print(
+                'DEBUG BODY+ATHOME dropdown values: ${items.asMap().entries.map((entry) => '${entry.key}:${entry.value}').join(' | ')}',
+              );
+            }
+            return items
+                .map((t) => DropdownMenuItem<String>(value: t, child: Text(t)))
+                .toList();
+          }(),
           onChanged: (value) {
             setState(() {
               selectedType = value;
