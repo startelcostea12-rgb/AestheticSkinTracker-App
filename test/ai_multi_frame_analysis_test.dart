@@ -114,6 +114,7 @@ void main() {
     const aiAnalysis = CameraScreen(
       isSkincareScan: true,
       aiMultiFrameCapture: true,
+      capturePurpose: CameraCapturePurpose.aiSkinAnalysis,
     );
 
     expect(trackProcedure.aiMultiFrameCapture, isFalse);

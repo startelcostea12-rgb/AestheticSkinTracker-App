@@ -7,12 +7,13 @@ ScanHistoryEntry _scan({
   String? captureMode,
   Map<String, String>? extractionPaths,
   double? scaleReferencePixels,
+  Map<String, double> metrics = const <String, double>{},
 }) {
   return ScanHistoryEntry(
-    id: '${captureQuality}_${captureMode}_${scaleReferencePixels}',
+    id: '${captureQuality}_${captureMode}_$scaleReferencePixels',
     timestamp: DateTime(2026, 9, 8),
     estimatedSkinAge: 0,
-    metrics: const <String, double>{},
+    metrics: metrics,
     captureQuality: captureQuality,
     captureMode: captureMode,
     rawPayload: <String, dynamic>{
@@ -27,6 +28,29 @@ ScanHistoryEntry _scan({
 
 void main() {
   group('procedurePhotoComparisonEligibility', () {
+    test('poor body reference alignment makes the comparison non-comparable', () {
+      final baseline = _scan(
+        captureQuality: 'normal',
+        captureMode: 'mirror',
+        scaleReferencePixels: 200,
+      );
+      final latest = _scan(
+        captureQuality: 'normal',
+        captureMode: 'mirror',
+        scaleReferencePixels: 205,
+        metrics: const {'capture_reference_alignment_score': 42.0},
+      );
+
+      final result = procedurePhotoComparisonEligibility(
+        isBodyProcedure: true,
+        baseline: baseline,
+        latest: latest,
+      );
+
+      expect(result.isComparable, isFalse);
+      expect(result.caveat, contains('locked reference'));
+    });
+
     test('allows face comparison with equal quality and extraction paths', () {
       final baseline = _scan(
         extractionPaths: const {'pigment_load': 'cheek_primary'},

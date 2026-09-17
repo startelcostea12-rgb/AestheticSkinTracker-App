@@ -414,6 +414,7 @@ class _ActiveSkincareDetailsScreenState
         builder: (_) => CameraScreen(
           isSkincareScan: true,
           productName: widget.product.name,
+          capturePurpose: CameraCapturePurpose.skincareTracking,
         ),
       ),
     );

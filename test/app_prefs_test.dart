@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:aesthetic_skin_tracker/features/procedures/presentation/procedure_profiles_screen.dart';
+import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'dart:convert';
@@ -349,5 +351,141 @@ void main() {
         expect(comparison['latestScanId'], 'followup_third');
       },
     );
+
+    test('locked baseline preserves body reference geometry after normalization', () async {
+      const procedureId = 'proc_body_reference_geometry';
+      const geometry = <String, double>{
+        'shoulderWidthNorm': 0.40,
+        'hipWidthNorm': 0.36,
+        'shoulderToHipRatio': 1.11,
+        'centerOffsetX': 0.01,
+        'centerOffsetY': -0.02,
+      };
+
+      await AppPrefs.addScanEntry(
+        ScanHistoryEntry(
+          id: 'body_baseline',
+          timestamp: DateTime.parse('2026-06-20T10:00:00.000Z'),
+          procedureId: procedureId,
+          imagePath: 'body_baseline.jpg',
+          estimatedSkinAge: 0,
+          metrics: const {'capture_pose_similarity': 95.0},
+          bodyReferenceGeometry: geometry,
+        ),
+      );
+      await AppPrefs.addScanEntry(
+        ScanHistoryEntry(
+          id: 'body_followup',
+          timestamp: DateTime.parse('2026-06-21T10:00:00.000Z'),
+          procedureId: procedureId,
+          imagePath: 'body_followup.jpg',
+          estimatedSkinAge: 0,
+          metrics: const {
+            'capture_pose_similarity': 90.0,
+            'capture_reference_alignment_score': 88.0,
+          },
+          bodyReferenceGeometry: const {
+            'shoulderWidthNorm': 0.41,
+            'hipWidthNorm': 0.35,
+            'shoulderToHipRatio': 1.10,
+            'centerOffsetX': 0.02,
+            'centerOffsetY': -0.01,
+          },
+        ),
+      );
+
+      await AppPrefs.patchScanMetrics(
+        'body_baseline',
+        const {'waist_measurement': 31.5},
+      );
+
+      final scans = await AppPrefs.getScanEntries();
+      final baseline = scans.singleWhere((entry) => entry.id == 'body_baseline');
+      final followup = scans.singleWhere((entry) => entry.id == 'body_followup');
+
+      expect(baseline.isBaseline, isTrue);
+      expect(baseline.bodyReferenceGeometry, geometry);
+      expect(baseline.metrics['waist_measurement'], 31.5);
+      expect(followup.parentBaselineId, 'body_baseline');
+      expect(followup.metrics['capture_reference_alignment_score'], 88.0);
+    });
+
+    test('poor body follow-up alignment survives storage and gates comparison', () async {
+      const procedureId = 'proc_body_alignment_gate';
+      const baselineGeometry = <String, double>{
+        'shoulderWidthNorm': 0.40,
+        'hipWidthNorm': 0.36,
+        'shoulderToHipRatio': 1.11,
+        'centerOffsetX': 0.0,
+        'centerOffsetY': 0.0,
+      };
+      const poorGeometry = <String, double>{
+        'shoulderWidthNorm': 0.18,
+        'hipWidthNorm': 0.62,
+        'shoulderToHipRatio': 0.35,
+        'centerOffsetX': 0.30,
+        'centerOffsetY': 0.25,
+      };
+      final poorScore = bodyReferenceAlignmentScore(
+        baselineGeometry,
+        poorGeometry,
+      )!;
+
+      await AppPrefs.addScanEntry(
+        ScanHistoryEntry(
+          id: 'body_gate_baseline',
+          timestamp: DateTime.parse('2026-07-01T10:00:00.000Z'),
+          procedureId: procedureId,
+          imagePath: 'baseline.jpg',
+          estimatedSkinAge: 0,
+          metrics: const {},
+          bodyReferenceGeometry: baselineGeometry,
+          captureQuality: 'normal',
+          captureMode: 'mirror',
+          rawPayload: const {
+            'result': {'scale_reference_pixels': 200.0},
+          },
+        ),
+      );
+      await AppPrefs.addScanEntry(
+        ScanHistoryEntry(
+          id: 'body_gate_followup',
+          timestamp: DateTime.parse('2026-07-02T10:00:00.000Z'),
+          procedureId: procedureId,
+          imagePath: 'followup.jpg',
+          estimatedSkinAge: 0,
+          metrics: {'capture_reference_alignment_score': poorScore},
+          bodyReferenceGeometry: poorGeometry,
+          captureQuality: 'normal',
+          captureMode: 'mirror',
+          rawPayload: const {
+            'result': {'scale_reference_pixels': 205.0},
+          },
+        ),
+      );
+
+      final scans = (await AppPrefs.getScanEntries())
+          .where((entry) => entry.procedureId == procedureId)
+          .toList();
+      final baseline = lockedProcedureReference(scans, procedureId);
+      final followup = scans.singleWhere(
+        (entry) => entry.id == 'body_gate_followup',
+      );
+      final eligibility = procedurePhotoComparisonEligibility(
+        isBodyProcedure: true,
+        baseline: baseline,
+        latest: followup,
+      );
+
+      expect(baseline?.id, 'body_gate_baseline');
+      expect(baseline?.bodyReferenceGeometry, baselineGeometry);
+      expect(poorScore, lessThan(minimumComparableReferenceAlignmentScore));
+      expect(
+        followup.metrics['capture_reference_alignment_score'],
+        poorScore,
+      );
+      expect(eligibility.isComparable, isFalse);
+      expect(eligibility.caveat, contains('locked reference'));
+    });
   });
 }

@@ -140,6 +140,75 @@ enum BodyCaptureMode {
   };
 }
 
+enum CameraCapturePurpose {
+  trackProcedure,
+  aiSkinAnalysis,
+  skincareTracking,
+  challenge,
+  generic,
+}
+
+bool isTrackProcedureCapturePurpose(CameraCapturePurpose purpose) =>
+    purpose == CameraCapturePurpose.trackProcedure;
+
+bool referencePoseLockingEnabled(CameraCapturePurpose purpose) =>
+  isTrackProcedureCapturePurpose(purpose);
+
+const double minimumComparableReferenceAlignmentScore = 60.0;
+
+double? bodyReferenceAlignmentScore(
+  Map<String, double>? reference,
+  Map<String, double>? live,
+) {
+  if (reference == null || live == null || reference.isEmpty || live.isEmpty) {
+    return null;
+  }
+
+  double component(String key, double tolerance) {
+    final referenceValue = reference[key];
+    final liveValue = live[key];
+    if (referenceValue == null || liveValue == null) return 0.0;
+    final normalizedDelta = (liveValue - referenceValue).abs() / tolerance;
+    return (1.0 - normalizedDelta.clamp(0.0, 1.0)).clamp(0.0, 1.0);
+  }
+
+  final shoulderWidth = component('shoulderWidthNorm', 0.12);
+  final hipWidth = component('hipWidthNorm', 0.12);
+  final shoulderToHip = component('shoulderToHipRatio', 0.18);
+  final centerDelta =
+      ((live['centerOffsetX'] ?? 0.0) -
+              (reference['centerOffsetX'] ?? 0.0))
+          .abs() +
+      ((live['centerOffsetY'] ?? 0.0) -
+              (reference['centerOffsetY'] ?? 0.0))
+          .abs();
+  final centerScore = (1.0 - (centerDelta / 0.20).clamp(0.0, 1.0))
+      .clamp(0.0, 1.0);
+
+  return ((shoulderWidth * 0.40) +
+          (hipWidth * 0.30) +
+          (shoulderToHip * 0.20) +
+          (centerScore * 0.10)) *
+      100.0;
+}
+
+ScanHistoryEntry? lockedProcedureReference(
+  List<ScanHistoryEntry> history,
+  String? procedureId,
+) {
+  final normalizedId = procedureId?.trim();
+  if (normalizedId == null || normalizedId.isEmpty) return null;
+  final matches = history
+      .where((entry) => (entry.procedureId ?? '').trim() == normalizedId)
+      .toList()
+    ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+  if (matches.isEmpty) return null;
+  return matches.firstWhere(
+    (entry) => entry.isBaseline,
+    orElse: () => matches.first,
+  );
+}
+
 /// Horizontally flips [bytes] when [mode] is [BodyCaptureMode.mirror] —
 /// mirror captures show a left-right-flipped view of the subject, so this
 /// must run BEFORE the bytes are persisted, analyzed for landmarks, or sent
@@ -243,6 +312,7 @@ class CameraScreen extends StatefulWidget {
   final Procedure? procedure;
   final bool isSkincareScan;
   final bool aiMultiFrameCapture;
+  final CameraCapturePurpose capturePurpose;
   final String? productName;
   final String? initialProcedureId;
   final String? initialProcedureLabel;
@@ -252,11 +322,16 @@ class CameraScreen extends StatefulWidget {
     this.procedure,
     this.isSkincareScan = false,
     this.aiMultiFrameCapture = false,
+    this.capturePurpose = CameraCapturePurpose.generic,
     this.productName,
     this.initialProcedureId,
     this.initialProcedureLabel,
     this.initialTrackProcedureBaselineRecord,
-  }) : super(key: null);
+  }) : assert(
+         !aiMultiFrameCapture ||
+             capturePurpose == CameraCapturePurpose.aiSkinAnalysis,
+       ),
+       super(key: null);
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -275,6 +350,9 @@ class AiSkinAnalysisCaptureResult {
 class _CameraScreenState extends State<CameraScreen>
     with TickerProviderStateMixin {
   bool _capturing = false;
+
+  bool get _isTrackProcedureFlow =>
+      referencePoseLockingEnabled(widget.capturePurpose);
   bool _cameraReady = false;
   bool _cameraInitFailed = false;
   bool _lightingStreamActive = false;
@@ -1189,51 +1267,20 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   double _bodyAlignmentScoreFromReference() {
-    final ref = _referenceScan?.bodyReferenceGeometry;
-    final live = _liveLandmarkAssessment.bodyReferenceGeometry;
-    if (ref == null || live == null || ref.isEmpty || live.isEmpty) {
+    if (!_isTrackProcedureFlow) return 0.0;
+    final score = bodyReferenceAlignmentScore(
+      _referenceScan?.bodyReferenceGeometry,
+      _liveLandmarkAssessment.bodyReferenceGeometry,
+    );
+    if (score == null) {
       return 0.0;
     }
-
-    double scoreComponent(double liveValue, double refValue, {double tolerance = 0.12}) {
-      final delta = (liveValue - refValue).abs();
-      final normalizedDelta = delta / (tolerance == 0 ? 1.0 : tolerance);
-      return (1.0 - normalizedDelta.clamp(0.0, 1.0)).clamp(0.0, 1.0);
-    }
-
-    final shoulderWidth = scoreComponent(
-      live['shoulderWidthNorm'] ?? 0.0,
-      ref['shoulderWidthNorm'] ?? 0.0,
-      tolerance: 0.12,
-    );
-    final hipWidth = scoreComponent(
-      live['hipWidthNorm'] ?? 0.0,
-      ref['hipWidthNorm'] ?? 0.0,
-      tolerance: 0.12,
-    );
-    final shoulderToHip = scoreComponent(
-      live['shoulderToHipRatio'] ?? 0.0,
-      ref['shoulderToHipRatio'] ?? 0.0,
-      tolerance: 0.18,
-    );
-    final centerDelta = (
-          (live['centerOffsetX'] ?? 0.0) - (ref['centerOffsetX'] ?? 0.0)
-      ).abs() + (
-          (live['centerOffsetY'] ?? 0.0) - (ref['centerOffsetY'] ?? 0.0)
-      ).abs();
-    final centerScore = (1.0 - (centerDelta / 0.20).clamp(0.0, 1.0)).clamp(0.0, 1.0);
-
-    final score =
-        (shoulderWidth * 0.40) +
-        (hipWidth * 0.30) +
-        (shoulderToHip * 0.20) +
-        (centerScore * 0.10);
-    _liveBodyAlignmentScore = score;
-    return score;
+    _liveBodyAlignmentScore = score / 100.0;
+    return _liveBodyAlignmentScore;
   }
 
   String get _bodyAlignmentStatusLabel {
-    if (!_isBodyGuide) return 'Body alignment';
+    if (!_isBodyGuide || !_isTrackProcedureFlow) return 'Body alignment';
     final score = _liveBodyAlignmentScore > 0.0
         ? _liveBodyAlignmentScore
         : _bodyAlignmentScoreFromReference();
@@ -1243,7 +1290,7 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Color get _bodyAlignmentStatusColor {
-    if (!_isBodyGuide) return Colors.transparent;
+    if (!_isBodyGuide || !_isTrackProcedureFlow) return Colors.transparent;
     final score = _liveBodyAlignmentScore > 0.0
         ? _liveBodyAlignmentScore
         : _bodyAlignmentScoreFromReference();
@@ -1263,7 +1310,27 @@ class _CameraScreenState extends State<CameraScreen>
     var selectedGoodReference = false;
     var bestScore = double.negativeInfinity;
 
-    for (final entry in filtered.take(12)) {
+    if (_isTrackProcedureFlow) {
+      final procedureId = widget.procedure?.id ?? _selectedProcedureId;
+      ref = lockedProcedureReference(history, procedureId);
+      final candidatePath = ref?.imagePath;
+      if (candidatePath != null && candidatePath.trim().isNotEmpty) {
+        refBytes = await _bytesFromImagePath(candidatePath);
+        if (refBytes != null && refBytes.isNotEmpty) {
+          refPath = candidatePath;
+          final candidateLighting = _analyzeLighting(refBytes);
+          final landmarkQuality =
+              ref?.metrics['capture_landmark_quality'] ?? 0.0;
+          selectedGoodReference =
+              candidateLighting.level == _LightingLevel.optimal &&
+              landmarkQuality >= 0.72;
+        }
+      }
+    }
+
+    for (final entry in _isTrackProcedureFlow
+        ? const <ScanHistoryEntry>[]
+        : filtered.take(12)) {
       final candidatePath = entry.imagePath;
       if (candidatePath == null || candidatePath.trim().isEmpty) {
         continue;
@@ -1491,6 +1558,22 @@ class _CameraScreenState extends State<CameraScreen>
     }
 
     return score.clamp(45, 100).toDouble();
+  }
+
+  Map<String, double> _captureProvenanceMetrics(
+    LandmarkAssessment assessment,
+  ) {
+    final metrics = <String, double>{...assessment.toMetricMap()};
+    if (_isTrackProcedureFlow && _isBodyGuide) {
+      final score = bodyReferenceAlignmentScore(
+        _referenceScan?.bodyReferenceGeometry,
+        assessment.bodyReferenceGeometry,
+      );
+      if (score != null) {
+        metrics['capture_reference_alignment_score'] = score;
+      }
+    }
+    return metrics;
   }
 
   Map<String, dynamic>? _baselineMetricMatrix() {
@@ -3325,8 +3408,10 @@ class _CameraScreenState extends State<CameraScreen>
           customDescription: _customDescriptionForSave,
           lightingConfidence: lightingConfidence,
           preferredReference: preferredReference,
-          extraMetrics: capturedLandmarks.toMetricMap(),
-          bodyReferenceGeometry: capturedLandmarks.bodyReferenceGeometry,
+            extraMetrics: _captureProvenanceMetrics(capturedLandmarks),
+            bodyReferenceGeometry: _isTrackProcedureFlow
+              ? capturedLandmarks.bodyReferenceGeometry
+              : null,
           makeupPresent: _makeupPresent ?? false,
           distanceEstimate: _distanceEstimate(),
           headTiltAngle: _isBodyGuide ? _bodyTiltAngle() : _headTiltAngle(),
@@ -3356,7 +3441,10 @@ class _CameraScreenState extends State<CameraScreen>
           customDescription: _customDescriptionForSave,
           lightingConfidence: lightingConfidence,
           preferredReference: preferredReference,
-          extraMetrics: capturedLandmarks.toMetricMap(),
+            extraMetrics: _captureProvenanceMetrics(capturedLandmarks),
+            bodyReferenceGeometry: _isTrackProcedureFlow
+              ? capturedLandmarks.bodyReferenceGeometry
+              : null,
           makeupPresent: _makeupPresent ?? false,
           distanceEstimate: _distanceEstimate(),
           headTiltAngle: _isBodyGuide ? _bodyTiltAngle() : _headTiltAngle(),
@@ -3659,7 +3747,10 @@ class _CameraScreenState extends State<CameraScreen>
           customDescription: _customDescriptionForSave,
           lightingConfidence: lightingConfidence,
           preferredReference: preferredReference,
-          extraMetrics: capturedLandmarks.toMetricMap(),
+            extraMetrics: _captureProvenanceMetrics(capturedLandmarks),
+            bodyReferenceGeometry: _isTrackProcedureFlow
+              ? capturedLandmarks.bodyReferenceGeometry
+              : null,
           makeupPresent: _makeupPresent ?? false,
           distanceEstimate: _distanceEstimate(),
           headTiltAngle: _isBodyGuide ? _bodyTiltAngle() : _headTiltAngle(),
@@ -3684,7 +3775,10 @@ class _CameraScreenState extends State<CameraScreen>
           customDescription: _customDescriptionForSave,
           lightingConfidence: lightingConfidence,
           preferredReference: preferredReference,
-          extraMetrics: capturedLandmarks.toMetricMap(),
+            extraMetrics: _captureProvenanceMetrics(capturedLandmarks),
+            bodyReferenceGeometry: _isTrackProcedureFlow
+              ? capturedLandmarks.bodyReferenceGeometry
+              : null,
           makeupPresent: _makeupPresent ?? false,
           distanceEstimate: _distanceEstimate(),
           headTiltAngle: _isBodyGuide ? _bodyTiltAngle() : _headTiltAngle(),
@@ -5291,7 +5385,9 @@ class _CameraScreenState extends State<CameraScreen>
                 ),
                 if (_showGhostOverlay && _referenceImagePath != null)
                   _buildGhostReferenceOverlay(),
-                if (_isBodyGuide)
+                if (_isBodyGuide &&
+                  _isTrackProcedureFlow &&
+                  _referenceScan?.bodyReferenceGeometry != null)
                   Positioned.fill(
                     child: IgnorePointer(
                       child: AnimatedContainer(

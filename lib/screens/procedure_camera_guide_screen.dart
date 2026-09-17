@@ -128,6 +128,7 @@ class ProcedureCameraGuideScreen extends StatelessWidget {
       MaterialPageRoute(
         builder: (_) => CameraScreen(
           procedure: procedure,
+          capturePurpose: CameraCapturePurpose.trackProcedure,
           initialTrackProcedureBaselineRecord:
               initialTrackProcedureBaselineRecord,
         ),
@@ -144,6 +145,7 @@ class ProcedureCameraGuideScreen extends StatelessWidget {
     if (kIsWeb) {
       return CameraScreen(
         procedure: procedure,
+        capturePurpose: CameraCapturePurpose.trackProcedure,
         initialTrackProcedureBaselineRecord:
             initialTrackProcedureBaselineRecord,
       );

@@ -260,6 +260,17 @@ ProcedurePhotoComparisonEligibility procedurePhotoComparisonEligibility({
     return const ProcedurePhotoComparisonEligibility(isComparable: true);
   }
 
+  final referenceAlignment =
+      latest.metrics['capture_reference_alignment_score'];
+  if (referenceAlignment != null &&
+      referenceAlignment < minimumComparableReferenceAlignmentScore) {
+    return const ProcedurePhotoComparisonEligibility(
+      isComparable: false,
+      caveat:
+          'Photos are shown separately because the follow-up pose did not match the locked reference closely enough.',
+    );
+  }
+
   final baselineMode = normalizedText(baseline.captureMode);
   final latestMode = normalizedText(latest.captureMode);
   if (baselineMode == null || latestMode == null || baselineMode != latestMode) {
@@ -810,7 +821,11 @@ class ProcedureSafeDashboardScreen extends StatelessWidget {
                 await Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (_) => kIsWeb
-                        ? CameraScreen(procedure: procedure)
+                      ? CameraScreen(
+                        procedure: procedure,
+                        capturePurpose:
+                          CameraCapturePurpose.trackProcedure,
+                        )
                         : ProcedureCameraGuideScreen(procedure: procedure),
                   ),
                 );
@@ -1706,6 +1721,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
         builder: (_) => kIsWeb
             ? CameraScreen(
                 procedure: _procedure,
+              capturePurpose: CameraCapturePurpose.trackProcedure,
                 initialTrackProcedureBaselineRecord: baselineRecord,
               )
             : ProcedureCameraGuideScreen(

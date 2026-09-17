@@ -969,6 +969,8 @@ class _HomePageState extends State<HomePage>
                                     MaterialPageRoute(
                                       builder: (_) => const CameraScreen(
                                         isSkincareScan: true,
+                                        capturePurpose:
+                                            CameraCapturePurpose.skincareTracking,
                                       ),
                                     ),
                                   )
@@ -1140,6 +1142,7 @@ class _HomePageState extends State<HomePage>
             builder: (_) => CameraScreen(
               initialProcedureId: procedureId,
               initialProcedureLabel: procedureType,
+              capturePurpose: CameraCapturePurpose.trackProcedure,
             ),
           ),
         )

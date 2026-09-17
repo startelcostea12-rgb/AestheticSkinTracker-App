@@ -502,6 +502,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           builder: (_) => const CameraScreen(
             isSkincareScan: true,
             aiMultiFrameCapture: true,
+            capturePurpose: CameraCapturePurpose.aiSkinAnalysis,
           ),
         ),
       );

@@ -274,7 +274,7 @@ class _AestheticSkinTrackerState extends State<AestheticSkinTracker> {
       case '/conversion-diagnostics':
         return const ConversionDiagnosticsScreen();
       case '/camera':
-        return const CameraScreen();
+        return const CameraScreen(capturePurpose: CameraCapturePurpose.generic);
       case '/analysis':
         final args = settings.arguments as String?;
         return AnalysisResultsScreen(imagePath: args);

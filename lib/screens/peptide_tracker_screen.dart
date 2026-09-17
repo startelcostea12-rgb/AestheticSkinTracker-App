@@ -276,7 +276,10 @@ class _PeptideTrackerScreenState extends State<PeptideTrackerScreen> {
     if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => CameraScreen(procedure: procedureToUse),
+        builder: (_) => CameraScreen(
+          procedure: procedureToUse,
+          capturePurpose: CameraCapturePurpose.trackProcedure,
+        ),
       ),
     );
 

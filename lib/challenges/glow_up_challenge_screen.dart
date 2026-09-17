@@ -515,7 +515,10 @@ class _GlowUpChallengeScreenState extends State<GlowUpChallengeScreen>
   void _openCamera(BuildContext context, int day) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => const CameraScreen(isSkincareScan: true),
+        builder: (_) => const CameraScreen(
+          isSkincareScan: true,
+          capturePurpose: CameraCapturePurpose.challenge,
+        ),
       ),
     );
     completeChecklistItem(day, 'Scan');

@@ -185,9 +185,15 @@ class _YearEndChallengeScreenState extends State<YearEndChallengeScreen> {
       MaterialPageRoute(
         builder: (_) => proc != null
             ? (kIsWeb
-                  ? CameraScreen(procedure: proc)
+                  ? CameraScreen(
+                      procedure: proc,
+                      capturePurpose: CameraCapturePurpose.trackProcedure,
+                    )
                   : ProcedureCameraGuideScreen(procedure: proc))
-            : const CameraScreen(isSkincareScan: false),
+            : const CameraScreen(
+                isSkincareScan: false,
+                capturePurpose: CameraCapturePurpose.challenge,
+              ),
       ),
     );
     if (!mounted) return;
