@@ -7247,12 +7247,15 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       children: [
         Icon(Icons.tune_rounded, size: 16, color: MyApp.clinicalNavy),
         const SizedBox(width: 7),
-        Text(
-          result.displayText,
-          style: TextStyle(
-            color: MyApp.textBrown,
-            fontSize: 11.5,
-            fontWeight: FontWeight.w700,
+        Expanded(
+          child: Text(
+            result.displayText,
+            softWrap: true,
+            style: TextStyle(
+              color: MyApp.textBrown,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
       ],

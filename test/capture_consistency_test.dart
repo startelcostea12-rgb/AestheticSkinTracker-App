@@ -23,7 +23,10 @@ void main() {
 
     expect(result.checkCount, 4);
     expect(result.score, 88.0);
-    expect(result.displayText, 'Capture consistency: 88% · 4 checks');
+    expect(
+      result.displayText,
+      'Capture consistency: 88% · 4 checks — mainly due to photo resolution differing from your baseline',
+    );
   });
 
   test('quality match is 100 and known quality mismatch is zero', () {
@@ -38,6 +41,22 @@ void main() {
 
     expect(matching.score, 100);
     expect(mismatch.score, 0);
+  });
+
+  test('capture quality is identified as the lowest face consistency factor', () {
+    final result = captureConsistencyForPayload(
+      {
+        'baseline_capture_quality': 'normal',
+        'capture_quality': 'low_light',
+        'baseline_metric_extraction_paths': {'pigment_load': 'cheek_primary'},
+        'metric_extraction_paths': {'pigment_load': 'cheek_primary'},
+        'capture_reference_alignment_score': 90,
+      },
+      isBodyProcedure: false,
+    );
+
+    expect(result.lowestCheck?.factor, CaptureConsistencyFactor.captureQuality);
+    expect(result.displayText, contains('capture conditions differing from your baseline'));
   });
 
   test('unavailable quality is omitted rather than zeroed or perfected', () {
@@ -155,6 +174,115 @@ void main() {
     expect(available.score, 85);
   });
 
+  test('resolution is identified as the lowest face consistency factor', () {
+    final result = captureConsistencyForPayload(
+      {
+        'baseline_capture_quality': 'normal',
+        'capture_quality': 'normal',
+        'baseline_source_image_width': 1000,
+        'baseline_source_image_height': 1000,
+        'source_image_width': 1080,
+        'source_image_height': 1000,
+        'baseline_metric_extraction_paths': {'pigment_load': 'cheek_primary'},
+        'metric_extraction_paths': {'pigment_load': 'cheek_primary'},
+        'capture_reference_alignment_score': 90,
+      },
+      isBodyProcedure: false,
+    );
+
+    expect(result.lowestCheck?.factor, CaptureConsistencyFactor.sourceResolution);
+    expect(result.displayText, contains('photo resolution differing from your baseline'));
+  });
+
+  test('reference pose is identified as the lowest face consistency factor', () {
+    final result = captureConsistencyForPayload(
+      {
+        'baseline_capture_quality': 'normal',
+        'capture_quality': 'normal',
+        'baseline_metric_extraction_paths': {'pigment_load': 'cheek_primary'},
+        'metric_extraction_paths': {'pigment_load': 'cheek_primary'},
+        'capture_reference_alignment_score': 55,
+      },
+      isBodyProcedure: false,
+    );
+
+    expect(result.lowestCheck?.factor, CaptureConsistencyFactor.referencePose);
+    expect(result.displayText, contains('your positioning differing from your reference pose'));
+  });
+
+  test('extraction path is identified as the lowest face consistency factor', () {
+    final result = captureConsistencyForPayload(
+      {
+        'baseline_capture_quality': 'normal',
+        'capture_quality': 'normal',
+        'baseline_metric_extraction_paths': {'pigment_load': 'cheek_primary'},
+        'metric_extraction_paths': {'pigment_load': 'full_face_fallback'},
+        'capture_reference_alignment_score': 90,
+      },
+      isBodyProcedure: false,
+    );
+
+    expect(result.lowestCheck?.factor, CaptureConsistencyFactor.extractionPath);
+    expect(result.displayText, contains('a different analysis method being used for this comparison'));
+  });
+
+  test('body capture mode is identified as the lowest factor', () {
+    final result = captureConsistencyForPayload(
+      {
+        'baseline_capture_quality': 'normal',
+        'capture_quality': 'normal',
+        'baseline_capture_mode': 'mirror',
+        'capture_mode': 'timer',
+        'baseline_result': {'scale_reference_pixels': 100.0},
+        'result': {'scale_reference_pixels': 100.0},
+        'capture_reference_alignment_score': 90,
+      },
+      isBodyProcedure: true,
+    );
+
+    expect(result.lowestCheck?.factor, CaptureConsistencyFactor.captureMode);
+    expect(result.displayText, contains('capture method or framing differing from your baseline'));
+  });
+
+  test('body scale reference is identified as the lowest factor', () {
+    final result = captureConsistencyForPayload(
+      {
+        'baseline_capture_quality': 'normal',
+        'capture_quality': 'normal',
+        'baseline_capture_mode': 'mirror',
+        'capture_mode': 'mirror',
+        'baseline_result': {'scale_reference_pixels': 100.0},
+        'result': {'scale_reference_pixels': 120.0},
+        'capture_reference_alignment_score': 90,
+      },
+      isBodyProcedure: true,
+    );
+
+    expect(result.lowestCheck?.factor, CaptureConsistencyFactor.scaleReference);
+    expect(result.displayText, contains('capture method or framing differing from your baseline'));
+  });
+
+  test('high consistency does not add a mainly-due explanation', () {
+    final result = captureConsistencyForPayload(
+      {
+        'baseline_capture_quality': 'normal',
+        'capture_quality': 'normal',
+        'baseline_source_image_width': 1000,
+        'baseline_source_image_height': 1000,
+        'source_image_width': 1000,
+        'source_image_height': 1000,
+        'baseline_metric_extraction_paths': {'pigment_load': 'cheek_primary'},
+        'metric_extraction_paths': {'pigment_load': 'cheek_primary'},
+        'capture_reference_alignment_score': 92,
+      },
+      isBodyProcedure: false,
+    );
+
+    expect(result.score, 98.0);
+    expect(result.displayText, 'Capture consistency: 98% · 4 checks');
+    expect(result.displayText, isNot(contains('mainly due to')));
+  });
+
   testWidgets('Luxe comparison visibly renders capture consistency and check count', (
     tester,
   ) async {
@@ -187,6 +315,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Capture consistency: 87% · 3 checks'), findsOneWidget);
+    expect(
+      find.text(
+        'Capture consistency: 87% · 3 checks — mainly due to photo resolution differing from your baseline',
+      ),
+      findsOneWidget,
+    );
   });
 }

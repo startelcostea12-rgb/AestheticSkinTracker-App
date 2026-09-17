@@ -1886,12 +1886,15 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
           color: AppColors.brandAccent,
         ),
         const SizedBox(width: 7),
-        Text(
-          result.displayText,
-          style: const TextStyle(
-            color: AppColors.textStructure,
-            fontSize: 11.2,
-            fontWeight: FontWeight.w800,
+        Expanded(
+          child: Text(
+            result.displayText,
+            softWrap: true,
+            style: const TextStyle(
+              color: AppColors.textStructure,
+              fontSize: 11.2,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ),
       ],

@@ -1,17 +1,59 @@
 import '../models/scan_history.dart';
 
+enum CaptureConsistencyFactor {
+  captureQuality,
+  extractionPath,
+  sourceResolution,
+  referencePose,
+  captureMode,
+  scaleReference,
+}
+
+class CaptureConsistencyCheck {
+  const CaptureConsistencyCheck({required this.factor, required this.score});
+
+  final CaptureConsistencyFactor factor;
+  final double score;
+
+  String get explanation {
+    switch (factor) {
+      case CaptureConsistencyFactor.sourceResolution:
+        return 'photo resolution differing from your baseline';
+      case CaptureConsistencyFactor.referencePose:
+        return 'your positioning differing from your reference pose';
+      case CaptureConsistencyFactor.captureMode:
+      case CaptureConsistencyFactor.scaleReference:
+        return 'capture method or framing differing from your baseline';
+      case CaptureConsistencyFactor.extractionPath:
+        return 'a different analysis method being used for this comparison';
+      case CaptureConsistencyFactor.captureQuality:
+        return 'capture conditions differing from your baseline';
+    }
+  }
+}
+
 class CaptureConsistencyResult {
   const CaptureConsistencyResult({
     required this.score,
     required this.checkCount,
+    this.checks = const <CaptureConsistencyCheck>[],
   });
 
   final double? score;
   final int checkCount;
+  final List<CaptureConsistencyCheck> checks;
+
+  CaptureConsistencyCheck? get lowestCheck {
+    if (checks.isEmpty) return null;
+    return checks.reduce(
+      (lowest, current) => current.score < lowest.score ? current : lowest,
+    );
+  }
 
   String get displayText => score == null
       ? 'Capture consistency unavailable'
-      : 'Capture consistency: ${score!.toStringAsFixed(0)}% · $checkCount checks';
+      : 'Capture consistency: ${score!.toStringAsFixed(0)}% · $checkCount checks'
+          '${lowestCheck != null && lowestCheck!.score <= 85.0 ? ' — mainly due to ${lowestCheck!.explanation}' : ''}';
 }
 
 CaptureConsistencyResult captureConsistencyForScanPair({
@@ -23,12 +65,17 @@ CaptureConsistencyResult captureConsistencyForScanPair({
     return const CaptureConsistencyResult(score: null, checkCount: 0);
   }
 
-  final scores = <double>[];
+  final checks = <CaptureConsistencyCheck>[];
   final qualityScore = _captureQualityScore(
     baseline.captureQuality,
     latest.captureQuality,
   );
-  if (qualityScore != null) scores.add(qualityScore);
+  if (qualityScore != null) {
+    checks.add(CaptureConsistencyCheck(
+      factor: CaptureConsistencyFactor.captureQuality,
+      score: qualityScore,
+    ));
+  }
 
   final resolutionScore = _resolutionScore(
     baseline.sourceImageWidth,
@@ -36,38 +83,68 @@ CaptureConsistencyResult captureConsistencyForScanPair({
     latest.sourceImageWidth,
     latest.sourceImageHeight,
   );
-  if (resolutionScore != null) scores.add(resolutionScore);
+  if (resolutionScore != null) {
+    checks.add(CaptureConsistencyCheck(
+      factor: CaptureConsistencyFactor.sourceResolution,
+      score: resolutionScore,
+    ));
+  }
 
   final alignmentScore = _alignmentScore(latest.metrics);
-  if (alignmentScore != null) scores.add(alignmentScore);
+  if (alignmentScore != null) {
+    checks.add(CaptureConsistencyCheck(
+      factor: CaptureConsistencyFactor.referencePose,
+      score: alignmentScore,
+    ));
+  }
 
   if (isBodyProcedure) {
     final modeScore = _binaryMatchScore(
       baseline.captureMode,
       latest.captureMode,
     );
-    if (modeScore != null) scores.add(modeScore);
+    if (modeScore != null) {
+      checks.add(CaptureConsistencyCheck(
+        factor: CaptureConsistencyFactor.captureMode,
+        score: modeScore,
+      ));
+    }
 
     final scaleScore = _scaleScore(baseline.rawPayload, latest.rawPayload);
-    if (scaleScore != null) scores.add(scaleScore);
+    if (scaleScore != null) {
+      checks.add(CaptureConsistencyCheck(
+        factor: CaptureConsistencyFactor.scaleReference,
+        score: scaleScore,
+      ));
+    }
   } else {
     final pathScore = _pathMatchScore(baseline, latest);
-    if (pathScore != null) scores.add(pathScore);
+    if (pathScore != null) {
+      checks.add(CaptureConsistencyCheck(
+        factor: CaptureConsistencyFactor.extractionPath,
+        score: pathScore,
+      ));
+    }
   }
 
-  return _average(scores);
+  return _average(checks);
 }
 
 CaptureConsistencyResult captureConsistencyForPayload(
   Map<String, dynamic> payload, {
   required bool isBodyProcedure,
 }) {
-  final scores = <double>[];
+  final checks = <CaptureConsistencyCheck>[];
   final qualityScore = _captureQualityScore(
     _stringValue(payload['baseline_capture_quality'] ?? payload['baselineCaptureQuality']),
     _stringValue(payload['capture_quality'] ?? payload['captureQuality']),
   );
-  if (qualityScore != null) scores.add(qualityScore);
+  if (qualityScore != null) {
+    checks.add(CaptureConsistencyCheck(
+      factor: CaptureConsistencyFactor.captureQuality,
+      score: qualityScore,
+    ));
+  }
 
   final resolutionScore = _resolutionScore(
     _intValue(payload['baseline_source_image_width'] ?? payload['baselineSourceImageWidth']),
@@ -75,38 +152,64 @@ CaptureConsistencyResult captureConsistencyForPayload(
     _intValue(payload['source_image_width'] ?? payload['sourceImageWidth']),
     _intValue(payload['source_image_height'] ?? payload['sourceImageHeight']),
   );
-  if (resolutionScore != null) scores.add(resolutionScore);
+  if (resolutionScore != null) {
+    checks.add(CaptureConsistencyCheck(
+      factor: CaptureConsistencyFactor.sourceResolution,
+      score: resolutionScore,
+    ));
+  }
 
   final alignmentScore = _alignmentScore(payload['capture_reference_alignment_score']);
-  if (alignmentScore != null) scores.add(alignmentScore);
+  if (alignmentScore != null) {
+    checks.add(CaptureConsistencyCheck(
+      factor: CaptureConsistencyFactor.referencePose,
+      score: alignmentScore,
+    ));
+  }
 
   if (isBodyProcedure) {
     final modeScore = _binaryMatchScore(
       _stringValue(payload['baseline_capture_mode'] ?? payload['baselineCaptureMode']),
       _stringValue(payload['capture_mode'] ?? payload['captureMode']),
     );
-    if (modeScore != null) scores.add(modeScore);
+    if (modeScore != null) {
+      checks.add(CaptureConsistencyCheck(
+        factor: CaptureConsistencyFactor.captureMode,
+        score: modeScore,
+      ));
+    }
     final scaleScore = _scaleScore(payload['baseline_result'], payload['result']);
-    if (scaleScore != null) scores.add(scaleScore);
+    if (scaleScore != null) {
+      checks.add(CaptureConsistencyCheck(
+        factor: CaptureConsistencyFactor.scaleReference,
+        score: scaleScore,
+      ));
+    }
   } else {
     final pathScore = _pathMapMatchScore(
       payload['baseline_metric_extraction_paths'],
       payload['metric_extraction_paths'],
     );
-    if (pathScore != null) scores.add(pathScore);
+    if (pathScore != null) {
+      checks.add(CaptureConsistencyCheck(
+        factor: CaptureConsistencyFactor.extractionPath,
+        score: pathScore,
+      ));
+    }
   }
 
-  return _average(scores);
+  return _average(checks);
 }
 
-CaptureConsistencyResult _average(List<double> scores) {
-  if (scores.isEmpty) {
+CaptureConsistencyResult _average(List<CaptureConsistencyCheck> checks) {
+  if (checks.isEmpty) {
     return const CaptureConsistencyResult(score: null, checkCount: 0);
   }
-  final total = scores.fold<double>(0.0, (sum, value) => sum + value);
+  final total = checks.fold<double>(0.0, (sum, check) => sum + check.score);
   return CaptureConsistencyResult(
-    score: total / scores.length,
-    checkCount: scores.length,
+    score: total / checks.length,
+    checkCount: checks.length,
+    checks: List.unmodifiable(checks),
   );
 }
 
