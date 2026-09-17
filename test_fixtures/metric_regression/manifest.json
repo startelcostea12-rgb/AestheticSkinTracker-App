@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "pipeline": {
+    "entrypoint": "main.analyze_skin_patch",
+    "normalization": "main.assess_and_normalize_image",
+    "camera_qa": false,
+    "camera_qa_reason": "Calibration references include clinical crops that are not representative camera captures. Formula and ROI processing remain fully enabled."
+  },
+  "cases": [
+    {
+      "id": "clear_face",
+      "photo_path": "test_fixtures/metric_regression/clear_face.jfif",
+      "preprocess": {"mode": "resize_jpeg", "size": 512},
+      "notes": "Visually very minimal pigmentation. Historical post-fix pigment_load was approximately 13.4.",
+      "strict": true,
+      "metrics": {
+        "pigment_load": {"confirmed": 13.4, "min": 8.4, "max": 18.4},
+        "localized_redness": {"confirmed": 4.6, "min": 0.0, "max": 9.6},
+        "diffuse_flushing_erythema": {"confirmed": 9.6, "min": 4.6, "max": 14.6},
+        "rosacea_severity": {"confirmed": 3.0, "min": 0.0, "max": 8.0},
+        "sebum_excess_oil_gloss": {"confirmed": 3.4, "min": 0.0, "max": 8.4},
+        "under_eye_texture_density": {"confirmed": 21.0, "min": 16.0, "max": 26.0},
+        "under_eye_dark_circle_density": {"confirmed": 17.8, "min": 12.8, "max": 22.8}
+      }
+    },
+    {
+      "id": "nikki2",
+      "photo_path": "test_fixtures/metric_regression/nikki2.jpg",
+      "preprocess": {"mode": "center_crop_resize_jpeg", "crop_fraction": 0.9, "size": 512},
+      "notes": "Real visible cheek redness. Uses the exact first accepted crop from tool/smoke_test_analyze_skin.py. The p95 single-formula baseline was recalibrated after removing the mean-based canonical collision.",
+      "strict": true,
+      "metrics": {
+        "localized_redness": {"confirmed": 13.5, "min": 8.5, "max": 18.5}
+      }
+    },
+    {
+      "id": "nikki3",
+      "photo_path": "test_fixtures/metric_regression/nikki3.jpg",
+      "preprocess": {"mode": "center_crop_resize_jpeg", "crop_fraction": 0.9, "size": 512},
+      "notes": "Companion visible-redness reference using the recalibrated p95 single-formula baseline.",
+      "strict": true,
+      "metrics": {
+        "localized_redness": {"confirmed": 23.0, "min": 18.0, "max": 28.0},
+        "rosacea_severity": {"confirmed": 13.1, "min": 8.1, "max": 18.1},
+        "sebum_excess_oil_gloss": {"confirmed": 6.4, "min": 1.4, "max": 11.4},
+        "pore_visibility": {"confirmed": 3.4, "min": 0.0, "max": 8.4},
+        "under_eye_texture_density": {"confirmed": 96.0, "min": 91.0, "max": 100.0},
+        "under_eye_dark_circle_density": {"confirmed": 72.6, "min": 67.6, "max": 77.6}
+      }
+    },
+    {
+      "id": "st1",
+      "photo_path": "test_fixtures/metric_regression/st1.jpg",
+      "preprocess": {"mode": "center_crop_resize_jpeg", "crop_fraction": 0.9, "size": 512},
+      "notes": "Severe rosacea reference with a documented mixed redness/pigment presentation. The redness baseline uses the recalibrated p95 formula; pigment remains independently calibrated.",
+      "strict": true,
+      "metrics": {
+        "localized_redness": {"confirmed": 84.8, "min": 79.8, "max": 89.8},
+        "pigment_load": {"confirmed": 46.5, "min": 41.5, "max": 51.5},
+        "rosacea_severity": {"confirmed": 48.0, "min": 43.0, "max": 53.0},
+        "sebum_excess_oil_gloss": {"confirmed": 0.6, "min": 0.0, "max": 5.6},
+        "under_eye_texture_density": {"confirmed": 100.0, "min": 95.0, "max": 100.0},
+        "under_eye_dark_circle_density": {"confirmed": 13.2, "min": 8.2, "max": 18.2}
+      }
+    },
+    {
+      "id": "portrait_09_outdoor_outlier",
+      "photo_path": "calibration_stock_batch/portrait_09_woman_outdoor.jpg",
+      "preprocess": {"mode": "raw"},
+      "notes": "Known unresolved pigment outlier caused by extreme b-star chroma dispersion. Track drift visibly but do not gate releases.",
+      "strict": false,
+      "metrics": {
+        "pigment_load": {"confirmed": 99.8, "observed": 99.9}
+      }
+    }
+  ]
+}

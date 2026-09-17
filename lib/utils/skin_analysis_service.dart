@@ -147,15 +147,10 @@ class SkinAnalysisService {
 
   /// Submits a body-procedure capture to `/api/body/analyze-silhouette`.
   ///
-  /// Unlike [analyzeImageFromBytes]/[uploadSingleImageFile] (user-initiated
-  /// "Deep Analysis" actions that should surface a failure), this runs as
-  /// part of the automatic post-capture save for body-region scans — a
-  /// network hiccup here shouldn't block saving the scan itself, so this
-  /// returns null on any failure (bad status, timeout, no connection)
-  /// instead of throwing. Not gated by [_ensureBackendAllowed]: that gate
-  /// protects the user-initiated face "Deep Analysis" flow specifically;
-  /// this is a distinct, deliberate submission path with no equivalent
-  /// consent-gated screen of its own.
+  /// Backend access is denied by default, including Track Procedure body
+  /// scans. Only a consent-based AI Skin Analysis flow may pass
+  /// [allowBackend] as true. Failures return null so an unavailable or blocked
+  /// backend never prevents the local scan from being saved.
   /// [httpClient] is injectable purely for tests — production callers omit
   /// it and get the default top-level [http.post]. This lets a test supply
   /// a `package:http/testing.dart` `MockClient` to capture and assert on
@@ -174,11 +169,13 @@ class SkinAnalysisService {
     int? sourceImageHeight,
     int? baselineSourceImageWidth,
     int? baselineSourceImageHeight,
+    bool allowBackend = false,
     http.Client? httpClient,
   }) async {
-    final uri = BackendConfig.analyzeBodySilhouetteUri;
-    debugPrint('[SkinAnalysisService] POST $uri (body silhouette)');
     try {
+      _ensureBackendAllowed(allowBackend);
+      final uri = BackendConfig.analyzeBodySilhouetteUri;
+      debugPrint('[SkinAnalysisService] POST $uri (body silhouette)');
       final poster = httpClient?.post ?? http.post;
       final response = await poster(
         uri,

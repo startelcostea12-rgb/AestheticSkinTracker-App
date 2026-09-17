@@ -658,7 +658,7 @@ class ComputeTrendDeltasTests(unittest.TestCase):
         }
 
         redness = _compute_redness_from_personal_baseline(current, baseline)
-        self.assertGreater(redness, 0.0)
+        self.assertAlmostEqual(redness, 28.05, places=2)
         self.assertEqual(_compute_redness_from_personal_baseline({"a_p95": 126.0}, {}), 0.0)
 
     def test_request_roi_cache_reuses_masks_within_single_analysis(self) -> None:

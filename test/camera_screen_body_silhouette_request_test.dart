@@ -1,7 +1,18 @@
+import 'dart:io';
+
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('Track Procedure camera flow contains no backend body upload call', () {
+    final source = File(
+      'lib/features/skin_tracker/presentation/screens/camera_screen.dart',
+    ).readAsStringSync();
+
+    expect(source, isNot(contains('SkinAnalysisService.analyzeBodySilhouette')));
+    expect(source, isNot(contains("as remote_skin_analysis")));
+  });
+
   group('buildBodySilhouetteRequestParams', () {
     test(
       'pulls captureMode from the selected mode and captureQuality from the last tag',

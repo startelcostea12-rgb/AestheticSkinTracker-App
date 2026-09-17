@@ -21,9 +21,6 @@ import 'package:aesthetic_skin_tracker/utils/premium_access.dart';
 import 'package:aesthetic_skin_tracker/utils/premium_recovery_service.dart';
 import 'package:aesthetic_skin_tracker/services/skin_analysis_service.dart'
     as local_skin_analysis;
-import 'package:aesthetic_skin_tracker/services/notification_service.dart';
-import 'package:aesthetic_skin_tracker/utils/skin_analysis_service.dart'
-    as remote_skin_analysis;
 import 'package:aesthetic_skin_tracker/utils/web_upload_image_utils.dart';
 import 'package:aesthetic_skin_tracker/utils/web_image_picker.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
@@ -2781,82 +2778,6 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
-  /// Submits a body-region capture to `/api/body/analyze-silhouette` and
-  /// returns its raw JSON response — {status, text, modelUsed, result,
-  /// trend_deltas, trend_status, honesty_band_percent,
-  /// consistent_scan_requirement} — unmodified, so it can be stored
-  /// verbatim as the saved scan's `rawPayload` and later read back as the
-  /// next scan's baseline (see the `baselineResult` extraction below) or
-  /// rendered by a downstream UI the same way `rawPayload` already carries
-  /// the face pipeline's trend data.
-  ///
-  /// Returns null for non-body scans, and also (silently) on any backend
-  /// failure — this call is best-effort by design; see
-  /// [remote_skin_analysis.SkinAnalysisService.analyzeBodySilhouette] for
-  /// why that doesn't throw here.
-  Future<Map<String, dynamic>?> _submitBodySilhouetteAnalysis(
-    Uint8List bytes,
-    {
-    int? sourceImageWidth,
-    int? sourceImageHeight,
-  }
-  ) async {
-    if (!_isBodyGuide) return null;
-    final procedureId = widget.procedure?.id ?? _selectedProcedureId;
-    final priorCount = procedureId == null
-        ? 0
-        : await AppPrefs.getBodyConsistentScanCount(procedureId);
-    final params = buildBodySilhouetteRequestParams(
-      selectedCaptureMode: _selectedBodyCaptureMode,
-      lastCaptureQualityTag: _lastCaptureQualityTag,
-      baselineRawPayload: _referenceScan?.rawPayload,
-      baselineCaptureMode: _referenceScan?.captureMode,
-      baselineCaptureQuality: _referenceScan?.captureQuality,
-      priorConsistentScanCount: priorCount,
-      sourceImageWidth: sourceImageWidth,
-      sourceImageHeight: sourceImageHeight,
-      baselineSourceImageWidth: _referenceScan?.sourceImageWidth,
-      baselineSourceImageHeight: _referenceScan?.sourceImageHeight,
-    );
-    final response = await remote_skin_analysis.SkinAnalysisService.analyzeBodySilhouette(
-      bytes: bytes,
-      captureMode: params.captureMode,
-      captureQuality: params.captureQuality,
-      baselineResult: params.baselineResult,
-      baselineCaptureMode: params.baselineCaptureMode,
-      baselineCaptureQuality: params.baselineCaptureQuality,
-      currentConsistentScanCount: params.currentConsistentScanCount,
-      baselineConsistentScanCount: params.baselineConsistentScanCount,
-      sourceImageWidth: params.sourceImageWidth,
-      sourceImageHeight: params.sourceImageHeight,
-      baselineSourceImageWidth: params.baselineSourceImageWidth,
-      baselineSourceImageHeight: params.baselineSourceImageHeight,
-    );
-    final confirmedCount = response?['consistent_scan_count'];
-    if (procedureId != null && confirmedCount is num) {
-      await AppPrefs.setBodyConsistentScanCount(procedureId, confirmedCount.toInt());
-      final status = response?['trend_status'];
-      final trendStatus = status is Map
-          ? status['normalized_area_index']?.toString()
-          : null;
-      final notifications = NotificationService();
-      await notifications.cancelBodyTrendReminder(procedureId);
-      if (bodyTrendReminderAction(
-            trendStatus: trendStatus,
-            consistentScanCount: confirmedCount.toInt(),
-        priorConsistentScanCount: priorCount,
-          ) ==
-          BodyTrendReminderAction.schedule) {
-        await notifications.scheduleBodyTrendReminder(
-          procedureId: procedureId,
-          procedureName: _effectiveGuideProcedureType,
-          consistentScanCount: confirmedCount.toInt(),
-        );
-      }
-    }
-    return response;
-  }
-
   /// Premium Deep Analysis block: a top disclaimer, the consent gate, and the
   /// gated Run button. The button stays disabled until a cropped image exists
   /// AND the disclaimer has been accepted.
@@ -3297,15 +3218,9 @@ class _CameraScreenState extends State<CameraScreen>
       prefix: 'procedure_scan',
     );
     final nextMetrics = await _metricsFromBackendOrThrow(imagePathToSave);
-    // Runs alongside _metricsFromBackendOrThrow, not instead of it: that
-    // call still drives captureQuality/consistencyScore gating shared by
-    // every scan (body included), so it isn't replaced here. This adds the
-    // actual body-silhouette signal on top for body-region procedures only.
-    final bodySilhouettePayload = await _submitBodySilhouetteAnalysis(
-      bytes,
-      sourceImageWidth: sourceImageWidth,
-      sourceImageHeight: sourceImageHeight,
-    );
+    // Track Procedure is local-only for every region. Body silhouette data
+    // remains absent until a genuine on-device implementation is available.
+    const Map<String, dynamic>? bodySilhouettePayload = null;
     try {
       debugPrint(
         '[_saveWebGalleryBytes] imagePathToSave length=${imagePathToSave.length}, originalBytes=${bytes.length}, storedBytes=${bytesForStorage.length}',
@@ -3704,11 +3619,9 @@ class _CameraScreenState extends State<CameraScreen>
       final nextMetrics = await _metricsFromBackendOrThrow(imagePathToSave);
       // Runs alongside _metricsFromBackendOrThrow, not instead of it — see
       // the matching comment in _saveWebGalleryBytes.
-      final bodySilhouettePayload = await _submitBodySilhouetteAnalysis(
-        bytes,
-        sourceImageWidth: sourceImageWidth,
-        sourceImageHeight: sourceImageHeight,
-      );
+      // Track Procedure is local-only for every region. Body silhouette data
+      // remains absent until a genuine on-device implementation is available.
+      const Map<String, dynamic>? bodySilhouettePayload = null;
       final consistencyScore = _calculateConsistencyScore(
         bytes,
         nextMetrics,

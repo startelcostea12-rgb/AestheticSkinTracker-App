@@ -1865,6 +1865,23 @@ PIGMENT_LOAD_SCORE_SLOPE = 3.6
 # a future ROI makes it genuinely informative.
 PIGMENT_LOAD_L_CONTRAST_WEIGHT = 0.0
 
+# PROVISIONAL localized-redness calibration. First scans use each photo's own
+# least-red cheek band (p10) as the reference for its p95 hot-spot signal,
+# eliminating the fixed-neutral a*=128 pedestal. Across the real reference
+# set, max per-cheek p95-p10 was 9.55 (clear), 10.61 (nikki2), 11.76
+# (nikki3), and 19.19 (severe st1). A 9.0-unit dead zone and 8.34 multiplier
+# map those to approximately 4.6, 13.5, 23.0, and 85.0. Revisit when a larger
+# set of human-rated redness references is available.
+LOCALIZED_REDNESS_SELF_BASELINE_PERCENTILE = 10.0
+LOCALIZED_REDNESS_DEAD_ZONE_A_UNITS = 9.0
+LOCALIZED_REDNESS_SCORE_MULTIPLIER = 8.34
+
+# PROVISIONAL follow-up calibration. Return visits compare cheek p95 to the
+# prior scan's cheek p95, never p95 to mean. The adjustment is anchored to the
+# prior canonical score so an unchanged follow-up preserves absolute severity.
+LOCALIZED_REDNESS_FOLLOWUP_DEAD_ZONE_A_UNITS = 1.0
+LOCALIZED_REDNESS_FOLLOWUP_MULTIPLIER = 2.55
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # Pure scoring-formula extractions
@@ -1876,7 +1893,15 @@ PIGMENT_LOAD_L_CONTRAST_WEIGHT = 0.0
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def compute_localized_redness_and_rosacea(p95_a, baseline_a_ref, diffuse_density):
+def compute_localized_redness_and_rosacea(
+    p95_a,
+    baseline_a_ref,
+    diffuse_density,
+    *,
+    dead_zone=LOCALIZED_REDNESS_DEAD_ZONE_A_UNITS,
+    multiplier=LOCALIZED_REDNESS_SCORE_MULTIPLIER,
+    baseline_score=0.0,
+):
     """Pure extraction of the localized_redness / rosacea_severity formula
     from _compute_zone_based_metrics. Inputs are already-reduced cheek-ROI
     statistics (95th-percentile LAB 'a' channel, personal baseline 'a'
@@ -1884,7 +1909,18 @@ def compute_localized_redness_and_rosacea(p95_a, baseline_a_ref, diffuse_density
     Returns a dict: localized_redness, diffuse_flushing_erythema,
     rosacea_before, rosacea_severity, rosacea_reason.
     """
-    localized_redness = float(np.clip((p95_a - baseline_a_ref) * 3.1, 0.0, 100.0))
+    delta = float(p95_a) - float(baseline_a_ref)
+    if baseline_score > 0.0:
+        signed_effective_delta = math.copysign(
+            max(0.0, abs(delta) - dead_zone),
+            delta,
+        )
+        localized_redness = float(
+            np.clip(baseline_score + (signed_effective_delta * multiplier), 0.0, 100.0)
+        )
+    else:
+        effective_delta = max(0.0, delta - dead_zone)
+        localized_redness = float(np.clip(effective_delta * multiplier, 0.0, 100.0))
     diffuse_flushing_erythema = float(
         np.clip((0.70 * diffuse_density) + (0.30 * localized_redness), 0.0, 100.0)
     )
@@ -2065,21 +2101,55 @@ def _compute_zone_based_metrics(
         median_a = 128.0
         p95_a = 128.0
 
-    personal_lab_baseline = _resolve_personal_lab_ctx(baseline_matrix)
-    baseline_a_ref = personal_lab_baseline.get("a_mean", 128.0)
+    personal_lab_baseline = _coalesce_personal_lab_baseline(baseline_matrix or {})
+    baseline_a_p95 = safe_float(personal_lab_baseline.get("a_p95"))
     diffuse_threshold = max(138.0, median_a + 5.0)
     diffuse_mask = np.logical_and(u_zone_pixels, a_blur >= diffuse_threshold)
     diffuse_density = float(np.clip(np.mean(diffuse_mask) * 100.0, 0.0, 100.0))
-    _redness_result = compute_localized_redness_and_rosacea(
-        p95_a, baseline_a_ref, diffuse_density
-    )
+    if baseline_a_p95 is not None:
+        baseline_score = safe_float((baseline_matrix or {}).get("localized_redness")) or 0.0
+        _redness_result = compute_localized_redness_and_rosacea(
+            p95_a,
+            baseline_a_p95,
+            diffuse_density,
+            dead_zone=LOCALIZED_REDNESS_FOLLOWUP_DEAD_ZONE_A_UNITS,
+            multiplier=LOCALIZED_REDNESS_FOLLOWUP_MULTIPLIER,
+            baseline_score=baseline_score,
+        )
+        redness_signal = p95_a - baseline_a_p95
+        redness_reference_source = "personal_p95"
+    else:
+        side_spreads: list[float] = []
+        for cheek_mask in (left_cheek, right_cheek):
+            side_pixels = cv2.bitwise_and(cheek_mask, skin_mask) > 0
+            if not np.any(side_pixels):
+                continue
+            side_values = a_blur[side_pixels]
+            side_spreads.append(
+                float(np.percentile(side_values, 95))
+                - float(
+                    np.percentile(
+                        side_values,
+                        LOCALIZED_REDNESS_SELF_BASELINE_PERCENTILE,
+                    )
+                )
+            )
+        redness_signal = max(side_spreads, default=0.0)
+        _redness_result = compute_localized_redness_and_rosacea(
+            redness_signal,
+            0.0,
+            diffuse_density,
+        )
+        redness_reference_source = "self_cheek_p10"
     localized_redness = _redness_result["localized_redness"]
     diffuse_flushing_erythema = _redness_result["diffuse_flushing_erythema"]
     rosacea_before = _redness_result["rosacea_before"]
     rosacea_severity = _redness_result["rosacea_severity"]
     rosacea_reason = _redness_result["rosacea_reason"]
     logger.info(
-        "ROSACEA_CALIB redness=%.1f rosacea_before=%.1f rosacea_after=%.1f reason=%s",
+        "ROSACEA_CALIB signal=%.2f reference=%s redness=%.1f rosacea_before=%.1f rosacea_after=%.1f reason=%s",
+        redness_signal,
+        redness_reference_source,
         localized_redness,
         rosacea_before,
         rosacea_severity,
@@ -2912,7 +2982,10 @@ def _compute_canonical_patch_metrics(
         cheek_a = a_channel[cheek_mask > 0]
         mean_a = float(np.mean(cheek_a)) if cheek_a.size > 0 else 128.0
         redness = ((mean_a - 128.0) / 30.0) * 100.0
-        matrix["localized_redness"] = round(float(np.clip(redness, 0.0, 100.0)), 1)
+        raw_components["mean_cheek_redness_proxy"] = round(
+            float(np.clip(redness, 0.0, 100.0)),
+            1,
+        )
     confidence["localized_redness"] = _conf(cheek_pixels)
     if cheek_expand_no_skin_used and confidence["localized_redness"] == "high":
         confidence["localized_redness"] = "medium"
@@ -3914,11 +3987,30 @@ def _compute_redness_from_personal_baseline(
     reference = _pick_personal_baseline_reference(baseline)
     if signal is None or reference is None:
         return 0.0
-    return float(np.clip(((signal - reference) / 30.0) * 100.0, 0.0, 100.0))
+    effective_delta = max(
+        0.0,
+        (signal - reference) - LOCALIZED_REDNESS_FOLLOWUP_DEAD_ZONE_A_UNITS,
+    )
+    return float(
+        np.clip(
+            effective_delta * LOCALIZED_REDNESS_FOLLOWUP_MULTIPLIER,
+            0.0,
+            100.0,
+        )
+    )
 
 
 def _pick_personal_baseline_reference(baseline: Dict[str, float]) -> float | None:
-    for key in ("a_mean", "mean_a", "a_star_mean", "redness_a_mean"):
+    for key in (
+        "a_p95",
+        "p95_a",
+        "a_star_p95",
+        "redness_a_p95",
+        "a_mean",
+        "mean_a",
+        "a_star_mean",
+        "redness_a_mean",
+    ):
         value = safe_float(baseline.get(key))
         if value is not None:
             return float(value)
@@ -4822,6 +4914,12 @@ def analyze_skin_patch(
         baseline_matrix=baseline_matrix,
         roi_cache=request_roi_cache,
     )
+    zone_redness = safe_float(zone_metrics.get("localized_redness"))
+    if zone_redness is not None and math.isfinite(zone_redness):
+        canonical_metric_matrix["localized_redness"] = round(
+            float(np.clip(zone_redness, 0.0, 100.0)),
+            1,
+        )
 
     # Confidence-aware gating using ROI support, landmark robustness, and signal sparsity.
     skin_ratio = float(cv2.countNonZero(mask)) / max(float(mask.size), 1.0)
@@ -5104,7 +5202,7 @@ def analyze_skin_patch(
         )
 
     redness_current = safe_float(canonical_metric_matrix.get("localized_redness"))
-    redness_unset = is_redness_unset(redness_current)
+    redness_unset = redness_current is None or not math.isfinite(redness_current)
     redness_roi = np.zeros(norm.shape[:2], dtype=np.uint8)
     redness_path = "skipped"
     cheek_primary_usable = bool(raw_components.get("cheek_primary_usable", 0.0) > 0.5)
@@ -5118,13 +5216,8 @@ def analyze_skin_patch(
         redness_roi = large_fallback_roi
         redness_path = "full_face_fallback"
 
-    # NOTE (localized_redness naming): this is a mean-based statistic over the
-    # cheek ROI, matching _compute_canonical_patch_metrics. Elsewhere in this
-    # file, _compute_zone_based_metrics' "localized_redness" concept is
-    # p95-based (percentile/hot-spot flavored) under the same name. That
-    # naming tension is real and unresolved — reconcile deliberately later
-    # rather than rediscovering it. Do not let this fallback quietly drift
-    # back toward a percentile statistic without addressing that first.
+    # The p95 zone value is canonical. This mean/p90 calculation is only an
+    # availability fallback when zone extraction produced no finite value.
     redness_roi_pixels = int(cv2.countNonZero(redness_roi))
     if redness_unset and redness_roi_pixels >= 500:
         redness_values = a_channel[redness_roi > 0]

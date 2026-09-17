@@ -8,10 +8,46 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  group('Track Procedure backend privacy gate', () {
+    test('face analysis denies backend access by default', () async {
+      await expectLater(
+        SkinAnalysisService.analyzeImageFromBytes(
+          Uint8List.fromList([10, 20, 30]),
+        ),
+        throwsA(
+          predicate(
+            (error) => error.toString().contains(
+              'Backend access is disabled for this flow',
+            ),
+          ),
+        ),
+      );
+    });
+  });
+
   group('SkinAnalysisService.analyzeBodySilhouette request construction', () {
     test(
+      'Track Procedure body analysis is blocked by default and makes zero HTTP requests',
+      () async {
+        var requestCount = 0;
+        final mockClient = MockClient((request) async {
+          requestCount += 1;
+          return http.Response(jsonEncode({'status': 'success'}), 200);
+        });
+
+        final result = await SkinAnalysisService.analyzeBodySilhouette(
+          bytes: Uint8List.fromList([10, 20, 30]),
+          httpClient: mockClient,
+        );
+
+        expect(result, isNull);
+        expect(requestCount, 0);
+      },
+    );
+
+    test(
       'posts to the body-silhouette endpoint with a correctly base64-encoded '
-      'image and all provided fields present in the JSON body',
+      'image only when the consent-based AI flow explicitly allows backend access',
       () async {
         http.Request? captured;
         final mockClient = MockClient((request) async {
@@ -43,6 +79,7 @@ void main() {
           sourceImageHeight: 1200,
           baselineSourceImageWidth: 1000,
           baselineSourceImageHeight: 750,
+          allowBackend: true,
           httpClient: mockClient,
         );
 
@@ -92,6 +129,7 @@ void main() {
 
         await SkinAnalysisService.analyzeBodySilhouette(
           bytes: Uint8List.fromList([1, 2, 3]),
+          allowBackend: true,
           httpClient: mockClient,
         );
 
@@ -112,6 +150,7 @@ void main() {
 
       final result = await SkinAnalysisService.analyzeBodySilhouette(
         bytes: Uint8List.fromList([1, 2, 3]),
+        allowBackend: true,
         httpClient: mockClient,
       );
 
@@ -128,6 +167,7 @@ void main() {
 
         final result = await SkinAnalysisService.analyzeBodySilhouette(
           bytes: Uint8List.fromList([1, 2, 3]),
+          allowBackend: true,
           httpClient: mockClient,
         );
 

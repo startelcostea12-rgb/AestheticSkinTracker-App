@@ -13,6 +13,11 @@ import math
 import pytest
 
 from main import (
+    LOCALIZED_REDNESS_DEAD_ZONE_A_UNITS,
+    LOCALIZED_REDNESS_FOLLOWUP_DEAD_ZONE_A_UNITS,
+    LOCALIZED_REDNESS_FOLLOWUP_MULTIPLIER,
+    LOCALIZED_REDNESS_SCORE_MULTIPLIER,
+    LOCALIZED_REDNESS_SELF_BASELINE_PERCENTILE,
     PIGMENT_LOAD_DEAD_ZONE_SIGNAL,
     PIGMENT_LOAD_L_CONTRAST_WEIGHT,
     PIGMENT_LOAD_SCORE_CENTER,
@@ -30,6 +35,13 @@ from main import (
 
 
 class TestLocalizedRednessAndRosacea:
+    def test_constants_match_real_reference_calibration(self):
+        assert LOCALIZED_REDNESS_SELF_BASELINE_PERCENTILE == 10.0
+        assert LOCALIZED_REDNESS_DEAD_ZONE_A_UNITS == 9.0
+        assert LOCALIZED_REDNESS_SCORE_MULTIPLIER == 8.34
+        assert LOCALIZED_REDNESS_FOLLOWUP_DEAD_ZONE_A_UNITS == 1.0
+        assert LOCALIZED_REDNESS_FOLLOWUP_MULTIPLIER == 2.55
+
     def test_zero_signal_yields_zero_redness_and_rosacea(self):
         result = compute_localized_redness_and_rosacea(
             p95_a=128.0, baseline_a_ref=128.0, diffuse_density=0.0
@@ -39,18 +51,38 @@ class TestLocalizedRednessAndRosacea:
         assert result["rosacea_reason"] == "unchanged"
 
     def test_moderate_redness_with_low_diffuse_density_is_uncapped(self):
-        # p95_a - baseline = 10 -> localized_redness = 31.0, well under the
+        # Self-referenced p95-p10 spread=10 -> effective=1 -> redness=8.34.
         # 25.0 cap-eligibility threshold's cap check only fires when
         # rosacea_before actually exceeds the cap.
         result = compute_localized_redness_and_rosacea(
             p95_a=138.0, baseline_a_ref=128.0, diffuse_density=20.0
         )
-        assert result["localized_redness"] == pytest.approx(31.0, abs=0.05)
+        assert result["localized_redness"] == pytest.approx(8.34, abs=0.05)
         assert result["rosacea_reason"] == "unchanged"
         # rosacea_before = 0.65*diffuse_flushing_erythema + 0.35*localized_redness
         diffuse_flushing = 0.70 * 20.0 + 0.30 * result["localized_redness"]
         expected_rosacea = 0.65 * diffuse_flushing + 0.35 * result["localized_redness"]
         assert result["rosacea_severity"] == pytest.approx(expected_rosacea, abs=0.05)
+
+    def test_personal_followup_compares_p95_to_p95_and_preserves_baseline_score(self):
+        unchanged = compute_localized_redness_and_rosacea(
+            p95_a=148.0,
+            baseline_a_ref=148.0,
+            diffuse_density=20.0,
+            dead_zone=LOCALIZED_REDNESS_FOLLOWUP_DEAD_ZONE_A_UNITS,
+            multiplier=LOCALIZED_REDNESS_FOLLOWUP_MULTIPLIER,
+            baseline_score=42.0,
+        )
+        increased = compute_localized_redness_and_rosacea(
+            p95_a=152.0,
+            baseline_a_ref=148.0,
+            diffuse_density=20.0,
+            dead_zone=LOCALIZED_REDNESS_FOLLOWUP_DEAD_ZONE_A_UNITS,
+            multiplier=LOCALIZED_REDNESS_FOLLOWUP_MULTIPLIER,
+            baseline_score=42.0,
+        )
+        assert unchanged["localized_redness"] == 42.0
+        assert increased["localized_redness"] == pytest.approx(49.65, abs=0.05)
 
     def test_low_redness_high_diffuse_divergence_triggers_the_cap(self):
         # Low localized_redness (<=25) but very high diffuse_density can
