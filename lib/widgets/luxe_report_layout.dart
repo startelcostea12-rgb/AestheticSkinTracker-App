@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
+import '../utils/capture_consistency.dart';
 import '../utils/severity_band.dart';
 import '../utils/trend_lock_reason.dart';
 import 'before_after_split_slider.dart';
@@ -1722,6 +1723,10 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
       showProgressComparison &&
       widget.baselineImageProvider != null &&
       widget.currentImageProvider != null;
+    final captureConsistency = captureConsistencyForPayload(
+      widget.rawPayload,
+      isBodyProcedure: false,
+    );
 
     return Container(
       color: AppColors.cardBackground,
@@ -1729,6 +1734,10 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (showProgressComparison && captureConsistency.checkCount > 0) ...[
+            _buildCaptureConsistencyNote(captureConsistency),
+            const SizedBox(height: 12),
+          ],
           if (showComparisonFrames) ...[
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -1865,6 +1874,27 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildCaptureConsistencyNote(CaptureConsistencyResult result) {
+    return Row(
+      children: [
+        const Icon(
+          Icons.tune_rounded,
+          size: 15,
+          color: AppColors.brandAccent,
+        ),
+        const SizedBox(width: 7),
+        Text(
+          result.displayText,
+          style: const TextStyle(
+            color: AppColors.textStructure,
+            fontSize: 11.2,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
     );
   }
 }

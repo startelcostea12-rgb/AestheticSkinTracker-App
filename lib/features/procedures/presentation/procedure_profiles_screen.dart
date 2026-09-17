@@ -23,6 +23,7 @@ import 'package:aesthetic_skin_tracker/utils/ai_product_recommendation_engine.da
 import 'package:aesthetic_skin_tracker/utils/ai_recovery_plan.dart';
 import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
+import 'package:aesthetic_skin_tracker/utils/capture_consistency.dart';
 import 'package:aesthetic_skin_tracker/utils/procedure_intelligence.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_intelligence_engine.dart';
 import 'package:aesthetic_skin_tracker/utils/ocr_service.dart';
@@ -6726,6 +6727,11 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       baseline: _findScanById(_baselineScanId),
       latest: _findScanById(_latestScanId),
     );
+    final captureConsistency = captureConsistencyForScanPair(
+      isBodyProcedure: isBodyProcedure,
+      baseline: _findScanById(_baselineScanId),
+      latest: _findScanById(_latestScanId),
+    );
 
     Widget nonComparablePhotoPair({
       required Uint8List baselinePhoto,
@@ -6873,6 +6879,8 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                 _buildHeatmapDebugChipRow(),
                 const SizedBox(height: 12),
               ],
+              _buildCaptureConsistencyNote(captureConsistency),
+              const SizedBox(height: 12),
               if (comparisonEligibility.isComparable)
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
@@ -7036,6 +7044,23 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildCaptureConsistencyNote(CaptureConsistencyResult result) {
+    return Row(
+      children: [
+        Icon(Icons.tune_rounded, size: 16, color: MyApp.clinicalNavy),
+        const SizedBox(width: 7),
+        Text(
+          result.displayText,
+          style: TextStyle(
+            color: MyApp.textBrown,
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
     );
   }
 
