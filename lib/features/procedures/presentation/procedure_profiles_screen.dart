@@ -43,6 +43,8 @@ import 'package:aesthetic_skin_tracker/widgets/smart_narrative_container.dart';
 import 'package:aesthetic_skin_tracker/widgets/skin_heatmap_overlay.dart';
 import 'package:aesthetic_skin_tracker/utils/report_purchase.dart';
 import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
+import 'package:aesthetic_skin_tracker/widgets/image_crop_dialog.dart';
+import 'package:aesthetic_skin_tracker/utils/severity_band.dart';
 import 'package:aesthetic_skin_tracker/widgets/report_paywall_sheet.dart';
 import 'package:aesthetic_skin_tracker/screens/ai_recovery_coach_screen.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
@@ -182,6 +184,93 @@ class ProcedurePhotoComparisonEligibility {
 
   final bool isComparable;
   final String? caveat;
+}
+
+class ProcedureZoneComparison {
+  const ProcedureZoneComparison({
+    required this.key,
+    required this.label,
+    required this.baselineMetrics,
+    required this.latestMetrics,
+    required this.crop,
+  });
+
+  final String key;
+  final String label;
+  final Map<String, double> baselineMetrics;
+  final Map<String, double> latestMetrics;
+  final NormalizedSquareCrop crop;
+}
+
+List<ProcedureZoneComparison> procedureZoneComparisons({
+  required Map<String, dynamic>? baselinePayload,
+  required Map<String, dynamic>? latestPayload,
+}) {
+  Map<String, dynamic> asMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return const <String, dynamic>{};
+  }
+
+  final baselineZones = asMap(baselinePayload?['zone_analysis']);
+  final latestZones = asMap(latestPayload?['zone_analysis']);
+  const labels = <String, String>{
+    'forehead': 'Forehead',
+    'left_cheek': 'Left cheek',
+    'right_cheek': 'Right cheek',
+    'nose': 'Nose',
+  };
+  final output = <ProcedureZoneComparison>[];
+  for (final entry in latestZones.entries) {
+    final key = entry.key.toString();
+    if (!labels.containsKey(key) || !baselineZones.containsKey(key)) continue;
+    final latest = asMap(entry.value);
+    final baseline = asMap(baselineZones[key]);
+    final latestMetrics = asMap(latest['metrics']);
+    final baselineMetrics = asMap(baseline['metrics']);
+    final currentValues = <String, double>{};
+    final baselineValues = <String, double>{};
+    for (final metricKey in latestMetrics.keys) {
+      final current = latestMetrics[metricKey];
+      final before = baselineMetrics[metricKey];
+      if (current is! num || before is! num) continue;
+      if (!current.isFinite || !before.isFinite) continue;
+      currentValues[metricKey.toString()] = current.toDouble();
+      baselineValues[metricKey.toString()] = before.toDouble();
+    }
+    final crop = asMap(latest['crop']);
+    final left = crop['left'];
+    final top = crop['top'];
+    final size = crop['size'];
+    if (currentValues.isEmpty || left is! num || top is! num || size is! num) continue;
+    if (!left.isFinite || !top.isFinite || !size.isFinite || size <= 0) continue;
+    output.add(
+      ProcedureZoneComparison(
+        key: key,
+        label: labels[key]!,
+        baselineMetrics: baselineValues,
+        latestMetrics: currentValues,
+        crop: NormalizedSquareCrop(
+          left: left.toDouble(),
+          top: top.toDouble(),
+          size: size.toDouble(),
+        ),
+      ),
+    );
+  }
+  return output;
+}
+
+List<ProcedureZoneComparison> gatedProcedureZoneComparisons({
+  required ProcedurePhotoComparisonEligibility eligibility,
+  required Map<String, dynamic>? baselinePayload,
+  required Map<String, dynamic>? latestPayload,
+}) {
+  if (!eligibility.isComparable) return const <ProcedureZoneComparison>[];
+  return procedureZoneComparisons(
+    baselinePayload: baselinePayload,
+    latestPayload: latestPayload,
+  );
 }
 
 /// Uses the same capture provenance required by the metric honesty gates.
@@ -1366,6 +1455,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
   String _selectedRecoveryCurveMetric = 'redness';
   bool _showHeatmapDebugRow = kDebugMode;
   HeatmapDebugRegion? _debugHeatmapRegionOverride;
+  String? _selectedZoneKey;
 
   @override
   void initState() {
@@ -6187,6 +6277,99 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     );
   }
 
+  Widget _buildZoneBreakdown({
+    required ProcedurePhotoComparisonEligibility eligibility,
+    required ScanHistoryEntry baselineScan,
+    required ScanHistoryEntry latestScan,
+    required Uint8List baselinePhoto,
+    required Uint8List latestPhoto,
+  }) {
+    final zones = gatedProcedureZoneComparisons(
+      eligibility: eligibility,
+      baselinePayload: baselineScan.rawPayload,
+      latestPayload: latestScan.rawPayload,
+    );
+    if (zones.isEmpty) return const SizedBox.shrink();
+
+    final matchingZones = zones.where((zone) => zone.key == _selectedZoneKey).toList();
+    final selected = matchingZones.isEmpty ? null : matchingZones.first;
+    final metricLabel = <String, String>{
+      'localized_redness': 'Redness',
+      'pigment_load': 'Pigment',
+      'texture_smoothness': 'Texture',
+    };
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const ClinicalSectionHeader(
+          icon: Icons.grid_view_rounded,
+          title: 'Zone breakdown',
+          eyebrow: 'Tap a zone for zoomed proof',
+        ),
+        const SizedBox(height: 8),
+        ...zones.map((zone) {
+          final metricEntries = zone.latestMetrics.keys.map((metricKey) {
+            final before = zone.baselineMetrics[metricKey]!;
+            final after = zone.latestMetrics[metricKey]!;
+            final beforeText = metricLabel.containsKey(metricKey)
+              ? formatScoreWithSeverityBand(metricKey, before)
+              : before.toStringAsFixed(1);
+            final afterText = metricLabel.containsKey(metricKey)
+              ? formatScoreWithSeverityBand(metricKey, after)
+              : after.toStringAsFixed(1);
+            return '${metricLabel[metricKey] ?? metricKey}: '
+              '$beforeText -> $afterText';
+          }).join('  |  ');
+          return InkWell(
+            onTap: () => setState(() => _selectedZoneKey = zone.key),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 7),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${zone.label}: $metricEntries',
+                      style: TextStyle(
+                        color: MyApp.textBrown,
+                        fontSize: 12,
+                        fontWeight: zone.key == _selectedZoneKey
+                            ? FontWeight.w800
+                            : FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const Icon(Icons.zoom_in_rounded, size: 17),
+                ],
+              ),
+            ),
+          );
+        }),
+        if (selected != null &&
+            baselinePhoto.isNotEmpty && latestPhoto.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            '${selected.label} proof',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 6),
+          InteractiveBeforeAfterSlider(
+            beforeImage: MemoryImage(
+              applyNormalizedSquareCrop(baselinePhoto, selected.crop),
+            ),
+            afterImage: MemoryImage(
+              applyNormalizedSquareCrop(latestPhoto, selected.crop),
+            ),
+            beforeLabel: 'Before',
+            afterLabel: 'After',
+            aspectRatio: 1,
+            metricTags: const <BeforeAfterMetricTag>[],
+          ),
+        ],
+      ],
+    );
+  }
+
   SkinHeatmapBodyRegion _bodyHeatmapRegionForProcedure(String procedureType) {
     switch (ProcedureIntelligence.bodyContouringSubtype(procedureType)) {
       case ProcedureBodyContouringSubtype.bbl:
@@ -6901,6 +7084,18 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                   caveat: comparisonEligibility.caveat ??
                       'Photos are shown separately because capture conditions differed.',
                 ),
+              if (comparisonEligibility.isComparable &&
+                  _findScanById(_baselineScanId) != null &&
+                  _findScanById(_latestScanId) != null) ...[
+                const SizedBox(height: 14),
+                _buildZoneBreakdown(
+                  eligibility: comparisonEligibility,
+                  baselineScan: _findScanById(_baselineScanId)!,
+                  latestScan: _findScanById(_latestScanId)!,
+                  baselinePhoto: baselinePhoto,
+                  latestPhoto: latestPhoto,
+                ),
+              ],
               ..._bodySilhouetteTrendSection(),
             ],
           ),

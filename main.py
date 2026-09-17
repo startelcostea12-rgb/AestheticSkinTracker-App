@@ -4714,6 +4714,121 @@ def generate_clinical_advice(
     }
 
 
+def _compute_zone_analysis(
+    face_bgr: np.ndarray,
+    skin_mask: np.ndarray,
+    regions: Dict[str, np.ndarray],
+    *,
+    min_pixels: int = 1200,
+) -> Dict[str, Any]:
+    """Return valid zone scores using the existing canonical formula pieces.
+
+    This is deliberately additive: the whole-face pipeline remains the source
+    of canonical metrics and trend decisions. Zone scores are emitted only
+    when their ROI has enough pixels for the same signal family to be useful.
+    """
+    h, w = face_bgr.shape[:2]
+    if h <= 0 or w <= 0:
+        return {}
+
+    lab = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2LAB)
+    gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
+    a_channel = lab[:, :, 1].astype(np.float32)
+    l_channel = lab[:, :, 0].astype(np.float32)
+    lap_abs = np.abs(cv2.Laplacian(gray, cv2.CV_32F, ksize=3))
+    skin = _as_binary_mask(skin_mask, (h, w))
+
+    raw_zones = {
+        "forehead": regions.get("forehead"),
+        "left_cheek": regions.get("left_cheek"),
+        "right_cheek": regions.get("right_cheek"),
+        "nose": _nose_region_mask((h, w), np.asarray([]), skin),
+    }
+    # The nose mask needs landmarks; callers pass it through regions when
+    # available because _nose_region_mask has no meaningful empty fallback.
+    if regions.get("nose") is not None:
+        raw_zones["nose"] = regions["nose"]
+
+    def normalized_crop(mask: np.ndarray) -> Dict[str, float] | None:
+        ys, xs = np.where(mask > 0)
+        if len(xs) == 0 or len(ys) == 0:
+            return None
+        x0, x1 = int(xs.min()), int(xs.max())
+        y0, y1 = int(ys.min()), int(ys.max())
+        side = max(x1 - x0 + 1, y1 - y0 + 1)
+        pad = max(4, int(round(side * 0.12)))
+        side = min(max(side + (pad * 2), 1), min(w, h))
+        cx = (x0 + x1) / 2.0
+        cy = (y0 + y1) / 2.0
+        left = max(0.0, min(float(w - side), cx - side / 2.0)) / w
+        top = max(0.0, min(float(h - side), cy - side / 2.0)) / h
+        return {
+            "left": round(left, 6),
+            "top": round(top, 6),
+            "size": round(min(side / w, side / h), 6),
+            "coordinate_space": "normalized_face",
+        }
+
+    def score_texture(values: np.ndarray) -> float | None:
+        if values.size < min_pixels:
+            return None
+        local_mean = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), 1.4)
+        local_mean_sq = cv2.GaussianBlur((gray.astype(np.float32) ** 2), (0, 0), 1.4)
+        local_var = np.clip(local_mean_sq - (local_mean ** 2), 0.0, None)[values > 0]
+        pixels = gray[values > 0].astype(np.float32)
+        lap_values = lap_abs[values > 0]
+        var_p80 = float(np.percentile(local_var, 80))
+        lap_p80 = float(np.percentile(lap_values, 80))
+        spread = float(np.std(pixels))
+        energy = (0.65 * math.sqrt(max(var_p80, 0.0))) + (0.35 * lap_p80)
+        n_energy = float(np.clip((energy - 8.0) / 22.0, 0.0, 1.0))
+        n_var = float(np.clip((math.sqrt(max(var_p80, 0.0)) - 6.0) / 14.0, 0.0, 1.0))
+        n_lap = float(np.clip((lap_p80 - 14.0) / 32.0, 0.0, 1.0))
+        n_spread = float(np.clip((spread - 18.0) / 32.0, 0.0, 1.0))
+        roughness = (0.45 * n_energy) + (0.20 * n_var) + (0.20 * n_lap) + (0.15 * n_spread)
+        return round(float(np.clip(100.0 * (1.0 - math.pow(roughness, 1.10)), 0.0, 100.0)), 1)
+
+    output: Dict[str, Any] = {}
+    for zone_name, raw_mask in raw_zones.items():
+        if raw_mask is None:
+            continue
+        mask = cv2.bitwise_and(_as_binary_mask(raw_mask, (h, w)), skin)
+        pixel_count = int(cv2.countNonZero(mask))
+        crop = normalized_crop(mask)
+        if pixel_count < min_pixels or crop is None:
+            continue
+        pixels = mask > 0
+        values = a_channel[pixels]
+        spread = float(np.percentile(values, 95) - np.percentile(values, 10))
+        redness = compute_localized_redness_and_rosacea(
+            spread,
+            0.0,
+            float(np.mean(values >= np.percentile(values, 50) + 5.0) * 100.0),
+        )["localized_redness"]
+        zone: Dict[str, Any] = {
+            "crop": crop,
+            "pixel_count": pixel_count,
+            "metrics": {"localized_redness": round(float(redness), 1)},
+        }
+        if zone_name in {"left_cheek", "right_cheek"}:
+            cheek_l = l_channel[pixels]
+            cheek_a = a_channel[pixels]
+            cheek_b = lab[:, :, 2].astype(np.float32)[pixels]
+            mean_a = float(np.mean(cheek_a))
+            mean_b = float(np.mean(cheek_b))
+            pigment_signal = float(
+                np.percentile(np.sqrt((cheek_a - mean_a) ** 2 + (cheek_b - mean_b) ** 2), 85)
+                + (PIGMENT_LOAD_L_CONTRAST_WEIGHT * np.std(cheek_l))
+            )
+            zone["metrics"]["pigment_load"] = round(float(compute_pigment_load(pigment_signal)), 1)
+        if zone_name in {"forehead", "left_cheek", "right_cheek"}:
+            texture = score_texture(mask)
+            if texture is not None:
+                zone["metrics"]["texture_smoothness"] = texture
+        output[zone_name] = zone
+    return output
+
+
 def analyze_skin_patch(
     bgr_image: np.ndarray,
     baseline_matrix: Dict[str, float] | None = None,
@@ -4914,6 +5029,14 @@ def analyze_skin_patch(
         baseline_matrix=baseline_matrix,
         roi_cache=request_roi_cache,
     )
+    zone_regions = dict(regions)
+    zone_regions["nose"] = _nose_region_mask(
+        norm.shape[:2],
+        norm_points,
+        mask,
+        apply_skin_mask=False,
+    )
+    zone_analysis = _compute_zone_analysis(norm, mask, zone_regions)
     zone_redness = safe_float(zone_metrics.get("localized_redness"))
     if zone_redness is not None and math.isfinite(zone_redness):
         canonical_metric_matrix["localized_redness"] = round(
@@ -5998,6 +6121,7 @@ def analyze_skin_patch(
         "fingerprint": fingerprint,
         "calibration": calibration,
         "metric_matrix": metric_matrix,
+        "zone_analysis": zone_analysis,
         "trend_deltas": trend_deltas,
         "trend_status": trend_status,
         "trend_lock_reasons": trend_lock_reasons,
