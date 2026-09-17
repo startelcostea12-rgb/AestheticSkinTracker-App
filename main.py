@@ -82,6 +82,7 @@ _FACE_DETECTOR = None
 _YOLO = None
 _BODY_POSE_LANDMARKER = None
 _BODY_SEGMENTATION_MODEL = None
+_BODY_SEGMENTATION_MODEL_KIND = "none"
 _BODY_PIPELINE_READY = False
 _BODY_PIPELINE_ERROR = ""
 
@@ -242,7 +243,7 @@ def _extract_primary_landmarks(rgb_image: np.ndarray):
 
 
 def ensure_body_pipeline_ready() -> Dict[str, str]:
-    global _BODY_POSE_LANDMARKER, _BODY_SEGMENTATION_MODEL, _BODY_PIPELINE_READY, _BODY_PIPELINE_ERROR
+    global _BODY_POSE_LANDMARKER, _BODY_SEGMENTATION_MODEL, _BODY_SEGMENTATION_MODEL_KIND, _BODY_PIPELINE_READY, _BODY_PIPELINE_ERROR
 
     if _BODY_PIPELINE_READY:
         return {"status": "ready"}
@@ -306,17 +307,43 @@ def ensure_body_pipeline_ready() -> Dict[str, str]:
             except FileNotFoundError:
                 continue
 
-        if segmentation_model_path is not None:
-            logger.info("Loaded MediaPipe selfie segmenter model from: %s", segmentation_model_path)
+        segmentation_mode = os.getenv("BODY_SEGMENTATION_MODEL_MODE", "custom").strip().lower()
+        if segmentation_mode == "legacy":
             _BODY_SEGMENTATION_MODEL = mp.solutions.selfie_segmentation.SelfieSegmentation(
                 model_selection=1,
+            )
+            _BODY_SEGMENTATION_MODEL_KIND = "legacy_landscape_builtin"
+            logger.warning(
+                "Initialized legacy built-in MediaPipe selfie segmentation "
+                "(model_selection=1) for comparison mode."
+            )
+        elif segmentation_model_path is not None:
+            segmenter_options = mp_vision.ImageSegmenterOptions(
+                base_options=mp_python.BaseOptions(
+                    model_asset_path=segmentation_model_path,
+                ),
+                running_mode=mp_vision.RunningMode.IMAGE,
+                output_confidence_masks=True,
+                output_category_mask=False,
+            )
+            _BODY_SEGMENTATION_MODEL = mp_vision.ImageSegmenter.create_from_options(
+                segmenter_options,
+            )
+            _BODY_SEGMENTATION_MODEL_KIND = "custom_asset"
+            logger.info(
+                "Loaded custom MediaPipe selfie segmenter through Tasks API: %s",
+                segmentation_model_path,
             )
         else:
-            _BODY_SEGMENTATION_MODEL = mp.solutions.selfie_segmentation.SelfieSegmentation(
-                model_selection=1,
+            raise FileNotFoundError(
+                "No custom selfie segmentation model found. "
+                "Set SELFIE_SEGMENTER_MODEL_PATH or provide backend/models/selfie_segmenter.tflite."
             )
 
-        logger.info("Initialized MediaPipe selfie segmentation for body silhouette masking.")
+        logger.info(
+            "Initialized MediaPipe selfie segmentation for body silhouette masking kind=%s.",
+            _BODY_SEGMENTATION_MODEL_KIND,
+        )
         _BODY_PIPELINE_READY = True
         return {"status": "ready"}
     except Exception:
@@ -478,10 +505,17 @@ def _silhouette_mask_from_image(rgb_image: np.ndarray) -> np.ndarray:
         return np.zeros(rgb_image.shape[:2], dtype=np.uint8)
 
     try:
-        result = _BODY_SEGMENTATION_MODEL.process(rgb_image)
-        if result.segmentation_mask is None:
-            return np.zeros(rgb_image.shape[:2], dtype=np.uint8)
-        mask = result.segmentation_mask.astype(np.float32)
+        if _BODY_SEGMENTATION_MODEL_KIND == "custom_asset":
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
+            result = _BODY_SEGMENTATION_MODEL.segment(mp_image)
+            if not result.confidence_masks:
+                return np.zeros(rgb_image.shape[:2], dtype=np.uint8)
+            mask = result.confidence_masks[0].numpy_view().astype(np.float32)
+        else:
+            result = _BODY_SEGMENTATION_MODEL.process(rgb_image)
+            if result.segmentation_mask is None:
+                return np.zeros(rgb_image.shape[:2], dtype=np.uint8)
+            mask = result.segmentation_mask.astype(np.float32)
         return (mask > 0.5).astype(np.uint8)
     except Exception:
         logger.exception("Selfie segmentation failed for body silhouette analysis")
