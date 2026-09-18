@@ -90,7 +90,9 @@ CaptureConsistencyResult captureConsistencyForScanPair({
     ));
   }
 
-  final alignmentScore = _alignmentScore(latest.metrics);
+  final alignmentScore = _alignmentScore(
+    latest.metrics['capture_reference_alignment_score'],
+  );
   if (alignmentScore != null) {
     checks.add(CaptureConsistencyCheck(
       factor: CaptureConsistencyFactor.referencePose,
