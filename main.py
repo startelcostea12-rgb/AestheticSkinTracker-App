@@ -80,6 +80,7 @@ _FACE_MESH = None
 _FACE_LANDMARKER = None
 _FACE_DETECTOR = None
 _YOLO = None
+_YUNET_FACE_DETECTOR_MODEL_PATH: str | None = None
 _BODY_POSE_LANDMARKER = None
 _BODY_SEGMENTATION_MODEL = None
 _BODY_SEGMENTATION_MODEL_KIND = "none"
@@ -96,6 +97,14 @@ BODY_SEGMENTATION_MIN_ROI_COVERAGE = 0.40
 BODY_SEGMENTATION_MIN_FOREGROUND_CENTER_X = 0.35
 BODY_SEGMENTATION_MAX_FOREGROUND_CENTER_X = 0.65
 BODY_SEGMENTATION_MAX_UNCERTAINTY_FRACTION = 0.10
+
+YUNET_PRECISE_LANDMARKS_MESSAGE = "We detected a face outline but couldn't get precise landmarks."
+YUNET_PARTIAL_FACE_MESSAGE = "We found only a partial or obstructed face outline."
+_YUNET_MIN_REASONABLE_FACE_AREA_FRACTION = 0.007
+_YUNET_MIN_CENTER_X = 0.20
+_YUNET_MAX_CENTER_X = 0.80
+_YUNET_MIN_CENTER_Y = 0.08
+_YUNET_MAX_CENTER_Y = 0.85
 
 
 class ModelAssetManager:
@@ -251,6 +260,70 @@ def _extract_primary_landmarks(rgb_image: np.ndarray):
         return None, 0, "mesh"
     face = mesh_res.multi_face_landmarks[0]
     return face.landmark, len(face.landmark), "mesh"
+
+
+def _resolve_yunet_model_path() -> str | None:
+    env_path = os.getenv("OPENCV_YUNET_MODEL_PATH", "").strip()
+    candidates = []
+    if env_path:
+        candidates.append(Path(env_path))
+    candidates.extend(
+        [
+            Path(PROJECT_ROOT) / "backend" / "models" / "face_detection_yunet_2023mar.onnx",
+            Path(PROJECT_ROOT) / "assets" / "models" / "face_detection_yunet_2023mar.onnx",
+            Path(PROJECT_ROOT) / "diagnostics" / "opencv_yunet" / "face_detection_yunet_2023mar.onnx",
+        ]
+    )
+    for candidate in candidates:
+        path = candidate if candidate.is_absolute() else Path(PROJECT_ROOT) / candidate
+        if path.is_file():
+            return str(path.resolve())
+    return None
+
+
+def _classify_yunet_face_outline(box: list[float], image_width: int, image_height: int) -> str:
+    x0, y0, x1, y1 = box
+    area_fraction = ((x1 - x0) * (y1 - y0)) / max(float(image_width * image_height), 1.0)
+    center_x = (x0 + x1) / max(float(image_width) * 2.0, 1.0)
+    center_y = (y0 + y1) / max(float(image_height) * 2.0, 1.0)
+    if (
+        area_fraction >= _YUNET_MIN_REASONABLE_FACE_AREA_FRACTION
+        and _YUNET_MIN_CENTER_X <= center_x <= _YUNET_MAX_CENTER_X
+        and _YUNET_MIN_CENTER_Y <= center_y <= _YUNET_MAX_CENTER_Y
+    ):
+        return "reasonable"
+    return "partial"
+
+
+def _detect_yunet_face_outline(bgr_image: np.ndarray) -> str | None:
+    if not hasattr(cv2, "FaceDetectorYN_create"):
+        return None
+    model_path = _resolve_yunet_model_path()
+    if model_path is None:
+        return None
+    if bgr_image is None or bgr_image.size == 0:
+        return None
+    h, w = bgr_image.shape[:2]
+    try:
+        detector = cv2.FaceDetectorYN_create(model_path, "", (w, h), 0.6, 0.3, 5000)
+        _, faces = detector.detect(bgr_image)
+    except Exception:
+        logger.exception("OpenCV YuNet fallback face detection failed")
+        return None
+    if faces is None or len(faces) == 0:
+        return None
+    face = max(faces, key=lambda row: float(row[2] * row[3]))
+    x, y, width, height = map(float, face[:4])
+    return _classify_yunet_face_outline([x, y, x + width, y + height], w, h)
+
+
+def _media_pipe_no_face_message(bgr_image: np.ndarray) -> str:
+    outline = _detect_yunet_face_outline(bgr_image)
+    if outline == "reasonable":
+        return YUNET_PRECISE_LANDMARKS_MESSAGE
+    if outline == "partial":
+        return YUNET_PARTIAL_FACE_MESSAGE
+    return "No face detected by MediaPipe Face Mesh. Please avoid camera monitor reflection or glare noise."
 
 
 def ensure_body_pipeline_ready() -> Dict[str, str]:
@@ -4977,9 +5050,7 @@ def analyze_skin_patch(
     primary_landmarks, primary_landmark_count, primary_source = _extract_primary_landmarks(rgb)
 
     if primary_landmarks is None:
-        raise RuntimeError(
-            "No face detected by MediaPipe Face Mesh. Please avoid camera monitor reflection or glare noise."
-        )
+        raise RuntimeError(_media_pipe_no_face_message(calibrated_image))
 
     logger.info(
         "MediaPipe face landmarks: source=%s faces=1 primary_landmarks=%d",
@@ -6734,6 +6805,8 @@ async def analyze_skin(request: Request):
         message = str(e)
         if _is_pipeline_init_error(message):
             raise HTTPException(status_code=400, detail=_FACE_DETECTION_UNAVAILABLE_DETAIL)
+        if message in {YUNET_PRECISE_LANDMARKS_MESSAGE, YUNET_PARTIAL_FACE_MESSAGE}:
+            raise HTTPException(status_code=400, detail=message)
         raise HTTPException(
             status_code=503,
             detail=(

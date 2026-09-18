@@ -1,0 +1,121 @@
+[
+  {
+    "artifact": null,
+    "detections": [],
+    "photo": "stock_body_photo_a.jpg"
+  },
+  {
+    "artifact": "C:\\Users\\Admin\\Desktop\\aestheticskintracker\\diagnostics\\opencv_yunet\\false_positive_check\\stock_body_photo_b_yunet_detection.jpg",
+    "detections": [
+      {
+        "box": [
+          472.33,
+          409.03,
+          531.5,
+          486.37
+        ],
+        "score": 0.7299
+      }
+    ],
+    "photo": "stock_body_photo_b.jpg"
+  },
+  {
+    "artifact": null,
+    "detections": [],
+    "photo": "candidate_body_1.jpg"
+  },
+  {
+    "artifact": null,
+    "detections": [],
+    "photo": "candidate_body_2.jpg"
+  },
+  {
+    "artifact": "C:\\Users\\Admin\\Desktop\\aestheticskintracker\\diagnostics\\opencv_yunet\\false_positive_check\\candidate_body_3_yunet_detection.jpg",
+    "detections": [
+      {
+        "box": [
+          472.33,
+          409.03,
+          531.5,
+          486.37
+        ],
+        "score": 0.7299
+      }
+    ],
+    "photo": "candidate_body_3.jpg"
+  },
+  {
+    "artifact": "C:\\Users\\Admin\\Desktop\\aestheticskintracker\\diagnostics\\opencv_yunet\\false_positive_check\\candidate_body_4_yunet_detection.jpg",
+    "detections": [
+      {
+        "box": [
+          540.14,
+          109.8,
+          653.43,
+          259.24
+        ],
+        "score": 0.9372
+      }
+    ],
+    "photo": "candidate_body_4.jpg"
+  },
+  {
+    "artifact": "C:\\Users\\Admin\\Desktop\\aestheticskintracker\\diagnostics\\opencv_yunet\\false_positive_check\\candidate_body_5_yunet_detection.jpg",
+    "detections": [
+      {
+        "box": [
+          400.79,
+          373.82,
+          691.62,
+          794.35
+        ],
+        "score": 0.9283
+      }
+    ],
+    "photo": "candidate_body_5.jpg"
+  },
+  {
+    "artifact": "C:\\Users\\Admin\\Desktop\\aestheticskintracker\\diagnostics\\opencv_yunet\\false_positive_check\\candidate_body_6_yunet_detection.jpg",
+    "detections": [
+      {
+        "box": [
+          412.9,
+          108.66,
+          491.72,
+          215.98
+        ],
+        "score": 0.9175
+      },
+      {
+        "box": [
+          595.37,
+          431.42,
+          712.06,
+          554.58
+        ],
+        "score": 0.736
+      }
+    ],
+    "photo": "candidate_body_6.jpg"
+  },
+  {
+    "artifact": null,
+    "detections": [],
+    "photo": "candidate_body_7.jpg"
+  },
+  {
+    "artifact": null,
+    "detections": [],
+    "photo": "assets\\branding\\splash_swirl_background.png"
+  },
+  {
+    "artifact": null,
+    "detections": [],
+    "photo": "assets\\branding\\logo_variations\\ast_logo_v5_luxe_badge.png"
+  },
+  {
+    "artifact": null,
+    "detections": [],
+    "photo": "web\\favicon.png"
+  }
+]
