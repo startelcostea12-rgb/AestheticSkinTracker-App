@@ -319,6 +319,49 @@ void main() {
     );
 
     testWidgets(
+      'trend lock display reads the metric-specific reason, not a wrong-level decoy',
+      (tester) async {
+        final payload = <String, dynamic>{
+          'is_follow_up': true,
+          'local_history_count': 2,
+          'metric_matrix': <String, dynamic>{
+            'pigment_load': 80.0,
+          },
+          'baseline_metric_matrix': <String, dynamic>{
+            'pigment_load': 50.0,
+          },
+          'metric_extraction_paths': <String, dynamic>{
+            'pigment_load': 'primary_roi',
+          },
+          'baseline_metric_extraction_paths': <String, dynamic>{
+            'pigment_load': 'primary_roi',
+          },
+          'trend_deltas': <String, dynamic>{'pigment_load': 0.0},
+          'trend_status': <String, dynamic>{'pigment_load': 'stable'},
+          'trend_lock_reason': 'capture_quality_mismatch',
+          'trend_lock_reasons': <String, dynamic>{
+            'pigment_load': null,
+          },
+        };
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: LuxeReportLayout(rawPayload: payload),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('Stable - change within tracking noise'),
+          findsOneWidget,
+        );
+        expect(find.textContaining('Standalone entry'), findsNothing);
+      },
+    );
+
+    testWidgets(
       'a backend "stable" forced by resolution_mismatch shows a distinct '
       'standalone-entry label instead of generic "Stable"',
       (tester) async {

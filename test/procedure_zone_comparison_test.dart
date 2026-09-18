@@ -69,6 +69,26 @@ void main() {
     expect(zones.single.crop.size, 0.40);
   });
 
+  test('zone parser reads zone metrics and crop rather than top-level decoys', () {
+    final baseline = _zonePayload()
+      ..['metrics'] = {'localized_redness': 1.0, 'pigment_load': 2.0}
+      ..['crop'] = {'left': 0.99, 'top': 0.99, 'size': 0.01};
+    final latest = _zonePayload()
+      ..['metrics'] = {'localized_redness': 98.0, 'pigment_load': 99.0}
+      ..['crop'] = {'left': 0.99, 'top': 0.99, 'size': 0.01};
+
+    final zone = procedureZoneComparisons(
+      baselinePayload: baseline,
+      latestPayload: latest,
+    ).single;
+
+    expect(zone.baselineMetrics['localized_redness'], 44.0);
+    expect(zone.latestMetrics['pigment_load'], 31.0);
+    expect(zone.crop.left, 0.25);
+    expect(zone.crop.top, 0.20);
+    expect(zone.crop.size, 0.40);
+  });
+
   test('unsupported whole-face measures are omitted', () {
     final zones = procedureZoneComparisons(
       baselinePayload: _zonePayload(includeUnsupported: true),

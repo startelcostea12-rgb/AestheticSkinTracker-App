@@ -176,6 +176,30 @@ void main() {
       expect(after.requestedFrameCount, 3);
     });
 
+    test('precision parser ignores wrong-level range and count decoys', () {
+      final metric = LuxeMetricParser.parseTimelinePayload({
+        'metric_matrix': {'localized_redness': 44.0},
+        'baseline_metric_matrix': {'localized_redness': 40.0},
+        'metric_confidence': {'localized_redness': 'medium'},
+        'metric_ranges': {
+          'localized_redness': {'min': 1.0, 'max': 99.0, 'count': 99},
+        },
+        'metric_contributor_counts': {'localized_redness': 99},
+        'multi_frame_analysis': {
+          'requested_frames': 3,
+          'metric_contributor_counts': {'localized_redness': 2},
+          'metric_ranges': {
+            'localized_redness': {'min': 42.0, 'max': 45.0, 'count': 2},
+          },
+        },
+      }).single;
+
+      expect(metric.currentRangeMin, 42.0);
+      expect(metric.currentRangeMax, 45.0);
+      expect(metric.contributorCount, 2);
+      expect(metric.requestedFrameCount, 3);
+    });
+
     testWidgets('shared metric card visibly renders a real multi-frame range', (
       tester,
     ) async {
