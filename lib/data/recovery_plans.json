@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "plans": [
+    {
+      "id": "halo_laser_7_day_first_draft",
+      "procedure_type": "Halo Laser",
+      "title": "Halo Laser 7-Day Recovery Plan",
+      "review_status": "first_draft_requires_human_clinical_review",
+      "disclaimer": "This is general wellness information and is not a substitute for professional medical advice. Follow your licensed provider's instructions and contact them with clinical questions or concerns.",
+      "days": [
+        {
+          "day": 1,
+          "whats_common": "Many patients notice warmth, redness, tightness, and a sunburn-like feeling during the first day after a Halo laser treatment.",
+          "watch_for": "If you notice rapidly worsening pain, spreading swelling, fever, pus-like drainage, or symptoms that feel concerning, it's worth reaching out to your provider.",
+          "suggested_action": "Consider saving a Day 1 baseline recovery note or photo in Track Procedure if your provider has said photo tracking is appropriate.",
+          "reminder": {"kind": "note", "hour": 19, "minute": 0, "title": "Halo Day 1 recovery check-in", "body": "Consider adding a gentle recovery note or baseline photo if photo tracking is appropriate for you."}
+        },
+        {
+          "day": 2,
+          "whats_common": "It's common around this time for redness, swelling, tightness, and sensitivity to remain visible while the skin barrier is still settling.",
+          "watch_for": "If swelling becomes asymmetric, vision feels affected, discomfort escalates sharply, or the treated area looks infected, it's worth reaching out to your provider.",
+          "suggested_action": "Consider logging how your skin feels today so future progress comparisons have more context.",
+          "reminder": {"kind": "note", "hour": 19, "minute": 0, "title": "Halo Day 2 recovery note", "body": "Consider logging today's recovery context, such as comfort, redness, and swelling."}
+        },
+        {
+          "day": 3,
+          "whats_common": "Many patients start noticing a dry, rough, sandpapery texture as surface renewal becomes more obvious.",
+          "watch_for": "If cracking, bleeding, severe itching, unusual drainage, or intense tenderness appears, it's worth reaching out to your provider.",
+          "suggested_action": "Consider taking your next Track Procedure scan today if lighting and framing can match your baseline.",
+          "reminder": {"kind": "scan", "hour": 10, "minute": 0, "title": "Halo Day 3 tracking scan", "body": "Consider taking a matched-lighting progress scan for your Halo recovery record."}
+        },
+        {
+          "day": 4,
+          "whats_common": "It's common around now for dryness and visible texture to peak for some patients, while redness may gradually begin to soften.",
+          "watch_for": "If the recovery pattern suddenly worsens after improving, or if new severe pain, swelling, or heat develops, it's worth reaching out to your provider.",
+          "suggested_action": "Consider reviewing your recovery trend notes rather than relying on a single day's appearance.",
+          "reminder": {"kind": "note", "hour": 19, "minute": 0, "title": "Halo Day 4 recovery context", "body": "Consider adding a short note about texture, redness, and comfort today."}
+        },
+        {
+          "day": 5,
+          "whats_common": "Many patients notice flaking or a bronzed, rough surface appearance during this part of recovery.",
+          "watch_for": "If the skin appears increasingly raw, has open areas, or shows signs that feel outside your provider's expected course, it's worth reaching out to your provider.",
+          "suggested_action": "Consider adding a progress note or photo only if it can be captured gently and consistently.",
+          "reminder": {"kind": "note", "hour": 19, "minute": 0, "title": "Halo Day 5 recovery note", "body": "Consider recording today's texture and comfort level in your procedure timeline."}
+        },
+        {
+          "day": 6,
+          "whats_common": "It's common for visible roughness to continue improving gradually, though redness or sensitivity may still be present.",
+          "watch_for": "If irritation is escalating, sensitivity feels severe, or recovery seems to move backward instead of gradually settling, it's worth reaching out to your provider.",
+          "suggested_action": "Consider checking whether your recent notes and photos show a steady overall direction rather than judging a single snapshot.",
+          "reminder": {"kind": "note", "hour": 19, "minute": 0, "title": "Halo Day 6 recovery check-in", "body": "Consider checking your recent notes and photos for overall recovery direction."}
+        },
+        {
+          "day": 7,
+          "whats_common": "Many patients are past the most intense early texture phase by the end of the first week, while color and sensitivity can continue to normalize over time.",
+          "watch_for": "If redness, swelling, drainage, pain, or sensitivity feels concerning or outside your provider's expected timeline, it's worth reaching out to your provider.",
+          "suggested_action": "Consider taking a Day 7 Track Procedure scan to document the first-week recovery point if conditions can match your earlier scan.",
+          "reminder": {"kind": "scan", "hour": 10, "minute": 0, "title": "Halo Day 7 tracking scan", "body": "Consider taking a matched-lighting Day 7 scan for your Halo recovery record."}
+        }
+      ]
+    }
+  ]
+}

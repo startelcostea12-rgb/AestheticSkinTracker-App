@@ -6,6 +6,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import '../models/peptide_model.dart';
 import '../models/procedure_log.dart';
+import '../models/recovery_plan.dart';
 import '../utils/app_prefs.dart';
 import '../utils/peptide_service.dart';
 
@@ -238,6 +239,65 @@ class NotificationService {
   Future<void> cancelBodyTrendReminder(String procedureId) async {
     final notificationId = 'body_trend_$procedureId'.hashCode.abs();
     await _notifications.cancel(notificationId);
+  }
+
+  Future<void> scheduleRecoveryPlanReminders({
+    required String procedureId,
+    required String procedureName,
+    required DateTime startDate,
+    required RecoveryPlan plan,
+  }) async {
+    if (!await AppPrefs.getNotificationsEnabled()) return;
+    if (!_initialized) await initialize();
+
+    const androidDetails = AndroidNotificationDetails(
+      'procedure_reminders',
+      'Procedure Reminders',
+      channelDescription: 'Local recovery and procedure tracking check-ins',
+      importance: Importance.high,
+      priority: Priority.high,
+      icon: '@mipmap/ic_launcher',
+    );
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    const notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+      macOS: iosDetails,
+    );
+
+    final name = procedureName.trim().isEmpty ? 'procedure' : procedureName.trim();
+    final now = DateTime.now();
+    for (final day in plan.days) {
+      final reminder = day.reminder;
+      final localDate = DateTime(
+        startDate.year,
+        startDate.month,
+        startDate.day,
+        reminder.hour,
+        reminder.minute,
+      ).add(Duration(days: day.day - 1));
+      if (localDate.isBefore(now)) continue;
+      await _notifications.zonedSchedule(
+        'recovery_plan_${procedureId}_${day.day}'.hashCode.abs(),
+        reminder.title,
+        '$name day ${day.day}: ${reminder.body}',
+        tz.TZDateTime.from(localDate, tz.local),
+        notificationDetails,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+    }
+  }
+
+  Future<void> cancelRecoveryPlanReminders(String procedureId) async {
+    for (var day = 1; day <= 7; day++) {
+      await _notifications.cancel('recovery_plan_${procedureId}_$day'.hashCode.abs());
+    }
   }
 
   /// Schedule a daily/weekly reminder for an active peptide routine.

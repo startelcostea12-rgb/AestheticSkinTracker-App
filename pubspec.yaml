@@ -80,6 +80,7 @@ flutter:
   # Assets
   assets:
     - lib/data/skincare_knowledge_base.json
+    - lib/data/recovery_plans.json
     - assets/logo/logo.png
     - assets/logo/
     - assets/images/

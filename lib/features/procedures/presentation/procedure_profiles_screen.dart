@@ -17,7 +17,9 @@ import 'package:aesthetic_skin_tracker/models/premium_recovery_models.dart';
 import 'package:aesthetic_skin_tracker/models/procedure.dart';
 import 'package:aesthetic_skin_tracker/models/procedure_log.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
+import 'package:aesthetic_skin_tracker/models/recovery_plan.dart';
 import 'package:aesthetic_skin_tracker/providers/procedure_logs_provider.dart';
+import 'package:aesthetic_skin_tracker/services/recovery_plan_service.dart';
 import 'package:aesthetic_skin_tracker/utils/trend_lock_reason.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_product_recommendation_engine.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_recovery_plan.dart';
@@ -1443,6 +1445,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
   bool _loadingPremiumData = false;
   bool _busy = false;
   Map<String, dynamic>? _localProcedureDeltaPayload;
+  RecoveryPlan? _activeRecoveryPlan;
 
   // BBL-specific manual recovery assessment metrics
   Map<String, double>? _bblAssessment;
@@ -1541,6 +1544,12 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     });
 
     await _hydrateLocalProcedureDeltaPayload(procedureLog);
+    final activePlan = await RecoveryPlanService.planById(
+      _procedure.recoveryPlanId,
+    );
+    if (mounted) {
+      setState(() => _activeRecoveryPlan = activePlan);
+    }
 
     // Load BBL-specific assessment and history for body contouring procedures
     if (ProcedureIntelligence.categoryFor(_procedure.type) ==
@@ -7262,6 +7271,64 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     );
   }
 
+  Widget _buildRecoveryPlanCurrentDayCard() {
+    final plan = _activeRecoveryPlan;
+    if (plan == null) return const SizedBox.shrink();
+    final day = plan.dayFor(_procedure.startDate, DateTime.now());
+    if (day == null) return const SizedBox.shrink();
+
+    Widget subsection(String title, String text) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              color: MyApp.clinicalNavy,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            text,
+            style: TextStyle(
+              color: MyApp.textBrown.withValues(alpha: 0.82),
+              fontSize: 12.5,
+              height: 1.4,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return _buildSectionCard(
+      title: plan.title,
+      icon: Icons.calendar_month_outlined,
+      eyebrow: 'Day ${day.day} post-procedure · first draft',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          subsection("What's common around now", day.whatsCommon),
+          const SizedBox(height: 12),
+          subsection('What to watch for', day.watchFor),
+          const SizedBox(height: 12),
+          subsection('Suggested action', day.suggestedAction),
+          const SizedBox(height: 12),
+          Text(
+            plan.disclaimer,
+            style: TextStyle(
+              color: MyApp.textBrown.withValues(alpha: 0.68),
+              fontSize: 11,
+              height: 1.35,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -7624,6 +7691,8 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
               timelineMilestones: _procedure.timelineMilestones,
             ),
             const SizedBox(height: 14),
+            _buildRecoveryPlanCurrentDayCard(),
+            if (_activeRecoveryPlan != null) const SizedBox(height: 14),
             // ── Surgeon's Recovery Plan ────────────────────────────────────
             _buildSurgeonPlanSection(),
             const SizedBox(height: 16),

@@ -714,6 +714,45 @@ class AppPrefs {
     await prefs.reload(); // Extra safety after write
   }
 
+  static Future<void> activateRecoveryPlanForProcedure({
+    required String procedureId,
+    required String recoveryPlanId,
+  }) async {
+    final cleanProcedureId = procedureId.trim();
+    final cleanPlanId = recoveryPlanId.trim();
+    if (cleanProcedureId.isEmpty || cleanPlanId.isEmpty) return;
+    final procedures = await getProcedureEntries();
+    var changed = false;
+    final updated = procedures.map((procedure) {
+      if ((procedure['id']?.toString() ?? '') != cleanProcedureId) {
+        return procedure;
+      }
+      changed = true;
+      return <String, dynamic>{
+        ...procedure,
+        'recoveryPlanId': cleanPlanId,
+      };
+    }).toList(growable: false);
+    if (changed) await saveProcedureHistory(updated);
+  }
+
+  static Future<void> clearRecoveryPlanForProcedure(String procedureId) async {
+    final cleanProcedureId = procedureId.trim();
+    if (cleanProcedureId.isEmpty) return;
+    final procedures = await getProcedureEntries();
+    var changed = false;
+    final updated = procedures.map((procedure) {
+      if ((procedure['id']?.toString() ?? '') != cleanProcedureId) {
+        return procedure;
+      }
+      changed = true;
+      final copy = <String, dynamic>{...procedure};
+      copy.remove('recoveryPlanId');
+      return copy;
+    }).toList(growable: false);
+    if (changed) await saveProcedureHistory(updated);
+  }
+
   static Future<String?> getSelectedProcedureIdOrNull() async {
     final prefs = await SharedPreferences.getInstance();
     final id = prefs.getString(selectedProcedureIdKey)?.trim();

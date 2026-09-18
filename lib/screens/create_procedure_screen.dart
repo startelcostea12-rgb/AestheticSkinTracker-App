@@ -4,6 +4,8 @@ import '../app_theme.dart';
 import '../widgets/clinical_section_header.dart';
 import '../models/procedure.dart';
 import '../models/provider_directory.dart';
+import '../services/notification_service.dart';
+import '../services/recovery_plan_service.dart';
 import '../utils/app_prefs.dart';
 import '../utils/procedure_focus_area.dart';
 import 'package:aesthetic_skin_tracker/features/procedures/presentation/procedure_profiles_screen.dart';
@@ -536,6 +538,47 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
       await AppPrefs.saveProcedureHistory(updated);
       await AppPrefs.setSelectedProcedureId(newProcedure.id);
 
+      final availablePlan = await RecoveryPlanService.planForProcedureType(
+        newProcedure.type,
+      );
+      Procedure procedureForDetail = newProcedure;
+      if (availablePlan != null && mounted) {
+        final activatePlan = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text('Activate ${availablePlan.title}?'),
+            content: const Text(
+              'This optional 7-day plan is general wellness information and requires human/clinical review before shipping as final content. It does not replace your provider instructions.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Not now'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Activate plan'),
+              ),
+            ],
+          ),
+        );
+        if (activatePlan == true) {
+          await AppPrefs.activateRecoveryPlanForProcedure(
+            procedureId: newProcedure.id,
+            recoveryPlanId: availablePlan.id,
+          );
+          await NotificationService().scheduleRecoveryPlanReminders(
+            procedureId: newProcedure.id,
+            procedureName: newProcedure.type,
+            startDate: newProcedure.startDate,
+            plan: availablePlan,
+          );
+          procedureForDetail = newProcedure.copyWith(
+            recoveryPlanId: availablePlan.id,
+          );
+        }
+      }
+
       if (!mounted) return;
       final messenger = ScaffoldMessenger.of(context);
       messenger.hideCurrentSnackBar();
@@ -551,7 +594,7 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
 
       await Navigator.of(context).pushReplacement(
         MaterialPageRoute(
-          builder: (_) => ProcedureDetailScreen(procedure: newProcedure),
+          builder: (_) => ProcedureDetailScreen(procedure: procedureForDetail),
           settings: RouteSettings(name: '/procedures/${newProcedure.id}'),
         ),
       );

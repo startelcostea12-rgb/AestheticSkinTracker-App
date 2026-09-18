@@ -61,6 +61,35 @@ void main() {
       expect(prefs.getString(AppPrefs.trackedProcedureKey), null);
     });
 
+    test('recovery plan activation is opt-in procedure metadata only', () async {
+      await AppPrefs.saveProcedureHistory([
+        {
+          'id': 'proc_halo',
+          'type': 'Halo Laser',
+          'provider': 'Self / At-Home',
+          'startDate': DateTime(2026, 9, 18).toIso8601String(),
+          'numSessions': 1,
+        },
+      ]);
+
+      var procedures = await AppPrefs.getProcedureEntries();
+      expect(procedures.single.containsKey('recoveryPlanId'), isFalse);
+
+      await AppPrefs.activateRecoveryPlanForProcedure(
+        procedureId: 'proc_halo',
+        recoveryPlanId: 'halo_laser_7_day_first_draft',
+      );
+      procedures = await AppPrefs.getProcedureEntries();
+      expect(
+        procedures.single['recoveryPlanId'],
+        'halo_laser_7_day_first_draft',
+      );
+
+      await AppPrefs.clearRecoveryPlanForProcedure('proc_halo');
+      procedures = await AppPrefs.getProcedureEntries();
+      expect(procedures.single.containsKey('recoveryPlanId'), isFalse);
+    });
+
     test('reminder notifications toggle persists and defaults off', () async {
       expect(await AppPrefs.getNotificationsEnabled(), isFalse);
 

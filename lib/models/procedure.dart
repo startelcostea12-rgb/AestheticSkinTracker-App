@@ -428,6 +428,7 @@ class Procedure {
   final List<DateTime> milestoneDates;
   final List<ProcedureTimelineMilestone> timelineMilestones;
   final List<String> taggedPhotos; // kept for mobile backward compatibility
+  final String? recoveryPlanId;
   final Uint8List? beforePhotoBytes;
   final Uint8List? afterPhotoBytes;
 
@@ -456,6 +457,7 @@ class Procedure {
     this.milestoneDates = const [],
     this.timelineMilestones = const [],
     this.taggedPhotos = const [],
+    this.recoveryPlanId,
     this.beforePhotoBytes,
     this.afterPhotoBytes,
     this.surgeonPlanPhotoBytes,
@@ -508,6 +510,9 @@ class Procedure {
           [],
       taggedPhotos:
           (json['taggedPhotos'] as List<dynamic>?)?.cast<String>() ?? [],
+        recoveryPlanId: (json['recoveryPlanId'] as String?)?.trim().isNotEmpty == true
+          ? (json['recoveryPlanId'] as String).trim()
+          : null,
       beforePhotoBytes: json['beforePhotoBytes'] != null
           ? Uint8List.fromList(List<int>.from(json['beforePhotoBytes']))
           : null,
@@ -542,6 +547,7 @@ class Procedure {
     'milestoneDates': milestoneDates.map((d) => d.toIso8601String()).toList(),
     'timelineMilestones': timelineMilestones.map((e) => e.toJson()).toList(),
     'taggedPhotos': taggedPhotos,
+    'recoveryPlanId': recoveryPlanId,
     'beforePhotoBytes': beforePhotoBytes,
     'afterPhotoBytes': afterPhotoBytes,
     'surgeonPlanPhotoBytes': surgeonPlanPhotoBytes,
@@ -565,6 +571,8 @@ class Procedure {
     List<DateTime>? milestoneDates,
     List<ProcedureTimelineMilestone>? timelineMilestones,
     List<String>? taggedPhotos,
+    String? recoveryPlanId,
+    bool clearRecoveryPlan = false,
     Uint8List? beforePhotoBytes,
     Uint8List? afterPhotoBytes,
     Uint8List? surgeonPlanPhotoBytes,
@@ -588,6 +596,9 @@ class Procedure {
       milestoneDates: milestoneDates ?? this.milestoneDates,
       timelineMilestones: timelineMilestones ?? this.timelineMilestones,
       taggedPhotos: taggedPhotos ?? this.taggedPhotos,
+        recoveryPlanId: clearRecoveryPlan
+          ? null
+          : (recoveryPlanId ?? this.recoveryPlanId),
       beforePhotoBytes: beforePhotoBytes ?? this.beforePhotoBytes,
       afterPhotoBytes: afterPhotoBytes ?? this.afterPhotoBytes,
       surgeonPlanPhotoBytes: clearSurgeonPlanPhoto
