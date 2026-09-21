@@ -102,3 +102,11 @@ Future<LandmarkAssessment> analyzeCapturedLandmarks({
 Future<void> closeLandmarkAnalyzers() {
   return impl.closeLandmarkAnalyzers();
 }
+
+// ── Debug-only pipeline outcome counters (kDebugMode) ───────────────────
+// Forwards to the platform implementation's running totals (always 0 on
+// the stub/web build). Purely observational — see the doc comment on
+// these in landmark_assessment_mlkit.dart for what each one means.
+int get debugConversionNullCount => impl.debugConversionNullCount;
+int get debugZeroDetectionsCount => impl.debugZeroDetectionsCount;
+int get debugDetectedCount => impl.debugDetectedCount;

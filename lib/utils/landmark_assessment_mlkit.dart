@@ -2,12 +2,30 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:image/image.dart' as img;
 
 import 'landmark_assessment.dart';
+
+// ── Debug-only pipeline outcome counters (kDebugMode) ───────────────────
+// Purely observational running totals, incremented at the three points
+// below where a live frame's fate is decided. Never read by any gating/
+// threshold logic — they exist so a debug overlay (see camera_screen.dart)
+// can distinguish three failure modes that all look identical from
+// `LandmarkAssessment.available == false` alone:
+//   1. debugConversionNullCount — _inputImageFromCameraImage returned
+//      null, so the frame never reached ML Kit at all (e.g. an
+//      unsupported CameraImage format/rotation for this platform).
+//   2. debugZeroDetectionsCount — ML Kit ran successfully but found no
+//      face/pose in the frame.
+//   3. debugDetectedCount — ML Kit found at least one face/pose.
+// Left at 0 (and never incremented) outside kDebugMode.
+int debugConversionNullCount = 0;
+int debugZeroDetectionsCount = 0;
+int debugDetectedCount = 0;
 
 final FaceDetector _streamFaceDetector = FaceDetector(
   options: FaceDetectorOptions(
@@ -59,7 +77,10 @@ Future<LandmarkAssessment> analyzeLiveLandmarks({
     camera: camera,
     deviceOrientation: deviceOrientation,
   );
-  if (inputImage == null) return LandmarkAssessment.unsupported;
+  if (inputImage == null) {
+    if (kDebugMode) debugConversionNullCount++;
+    return LandmarkAssessment.unsupported;
+  }
 
   return isBody
       ? _assessBody(inputImage, poseTemplate, useSingle: false)
@@ -219,6 +240,7 @@ Future<LandmarkAssessment> _assessFace(
   final detector = useSingle ? _singleFaceDetector : _streamFaceDetector;
   final faces = await detector.processImage(inputImage);
   if (faces.isEmpty) {
+    if (kDebugMode && !useSingle) debugZeroDetectionsCount++;
     return const LandmarkAssessment(
       available: false,
       primaryInstruction: 'Center your face inside the outline.',
@@ -227,6 +249,7 @@ Future<LandmarkAssessment> _assessFace(
       mode: 'face',
     );
   }
+  if (kDebugMode && !useSingle) debugDetectedCount++;
 
   faces.sort((a, b) {
     final aArea = a.boundingBox.width * a.boundingBox.height;
@@ -383,6 +406,7 @@ Future<LandmarkAssessment> _assessBody(
   final detector = useSingle ? _singlePoseDetector : _streamPoseDetector;
   final poses = await detector.processImage(inputImage);
   if (poses.isEmpty) {
+    if (kDebugMode && !useSingle) debugZeroDetectionsCount++;
     return const LandmarkAssessment(
       available: false,
       primaryInstruction: 'Center your body inside the outline.',
@@ -391,6 +415,7 @@ Future<LandmarkAssessment> _assessBody(
       mode: 'body',
     );
   }
+  if (kDebugMode && !useSingle) debugDetectedCount++;
 
   final pose = poses.first;
   final leftShoulder = pose.landmarks[PoseLandmarkType.leftShoulder];

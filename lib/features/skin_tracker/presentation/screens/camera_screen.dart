@@ -459,6 +459,19 @@ class _CameraScreenState extends State<CameraScreen>
   double? _debugRawPitch;
   double? _debugRawRoll;
 
+  // Raw CameraImage/CameraDescription properties for the same frame — added
+  // to investigate the iOS "never gets landmarks" report: these let the
+  // overlay show exactly what format/rotation is actually arriving at
+  // analyzeLiveLandmarks, independent of what CameraController was *asked*
+  // to produce (see the ImageFormatGroup passed to CameraController in
+  // _initializeController). `_debugRawFormatCode` is `dynamic` because
+  // CameraImageFormat.raw itself is `dynamic` (an Android ImageFormat int
+  // on Android, a FourCharCode-style int on iOS).
+  String? _debugRawFormatGroup;
+  Object? _debugRawFormatCode;
+  int? _debugRawPlaneCount;
+  int? _debugSensorOrientation;
+
   /// Result of the pre-scan makeup disclosure dialog. `null` until the user
   /// answers. Once the user has chosen, the scan flow proceeds and this flag
   /// is propagated onto every [ScanHistoryEntry] saved from this session.
@@ -1044,11 +1057,21 @@ class _CameraScreenState extends State<CameraScreen>
       await old.dispose();
     }
 
+    // iOS's camera stream never delivers YUV420 in practice — asking for it
+    // there made analyzeLiveLandmarks's InputImage conversion (which
+    // requires exactly bgra8888 on iOS) return null for essentially every
+    // frame, so landmarks/face-fill/etc. never populated on iOS at all.
+    // Android's ML Kit path accepts yuv420 directly, so it stays as-is.
+    // The live-stream pixel readers below (lighting/sharpness/face-ROI
+    // luma) are format-aware via _primaryPlaneBytesPerPixel /
+    // _luminanceFromBytes and handle both layouts correctly.
     final controller = CameraController(
       description,
       ResolutionPreset.high,
       enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.yuv420,
+      imageFormatGroup: Platform.isIOS
+          ? ImageFormatGroup.bgra8888
+          : ImageFormatGroup.yuv420,
     );
 
     try {
@@ -1187,6 +1210,10 @@ class _CameraScreenState extends State<CameraScreen>
                 _debugRawYaw = assessment.yaw;
                 _debugRawPitch = assessment.pitch;
                 _debugRawRoll = assessment.roll;
+                _debugRawFormatGroup = image.format.group.toString();
+                _debugRawFormatCode = image.format.raw;
+                _debugRawPlaneCount = image.planes.length;
+                _debugSensorOrientation = controller.description.sensorOrientation;
               });
             }
             final stabilized = _stabilizeLandmarkAssessment(assessment);
@@ -2137,8 +2164,48 @@ class _CameraScreenState extends State<CameraScreen>
     return Uint8List.fromList(img.encodeJpg(resized, quality: 58));
   }
 
+  // ── Format-aware pixel readers for the live CameraImage stream ─────────
+  // The stream's first plane is a single-channel 8-bit Y (luma) plane for
+  // every YUV-family ImageFormatGroup this app requests (yuv420 on
+  // Android, and previously — incorrectly — on iOS too), but is a single
+  // interleaved 4-byte-per-pixel BGRA plane for ImageFormatGroup.bgra8888
+  // (now used on iOS — see _initializeController). Every consumer below
+  // that reads `image.planes.first`/`firstOrNull` byte-by-byte
+  // (_summarizeCameraImage, _estimateFaceRoiLumaFromStream,
+  // _estimateLaplacianVarianceFromYPlane) goes through these two helpers
+  // so none of them silently mis-read BGRA as if it were 1-byte-per-pixel
+  // Y data (which would sample a different, effectively random channel
+  // byte per pixel and produce meaningless brightness/sharpness values).
+
+  /// Bytes-per-pixel for [plane] under [image]'s actual format group.
+  /// `Plane.bytesPerPixel` is Android-only (it is documented — and
+  /// confirmed in practice — to always be `null` on iOS), so this can't
+  /// simply trust that field; it's used only as a defensive first choice,
+  /// falling back to the known layout for the two format groups this app
+  /// actually requests: 4 for bgra8888, 1 for every YUV-family group.
+  int _primaryPlaneBytesPerPixel(CameraImage image, Plane plane) {
+    final reported = plane.bytesPerPixel;
+    if (reported != null && reported > 0) return reported;
+    return image.format.group == ImageFormatGroup.bgra8888 ? 4 : 1;
+  }
+
+  /// Luminance for the pixel whose first byte is at [pixelStart] in
+  /// [bytes]. For a 1-byte-per-pixel Y plane this is just that byte. For
+  /// 4-byte BGRA this derives luma from B/G/R (byte order confirmed via
+  /// package:camera's `Plane` docs — iOS delivers `kCVPixelFormatType_
+  /// 32BGRA`) using the same Rec.709 weights already used elsewhere in
+  /// this file for the grayscale preview ColorFilter, ignoring alpha.
+  double _luminanceFromBytes(Uint8List bytes, int pixelStart, int bytesPerPixel) {
+    if (bytesPerPixel <= 1) return bytes[pixelStart].toDouble();
+    final b = bytes[pixelStart].toDouble();
+    final g = bytes[pixelStart + 1].toDouble();
+    final r = bytes[pixelStart + 2].toDouble();
+    return (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
+  }
+
   _LightingFrameSummary _summarizeCameraImage(CameraImage image) {
     final plane = image.planes.first;
+    final bytesPerPixel = _primaryPlaneBytesPerPixel(image, plane);
     final width = image.width;
     final height = image.height;
     final stepX = math.max(1, width ~/ 28);
@@ -2160,9 +2227,9 @@ class _CameraScreenState extends State<CameraScreen>
     for (var y = 0; y < height; y += stepY) {
       final rowStart = y * plane.bytesPerRow;
       for (var x = 0; x < width; x += stepX) {
-        final index = rowStart + x;
-        if (index >= plane.bytes.length) continue;
-        final luminance = plane.bytes[index].toDouble();
+        final index = rowStart + x * bytesPerPixel;
+        if (index + bytesPerPixel > plane.bytes.length) continue;
+        final luminance = _luminanceFromBytes(plane.bytes, index, bytesPerPixel);
         samples.add(luminance);
         total += luminance;
         count += 1;
@@ -4545,10 +4612,11 @@ class _CameraScreenState extends State<CameraScreen>
     final assessment = _liveLandmarkAssessment;
     if (!assessment.available) return 0;
 
+    final bytesPerPixel = _primaryPlaneBytesPerPixel(image, yPlane);
     final width = image.width;
     final height = image.height;
     final rowStride = yPlane.bytesPerRow;
-    if (width <= 4 || height <= 4 || rowStride < width) return 0;
+    if (width <= 4 || height <= 4 || rowStride < width * bytesPerPixel) return 0;
 
     final centerX = ((assessment.centerOffsetX + 0.5) * width).round();
     final centerY = ((assessment.centerOffsetY + 0.5) * height).round();
@@ -4568,7 +4636,9 @@ class _CameraScreenState extends State<CameraScreen>
     for (var y = top; y < bottom; y += step) {
       final row = y * rowStride;
       for (var x = left; x < right; x += step) {
-        sum += bytes[row + x];
+        final idx = row + x * bytesPerPixel;
+        if (idx + bytesPerPixel > bytes.length) continue;
+        sum += _luminanceFromBytes(bytes, idx, bytesPerPixel);
         count++;
       }
     }
@@ -5431,6 +5501,18 @@ class _CameraScreenState extends State<CameraScreen>
       'face-fill: ${a.faceFillRatio.toStringAsFixed(3)}'
           ' (floor=${_targetFaceFillFloor.toStringAsFixed(3)})',
       'gate: ${_debugFramingFailureReason(report)}',
+      // Added to investigate the iOS "never gets landmarks" report: what
+      // CameraImage is actually arriving vs. what analyzeLiveLandmarks
+      // does with it. See landmark_assessment_mlkit.dart's
+      // _inputImageFromCameraImage for the format/rotation rules this is
+      // checking.
+      'raw CameraImage: format=${_debugRawFormatGroup ?? '—'}'
+          ' (raw=${_debugRawFormatCode?.toString() ?? '—'})'
+          ' planes=${_debugRawPlaneCount?.toString() ?? '—'}'
+          ' sensorOrientation=${_debugSensorOrientation?.toString() ?? '—'}°',
+      'landmark pipeline totals — conversion-null: $debugConversionNullCount'
+          '  zero-detections: $debugZeroDetectionsCount'
+          '  found: $debugDetectedCount',
     ];
 
     return Positioned(
@@ -5912,11 +5994,12 @@ class _CameraScreenState extends State<CameraScreen>
     final yPlane = image.planes.firstOrNull;
     if (yPlane == null || yPlane.bytes.isEmpty) return 0;
 
+    final bytesPerPixel = _primaryPlaneBytesPerPixel(image, yPlane);
     final bytes = yPlane.bytes;
     final width = image.width;
     final height = image.height;
     final rowStride = yPlane.bytesPerRow;
-    if (width < 6 || height < 6 || rowStride < width) return 0;
+    if (width < 6 || height < 6 || rowStride < width * bytesPerPixel) return 0;
 
     // Downsample aggressively to keep the stream loop lightweight.
     const step = 4;
@@ -5927,12 +6010,12 @@ class _CameraScreenState extends State<CameraScreen>
     for (var y = 2; y < height - 2; y += step) {
       final row = y * rowStride;
       for (var x = 2; x < width - 2; x += step) {
-        final idx = row + x;
-        final c = bytes[idx].toDouble();
-        final left = bytes[idx - 1].toDouble();
-        final right = bytes[idx + 1].toDouble();
-        final up = bytes[idx - rowStride].toDouble();
-        final down = bytes[idx + rowStride].toDouble();
+        final idx = row + x * bytesPerPixel;
+        final c = _luminanceFromBytes(bytes, idx, bytesPerPixel);
+        final left = _luminanceFromBytes(bytes, idx - bytesPerPixel, bytesPerPixel);
+        final right = _luminanceFromBytes(bytes, idx + bytesPerPixel, bytesPerPixel);
+        final up = _luminanceFromBytes(bytes, idx - rowStride, bytesPerPixel);
+        final down = _luminanceFromBytes(bytes, idx + rowStride, bytesPerPixel);
 
         final lap = (4 * c) - left - right - up - down;
         sum += lap;

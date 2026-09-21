@@ -23,3 +23,10 @@ Future<LandmarkAssessment> analyzeCapturedLandmarks({
 }
 
 Future<void> closeLandmarkAnalyzers() async {}
+
+// Web/unsupported-platform counterparts to the mlkit implementation's
+// debug-only outcome counters — always 0 here since this stub never runs
+// ML Kit at all. See landmark_assessment_mlkit.dart for what these mean.
+int debugConversionNullCount = 0;
+int debugZeroDetectionsCount = 0;
+int debugDetectedCount = 0;
