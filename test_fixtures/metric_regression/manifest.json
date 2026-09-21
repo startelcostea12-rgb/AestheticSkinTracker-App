@@ -37,13 +37,13 @@
       "id": "nikki3",
       "photo_path": "test_fixtures/metric_regression/nikki3.jpg",
       "preprocess": {"mode": "center_crop_resize_jpeg", "crop_fraction": 0.9, "size": 512},
-      "notes": "Companion visible-redness reference using the recalibrated p95 single-formula baseline.",
+      "notes": "Companion visible-redness reference using the recalibrated p95 single-formula baseline. pore_visibility was recalibrated after fixing a bug where _extract_normalized_pore_roi upsampled a small (~80-120px) native crop to a fixed 512x512 canvas before DoG frequency analysis, destroying real pore-scale detail and making the pore_roi_pixels size gate measure the resized canvas instead of real detail. Post-fix, DoG runs on the native-resolution crop (main._extract_native_resolution_pore_roi); real measured value is 11.7 (was 3.4 pre-fix on the same photo).",
       "strict": true,
       "metrics": {
         "localized_redness": {"confirmed": 23.0, "min": 18.0, "max": 28.0},
         "rosacea_severity": {"confirmed": 13.1, "min": 8.1, "max": 18.1},
         "sebum_excess_oil_gloss": {"confirmed": 6.4, "min": 1.4, "max": 11.4},
-        "pore_visibility": {"confirmed": 3.4, "min": 0.0, "max": 8.4},
+        "pore_visibility": {"confirmed": 11.7, "min": 6.7, "max": 16.7},
         "under_eye_texture_density": {"confirmed": 96.0, "min": 91.0, "max": 100.0},
         "under_eye_dark_circle_density": {"confirmed": 72.6, "min": 67.6, "max": 77.6}
       }

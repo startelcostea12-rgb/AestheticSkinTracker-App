@@ -1878,7 +1878,7 @@ def _build_pore_roi_masks(
     return geom_mask, skin_locked_mask
 
 
-def _extract_normalized_pore_roi(
+def _extract_native_resolution_pore_roi(
     face_bgr: np.ndarray,
     points: np.ndarray,
     skin_mask: np.ndarray,
@@ -1951,14 +1951,13 @@ def _extract_normalized_pore_roi(
     l_channel = lab[:, :, 0].astype(np.float32)
 
     l_crop = l_channel[y0:y1, x0:x1]
-    mask_crop = skin_locked_mask[y0:y1, x0:x1]
+    mask_crop = np.where(skin_locked_mask[y0:y1, x0:x1] > 0, 255, 0).astype(np.uint8)
 
-    # Scale normalization lock for camera-distance invariance.
-    l_norm = cv2.resize(l_crop, (512, 512), interpolation=cv2.INTER_AREA)
-    mask_norm = cv2.resize(mask_crop, (512, 512), interpolation=cv2.INTER_NEAREST)
-    mask_norm = np.where(mask_norm > 0, 255, 0).astype(np.uint8)
-
-    return l_norm, mask_norm, int(cv2.countNonZero(mask_norm))
+    # Frequency analysis must run on native-resolution pixels: upsampling this
+    # small crop to a fixed canvas (as a prior version did) destroys the
+    # pore-scale detail the DoG filter is meant to measure, and made the pixel
+    # count below meaningless as a real-detail gate.
+    return l_crop, mask_crop, int(cv2.countNonZero(mask_crop))
 
 
 def _signal_conf(
@@ -3265,7 +3264,7 @@ def _compute_canonical_patch_metrics(
     face_detected = points.shape[0] > 0
     pore_visibility_detected = False
 
-    pore_l_norm, pore_mask_norm, pore_roi_pixels = _extract_normalized_pore_roi(
+    pore_l_crop, pore_mask_crop, pore_roi_pixels = _extract_native_resolution_pore_roi(
         face_bgr,
         points,
         skin_mask,
@@ -3279,14 +3278,14 @@ def _compute_canonical_patch_metrics(
     if (
         face_detected
         and pose_ok
-        and pore_l_norm is not None
-        and pore_mask_norm is not None
+        and pore_l_crop is not None
+        and pore_mask_crop is not None
         and pore_roi_pixels > 5000
     ):
-        blur_small = cv2.GaussianBlur(pore_l_norm, (0, 0), 1.0)
-        blur_large = cv2.GaussianBlur(pore_l_norm, (0, 0), 2.0)
+        blur_small = cv2.GaussianBlur(pore_l_crop, (0, 0), 1.0)
+        blur_large = cv2.GaussianBlur(pore_l_crop, (0, 0), 2.0)
         dog = np.abs(blur_small - blur_large)
-        dog_vals = dog[pore_mask_norm > 0]
+        dog_vals = dog[pore_mask_crop > 0]
         if dog_vals.size > 0:
             pore_response_mean = float(np.mean(dog_vals))
             pore_spread = float(np.std(dog_vals))
