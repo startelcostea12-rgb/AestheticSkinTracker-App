@@ -1,0 +1,559 @@
+﻿--- ID 27 ---
+@'
+import os, glob, importlib, inspect
+print('CWD', os.getcwd())
+print('fixture', glob.glob('test_fixtures/metric_regression/*'))
+print('cal', glob.glob('calibration_stock_batch/*.jpg'))
+for modname in ('main','tool.diagnose_pore_visibility_gate'):
+    try:
+        m=importlib.import_module(modname)
+        print('\nMODULE',modname)
+        for n in dir(m):
+            if any(k in n.lower() for k in ('assess','landmark','align','crop','lighting','shadow','skin_mask','region_mask','pore_roi','sebum','radiance','canonical','metric')):
+                x=getattr(m,n)
+                if callable(x):
+                    try: s=inspect.signature(x)
+                    except: s='?'
+                    print(n,s)
+    except Exception as e: print('IMPORT_ERROR',modname,repr(e))
+'@ | python -
+--- ID 28 ---
+@'
+import inspect, main
+for n in ['assess_and_normalize_image','_extract_primary_landmarks','_align_and_crop_face','normalize_lighting_and_shadows','_skin_mask','_region_masks','_compute_additional_opencv_metrics','_compute_canonical_patch_metrics']:
+ print('\n###',n); print(inspect.getsource(getattr(main,n)))
+'@ | python -
+--- ID 29 ---
+@'
+import os, glob, json, math, traceback
+import cv2, numpy as np
+import main
+
+def clean(x):
+    if isinstance(x, dict): return {k:clean(v) for k,v in x.items()}
+    if isinstance(x, (np.integer,)): return int(x)
+    if isinstance(x, (np.floating, float)):
+        return None if not math.isfinite(float(x)) else round(float(x),6)
+    return x
+
+def pct(a,q): return float(np.percentile(a,q)) if a.size else None
+
+def one(path):
+    try:
+        b=open(path,'rb').read()
+        face, meta = main.assess_and_normalize_image(b)
+        if face is None or not isinstance(face,np.ndarray) or face.size==0: return {'file':path,'error':'no-face/empty'}
+        # assess_and_normalize_image is the application’s decode, landmark, align/crop path.
+        face=main.normalize_lighting_and_shadows(face)
+        sm=main._skin_mask(face).astype(bool)
+        rgb=cv2.cvtColor(face,cv2.COLOR_BGR2RGB)
+        pts=None
+        try: pts=main._extract_primary_landmarks(rgb)
+        except Exception: pass
+        if isinstance(pts,tuple): pts=pts[0]
+        if pts is None: return {'file':path,'error':'no-landmarks','skin_pixels':int(sm.sum())}
+        regs=main._region_masks(face.shape[:2],sm,pts)
+        lab=cv2.cvtColor(face,cv2.COLOR_BGR2LAB)[:,:,0].astype(np.float32)[sm]
+        gray=cv2.cvtColor(face,cv2.COLOR_BGR2GRAY).astype(np.float32)
+        # local variance sigma=1.4: E[x^2]-E[x]^2, then sqrt.
+        mu=cv2.GaussianBlur(gray,(0,0),1.4); mu2=cv2.GaussianBlur(gray*gray,(0,0),1.4)
+        lv=np.sqrt(np.maximum(mu2-mu*mu,0))[sm]
+        lap=np.abs(cv2.Laplacian(gray,cv2.CV_32F))[sm]
+        gx=cv2.Sobel(gray,cv2.CV_32F,1,0,ksize=3); gy=cv2.Sobel(gray,cv2.CV_32F,0,1,ksize=3)
+        grad=np.sqrt(gx*gx+gy*gy)[sm]
+        hsv=cv2.cvtColor(face,cv2.COLOR_BGR2HSV).astype(np.float32); v=hsv[:,:,2][sm]; s=hsv[:,:,1][sm]
+        out={'file':path,'skin_pixels':int(sm.sum()),'lab_L':{'mean':float(lab.mean()),'std':float(lab.std()),'p10':pct(lab,10),'p50':pct(lab,50),'p90':pct(lab,90),'p95':pct(lab,95)},'local_L_sqrtvar_p80':pct(lv,80),'L_laplacian_abs_p80':pct(lap,80),'L_gradient_mag_p80':pct(grad,80),'fullface_soft_highlight_fraction':float(np.mean((v>=pct(v,90))&(s<=75))),'fullface_harsh_highlight_fraction':float(np.mean((v>=pct(v,99))&(s<=60)))}
+        try: out['additional_opencv']=main._compute_additional_opencv_metrics(face,sm,regs,pts)
+        except Exception as e: out['additional_error']=type(e).__name__+': '+str(e)
+        try:
+            can, status, raw=main._compute_canonical_patch_metrics(face,sm,regs,pts,yolo_kept=0,yolo_max_conf=0.0)
+            out['canonical_metrics']=can; out['canonical_raw']=raw
+        except Exception as e: out['canonical_error']=type(e).__name__+': '+str(e)
+        return clean(out)
+    except Exception as e: return {'file':path,'error':type(e).__name__+': '+str(e)}
+
+paths=sorted(glob.glob('test_fixtures/metric_regression/*'))+sorted(glob.glob('calibration_stock_batch/*.jpg'))
+rows=[]
+for p in paths:
+    if os.path.splitext(p)[1].lower() not in ('.jpg','.jpeg','.jfif','.png'): continue
+    r=one(p); rows.append(r); print(json.dumps(r,separators=(',',':')))
+keys=['skin_pixels','local_L_sqrtvar_p80','L_laplacian_abs_p80','L_gradient_mag_p80','fullface_soft_highlight_fraction','fullface_harsh_highlight_fraction']
+for k in keys:
+ a=np.array([r[k] for r in rows if k in r and r[k] is not None],float)
+ if a.size: print(json.dumps({'aggregate':k,'n':int(a.size),'min':round(float(a.min()),6),'max':round(float(a.max()),6),'median':round(float(np.median(a)),6)},separators=(',',':')))
+'@ | python -
+--- ID 30 ---
+@'
+import glob
+import cv2
+import main
+
+print('main.mp is None:', main.mp is None)
+print('main._FACE_MESH is None:', main._FACE_MESH is None)
+print('main._FACE_LANDMARKER is None:', main._FACE_LANDMARKER is None)
+print('main._resolve_yunet_model_path():', main._resolve_yunet_model_path())
+
+paths = sorted(glob.glob('calibration_stock_batch/*'))
+image_path = next((p for p in paths if p.lower().endswith(('.jpg', '.jpeg', '.jfif', '.png'))), None)
+print('first calibration image:', image_path)
+if image_path is not None:
+    image = cv2.imread(image_path)
+    print('image shape:', None if image is None else image.shape)
+    result = main._extract_primary_landmarks(cv2.cvtColor(image, cv2.COLOR_BGR2RGB)) if image is not None else None
+    source = None
+    landmarks = result
+    if isinstance(result, tuple):
+        if len(result) >= 1:
+            landmarks = result[0]
+        if len(result) >= 2:
+            source = result[1]
+    elif isinstance(result, dict):
+        source = result.get('source')
+        landmarks = result.get('landmarks', result.get('points', result))
+    try:
+        count = len(landmarks) if landmarks is not None else 0
+    except TypeError:
+        count = 'unknown'
+    print('landmarks source:', source)
+    print('landmarks count:', count)
+    print('raw result type:', type(result).__name__)
+'@ | python -
+--- ID 31 ---
+@'
+import glob, os, json, math, inspect, traceback
+import cv2, numpy as np
+import mediapipe as mp
+import main
+
+# Read-only fixture diagnostic: deliberately bypass cached detector objects.
+mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.5)
+
+files = sorted(p for p in glob.glob('calibration_stock_batch/**/*', recursive=True)
+               if os.path.isfile(p) and p.lower().endswith(('.jpg','.jpeg','.jfif','.png','.bmp','.webp')))
+
+def pick(names):
+    for n in names:
+        x = getattr(main, n, None)
+        if callable(x): return x
+    raise AttributeError('missing function: ' + '/'.join(names))
+
+def call(fn, values):
+    sig = inspect.signature(fn)
+    args=[]; kwargs={}
+    aliases = {
+      'image':['image','img','frame','rgb_image','bgr_image','cropped','face_image','normalized_image'],
+      'rgb':['rgb','rgb_image','image','img'], 'points':['points','landmarks','face_points'],
+      'landmarks':['landmarks','points','face_landmarks'], 'shape':['shape','image_shape'],
+      'mask':['mask','skin_mask','face_mask','roi_mask'], 'skin_mask':['skin_mask','mask','face_mask'],
+      'region_masks':['region_masks','regions','masks'], 'normalized':['normalized','normalized_image','image'],
+      'original':['original','image','img'], 'face_landmarks':['face_landmarks','landmarks']}
+    for p in sig.parameters.values():
+        if p.kind in (p.VAR_POSITIONAL,p.VAR_KEYWORD): continue
+        if p.name in values: v=values[p.name]
+        else:
+            v=None
+            for a in aliases.get(p.name,[]):
+                if a in values: v=values[a]; break
+            if v is None and p.default is not p.empty: continue
+            if v is None: raise TypeError('unmapped parameter '+p.name+' for '+fn.__name__)
+        if p.kind == p.POSITIONAL_ONLY: args.append(v)
+        else: kwargs[p.name]=v
+    return fn(*args, **kwargs)
+
+def unpack_landmarks(x):
+    if hasattr(x,'multi_face_landmarks'): x=x.multi_face_landmarks[0]
+    if isinstance(x,(tuple,list)) and len(x) and not hasattr(x[0],'x'):
+        # tolerate (landmarks, source, ...)
+        x=x[0]
+    return x
+
+def pct(a,q): return float(np.percentile(a,q)) if a.size else None
+
+def scalarize(x):
+    if isinstance(x, dict): return x
+    return x
+
+landmarks_to_points=pick(['_landmarks_to_points'])
+align=pick(['_align_and_crop_face'])
+normalize=pick(['normalize_lighting_and_shadows'])
+skinfn=pick(['_skin_mask'])
+regionsfn=pick(['_region_masks'])
+porefn=pick(['_build_pore_roi_masks'])
+metricsfn=pick(['_compute_additional_opencv_metrics'])
+
+for path in files[:24]:
+    row={'image':os.path.basename(path)}
+    try:
+        bgr=cv2.imread(path)
+        if bgr is None: raise ValueError('cv2.imread returned None')
+        rgb=cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        res=mesh.process(rgb)
+        if not res.multi_face_landmarks: raise ValueError('no face landmarks')
+        fl=res.multi_face_landmarks[0]
+        pts=call(landmarks_to_points, {'landmarks':fl,'face_landmarks':fl,'image':rgb,'shape':rgb.shape})
+        aligned=call(align, {'image':rgb,'rgb':rgb,'points':pts,'landmarks':pts})
+        if isinstance(aligned,(tuple,list)): aligned=aligned[0]
+        norm=call(normalize, {'image':aligned,'img':aligned,'normalized':aligned})
+        if isinstance(norm,(tuple,list)): norm=norm[0]
+        sm=call(skinfn, {'image':norm,'img':norm,'rgb':norm})
+        if isinstance(sm,(tuple,list)): sm=sm[0]
+        sm=np.asarray(sm).astype(bool)
+        # second direct FaceMesh pass, as requested
+        n_rgb=norm if norm.shape[-1] == 3 else cv2.cvtColor(norm,cv2.COLOR_GRAY2RGB)
+        if n_rgb.dtype != np.uint8: n_rgb=np.clip(n_rgb,0,255).astype(np.uint8)
+        nr=mesh.process(n_rgb)
+        if not nr.multi_face_landmarks: raise ValueError('no normalized-image landmarks')
+        nfl=nr.multi_face_landmarks[0]
+        npts=call(landmarks_to_points, {'landmarks':nfl,'face_landmarks':nfl,'image':n_rgb,'shape':n_rgb.shape})
+        shape=n_rgb.shape
+        rm=call(regionsfn, {'points':npts,'landmarks':npts,'shape':shape,'image':n_rgb})
+        pm=call(porefn, {'image':n_rgb,'normalized':n_rgb,'points':npts,'landmarks':npts,'region_masks':rm,'regions':rm,'skin_mask':sm,'mask':sm})
+        # Accept common return forms and select the full-face mask.
+        masks=pm
+        if isinstance(pm,dict):
+            for k in ('full_face','full_face_mask','face_skin_mask','skin_mask','face'):
+                if k in pm: masks=pm[k]; break
+        if isinstance(masks,(tuple,list)):
+            cand=[x for x in masks if isinstance(x,np.ndarray) and x.shape[:2]==n_rgb.shape[:2]]
+            masks=cand[0] if cand else masks[0]
+        face=np.asarray(masks).astype(bool)
+        if face.shape != n_rgb.shape[:2]: raise ValueError('full-face mask shape '+str(face.shape))
+        # Ensure this is a skin mask (the requested full-face pore ROI mask may be soft/uint8).
+        row['face_pixels']=int(face.sum())
+        lab=cv2.cvtColor(n_rgb,cv2.COLOR_RGB2LAB); L=lab[:,:,0].astype(np.float32); vals=L[face]
+        row.update({'L_mean':float(vals.mean()),'L_std':float(vals.std()),'L_p10':pct(vals,10),'L_p50':pct(vals,50),'L_p90':pct(vals,90),'L_p95':pct(vals,95)})
+        blur=cv2.GaussianBlur(L,(0,0),1.4); local=np.sqrt(np.maximum(cv2.GaussianBlur(L*L,(0,0),1.4)-blur*blur,0))
+        lap=np.abs(cv2.Laplacian(L,cv2.CV_32F)); gx=cv2.Sobel(L,cv2.CV_32F,1,0,ksize=3); gy=cv2.Sobel(L,cv2.CV_32F,0,1,ksize=3); grad=cv2.magnitude(gx,gy)
+        row.update({'local_L_variance_sqrt_p80':pct(local[face],80),'L_laplacian_abs_p80':pct(lap[face],80),'L_gradient_magnitude_p80':pct(grad[face],80)})
+        hsv=cv2.cvtColor(n_rgb,cv2.COLOR_RGB2HSV); V=hsv[:,:,2]; S=hsv[:,:,1]; p90=np.percentile(V[face],90); p99=np.percentile(V[face],99)
+        row['soft_highlight_fraction']=float(np.mean((V>=p90)&(S<=75)&face)); row['harsh_highlight_fraction']=float(np.mean((V>=p99)&(S<=60)&face))
+        extra=call(metricsfn, {'image':n_rgb,'normalized':n_rgb,'mask':face,'skin_mask':face,'region_masks':rm,'regions':rm,'points':npts,'landmarks':npts})
+        if isinstance(extra,dict):
+            for k in ('sebum_excess_oil_gloss','skin_tone_radiance_evenness'):
+                row[k]=extra.get(k)
+        else: row['additional_metrics']=scalarize(extra)
+    except Exception as e:
+        row={'image':os.path.basename(path),'error':str(e)}
+    print(json.dumps(row,separators=(',',':'),default=lambda x: float(x) if isinstance(x,np.floating) else x))
+mesh.close()
+'@ | python -
+--- ID 32 ---
+@'
+import glob, os, json, inspect
+import cv2, numpy as np
+import mediapipe as mp
+import main
+
+mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.5)
+patterns = ['test_fixtures/metric_regression/*', 'calibration_stock_batch/*.jpg']
+files = []
+for pat in patterns:
+    files.extend(sorted(p for p in glob.glob(pat) if os.path.isfile(p) and cv2.haveImageReader(p)))
+files = list(dict.fromkeys(files))
+
+def pick(names):
+    for n in names:
+        x = getattr(main, n, None)
+        if callable(x): return x
+    raise AttributeError('missing function: ' + '/'.join(names))
+
+def call(fn, values):
+    sig = inspect.signature(fn); args=[]; kwargs={}
+    aliases = {
+      'image':['image','img','frame','rgb_image','bgr_image','cropped','face_image','normalized_image'],
+      'rgb':['rgb','rgb_image','image','img'], 'points':['points','landmarks','face_points'],
+      'landmarks':['landmarks','points','face_landmarks'], 'shape':['shape','image_shape'],
+      'mask':['mask','skin_mask','face_mask','roi_mask'], 'skin_mask':['skin_mask','mask','face_mask'],
+      'region_masks':['region_masks','regions','masks'], 'normalized':['normalized','normalized_image','image'],
+      'original':['original','image','img'], 'face_landmarks':['face_landmarks','landmarks']}
+    for p in sig.parameters.values():
+        if p.kind in (p.VAR_POSITIONAL,p.VAR_KEYWORD): continue
+        if p.name in values: v=values[p.name]
+        else:
+            v=next((values[a] for a in aliases.get(p.name,[]) if a in values), None)
+            if v is None and p.default is not p.empty: continue
+            if v is None: raise TypeError('unmapped parameter '+p.name+' for '+fn.__name__)
+        if p.kind == p.POSITIONAL_ONLY: args.append(v)
+        else: kwargs[p.name]=v
+    return fn(*args, **kwargs)
+
+def pct(a,q): return float(np.percentile(a,q)) if a.size else None
+
+def points_from(fl, image):
+    return main._landmarks_to_points(fl, image.shape[1], image.shape[0])
+
+def first(x):
+    return x[0] if isinstance(x,(tuple,list)) else x
+
+align=pick(['_align_and_crop_face'])
+normalize=pick(['normalize_lighting_and_shadows'])
+skinfn=pick(['_skin_mask'])
+regionsfn=pick(['_region_masks'])
+porefn=pick(['_build_pore_roi_masks'])
+metricsfn=pick(['_compute_additional_opencv_metrics'])
+
+for path in files:
+    row={'filename':path.replace('\\','/')}
+    try:
+        bgr=cv2.imread(path)
+        if bgr is None: raise ValueError('image decode failed')
+        rgb=cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        res=mesh.process(rgb)
+        if not res.multi_face_landmarks: raise ValueError('no face landmarks')
+        pts=points_from(res.multi_face_landmarks[0], rgb)
+        aligned=first(call(align, {'image':rgb,'rgb':rgb,'points':pts,'landmarks':pts}))
+        norm=first(call(normalize, {'image':aligned,'img':aligned,'normalized':aligned}))
+        sm=first(call(skinfn, {'image':norm,'img':norm,'rgb':norm})); sm=np.asarray(sm).astype(bool)
+        n_rgb=norm if norm.shape[-1] == 3 else cv2.cvtColor(norm,cv2.COLOR_GRAY2RGB)
+        if n_rgb.dtype != np.uint8: n_rgb=np.clip(n_rgb,0,255).astype(np.uint8)
+        nr=mesh.process(n_rgb)
+        if not nr.multi_face_landmarks: raise ValueError('no normalized-image landmarks')
+        npts=points_from(nr.multi_face_landmarks[0], n_rgb)
+        shape=n_rgb.shape
+        rm=call(regionsfn, {'points':npts,'landmarks':npts,'shape':shape,'image':n_rgb})
+        pm=call(porefn, {'image':n_rgb,'normalized':n_rgb,'points':npts,'landmarks':npts,'region_masks':rm,'regions':rm,'skin_mask':sm,'mask':sm})
+        masks=pm
+        if isinstance(pm,dict):
+            for k in ('full_face','full_face_mask','face_skin_mask','skin_mask','face'):
+                if k in pm: masks=pm[k]; break
+        if isinstance(masks,(tuple,list)):
+            cand=[x for x in masks if isinstance(x,np.ndarray) and x.shape[:2]==n_rgb.shape[:2]]
+            masks=cand[0] if cand else masks[0]
+        face=np.asarray(masks).astype(bool)
+        if face.shape != n_rgb.shape[:2]: raise ValueError('full-face mask shape '+str(face.shape))
+        lab=cv2.cvtColor(n_rgb,cv2.COLOR_RGB2LAB); L=lab[:,:,0].astype(np.float32); vals=L[face]
+        row.update({'face_pixels':int(face.sum()),'L_mean':float(vals.mean()),'L_std':float(vals.std()),'L_p10':pct(vals,10),'L_p50':pct(vals,50),'L_p90':pct(vals,90),'L_p95':pct(vals,95)})
+        blur=cv2.GaussianBlur(L,(0,0),1.4); local=np.sqrt(np.maximum(cv2.GaussianBlur(L*L,(0,0),1.4)-blur*blur,0))
+        lap=np.abs(cv2.Laplacian(L,cv2.CV_32F)); gx=cv2.Sobel(L,cv2.CV_32F,1,0,ksize=3); gy=cv2.Sobel(L,cv2.CV_32F,0,1,ksize=3); grad=cv2.magnitude(gx,gy)
+        row.update({'local_L_variance_sqrt_p80':pct(local[face],80),'L_laplacian_abs_p80':pct(lap[face],80),'L_gradient_p80':pct(grad[face],80)})
+        hsv=cv2.cvtColor(n_rgb,cv2.COLOR_RGB2HSV); V=hsv[:,:,2]; S=hsv[:,:,1]; p90=np.percentile(V[face],90); p99=np.percentile(V[face],99)
+        row['soft_highlight_fraction']=float(np.mean((V>=p90)&(S<=75)&face)); row['harsh_highlight_fraction']=float(np.mean((V>=p99)&(S<=60)&face))
+        extra=call(metricsfn, {'image':n_rgb,'normalized':n_rgb,'mask':face,'skin_mask':face,'region_masks':rm,'regions':rm,'points':npts,'landmarks':npts})
+        if isinstance(extra,dict):
+            row['sebum_excess_oil_gloss']=extra.get('sebum_excess_oil_gloss')
+            row['skin_tone_radiance_evenness']=extra.get('skin_tone_radiance_evenness')
+        else:
+            row['existing_metrics']=extra
+    except Exception as e:
+        row={'filename':path.replace('\\','/'),'error':str(e)}
+    print(json.dumps(row,separators=(',',':'),default=lambda x: float(x) if isinstance(x,np.floating) else x))
+mesh.close()
+'@ | python -
+--- ID 33 ---
+@'
+import glob, json, os
+import cv2
+import mediapipe as mp
+import numpy as np
+import main
+
+paths = []
+paths.extend(sorted(glob.glob('test_fixtures/metric_regression/*')))
+paths.extend(sorted(glob.glob('calibration_stock_batch/*.jpg')))
+paths = list(dict.fromkeys(p for p in paths if os.path.isfile(p)))
+
+mesh = mp.solutions.face_mesh.FaceMesh(
+    static_image_mode=True,
+    max_num_faces=1,
+    refine_landmarks=True,
+    min_detection_confidence=0.5,
+)
+
+def pct(values, q):
+    return float(np.percentile(values, q)) if values.size else None
+
+def clean(value):
+    if isinstance(value, dict):
+        return {k: clean(v) for k, v in value.items()}
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        return float(value)
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    return value
+
+try:
+    for path in paths:
+        row = {'filename': path.replace('\\', '/')}
+        try:
+            encoded = np.fromfile(path, dtype=np.uint8)
+            bgr = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+            if bgr is None:
+                raise ValueError('image decode failed')
+
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            result = mesh.process(rgb)
+            if not result.multi_face_landmarks:
+                raise ValueError('no face landmarks')
+            face_landmarks = result.multi_face_landmarks[0]
+            points = main._landmarks_to_points(face_landmarks, bgr.shape[1], bgr.shape[0])
+            aligned, aligned_points = main._align_and_crop_face(bgr, points)
+            norm = main.normalize_lighting_and_shadows(aligned)
+            mask = main._skin_mask(norm)
+
+            norm_result = mesh.process(cv2.cvtColor(norm, cv2.COLOR_BGR2RGB))
+            if not norm_result.multi_face_landmarks:
+                raise ValueError('no normalized-image landmarks')
+            norm_landmarks = norm_result.multi_face_landmarks[0]
+            norm_points = main._landmarks_to_points(norm_landmarks, norm.shape[1], norm.shape[0])
+            regions = main._region_masks(norm.shape[:2], mask, norm_points)
+            _, full_face_mask = main._build_pore_roi_masks(norm.shape[:2], norm_points, norm, mask)
+            if full_face_mask is None or not np.any(full_face_mask):
+                full_face_mask = mask
+            face = np.asarray(full_face_mask) > 0
+            if face.shape != norm.shape[:2] or not np.any(face):
+                raise ValueError('empty or invalid full-face mask')
+
+            lab = cv2.cvtColor(norm, cv2.COLOR_BGR2LAB)
+            L = lab[:, :, 0].astype(np.float32)
+            face_L = L[face]
+            row.update({
+                'face_pixels': int(face.sum()),
+                'L_mean': float(face_L.mean()),
+                'L_std': float(face_L.std()),
+                'L_p10': pct(face_L, 10),
+                'L_p50': pct(face_L, 50),
+                'L_p90': pct(face_L, 90),
+                'L_p95': pct(face_L, 95),
+            })
+
+            blurred = cv2.GaussianBlur(L, (0, 0), 1.4)
+            local_variance_sqrt = np.sqrt(np.maximum(
+                cv2.GaussianBlur(L * L, (0, 0), 1.4) - blurred * blurred, 0
+            ))
+            laplacian_abs = np.abs(cv2.Laplacian(L, cv2.CV_32F))
+            gx = cv2.Sobel(L, cv2.CV_32F, 1, 0, ksize=3)
+            gy = cv2.Sobel(L, cv2.CV_32F, 0, 1, ksize=3)
+            gradient = cv2.magnitude(gx, gy)
+            row.update({
+                'local_L_variance_sqrt_p80': pct(local_variance_sqrt[face], 80),
+                'L_laplacian_abs_p80': pct(laplacian_abs[face], 80),
+                'L_gradient_p80': pct(gradient[face], 80),
+            })
+
+            hsv = cv2.cvtColor(norm, cv2.COLOR_BGR2HSV)
+            V = hsv[:, :, 2]
+            S = hsv[:, :, 1]
+            face_V = V[face]
+            face_p90 = np.percentile(face_V, 90)
+            face_p99 = np.percentile(face_V, 99)
+            row['soft_highlight_fraction'] = float(np.mean((V[face] >= face_p90) & (S[face] <= 75)))
+            row['harsh_highlight_fraction'] = float(np.mean((V[face] >= face_p99) & (S[face] <= 60)))
+
+            extra = main._compute_additional_opencv_metrics(norm, mask, regions, norm_points)
+            if isinstance(extra, dict):
+                row['sebum_excess_oil_gloss'] = clean(extra.get('sebum_excess_oil_gloss'))
+                row['skin_tone_radiance_evenness'] = clean(extra.get('skin_tone_radiance_evenness'))
+            else:
+                row['additional_metrics'] = clean(extra)
+        except Exception as exc:
+            row = {'filename': path.replace('\\', '/'), 'error': str(exc)}
+        print(json.dumps(clean(row), separators=(',', ':')))
+finally:
+    mesh.close()
+'@ | python -
+--- ID 34 ---
+@'
+import glob, json, os, csv, sys
+import cv2
+import mediapipe as mp
+import numpy as np
+import main
+
+files = []
+files.extend(sorted(glob.glob('test_fixtures/metric_regression/*')))
+files.extend(sorted(glob.glob('calibration_stock_batch/*.jpg')))
+files = list(dict.fromkeys(p for p in files if os.path.isfile(p)))
+cols = ['file','status','face_px','L_mean','L_std','L_p10','L_p50','L_p90','L_p95','localL_sqrtvar_p80','lapL_p80','gradL_p80','soft_highlight_pct','harsh_highlight_pct','sebum_pct','radiance_score']
+numcols = cols[2:]
+rows = []
+
+def scalar(value, preferred=()):
+    if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, dict):
+        for k in preferred:
+            if k in value:
+                x = scalar(value[k], preferred)
+                if x is not None: return x
+        for k, v in value.items():
+            if str(k).lower() in {'percent','percentage','pct','score','value','mean'}:
+                x = scalar(v, preferred)
+                if x is not None: return x
+    return None
+
+def fmt(v):
+    if v is None: return ''
+    if isinstance(v, (int, np.integer)): return str(int(v))
+    return ('%.6f' % float(v)).rstrip('0').rstrip('.')
+
+mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.5)
+try:
+    for path in files:
+        r = {'file': path.replace('\\','/'), 'status': 'ok'}
+        try:
+            bgr = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if bgr is None: raise ValueError('image decode failed')
+            result = mesh.process(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+            if not result.multi_face_landmarks: raise ValueError('no face landmarks')
+            pts = main._landmarks_to_points(result.multi_face_landmarks[0], bgr.shape[1], bgr.shape[0])
+            aligned, _ = main._align_and_crop_face(bgr, pts)
+            norm = main.normalize_lighting_and_shadows(aligned)
+            mask = main._skin_mask(norm)
+            nr = mesh.process(cv2.cvtColor(norm, cv2.COLOR_BGR2RGB))
+            if not nr.multi_face_landmarks: raise ValueError('no normalized-image landmarks')
+            npts = main._landmarks_to_points(nr.multi_face_landmarks[0], norm.shape[1], norm.shape[0])
+            regions = main._region_masks(norm.shape[:2], mask, npts)
+            _, fmask = main._build_pore_roi_masks(norm.shape[:2], npts, norm, mask)
+            if fmask is None or not np.any(fmask): fmask = mask
+            face = np.asarray(fmask) > 0
+            if face.shape != norm.shape[:2] or not np.any(face): raise ValueError('empty or invalid full-face mask')
+            lab = cv2.cvtColor(norm, cv2.COLOR_BGR2LAB); L = lab[:,:,0].astype(np.float32); fl = L[face]
+            r.update(face_px=int(face.sum()), L_mean=float(fl.mean()), L_std=float(fl.std()), L_p10=float(np.percentile(fl,10)), L_p50=float(np.percentile(fl,50)), L_p90=float(np.percentile(fl,90)), L_p95=float(np.percentile(fl,95)))
+            blur = cv2.GaussianBlur(L,(0,0),1.4)
+            var = np.sqrt(np.maximum(cv2.GaussianBlur(L*L,(0,0),1.4)-blur*blur,0))
+            lap = np.abs(cv2.Laplacian(L,cv2.CV_32F)); gx=cv2.Sobel(L,cv2.CV_32F,1,0,ksize=3); gy=cv2.Sobel(L,cv2.CV_32F,0,1,ksize=3); grad=cv2.magnitude(gx,gy)
+            r.update(localL_sqrtvar_p80=float(np.percentile(var[face],80)), lapL_p80=float(np.percentile(lap[face],80)), gradL_p80=float(np.percentile(grad[face],80)))
+            hsv=cv2.cvtColor(norm,cv2.COLOR_BGR2HSV); V=hsv[:,:,2]; S=hsv[:,:,1]; fv=V[face]; p90=np.percentile(fv,90); p99=np.percentile(fv,99)
+            r.update(soft_highlight_pct=float(100*np.mean((fv>=p90)&(S[face]<=75))), harsh_highlight_pct=float(100*np.mean((fv>=p99)&(S[face]<=60))))
+            extra=main._compute_additional_opencv_metrics(norm,mask,regions,npts)
+            sebum=extra.get('sebum_excess_oil_gloss') if isinstance(extra,dict) else None
+            radiance=extra.get('skin_tone_radiance_evenness') if isinstance(extra,dict) else None
+            r['sebum_pct']=scalar(sebum, ('percent','percentage','pct','value','score'))
+            r['radiance_score']=scalar(radiance, ('score','value','mean'))
+        except Exception as e:
+            r={'file':path.replace('\\','/'),'status':'error','error':str(e)}
+        rows.append(r)
+finally:
+    mesh.close()
+
+w=csv.writer(sys.stdout, lineterminator='\n')
+w.writerow(cols)
+for r in rows: w.writerow([r.get(c,'') if c not in numcols else fmt(r.get(c)) for c in cols])
+print('')
+print('aggregate,signal,min,median,max')
+for c in numcols:
+    a=np.array([float(r[c]) for r in rows if r.get('status')=='ok' and r.get(c) is not None],dtype=float)
+    if a.size: print('aggregate,%s,%s,%s,%s' % (c,fmt(np.min(a)),fmt(np.median(a)),fmt(np.max(a))))
+print('')
+print('errors/no-face,file,detail')
+for r in rows:
+    if r.get('status')!='ok': print('error,%s,%s' % (r['file'],r.get('error','')))
+'@ | python -
+--- ID 35 ---
+Get-ChildItem -Recurse -File | Select-String -Pattern 'hydration_raw|raw hydration|hydration.*diagnostic|hydration' | Select-Object -First 100 Path,LineNumber,Line
+--- ID 36 ---
+Get-ChildItem -File | Select-Object Name; Get-ChildItem -File -Filter '*.py' | ForEach-Object { Select-String -Path $_.FullName -Pattern 'hydration|raw|diagnostic' -SimpleMatch } | Select-Object Path,LineNumber,Line
+--- ID 37 ---
+Get-ChildItem -File -Filter '*.py' | ForEach-Object { Select-String -Path $_.FullName -Pattern 'hydration|raw hydration|hydration_raw|diagnostic' } | Select-Object Path,LineNumber,Line | Format-Table -AutoSize
+--- ID 38 ---
+Select-String -Path main.py -Pattern 'hydration|raw|diagnostic' -Context 5,8; Select-String -Path test_canonical_metric_producer_registry.py -Pattern 'hydration|raw|diagnostic' -Context 5,8
+--- ID 39 ---
+$m = Select-String -Path main.py -Pattern 'hydration'; $m | ForEach-Object { $n=$_.LineNumber; Get-Content main.py | Select-Object -Skip ($n-4) -First 12 | ForEach-Object { '{0}: {1}' -f $n++, $_ } }; Write-Output '--- test references ---'; Select-String -Path test_canonical_metric_producer_registry.py -Pattern 'hydration' -Context 3,6
+--- ID 40 ---
+Get-History | Select-Object -Last 30 Id,CommandLine; Get-ChildItem -File -Filter '*.py' | Sort-Object LastWriteTime -Descending | Select-Object Name,LastWriteTime
+--- ID 41 ---
+Get-History | Where-Object Id -ge 27 | Format-List -Property Id,CommandLine
+--- ID 42 ---
+$h=Get-History | Where-Object Id -ge 27; $h | ForEach-Object { Write-Output ("--- ID {0} ---" -f $_.Id); $_.CommandLine }

@@ -2,14 +2,14 @@
 for main.py's metric scoring engine.
 
 Background: an audit (2026-09-21) found that _compute_zone_based_metrics
-independently recomputes localized_redness, pore_visibility,
-sebum_excess_oil_gloss, diffuse_flushing_erythema, pore_visibility_detected,
-and a legacy-misnamed glabellar_11_lines_depth, none of which are ever read
-by candidate_values in analyze_skin_patch - they are dead, silently shadowed
-by a different producer function. A near-identical pattern exists at the
-top level with calibrated_redness_score / calibrated_smoothness_score /
-acne_activity_score / raw_pore_density, which duplicate canonical metrics
-with an entirely separate, ungated formula.
+contained five computations that were shadowed by canonical producers:
+pore_visibility, pore_visibility_detected, sebum_excess_oil_gloss,
+diffuse_flushing_erythema, and the legacy-misnamed glabellar_11_lines_depth.
+Re-checking found that localized_redness is still read by the live baseline
+compatibility path, so it remains intentionally retained. A separate
+top-level set of calibrated_redness_score /
+calibrated_smoothness_score / acne_activity_score / raw_pore_density remains
+for the documented baseline-alias compatibility path for old scans.
 
 This test does not re-run the pipeline; it statically inspects the
 candidate_values dict literal in main.py's source so any change to which
@@ -56,11 +56,10 @@ CANONICAL_METRIC_ORDER = list(EXPECTED_PRODUCERS) + sorted(KNOWN_UNPRODUCED_METR
 # zone_metrics keys that are computed but must never appear as a
 # candidate_values source - if one of these starts being read, a dead
 # computation has silently become a second producer.
-ZONE_METRICS_DEAD_KEYS = {
+ZONE_METRICS_DISCARDED_KEYS = {
     "sebum_excess_oil_gloss",
     "pore_visibility",
     "pore_visibility_detected",
-    "localized_redness",
     "diffuse_flushing_erythema",
     "glabellar_11_lines_depth",
 }
@@ -146,22 +145,45 @@ def test_every_canonical_metric_has_exactly_one_documented_producer():
     )
 
 
-def test_zone_metrics_dead_keys_are_never_read_as_a_candidate_values_source():
+def test_zone_metrics_return_only_live_keys_and_discarded_keys_are_not_read():
     source = _read_main_source()
     block = _extract_candidate_values_block(source)
     actual_producers = _extract_producer_mapping(block)
 
     for metric, source_dict in actual_producers.items():
-        if source_dict != "zone_metrics":
-            continue
-        assert metric not in ZONE_METRICS_DEAD_KEYS, (
-            f"{metric} is read from zone_metrics in candidate_values, but is "
-            "documented as one of zone_metrics's dead/shadowed keys. Either "
-            "this key has been intentionally revived as a real producer (in "
-            "which case remove it from ZONE_METRICS_DEAD_KEYS and update the "
-            "comment at _compute_zone_based_metrics's return statement), or "
-            "this is a regression reintroducing a competing producer."
-        )
+        if source_dict == "zone_metrics":
+            assert metric not in ZONE_METRICS_DISCARDED_KEYS, (
+                f"{metric} is read from zone_metrics in candidate_values, but "
+                "was explicitly discarded as a shadowed producer."
+            )
+
+    function_match = re.search(
+        r"def _compute_zone_based_metrics\(.*?\n\ndef _compute_additional_opencv_metrics",
+        source,
+        re.DOTALL,
+    )
+    assert function_match is not None
+    zone_function = function_match.group(0)
+    return_keys = set(re.findall(r'\n\s+"([a-z_]+)":', zone_function))
+    assert return_keys == {
+        "localized_redness",
+        "rosacea_severity",
+        "under_eye_texture_density",
+        "under_eye_dark_circle_density",
+    }
+
+    analyze_match = re.search(
+        r"def analyze_skin_patch\(.*",
+        source,
+        re.DOTALL,
+    )
+    assert analyze_match is not None
+    analyze_source = analyze_match.group(0)
+    for metric in ZONE_METRICS_DISCARDED_KEYS:
+        assert not re.search(
+            rf"zone_metrics\s*(?:\.get\(\s*|\[\s*)[\"']{metric}[\"']",
+            analyze_source,
+        ), f"analyze_skin_patch still reads discarded zone key {metric!r}."
 
 
 def test_legacy_top_level_fields_are_not_wired_into_candidate_values():

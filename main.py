@@ -2176,106 +2176,21 @@ def _compute_zone_based_metrics(
     baseline_matrix: Dict[str, Any] | None = None,
     roi_cache: _RequestRoiCache | None = None,
 ) -> Dict[str, Any]:
-    # PRODUCER AUDIT (see CANONICAL_METRIC_ORDER registry below): of the 9 keys
-    # this function returns, only rosacea_severity, under_eye_texture_density,
-    # and under_eye_dark_circle_density actually reach candidate_values in
-    # analyze_skin_patch. sebum_excess_oil_gloss, pore_visibility,
-    # pore_visibility_detected, localized_redness, diffuse_flushing_erythema,
-    # and glabellar_11_lines_depth are computed here but are always shadowed
-    # by a different producer function and never read by any consumer -
-    # they are DEAD, not alternate/fallback paths. Kept only because their
-    # mask/ROI computations (t_zone, face_skin_mask) are shared with the live
-    # fields above; do not treat their presence in this return dict as a
-    # second source of truth for those metrics.
+    # PRODUCER AUDIT (see CANONICAL_METRIC_ORDER registry below): this helper
+    # returns only the three zone metrics consumed by analyze_skin_patch.
     h, w = face_bgr.shape[:2]
     if h == 0 or w == 0:
         return {
-            "sebum_excess_oil_gloss": 0.0,
-            "pore_visibility": None,
-            "pore_visibility_detected": False,
-            "localized_redness": 0.0,
-            "diffuse_flushing_erythema": 0.0,
             "rosacea_severity": 0.0,
-            "glabellar_11_lines_depth": 0.0,
             "under_eye_texture_density": 0.0,
             "under_eye_dark_circle_density": 0.0,
         }
 
-    hsv = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2HSV)
     lab = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2LAB)
     gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
     lap_abs = np.abs(cv2.Laplacian(gray, cv2.CV_32F, ksize=3))
 
     skin_mask = _as_binary_mask(skin_mask, (h, w))
-    if roi_cache is not None:
-        _, face_skin_mask = roi_cache.get_pore_mask((h, w), points, face_bgr, skin_mask)
-    else:
-        _, face_skin_mask = _build_pore_roi_masks((h, w), points, face_bgr, skin_mask)
-    if cv2.countNonZero(face_skin_mask) <= 0:
-        face_skin_mask = skin_mask.copy()
-
-    forehead = _as_binary_mask(
-        regions.get("forehead", np.zeros((h, w), dtype=np.uint8)),
-        (h, w),
-    )
-    nose_polygon = _nose_region_mask((h, w), points, skin_mask, apply_skin_mask=False)
-    t_zone_polygon = cv2.bitwise_or(forehead, nose_polygon)
-    t_zone_before_fix = cv2.bitwise_and(t_zone_polygon, skin_mask)
-    tzone_raw_pixels = int(cv2.countNonZero(t_zone_polygon))
-    tzone_skin_pixels_before = int(cv2.countNonZero(t_zone_before_fix))
-    if roi_cache is not None:
-        t_zone, tzone_meta = roi_cache.get_tzone_mask(
-            (h, w),
-            points,
-            forehead,
-            skin_mask,
-            face_skin_mask,
-        )
-    else:
-        t_zone, tzone_meta = _build_tzone_roi(
-            (h, w),
-            points,
-            forehead,
-            skin_mask,
-            face_skin_mask,
-        )
-    tzone_skin_pixels = int(tzone_meta["after_skin_pixels"])
-    logger.info(
-        "[TZoneFix] before_fix tzone_raw=%d skin_intersect=%d",
-        tzone_raw_pixels,
-        tzone_skin_pixels_before,
-    )
-    logger.info(
-        "[TZoneFix] after_fix tzone_raw=%d skin_intersect=%d",
-        tzone_raw_pixels,
-        tzone_skin_pixels,
-    )
-    pore_t_zone_pixels = int(cv2.countNonZero(t_zone))
-
-    # T-zone: oil gloss + pore visibility.
-    sat = hsv[:, :, 1]
-    val = hsv[:, :, 2]
-    sebum_zone = t_zone if pore_t_zone_pixels > 0 else skin_mask.copy()
-    t_zone_pixels = sebum_zone > 0
-    v_threshold = float(np.percentile(val[t_zone_pixels], 94)) if np.any(t_zone_pixels) else 225.0
-    specular = np.logical_and.reduce([t_zone_pixels, val >= max(220.0, v_threshold), sat <= 75])
-    sebum_excess_oil_gloss = float(np.clip(np.mean(specular) * 100.0, 0.0, 100.0))
-
-    pore_visibility = None
-    pore_visibility_detected = False
-    if pore_t_zone_pixels > 0:
-        t_lap = lap_abs[t_zone > 0]
-        if t_lap.size > 0:
-            pore_spread = float(np.std(t_lap))
-            pore_confidence = _pore_signal_conf(
-                pore_t_zone_pixels,
-                pore_spread,
-            )
-            if pore_confidence != "low":
-                pore_signal = float(np.percentile(t_lap, 90))
-                pore_visibility = round(float(np.clip(pore_signal / 2.35, 0.0, 100.0)), 1)
-                pore_visibility_detected = True
-
     # U-zone: cheeks for redness / diffuse flushing / rosacea indicators.
     left_cheek = regions.get("left_cheek", np.zeros((h, w), dtype=np.uint8))
     right_cheek = regions.get("right_cheek", np.zeros((h, w), dtype=np.uint8))
@@ -2290,11 +2205,11 @@ def _compute_zone_based_metrics(
         median_a = 128.0
         p95_a = 128.0
 
-    personal_lab_baseline = _coalesce_personal_lab_baseline(baseline_matrix or {})
-    baseline_a_p95 = safe_float(personal_lab_baseline.get("a_p95"))
     diffuse_threshold = max(138.0, median_a + 5.0)
     diffuse_mask = np.logical_and(u_zone_pixels, a_blur >= diffuse_threshold)
     diffuse_density = float(np.clip(np.mean(diffuse_mask) * 100.0, 0.0, 100.0))
+    personal_lab_baseline = _coalesce_personal_lab_baseline(baseline_matrix or {})
+    baseline_a_p95 = safe_float(personal_lab_baseline.get("a_p95"))
     if baseline_a_p95 is not None:
         baseline_score = safe_float((baseline_matrix or {}).get("localized_redness")) or 0.0
         _redness_result = compute_localized_redness_and_rosacea(
@@ -2396,18 +2311,8 @@ def _compute_zone_based_metrics(
         under_eye_dark_circle_density = 0.0
 
     return {
-        # DEAD: shadowed by canonical_metric_matrix (additional_metrics for
-        # sebum). See _compute_zone_based_metrics's header comment.
-        "sebum_excess_oil_gloss": round(sebum_excess_oil_gloss, 1),
-        "pore_visibility": pore_visibility,
-        "pore_visibility_detected": pore_visibility_detected,
         "localized_redness": round(localized_redness, 1),
-        "diffuse_flushing_erythema": round(diffuse_flushing_erythema, 1),
-        # LIVE: sole producer for rosacea_severity.
         "rosacea_severity": round(rosacea_severity, 1),
-        # DEAD: legacy key name, never matches canonical "glabellar_wrinkle_depth".
-        "glabellar_11_lines_depth": round(glabellar_11_lines_depth, 1),
-        # LIVE: sole producer for these two under-eye metrics.
         "under_eye_texture_density": round(under_eye_texture_density, 1),
         "under_eye_dark_circle_density": round(under_eye_dark_circle_density, 1),
     }
@@ -2438,12 +2343,10 @@ def _compute_additional_opencv_metrics(
     hsv = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2HSV)
     lab = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2LAB)
     gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
-
     hue = hsv[:, :, 0]
     sat = hsv[:, :, 1]
     val = hsv[:, :, 2]
 
-    # 1) Sebum / Excess Oil Gloss (defect)
     skin_mask = _as_binary_mask(skin_mask, (h, w))
     if roi_cache is not None:
         _, face_skin_mask = roi_cache.get_pore_mask((h, w), points, face_bgr, skin_mask)
@@ -2453,21 +2356,9 @@ def _compute_additional_opencv_metrics(
         face_skin_mask = skin_mask.copy()
     forehead = _as_binary_mask(regions.get("forehead", np.zeros((h, w), dtype=np.uint8)), (h, w))
     if roi_cache is not None:
-        t_zone, _ = roi_cache.get_tzone_mask(
-            (h, w),
-            points,
-            forehead,
-            skin_mask,
-            face_skin_mask,
-        )
+        t_zone, _ = roi_cache.get_tzone_mask((h, w), points, forehead, skin_mask, face_skin_mask)
     else:
-        t_zone, _ = _build_tzone_roi(
-            (h, w),
-            points,
-            forehead,
-            skin_mask,
-            face_skin_mask,
-        )
+        t_zone, _ = _build_tzone_roi((h, w), points, forehead, skin_mask, face_skin_mask)
     nose = _nose_region_mask((h, w), points, skin_mask)
     if cv2.countNonZero(t_zone) == 0:
         t_zone = face_skin_mask
@@ -2476,44 +2367,30 @@ def _compute_additional_opencv_metrics(
     v_threshold = 220.0
     if t_zone_pixels.size > 0:
         v_threshold = max(220.0, float(np.percentile(t_zone_pixels, 95)))
-
-    specular_mask = np.logical_and.reduce(
-        [
-            t_zone > 0,
-            val >= v_threshold,
-            sat <= 70,
-        ]
-    ).astype(np.uint8) * 255
+    specular_mask = np.logical_and.reduce([t_zone > 0, val >= v_threshold, sat <= 70]).astype(np.uint8) * 255
     small_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     specular_mask = cv2.morphologyEx(specular_mask, cv2.MORPH_OPEN, small_kernel)
     specular_mask = cv2.morphologyEx(specular_mask, cv2.MORPH_CLOSE, small_kernel)
     sebum_gloss_pct = (float(cv2.countNonZero(specular_mask)) / max(float(cv2.countNonZero(t_zone)), 1.0)) * 100.0
 
-    # 2) Diffuse Flushing / Erythema (defect)
     left_cheek = regions.get("left_cheek", np.zeros((h, w), dtype=np.uint8))
     right_cheek = regions.get("right_cheek", np.zeros((h, w), dtype=np.uint8))
     flush_roi = cv2.bitwise_or(cv2.bitwise_or(left_cheek, right_cheek), nose)
     flush_roi = cv2.bitwise_and(flush_roi, face_skin_mask)
     flush_area = max(int(cv2.countNonZero(flush_roi)), 1)
-
     a_channel = lab[:, :, 1].astype(np.float32)
     a_blur = cv2.GaussianBlur(a_channel, (0, 0), sigmaX=3.0)
     roi_values = a_blur[flush_roi > 0]
     median_a = float(np.percentile(roi_values, 50)) if roi_values.size > 0 else 128.0
     red_threshold = max(138.0, median_a + 6.0)
-
     red_binary = np.logical_and(flush_roi > 0, a_blur >= red_threshold).astype(np.uint8)
     red_binary = cv2.morphologyEx(red_binary * 255, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
-
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats((red_binary > 0).astype(np.uint8), connectivity=8)
     diffuse_mask = np.zeros((h, w), dtype=np.uint8)
     min_component_area = max(20, int(flush_area * 0.0025))
     for label_id in range(1, num_labels):
-        area = int(stats[label_id, cv2.CC_STAT_AREA])
-        if area < min_component_area:
-            continue
-        diffuse_mask[labels == label_id] = 255
-
+        if int(stats[label_id, cv2.CC_STAT_AREA]) >= min_component_area:
+            diffuse_mask[labels == label_id] = 255
     diffuse_density = (float(cv2.countNonZero(diffuse_mask)) / max(float(flush_area), 1.0)) * 100.0
     diffuse_pixels = a_blur[diffuse_mask > 0]
     if diffuse_pixels.size > 0:
@@ -2523,28 +2400,17 @@ def _compute_additional_opencv_metrics(
         diffuse_intensity = 0.0
     diffuse_flushing_score = (0.65 * diffuse_density) + (0.35 * diffuse_intensity)
 
-    # 3) Skin Tone Radiance & Evenness (benefit)
     healthy_skin = skin_mask > 0
-    red_lesion_like = np.logical_and.reduce(
-        [
-            healthy_skin,
-            np.logical_or(hue <= 12, hue >= 170),
-            sat >= 90,
-            val >= 60,
-        ]
-    )
+    red_lesion_like = np.logical_and.reduce([healthy_skin, np.logical_or(hue <= 12, hue >= 170), sat >= 90, val >= 60])
     lap_abs = np.abs(cv2.Laplacian(gray, cv2.CV_32F, ksize=3))
     healthy_lap = lap_abs[healthy_skin]
     texture_threshold = float(np.percentile(healthy_lap, 90)) if healthy_lap.size > 0 else 9999.0
     high_texture = np.logical_and(healthy_skin, lap_abs >= texture_threshold)
-    specular_bool = specular_mask > 0
-
     refined_healthy = np.logical_and(healthy_skin, ~red_lesion_like)
     refined_healthy = np.logical_and(refined_healthy, ~high_texture)
-    refined_healthy = np.logical_and(refined_healthy, ~specular_bool)
+    refined_healthy = np.logical_and(refined_healthy, ~(specular_mask > 0))
     if int(np.count_nonzero(refined_healthy)) < max(250, int(skin_area * 0.08)):
         refined_healthy = healthy_skin
-
     l_channel = lab[:, :, 0].astype(np.float32)
     b_channel = lab[:, :, 2].astype(np.float32)
     l_std = float(np.std(l_channel[refined_healthy])) if np.count_nonzero(refined_healthy) > 0 else 0.0
@@ -2552,7 +2418,6 @@ def _compute_additional_opencv_metrics(
     b_std = float(np.std(b_channel[refined_healthy])) if np.count_nonzero(refined_healthy) > 0 else 0.0
     composite_variance = (0.50 * l_std) + (0.30 * a_std) + (0.20 * b_std)
     radiance_evenness_score = 100.0 * math.exp(-composite_variance / 24.0)
-
     return {
         "sebum_excess_oil_gloss": round(float(np.clip(sebum_gloss_pct, 0.0, 100.0)), 1),
         "diffuse_flushing_erythema": round(float(np.clip(diffuse_flushing_score, 0.0, 100.0)), 1),
@@ -3582,11 +3447,9 @@ CANONICAL_METRIC_ORDER = [
     #   skin_hydration                 -> NO PRODUCER (declared canonical, never computed;
     #                                      always omitted as "non_usable_value" - known gap,
     #                                      not a competing-producer issue)
-    # zone_metrics ALSO computes sebum_excess_oil_gloss, pore_visibility,
-    # pore_visibility_detected, localized_redness, diffuse_flushing_erythema,
-    # and glabellar_11_lines_depth, but none of those are read by
-    # candidate_values - they are dead/shadowed, not alternate producers.
-    # See the comments at _compute_zone_based_metrics's return statement.
+    # zone_metrics retains localized_redness for the live baseline-alias
+    # compatibility path; the other former dead/shadowed calculations were
+    # removed after the producer audit. See _compute_zone_based_metrics.
     "localized_redness",
     "texture_smoothness",
     "pigment_load",
@@ -5166,13 +5029,8 @@ def analyze_skin_patch(
             exc,
         )
         zone_metrics = {
-            "sebum_excess_oil_gloss": 0.0,
-            "pore_visibility": None,
-            "pore_visibility_detected": False,
             "localized_redness": 0.0,
-            "diffuse_flushing_erythema": 0.0,
             "rosacea_severity": 0.0,
-            "glabellar_11_lines_depth": 0.0,
             "under_eye_texture_density": 0.0,
             "under_eye_dark_circle_density": 0.0,
         }
@@ -5275,7 +5133,6 @@ def analyze_skin_patch(
             float(np.clip(zone_redness, 0.0, 100.0)),
             1,
         )
-
     # Confidence-aware gating using ROI support, landmark robustness, and signal sparsity.
     skin_ratio = float(cv2.countNonZero(mask)) / max(float(mask.size), 1.0)
     global_conf_downgrade = 0
@@ -6018,7 +5875,10 @@ def analyze_skin_patch(
             personal_lab_baseline,
         )
         if baseline_redness > 0.0:
-            zone_metrics["localized_redness"] = round(float(np.clip(baseline_redness, 0.0, 100.0)), 1)
+            zone_metrics["localized_redness"] = round(
+                float(np.clip(baseline_redness, 0.0, 100.0)),
+                1,
+            )
     metric_extraction_paths = _compute_metric_extraction_paths(
         metric_status,
         raw_components,
