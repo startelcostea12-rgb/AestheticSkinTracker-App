@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "purpose": "Directional sanity gate only; these repository photos are not SCIN-labeled held-out data.",
+  "heads": {
+    "rough_flaky": {
+      "negative_labels": ["visually_clean_reference"],
+      "positive_labels": ["visually_severe_inflammatory_reference"]
+    },
+    "dermatitis": {
+      "negative_labels": ["visually_clean_reference"],
+      "positive_labels": ["visually_severe_inflammatory_reference"]
+    }
+  },
+  "cases": [
+    {
+      "photo": "test_fixtures/metric_regression/clear_face.jfif",
+      "labels": {
+        "rough_flaky": "visually_clean_reference",
+        "dermatitis": "visually_clean_reference"
+      }
+    },
+    {
+      "photo": "test_fixtures/metric_regression/st1.jpg",
+      "labels": {
+        "rough_flaky": "visually_severe_inflammatory_reference",
+        "dermatitis": "visually_severe_inflammatory_reference"
+      }
+    }
+  ],
+  "training_rows": [
+    {
+      "photo": "test_fixtures/metric_regression/clear_face.jfif",
+      "labels": {
+        "rough_flaky": "visually_clean_reference",
+        "dermatitis": "visually_clean_reference"
+      }
+    },
+    {
+      "photo": "test_fixtures/metric_regression/st1.jpg",
+      "labels": {
+        "rough_flaky": "visually_severe_inflammatory_reference",
+        "dermatitis": "visually_severe_inflammatory_reference"
+      }
+    }
+  ],
+  "validation_rows": [
+    {
+      "photo": "test_fixtures/metric_regression/clear_face.jfif",
+      "labels": {
+        "rough_flaky": "visually_clean_reference",
+        "dermatitis": "visually_clean_reference"
+      }
+    },
+    {
+      "photo": "test_fixtures/metric_regression/st1.jpg",
+      "labels": {
+        "rough_flaky": "visually_severe_inflammatory_reference",
+        "dermatitis": "visually_severe_inflammatory_reference"
+      }
+    }
+  ]
+}

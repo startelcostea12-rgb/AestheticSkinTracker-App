@@ -20,6 +20,8 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 import google.genai as genai
 
+from scin_experimental_models import ScinExperimentalModels
+
 try:
     import mediapipe as mp
 except Exception:
@@ -80,6 +82,7 @@ _FACE_MESH = None
 _FACE_LANDMARKER = None
 _FACE_DETECTOR = None
 _YOLO = None
+_SCIN_EXPERIMENTAL_MODELS: ScinExperimentalModels | None = None
 _YUNET_FACE_DETECTOR_MODEL_PATH: str | None = None
 _BODY_POSE_LANDMARKER = None
 _BODY_SEGMENTATION_MODEL = None
@@ -439,7 +442,7 @@ def ensure_body_pipeline_ready() -> Dict[str, str]:
 
 
 def ensure_pipeline_ready() -> Dict[str, str]:
-    global _PIPELINE_READY, _PIPELINE_ERROR, _FACE_MESH, _FACE_LANDMARKER, _FACE_DETECTOR, _YOLO
+    global _PIPELINE_READY, _PIPELINE_ERROR, _FACE_MESH, _FACE_LANDMARKER, _FACE_DETECTOR, _YOLO, _SCIN_EXPERIMENTAL_MODELS
     with _PIPELINE_LOCK:
         if _PIPELINE_READY:
             return {"status": "ready"}
@@ -558,6 +561,15 @@ def ensure_pipeline_ready() -> Dict[str, str]:
 
             _YOLO = YOLO(yolo_path)
             logger.info("Loaded YOLO weights from: %s", yolo_path)
+            _SCIN_EXPERIMENTAL_MODELS = ScinExperimentalModels(PROJECT_ROOT)
+            _SCIN_EXPERIMENTAL_MODELS.load()
+            if _SCIN_EXPERIMENTAL_MODELS.available:
+                logger.info("Loaded experimental SCIN classifiers")
+            else:
+                logger.warning(
+                    "Experimental SCIN classifiers unavailable: %s",
+                    _SCIN_EXPERIMENTAL_MODELS.load_error,
+                )
             _PIPELINE_READY = True
             return {"status": "ready"}
         except RuntimeError:
@@ -6196,6 +6208,21 @@ def analyze_skin_patch(
         landmark_alignment_score=landmark_alignment_score,
     )
 
+    experimental_metrics = (
+        _SCIN_EXPERIMENTAL_MODELS.predict(norm)
+        if _SCIN_EXPERIMENTAL_MODELS is not None
+        else {}
+    )
+    experimental_model_metadata = (
+        _SCIN_EXPERIMENTAL_MODELS.metadata()
+        if _SCIN_EXPERIMENTAL_MODELS is not None
+        else {
+            "status": "unavailable",
+            "experimental": True,
+            "canonical": False,
+        }
+    )
+
     response_payload = {
         "calibrated_redness_score": normalized_top_level_metrics[
             "calibrated_redness_score"
@@ -6222,6 +6249,10 @@ def analyze_skin_patch(
         "fingerprint": fingerprint,
         "calibration": calibration,
         "metric_matrix": metric_matrix,
+        # EXPERIMENTAL ONLY: these probabilities never enter candidate_values,
+        # canonical metric_matrix, trends, polarity, or clinical scoring.
+        "experimental_metrics": experimental_metrics,
+        "experimental_model_metadata": experimental_model_metadata,
         "zone_analysis": zone_analysis,
         "trend_deltas": trend_deltas,
         "trend_status": trend_status,

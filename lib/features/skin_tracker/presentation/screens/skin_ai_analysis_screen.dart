@@ -3176,6 +3176,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               _resultsTopDisclaimer(),
               const SizedBox(height: 14),
               _resultHeroCard(r),
+              if (_experimentalScinCard() != null) ...[
+                const SizedBox(height: 14),
+                _experimentalScinCard()!,
+              ],
               if (_requestedAnalysisFrameCount > 1) ...[
                 const SizedBox(height: 14),
                 _multiFrameConfidenceCard(),
@@ -3254,6 +3258,79 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           ),
         ),
         if (!isFollowUpPhase) _firstScanActionDock(),
+      ],
+    );
+  }
+
+  Widget? _experimentalScinCard() {
+    final payload = _latestBackendAnalysisPayload;
+    if (payload == null) return null;
+    final metrics = _asDynamicMap(payload['experimental_metrics']) ?? const {};
+    if (metrics.isEmpty) return null;
+
+    String formatProbability(dynamic value) {
+      final numeric = value is num ? value.toDouble() : double.tryParse('$value');
+      return numeric == null ? 'Unavailable' : '${(numeric * 100).toStringAsFixed(0)}%';
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.science_outlined, size: 18, color: AppColors.champagneGold),
+              const SizedBox(width: 8),
+              Text(
+                'EXPERIMENTAL MODEL OUTPUT',
+                style: TextStyle(
+                  color: MyApp.textBrown.withValues(alpha: 0.72),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.1,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Research-only SCIN classifiers. These probabilities are not canonical skin metrics and do not affect scoring or recommendations.',
+            style: TextStyle(
+              color: MyApp.textBrown.withValues(alpha: 0.72),
+              fontSize: 11.5,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _experimentalScinRow(
+            'Rough / flaky pattern',
+            formatProbability(metrics['texture_ml_rough_flaky_experimental']),
+          ),
+          const SizedBox(height: 8),
+          _experimentalScinRow(
+            'Dermatitis-family pattern',
+            formatProbability(metrics['dermatitis_pattern_ml_experimental']),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _experimentalScinRow(String label, String value) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          ),
+        ),
+        Text(
+          value,
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+        ),
       ],
     );
   }
