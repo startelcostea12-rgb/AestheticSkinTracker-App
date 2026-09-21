@@ -38,7 +38,6 @@ import 'screens/professional_report_screen.dart';
 import 'screens/scar_healing_tracker_screen.dart';
 import 'screens/peptide_tracker_screen.dart';
 import 'screens/peptide_reconstitution_sheet.dart';
-import 'screens/peptide_tracker_dashboard_view.dart';
 import 'screens/photo_gallery_screen.dart';
 import 'screens/provider_notes_screen.dart';
 import 'screens/product_store_screen.dart';
@@ -317,8 +316,6 @@ class _AestheticSkinTrackerState extends State<AestheticSkinTracker> {
         return YearEndChallengeScreen(onChangeProcedure: () {});
       case '/peptide-tracker':
         return const PeptideTrackerScreen();
-      case '/peptide-dashboard':
-        return const PeptideTrackerDashboardView();
       case '/peptide-library':
         return const PeptideTrackerScreen(initialTab: 3);
       case '/peptide-reconstitution':

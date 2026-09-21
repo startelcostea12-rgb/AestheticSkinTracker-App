@@ -2,6 +2,62 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 
+// Injectable/subcutaneous reconstitution reference peptides (BPC-157,
+// TB-500, CJC-1295, etc.), distinct from the topical cosmetic-ingredient
+// library in models/peptide_model.dart (kPeptideLibrary) — different
+// audience, different schema (vial size/reconstitution/stability/dosage
+// vs. mechanism/evidence-level/clinical-note), largely non-overlapping
+// content. Kept as its own typed model rather than merged into
+// PeptideLibraryEntry.
+class ReconstitutionPeptideReference {
+  final String name;
+  final String category;
+  final bool featured;
+  final String vialSizes;
+  final String reconstitution;
+  final String stability;
+  final String dosage;
+  final String benefits;
+  final String notes;
+
+  const ReconstitutionPeptideReference({
+    required this.name,
+    required this.category,
+    required this.featured,
+    required this.vialSizes,
+    required this.reconstitution,
+    required this.stability,
+    required this.dosage,
+    required this.benefits,
+    required this.notes,
+  });
+
+  factory ReconstitutionPeptideReference.fromMap(Map<String, dynamic> map) {
+    return ReconstitutionPeptideReference(
+      name: map['name'] as String,
+      category: map['category'] as String,
+      featured: map['featured'] as bool? ?? false,
+      vialSizes: map['vialSizes'] as String,
+      reconstitution: map['reconstitution'] as String,
+      stability: map['stability'] as String,
+      dosage: map['dosage'] as String,
+      benefits: map['benefits'] as String,
+      notes: map['notes'] as String,
+    );
+  }
+
+  String get searchHaystack => [
+    name,
+    category,
+    vialSizes,
+    reconstitution,
+    stability,
+    dosage,
+    benefits,
+    notes,
+  ].join(' ').toLowerCase();
+}
+
 class PeptideReconstitutionSheet extends StatefulWidget {
   const PeptideReconstitutionSheet({super.key});
 
@@ -52,42 +108,31 @@ class _PeptideReconstitutionSheetState
     return vialMg / targetMgPerMl;
   }
 
-  List<Map<String, dynamic>> get _favoritePeptides {
+  List<ReconstitutionPeptideReference> get _favoritePeptides {
     return allPeptides
-        .where((peptide) => peptide['featured'] == true)
+        .where((peptide) => peptide.featured)
         .toList(growable: false);
   }
 
-  List<Map<String, dynamic>> get _recentPeptides {
+  List<ReconstitutionPeptideReference> get _recentPeptides {
     return _recentlyViewed
         .map(
           (name) => allPeptides.firstWhere(
-            (peptide) => peptide['name'] == name,
+            (peptide) => peptide.name == name,
           ),
         )
         .toList(growable: false);
   }
 
-  List<Map<String, dynamic>> get _filteredPeptides {
+  List<ReconstitutionPeptideReference> get _filteredPeptides {
     final query = _searchController.text.trim().toLowerCase();
     return allPeptides.where((peptide) {
-      final category = peptide['category'] as String;
       final categoryMatches =
-          _selectedCategory == _allCategory || category == _selectedCategory;
+          _selectedCategory == _allCategory || peptide.category == _selectedCategory;
       if (!categoryMatches) return false;
 
       if (query.isEmpty) return true;
-      final haystack = [
-        peptide['name'],
-        peptide['category'],
-        peptide['vialSizes'],
-        peptide['reconstitution'],
-        peptide['stability'],
-        peptide['dosage'],
-        peptide['benefits'],
-        peptide['notes'],
-      ].join(' ').toLowerCase();
-      return haystack.contains(query);
+      return peptide.searchHaystack.contains(query);
     }).toList(growable: false);
   }
 
@@ -203,7 +248,7 @@ class _PeptideReconstitutionSheetState
   }
 }
 
-const List<Map<String, dynamic>> allPeptides = <Map<String, dynamic>>[
+const List<Map<String, dynamic>> _rawPeptideReferenceData = <Map<String, dynamic>>[
   {
     'name': 'Acetyl Tetrapeptide-5 (Eyeseryl)',
     'category': 'Anti-aging',
@@ -662,6 +707,10 @@ const List<Map<String, dynamic>> allPeptides = <Map<String, dynamic>>[
   },
 ];
 
+final List<ReconstitutionPeptideReference> allPeptides = _rawPeptideReferenceData
+    .map(ReconstitutionPeptideReference.fromMap)
+    .toList(growable: false);
+
 class _HeroDisclaimerCard extends StatelessWidget {
   final double? resultMl;
 
@@ -859,7 +908,7 @@ class _CalculatorCard extends StatelessWidget {
 }
 
 class _FeaturedPeptideStrip extends StatelessWidget {
-  final List<Map<String, dynamic>> peptides;
+  final List<ReconstitutionPeptideReference> peptides;
   final ValueChanged<String> onTap;
   final bool compact;
 
@@ -887,7 +936,7 @@ class _FeaturedPeptideStrip extends StatelessWidget {
           return _FeaturedPeptideCard(
             peptide: peptide,
             compact: compact,
-            onTap: () => onTap(peptide['name'] as String),
+            onTap: () => onTap(peptide.name),
           );
         },
       ),
@@ -896,7 +945,7 @@ class _FeaturedPeptideStrip extends StatelessWidget {
 }
 
 class _FeaturedPeptideCard extends StatelessWidget {
-  final Map<String, dynamic> peptide;
+  final ReconstitutionPeptideReference peptide;
   final bool compact;
   final VoidCallback onTap;
 
@@ -942,10 +991,10 @@ class _FeaturedPeptideCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.max,
             children: [
-              _CategoryPill(label: peptide['category'] as String),
+              _CategoryPill(label: peptide.category),
               const SizedBox(height: 8),
               Text(
-                peptide['name'] as String,
+                peptide.name,
                 maxLines: nameLines,
                 overflow: TextOverflow.ellipsis,
                 style: MyApp.cardTitleStyle(),
@@ -955,7 +1004,7 @@ class _FeaturedPeptideCard extends StatelessWidget {
                 child: Align(
                   alignment: Alignment.topLeft,
                   child: Text(
-                    peptide['benefits'] as String,
+                    peptide.benefits,
                     maxLines: benefitsLines,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -974,7 +1023,7 @@ class _FeaturedPeptideCard extends StatelessWidget {
 }
 
 class _LibraryResultsSection extends StatelessWidget {
-  final List<Map<String, dynamic>> peptides;
+  final List<ReconstitutionPeptideReference> peptides;
   final double maxHeight;
   final String query;
   final String category;
@@ -1000,7 +1049,6 @@ class _LibraryResultsSection extends StatelessWidget {
         maxHeight: maxHeight,
       ),
       child: Scrollbar(
-        thumbVisibility: true,
         child: ListView.separated(
           physics: const ClampingScrollPhysics(),
           itemCount: peptides.length,
@@ -1009,7 +1057,7 @@ class _LibraryResultsSection extends StatelessWidget {
             final item = peptides[index];
             return _PeptideReferenceCard(
               reference: item,
-              onTap: () => onTap(item['name'] as String),
+              onTap: () => onTap(item.name),
             );
           },
         ),
@@ -1063,7 +1111,7 @@ class _CategoryChipRow extends StatelessWidget {
 }
 
 class _PeptideReferenceCard extends StatelessWidget {
-  final Map<String, dynamic> reference;
+  final ReconstitutionPeptideReference reference;
   final VoidCallback onTap;
 
   const _PeptideReferenceCard({
@@ -1092,42 +1140,42 @@ class _PeptideReferenceCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          reference['name'] as String,
+                          reference.name,
                           style: MyApp.cardTitleStyle(),
                         ),
                         const SizedBox(height: 8),
-                        _CategoryPill(label: reference['category'] as String),
+                        _CategoryPill(label: reference.category),
                       ],
                     ),
                   ),
                   const SizedBox(width: 12),
-                  _GoldBadge(label: reference['vialSizes'] as String),
+                  _GoldBadge(label: reference.vialSizes),
                 ],
               ),
               const SizedBox(height: 14),
               _InfoSection(
                 title: 'Reconstitution',
-                body: reference['reconstitution'] as String,
+                body: reference.reconstitution,
               ),
               const SizedBox(height: 14),
               _InfoSection(
                 title: 'Stability',
-                body: reference['stability'] as String,
+                body: reference.stability,
               ),
               const SizedBox(height: 14),
               _InfoSection(
                 title: 'Typical dosage',
-                body: reference['dosage'] as String,
+                body: reference.dosage,
               ),
               const SizedBox(height: 14),
               _InfoSection(
                 title: 'Benefits',
-                body: reference['benefits'] as String,
+                body: reference.benefits,
               ),
               const SizedBox(height: 14),
               _InfoSection(
                 title: 'Notes',
-                body: reference['notes'] as String,
+                body: reference.notes,
               ),
             ],
           ),
