@@ -18,6 +18,14 @@
 		<string>AestheticSkinTracker</string>
 		<key>CFBundlePackageType</key>
 		<string>APPL</string>
+		<key>NSCameraUsageDescription</key>
+		<string>AestheticSkinTracker uses the camera to capture procedure and skin-tracking photos for progress comparison and AI-assisted skin analysis.</string>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>AestheticSkinTracker uses the microphone to record optional voice journal entries about your skin and recovery.</string>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>AestheticSkinTracker uses your photo library when you choose an existing skin, procedure, or journal photo to analyze or attach to your progress record.</string>
+		<key>NSSpeechRecognitionUsageDescription</key>
+		<string>AestheticSkinTracker uses speech recognition to turn optional voice journal entries into editable text.</string>
 		<key>CFBundleShortVersionString</key>
 		<string>$(FLUTTER_BUILD_NAME)</string>
 		<key>CFBundleSignature</key>
