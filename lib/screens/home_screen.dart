@@ -28,6 +28,7 @@ import '../utils/ai_intelligence_engine.dart';
 import '../utils/ai_product_recommendation_engine.dart';
 import '../widgets/scan_based_recommendations_card.dart';
 import '../widgets/bridge_card.dart';
+import 'package:aesthetic_skin_tracker/features/procedures/presentation/procedure_profiles_screen.dart';
 
 const Color _clinicalSage = AppColors.brandAccent;
 const Color _mintHighlight = AppColors.champagneGold;
@@ -1906,6 +1907,60 @@ class _HomePageState extends State<HomePage>
     );
   }
 
+  models.Procedure? get _nextUpcomingAppointment {
+    final now = DateTime.now();
+    final upcoming = _activeProcedureModels
+        .where((p) => p.nextAppointmentDate != null && p.nextAppointmentDate!.isAfter(now))
+        .toList()
+      ..sort((a, b) => a.nextAppointmentDate!.compareTo(b.nextAppointmentDate!));
+    return upcoming.isEmpty ? null : upcoming.first;
+  }
+
+  Widget _buildUpcomingAppointmentCard(Color textColor) {
+    final procedure = _nextUpcomingAppointment;
+    if (procedure == null) return const SizedBox.shrink();
+    final date = procedure.nextAppointmentDate!;
+    final dateLabel = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ProcedureDetailScreen(procedure: procedure),
+          ),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: _lightSageTint,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _clinicalSage.withValues(alpha: 0.24)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.event_available_rounded, color: _clinicalSage, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Next appointment: ${procedure.type} on $dateLabel',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: textColor,
+                ),
+              ),
+            ),
+            Icon(
+              Icons.chevron_right_rounded,
+              color: textColor.withValues(alpha: 0.5),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildMetaChip(IconData icon, String label, Color textColor) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
@@ -2113,6 +2168,10 @@ class _HomePageState extends State<HomePage>
                       : null,
                   activePeptides: _activePeptides,
                 ),
+                if (_nextUpcomingAppointment != null) ...[
+                  const SizedBox(height: 12),
+                  _buildUpcomingAppointmentCard(textColor),
+                ],
                 const SizedBox(height: 18),
 
                 _buildSectionHeader(

@@ -5,6 +5,7 @@ import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../models/peptide_model.dart';
+import '../models/procedure.dart';
 import '../models/procedure_log.dart';
 import '../models/recovery_plan.dart';
 import '../utils/app_prefs.dart';
@@ -12,6 +13,19 @@ import '../utils/peptide_service.dart';
 
 // PROVISIONAL: revise after real same-person body tracking data accumulates.
 const int kBodyTrendRequiredConsistentScans = 2;
+
+/// Advances a recurring appointment date by [recurrenceMonths]. Dart's
+/// DateTime constructor normalizes month/day overflow, so this is correct
+/// for both simple cases and December -> next-year rollovers.
+DateTime advanceAppointmentDate(DateTime current, int recurrenceMonths) {
+  return DateTime(
+    current.year,
+    current.month + recurrenceMonths,
+    current.day,
+    current.hour,
+    current.minute,
+  );
+}
 
 enum BodyTrendReminderAction { schedule, cancel }
 
@@ -300,6 +314,55 @@ class NotificationService {
     }
   }
 
+  /// Schedule a next-appointment reminder for a tracked [Procedure] through
+  /// the same procedure_reminders channel used by scan/recovery reminders.
+  /// Purely opt-in: does nothing unless the procedure has both a reminder
+  /// enabled and a next appointment date set.
+  Future<void> scheduleAppointmentReminder(Procedure procedure) async {
+    if (!procedure.appointmentReminderEnabled) return;
+    final date = procedure.nextAppointmentDate;
+    if (date == null) return;
+    if (!await AppPrefs.getNotificationsEnabled()) return;
+    if (!_initialized) await initialize();
+    if (date.isBefore(DateTime.now())) return;
+
+    const androidDetails = AndroidNotificationDetails(
+      'procedure_reminders',
+      'Procedure Reminders',
+      channelDescription: 'Local recovery and procedure tracking check-ins',
+      importance: Importance.high,
+      priority: Priority.high,
+      icon: '@mipmap/ic_launcher',
+    );
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    const notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+      macOS: iosDetails,
+    );
+
+    final name = procedure.type.trim().isEmpty ? 'procedure' : procedure.type.trim();
+    final dateLabel = '${date.month}/${date.day}/${date.year}';
+    await _notifications.zonedSchedule(
+      'appointment_${procedure.id}'.hashCode.abs(),
+      '📅 Upcoming $name appointment',
+      'Your next $name appointment is on $dateLabel.',
+      tz.TZDateTime.from(date, tz.local),
+      notificationDetails,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+    );
+  }
+
+  Future<void> cancelAppointmentReminder(String procedureId) async {
+    await _notifications.cancel('appointment_$procedureId'.hashCode.abs());
+  }
+
   /// Schedule a daily/weekly reminder for an active peptide routine.
   Future<void> scheduleReminderForPeptide(PeptideEntry peptide) async {
     if (!_initialized) {
@@ -382,6 +445,31 @@ class NotificationService {
     final peptides = await PeptideService.loadAll();
     for (final peptide in peptides.where((entry) => entry.isActive)) {
       await scheduleReminderForPeptide(peptide);
+    }
+
+    // Reconcile Track Procedure appointment reminders. If a reminder's date
+    // has already fired and the procedure recurs, roll it forward and
+    // persist the new date before rescheduling.
+    final procedureEntries = await AppPrefs.getProcedureEntries();
+    var appointmentsChanged = false;
+    final updatedProcedureEntries = <Map<String, dynamic>>[];
+    for (final entry in procedureEntries) {
+      var procedure = Procedure.fromJson(entry);
+      final date = procedure.nextAppointmentDate;
+      if (procedure.appointmentReminderEnabled && date != null) {
+        final recurrenceMonths = procedure.appointmentRecurrenceMonths;
+        if (date.isBefore(DateTime.now()) && recurrenceMonths != null) {
+          procedure = procedure.copyWith(
+            nextAppointmentDate: advanceAppointmentDate(date, recurrenceMonths),
+          );
+          appointmentsChanged = true;
+        }
+        await scheduleAppointmentReminder(procedure);
+      }
+      updatedProcedureEntries.add(procedure.toJson());
+    }
+    if (appointmentsChanged) {
+      await AppPrefs.saveProcedureHistory(updatedProcedureEntries);
     }
   }
 

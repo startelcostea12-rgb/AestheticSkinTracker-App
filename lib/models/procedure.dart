@@ -437,6 +437,16 @@ class Procedure {
   /// Stored as raw image bytes alongside [notes] for fast in-app viewing.
   final Uint8List? surgeonPlanPhotoBytes;
 
+  /// Opt-in next appointment reminder. Null means no reminder is scheduled
+  /// and behavior is identical to a procedure with no appointment tracking.
+  final DateTime? nextAppointmentDate;
+
+  /// Recurrence interval in months (e.g. 3 for quarterly Botox touch-ups).
+  /// Null means the appointment reminder is one-time only.
+  final int? appointmentRecurrenceMonths;
+
+  final bool appointmentReminderEnabled;
+
   // Healing Journey support - uses the shared rich JournalEntry
   final List<JournalEntry> journalEntries;
 
@@ -458,6 +468,9 @@ class Procedure {
     this.timelineMilestones = const [],
     this.taggedPhotos = const [],
     this.recoveryPlanId,
+    this.nextAppointmentDate,
+    this.appointmentRecurrenceMonths,
+    this.appointmentReminderEnabled = true,
     this.beforePhotoBytes,
     this.afterPhotoBytes,
     this.surgeonPlanPhotoBytes,
@@ -527,6 +540,11 @@ class Procedure {
               ?.map((e) => JournalEntry.fromJson(e as Map<String, dynamic>))
               .toList() ??
           [],
+      nextAppointmentDate: (json['nextAppointmentDate'] as String?)?.isNotEmpty == true
+          ? DateTime.tryParse(json['nextAppointmentDate'] as String)
+          : null,
+      appointmentRecurrenceMonths: (json['appointmentRecurrenceMonths'] as num?)?.toInt(),
+      appointmentReminderEnabled: json['appointmentReminderEnabled'] as bool? ?? true,
     );
   }
 
@@ -552,6 +570,9 @@ class Procedure {
     'afterPhotoBytes': afterPhotoBytes,
     'surgeonPlanPhotoBytes': surgeonPlanPhotoBytes,
     'journalEntries': journalEntries.map((e) => e.toJson()).toList(),
+    'nextAppointmentDate': nextAppointmentDate?.toIso8601String(),
+    'appointmentRecurrenceMonths': appointmentRecurrenceMonths,
+    'appointmentReminderEnabled': appointmentReminderEnabled,
   };
 
   Procedure copyWith({
@@ -578,6 +599,10 @@ class Procedure {
     Uint8List? surgeonPlanPhotoBytes,
     bool clearSurgeonPlanPhoto = false,
     List<JournalEntry>? journalEntries,
+    DateTime? nextAppointmentDate,
+    bool clearNextAppointment = false,
+    int? appointmentRecurrenceMonths,
+    bool? appointmentReminderEnabled,
   }) {
     return Procedure(
       id: id ?? this.id,
@@ -605,6 +630,14 @@ class Procedure {
           ? null
           : (surgeonPlanPhotoBytes ?? this.surgeonPlanPhotoBytes),
       journalEntries: journalEntries ?? this.journalEntries,
+      nextAppointmentDate: clearNextAppointment
+          ? null
+          : (nextAppointmentDate ?? this.nextAppointmentDate),
+      appointmentRecurrenceMonths: clearNextAppointment
+          ? null
+          : (appointmentRecurrenceMonths ?? this.appointmentRecurrenceMonths),
+      appointmentReminderEnabled:
+          appointmentReminderEnabled ?? this.appointmentReminderEnabled,
     );
   }
 }

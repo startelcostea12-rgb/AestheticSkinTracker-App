@@ -291,6 +291,8 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
   bool _focusAreaUserEdited = false;
   late DateTime selectedDate;
   late int numSessions;
+  DateTime? _nextAppointmentDate;
+  int? _appointmentRecurrenceMonths;
   late final TextEditingController _providerController;
   late final TextEditingController _notesController;
   late final TextEditingController _customProcedureController;
@@ -524,6 +526,8 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
         selectedDate.add(const Duration(days: 7)),
         selectedDate.add(const Duration(days: 30)),
       ],
+      nextAppointmentDate: _nextAppointmentDate,
+      appointmentRecurrenceMonths: _appointmentRecurrenceMonths,
     );
 
     try {
@@ -537,6 +541,10 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
       updated.add(procedureJson);
       await AppPrefs.saveProcedureHistory(updated);
       await AppPrefs.setSelectedProcedureId(newProcedure.id);
+
+      if (newProcedure.nextAppointmentDate != null) {
+        await NotificationService().scheduleAppointmentReminder(newProcedure);
+      }
 
       final availablePlan = await RecoveryPlanService.planForProcedureType(
         newProcedure.type,
@@ -645,6 +653,8 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
     );
     selectedFocusArea = existing?.focusArea;
     _applyDefaultFocusArea();
+    _nextAppointmentDate = existing?.nextAppointmentDate;
+    _appointmentRecurrenceMonths = existing?.appointmentRecurrenceMonths;
     // If we're editing and the provider already has text, expand the
     // manual section so the user can see / edit it.
     if ((existing?.provider ?? '').trim().isNotEmpty) {
@@ -801,6 +811,13 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
                 icon: Icons.edit_note_rounded,
               ),
             ),
+
+            const SizedBox(height: 18),
+
+            // ===== Next Appointment (opt-in reminder) =====
+            _fieldLabel('Next appointment', optional: true),
+            const SizedBox(height: 6),
+            _buildNextAppointmentSection(),
 
             const SizedBox(height: 32),
 
@@ -1921,6 +1938,104 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  static const List<int?> _recurrenceOptions = [null, 1, 3, 4, 6, 12];
+
+  String _recurrenceLabel(int? months) {
+    if (months == null) return 'One-time';
+    if (months == 1) return 'Every month';
+    if (months == 12) return 'Every year';
+    return 'Every $months months';
+  }
+
+  Widget _buildNextAppointmentSection() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.borders),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: () async {
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: _nextAppointmentDate ?? DateTime.now().add(const Duration(days: 90)),
+                firstDate: DateTime.now(),
+                lastDate: DateTime.now().add(const Duration(days: 3650)),
+              );
+              if (picked != null) setState(() => _nextAppointmentDate = picked);
+            },
+            child: Row(
+              children: [
+                Icon(
+                  Icons.event_available_rounded,
+                  color: AppColors.champagneGold.withValues(alpha: 0.82),
+                  size: 20,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    _nextAppointmentDate == null
+                        ? 'Set a reminder for your next appointment'
+                        : DateFormat('MMM d, y').format(_nextAppointmentDate!),
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: _nextAppointmentDate == null
+                          ? AppColors.refinedSlate.withValues(alpha: 0.6)
+                          : AppColors.refinedSlate,
+                    ),
+                  ),
+                ),
+                if (_nextAppointmentDate != null)
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    onPressed: () => setState(() {
+                      _nextAppointmentDate = null;
+                      _appointmentRecurrenceMonths = null;
+                    }),
+                  )
+                else
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: AppColors.refinedSlate.withValues(alpha: 0.45),
+                  ),
+              ],
+            ),
+          ),
+          if (_nextAppointmentDate != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Repeat reminder',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: AppColors.refinedSlate.withValues(alpha: 0.65),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final option in _recurrenceOptions)
+                  ChoiceChip(
+                    label: Text(_recurrenceLabel(option)),
+                    selected: _appointmentRecurrenceMonths == option,
+                    onSelected: (_) =>
+                        setState(() => _appointmentRecurrenceMonths = option),
+                  ),
+              ],
+            ),
+          ],
+        ],
       ),
     );
   }

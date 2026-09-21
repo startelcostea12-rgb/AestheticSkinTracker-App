@@ -19,6 +19,7 @@ import 'package:aesthetic_skin_tracker/models/procedure_log.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/models/recovery_plan.dart';
 import 'package:aesthetic_skin_tracker/providers/procedure_logs_provider.dart';
+import 'package:aesthetic_skin_tracker/services/notification_service.dart';
 import 'package:aesthetic_skin_tracker/services/recovery_plan_service.dart';
 import 'package:aesthetic_skin_tracker/utils/trend_lock_reason.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_product_recommendation_engine.dart';
@@ -2233,6 +2234,236 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       _procedure = updated;
       _busy = false;
     });
+  }
+
+  static const List<int?> _appointmentRecurrenceOptions = [null, 1, 3, 4, 6, 12];
+
+  String _appointmentRecurrenceLabel(int? months) {
+    if (months == null) return 'One-time';
+    if (months == 1) return 'Every month';
+    if (months == 12) return 'Every year';
+    return 'Every $months months';
+  }
+
+  Future<void> _saveAppointment({
+    DateTime? date,
+    int? recurrenceMonths,
+  }) async {
+    setState(() => _busy = true);
+    final updated = _procedure.copyWith(
+      nextAppointmentDate: date,
+      appointmentRecurrenceMonths: recurrenceMonths,
+      clearNextAppointment: date == null,
+    );
+    await AppPrefs.updateProcedureInHistory(updated.id, updated.toJson());
+    if (date == null) {
+      await NotificationService().cancelAppointmentReminder(updated.id);
+    } else {
+      await NotificationService().cancelAppointmentReminder(updated.id);
+      await NotificationService().scheduleAppointmentReminder(updated);
+    }
+    if (!mounted) return;
+    setState(() {
+      _procedure = updated;
+      _busy = false;
+    });
+  }
+
+  /// Marks the current appointment as complete: rolls the reminder forward
+  /// by its recurrence interval, or clears it entirely for one-time reminders.
+  Future<void> _markAppointmentComplete() async {
+    final recurrenceMonths = _procedure.appointmentRecurrenceMonths;
+    final current = _procedure.nextAppointmentDate;
+    if (current == null) return;
+    final next = recurrenceMonths == null
+        ? null
+        : advanceAppointmentDate(current, recurrenceMonths);
+    await _saveAppointment(date: next, recurrenceMonths: recurrenceMonths);
+  }
+
+  Future<void> _showAppointmentEditor() async {
+    DateTime? pickedDate = _procedure.nextAppointmentDate;
+    int? pickedRecurrence = _procedure.appointmentRecurrenceMonths;
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Next appointment'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  InkWell(
+                    onTap: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        initialDate:
+                            pickedDate ?? DateTime.now().add(const Duration(days: 90)),
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 3650)),
+                      );
+                      if (picked != null) {
+                        setDialogState(() => pickedDate = picked);
+                      }
+                    },
+                    child: Row(
+                      children: [
+                        const Icon(Icons.event_available_rounded, size: 20),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            pickedDate == null
+                                ? 'Choose a date'
+                                : _formatDate(pickedDate!),
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (pickedDate != null) ...[
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Repeat reminder',
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final option in _appointmentRecurrenceOptions)
+                          ChoiceChip(
+                            label: Text(_appointmentRecurrenceLabel(option)),
+                            selected: pickedRecurrence == option,
+                            onSelected: (_) =>
+                                setDialogState(() => pickedRecurrence = option),
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                if (_procedure.nextAppointmentDate != null)
+                  TextButton(
+                    onPressed: () {
+                      pickedDate = null;
+                      pickedRecurrence = null;
+                      Navigator.of(dialogContext).pop(true);
+                    },
+                    child: const Text('Remove'),
+                  ),
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: pickedDate == null
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(true),
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (result == true) {
+      await _saveAppointment(date: pickedDate, recurrenceMonths: pickedRecurrence);
+    }
+  }
+
+  Widget _buildAppointmentSection() {
+    final date = _procedure.nextAppointmentDate;
+    return Card(
+      margin: EdgeInsets.zero,
+      elevation: 2,
+      shadowColor: MyApp.clinicalNavy.withValues(alpha: 0.08),
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: MyApp.roseGold.withValues(alpha: 0.18), width: 0.8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const ClinicalSectionHeader(
+              icon: Icons.event_available_rounded,
+              title: 'Next Appointment',
+              eyebrow: 'Optional reminder for your next visit',
+            ),
+            const SizedBox(height: 12),
+            if (date == null) ...[
+              Text(
+                'No appointment reminder set.',
+                style: TextStyle(color: MyApp.textBrown.withValues(alpha: 0.7)),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _busy ? null : _showAppointmentEditor,
+                  icon: const Icon(Icons.add_alert_outlined, size: 18),
+                  label: const Text('Set Appointment Reminder'),
+                ),
+              ),
+            ] else ...[
+              Row(
+                children: [
+                  Icon(Icons.event_rounded, size: 18, color: MyApp.roseGold),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _formatDate(date),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: MyApp.textBrown,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (_procedure.appointmentRecurrenceMonths != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  _appointmentRecurrenceLabel(_procedure.appointmentRecurrenceMonths),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: MyApp.textBrown.withValues(alpha: 0.65),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _showAppointmentEditor,
+                    icon: const Icon(Icons.edit_outlined, size: 16),
+                    label: const Text('Edit'),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: _busy ? null : _markAppointmentComplete,
+                    icon: const Icon(Icons.check_circle_outline, size: 16),
+                    label: const Text('Mark Complete'),
+                    style: MyApp.primaryGoldButton,
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _addProcedureJournalEntry() async {
@@ -7690,6 +7921,8 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
               startDate: _procedure.startDate,
               timelineMilestones: _procedure.timelineMilestones,
             ),
+            const SizedBox(height: 14),
+            _buildAppointmentSection(),
             const SizedBox(height: 14),
             _buildRecoveryPlanCurrentDayCard(),
             if (_activeRecoveryPlan != null) const SizedBox(height: 14),
