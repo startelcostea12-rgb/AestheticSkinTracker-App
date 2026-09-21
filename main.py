@@ -2176,6 +2176,17 @@ def _compute_zone_based_metrics(
     baseline_matrix: Dict[str, Any] | None = None,
     roi_cache: _RequestRoiCache | None = None,
 ) -> Dict[str, Any]:
+    # PRODUCER AUDIT (see CANONICAL_METRIC_ORDER registry below): of the 9 keys
+    # this function returns, only rosacea_severity, under_eye_texture_density,
+    # and under_eye_dark_circle_density actually reach candidate_values in
+    # analyze_skin_patch. sebum_excess_oil_gloss, pore_visibility,
+    # pore_visibility_detected, localized_redness, diffuse_flushing_erythema,
+    # and glabellar_11_lines_depth are computed here but are always shadowed
+    # by a different producer function and never read by any consumer -
+    # they are DEAD, not alternate/fallback paths. Kept only because their
+    # mask/ROI computations (t_zone, face_skin_mask) are shared with the live
+    # fields above; do not treat their presence in this return dict as a
+    # second source of truth for those metrics.
     h, w = face_bgr.shape[:2]
     if h == 0 or w == 0:
         return {
@@ -2385,13 +2396,18 @@ def _compute_zone_based_metrics(
         under_eye_dark_circle_density = 0.0
 
     return {
+        # DEAD: shadowed by canonical_metric_matrix (additional_metrics for
+        # sebum). See _compute_zone_based_metrics's header comment.
         "sebum_excess_oil_gloss": round(sebum_excess_oil_gloss, 1),
         "pore_visibility": pore_visibility,
         "pore_visibility_detected": pore_visibility_detected,
         "localized_redness": round(localized_redness, 1),
         "diffuse_flushing_erythema": round(diffuse_flushing_erythema, 1),
+        # LIVE: sole producer for rosacea_severity.
         "rosacea_severity": round(rosacea_severity, 1),
+        # DEAD: legacy key name, never matches canonical "glabellar_wrinkle_depth".
         "glabellar_11_lines_depth": round(glabellar_11_lines_depth, 1),
+        # LIVE: sole producer for these two under-eye metrics.
         "under_eye_texture_density": round(under_eye_texture_density, 1),
         "under_eye_dark_circle_density": round(under_eye_dark_circle_density, 1),
     }
@@ -3542,6 +3558,35 @@ def _normalize_metric_payload_values(metrics: Dict[str, Any]) -> Dict[str, Any]:
 
 
 CANONICAL_METRIC_ORDER = [
+    # PRODUCER REGISTRY (single-canonical-producer rule, audited 2026-09-21):
+    # every key below must be sourced from exactly ONE producer in the
+    # candidate_values dict built in analyze_skin_patch. If you add a new
+    # metric or change which dict a key reads from, update both
+    # candidate_values AND test_canonical_metric_producer_registry.py in the
+    # same change - that test fails loudly on any silent drift.
+    #   localized_redness              -> canonical_metric_matrix (_compute_canonical_patch_metrics)
+    #   texture_smoothness             -> canonical_metric_matrix (_compute_canonical_patch_metrics)
+    #   pigment_load                   -> canonical_metric_matrix (_compute_canonical_patch_metrics)
+    #   pore_visibility                -> canonical_metric_matrix (_compute_canonical_patch_metrics)
+    #   wrinkle_load                   -> canonical_metric_matrix (_compute_canonical_patch_metrics)
+    #   breakout_activity              -> canonical_metric_matrix (_compute_canonical_patch_metrics)
+    #   sebum_excess_oil_gloss         -> additional_metrics (_compute_additional_opencv_metrics)
+    #   diffuse_flushing_erythema      -> additional_metrics (_compute_additional_opencv_metrics)
+    #   skin_tone_radiance_evenness    -> additional_metrics (_compute_additional_opencv_metrics)
+    #   glabellar_wrinkle_depth        -> structural_metrics (_compute_structural_opencv_metrics)
+    #   structural_firmness_elasticity -> structural_metrics (_compute_structural_opencv_metrics)
+    #   pore_contraction_index         -> structural_metrics (_compute_structural_opencv_metrics)
+    #   under_eye_texture_density      -> zone_metrics (_compute_zone_based_metrics)
+    #   under_eye_dark_circle_density  -> zone_metrics (_compute_zone_based_metrics)
+    #   rosacea_severity               -> zone_metrics (_compute_zone_based_metrics)
+    #   skin_hydration                 -> NO PRODUCER (declared canonical, never computed;
+    #                                      always omitted as "non_usable_value" - known gap,
+    #                                      not a competing-producer issue)
+    # zone_metrics ALSO computes sebum_excess_oil_gloss, pore_visibility,
+    # pore_visibility_detected, localized_redness, diffuse_flushing_erythema,
+    # and glabellar_11_lines_depth, but none of those are read by
+    # candidate_values - they are dead/shadowed, not alternate producers.
+    # See the comments at _compute_zone_based_metrics's return statement.
     "localized_redness",
     "texture_smoothness",
     "pigment_load",
@@ -5139,6 +5184,11 @@ def analyze_skin_patch(
     p95_a = _percentile(a_channel, cv2.bitwise_or(regions["left_cheek"], regions["right_cheek"]), 95)
     baseline_a_ref = _resolve_personal_lab_ctx(baseline_matrix or {}).get("a_mean", 128.0)
     redness_logistic = 1.0 / (1.0 + math.exp(-0.35 * (p95_a - (baseline_a_ref + 8.0))))
+    # LEGACY, NOT a canonical producer: calibrated_redness_score is a separate
+    # formula (p95_a logistic) that bypasses all ROI/confidence gating used by
+    # the real localized_redness pipeline. Shipped only so old Flutter scans
+    # that stored this key can still resolve a baseline alias; never treat it
+    # as an alternate source for localized_redness.
     calibrated_redness_score = (1.0 - redness_logistic) * 100.0
     if p95_a <= baseline_a_ref + 4.5:
         calibrated_redness_score = max(96.0, 100.0 - (p95_a - baseline_a_ref + 2.0))
@@ -5148,6 +5198,8 @@ def analyze_skin_patch(
     lap_abs = np.abs(lap)
     raw_variance = float(np.var(lap))
     texture_logistic = 1.0 / (1.0 + math.exp(-0.025 * (raw_variance - 65.0)))
+    # LEGACY, NOT a canonical producer: same caveat as calibrated_redness_score
+    # above, for texture_smoothness. Baseline-alias-only for old scans.
     calibrated_smoothness_score = (1.0 - texture_logistic) * 100.0
     if raw_variance <= 25.0:
         calibrated_smoothness_score = max(94.0, 100.0 - (raw_variance * 0.15))
@@ -5155,6 +5207,10 @@ def analyze_skin_patch(
 
     yolo_kept, yolo_max_conf = _run_yolo_detection_stats(norm)
     logger.info("YOLO lesion detector: boxes=%d max_conf=%.4f", yolo_kept, yolo_max_conf)
+    # LEGACY, NOT a canonical producer: acne_activity_score is a bare YOLO-count
+    # linear formula, unrelated to the real breakout_activity pipeline in
+    # _compute_canonical_patch_metrics. Top-level-only field, not consumed by
+    # any current candidate_values entry.
     acne_activity_score = float(np.clip(100.0 - (yolo_kept * 10.0), 0.0, 100.0))
     fingerprint = hashlib.sha256(norm.tobytes()).hexdigest()
     try:
@@ -6066,6 +6122,15 @@ def analyze_skin_patch(
         baseline_ssim,
     )
 
+    # LEGACY top-level duplicates, NOT canonical producers (see the
+    # CANONICAL_METRIC_ORDER producer registry comment above and
+    # test_canonical_metric_producer_registry.py): calibrated_redness_score,
+    # calibrated_smoothness_score, acne_activity_score, and raw_pore_density
+    # are independent formulas that bypass the canonical ROI/confidence
+    # pipeline entirely. They exist only so old client-side scans that stored
+    # these legacy keys can still resolve a baseline alias lookup; they must
+    # never be read as an alternate source for localized_redness,
+    # texture_smoothness, breakout_activity, or pore_visibility.
     normalized_top_level_metrics = _normalize_metric_payload_values(
         {
             "calibrated_redness_score": calibrated_redness_score,
