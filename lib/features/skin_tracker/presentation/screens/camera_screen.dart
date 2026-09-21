@@ -4,7 +4,7 @@ import 'dart:io' show Directory, File, Platform;
 import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
@@ -445,6 +445,19 @@ class _CameraScreenState extends State<CameraScreen>
   static const int _landmarkSmoothingWindow = 5;
   final List<LandmarkAssessment> _landmarkHistory = <LandmarkAssessment>[];
   int? _lastConsistencyScore;
+
+  // ── Debug-only framing telemetry (kDebugMode) ─────────────────────────
+  // Captures the latest UNSMOOTHED, single-frame ML Kit result exactly as
+  // it came back from analyzeLiveLandmarks — i.e. before
+  // _stabilizeLandmarkAssessment folds it into the 5-sample
+  // _landmarkHistory buffer. Purely observational: nothing here is read by
+  // any gating/threshold logic, only by _buildDebugFramingOverlay. Left
+  // null (and never assigned to) outside kDebugMode, so this costs nothing
+  // in release builds.
+  bool? _debugRawAvailable;
+  double? _debugRawYaw;
+  double? _debugRawPitch;
+  double? _debugRawRoll;
 
   /// Result of the pre-scan makeup disclosure dialog. `null` until the user
   /// answers. Once the user has chosen, the scan flow proceeds and this flag
@@ -1162,6 +1175,20 @@ class _CameraScreenState extends State<CameraScreen>
               poseTemplate: _selectedPoseTemplate,
             );
             if (!mounted) return;
+            // Debug-only: record this frame's UNSMOOTHED result before it
+            // goes anywhere near _landmarkHistory/_stabilizeLandmarkAssessment,
+            // so _buildDebugFramingOverlay can show raw vs. smoothed side by
+            // side. Updates on every analyzed frame (not gated by
+            // _shouldRefreshLandmarkAssessment below) so it reflects true
+            // per-frame jitter. No effect on any gating logic.
+            if (kDebugMode) {
+              setState(() {
+                _debugRawAvailable = assessment.available;
+                _debugRawYaw = assessment.yaw;
+                _debugRawPitch = assessment.pitch;
+                _debugRawRoll = assessment.roll;
+              });
+            }
             final stabilized = _stabilizeLandmarkAssessment(assessment);
             final shouldRefresh = _shouldRefreshLandmarkAssessment(stabilized);
             if (shouldRefresh || stabilized.available) {
@@ -4456,6 +4483,52 @@ class _CameraScreenState extends State<CameraScreen>
       report.headAngle.state == QualityState.green;
   }
 
+  /// Debug-only (see [_buildDebugFramingOverlay]): names exactly which of
+  /// _isCaptureFramingReady's three ANDed conditions is currently false,
+  /// and — for the two custom predicates — which specific check inside it
+  /// is the one failing. Calls the real predicates for the pass/fail
+  /// decision itself (so this can never disagree with the actual gate);
+  /// it only re-derives the underlying numbers to explain *why*, which is
+  /// pure read-only formatting, not gating logic.
+  String _debugFramingFailureReason(ClinicalQualityReport report) {
+    if (_isBodyGuide) return 'body guide — always ready (face gate not applied)';
+
+    if (!_isLiveFacePresentAndCentered()) {
+      final a = _liveLandmarkAssessment;
+      if (!a.available) {
+        return '_isLiveFacePresentAndCentered: landmarks not available';
+      }
+      final centerDelta = a.centerOffsetX.abs() + a.centerOffsetY.abs();
+      if (centerDelta > 0.35) {
+        return '_isLiveFacePresentAndCentered: centerDelta '
+            '${centerDelta.toStringAsFixed(3)} > 0.35';
+      }
+      final floor = _targetFaceFillFloor * 0.82;
+      return '_isLiveFacePresentAndCentered: faceFill '
+          '${a.faceFillRatio.toStringAsFixed(3)} < floor*0.82 '
+          '(${floor.toStringAsFixed(3)})';
+    }
+
+    if (!_isAlignmentInRange()) {
+      final a = _liveLandmarkAssessment;
+      if (!a.available) return '_isAlignmentInRange: landmarks not available';
+      final centerDelta = a.centerOffsetX.abs() + a.centerOffsetY.abs();
+      if (centerDelta > 0.25) {
+        return '_isAlignmentInRange: centerDelta '
+            '${centerDelta.toStringAsFixed(3)} > 0.25';
+      }
+      final tilt = _headTiltAngle() ?? 999.0;
+      return '_isAlignmentInRange: tilt ${tilt.toStringAsFixed(1)}° > 30.0°';
+    }
+
+    if (report.headAngle.state != QualityState.green) {
+      return 'report.headAngle.state = ${report.headAngle.state.name} '
+          '(needs green)';
+    }
+
+    return 'READY — all conditions pass';
+  }
+
   bool _isLiveFacePresentAndCentered() {
     final a = _liveLandmarkAssessment;
     if (!a.available) return false;
@@ -5313,7 +5386,86 @@ class _CameraScreenState extends State<CameraScreen>
           ),
           _buildSuccessOverlay(),
           _buildLivePoseOverlay(),
+          if (kDebugMode) _buildDebugFramingOverlay(report),
         ],
+      ),
+    );
+  }
+
+  /// Debug-only (kDebugMode) live telemetry HUD for the capture-framing
+  /// gate — added purely for observability while investigating
+  /// _isCaptureFramingReady's behavior. Does not read from, call, or
+  /// affect any threshold/logic; it only displays values the real gate
+  /// already computes (plus the debug-only raw/unsmoothed capture wired
+  /// up alongside the landmark stream callback). Never built in release
+  /// (`kDebugMode` is `false` and tree-shaken out).
+  Widget _buildDebugFramingOverlay(ClinicalQualityReport report) {
+    final a = _liveLandmarkAssessment;
+    final available = a.available;
+    final centerDelta = a.centerOffsetX.abs() + a.centerOffsetY.abs();
+    final smoothedTilt = _headTiltAngle();
+
+    final rawAvailable = _debugRawAvailable;
+    final rawYaw = _debugRawYaw;
+    final rawPitch = _debugRawPitch;
+    final rawRoll = _debugRawRoll;
+    final rawSummedTilt = (rawYaw == null && rawPitch == null && rawRoll == null)
+        ? null
+        : (rawYaw?.abs() ?? 0.0) + (rawPitch?.abs() ?? 0.0) + (rawRoll?.abs() ?? 0.0);
+
+    String fmt(double? v, {String unit = '', int decimals = 2}) =>
+        v == null ? 'null' : '${v.toStringAsFixed(decimals)}$unit';
+
+    final lines = <String>[
+      'DEBUG: capture framing (kDebugMode only)',
+      'landmarks available: ${available ? 'y' : 'n'}'
+          ' (raw frame: ${rawAvailable == null ? '—' : (rawAvailable ? 'y' : 'n')})',
+      'raw yaw/pitch/roll: ${fmt(rawYaw, unit: '°')} / '
+          '${fmt(rawPitch, unit: '°')} / ${fmt(rawRoll, unit: '°')}'
+          ' (pre-smoothing, this frame only)',
+      'summed tilt (raw, unsmoothed): ${fmt(rawSummedTilt, unit: '°', decimals: 1)}',
+      'smoothed tilt (_headTiltAngle, gate uses this): '
+          '${fmt(smoothedTilt, unit: '°', decimals: 1)}'
+          ' (avg over last ${_landmarkHistory.length}/$_landmarkSmoothingWindow samples)',
+      'centerDelta: ${centerDelta.toStringAsFixed(3)}',
+      'face-fill: ${a.faceFillRatio.toStringAsFixed(3)}'
+          ' (floor=${_targetFaceFillFloor.toStringAsFixed(3)})',
+      'gate: ${_debugFramingFailureReason(report)}',
+    ];
+
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: IgnorePointer(
+        child: SafeArea(
+          bottom: false,
+          child: Container(
+            margin: const EdgeInsets.all(8),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.78),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.limeAccent, width: 1),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final line in lines)
+                  Text(
+                    line,
+                    style: const TextStyle(
+                      color: Colors.limeAccent,
+                      fontFamily: 'monospace',
+                      fontSize: 10.5,
+                      height: 1.35,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
