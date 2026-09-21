@@ -32,7 +32,6 @@ class _ActiveSkincareDetailsScreenState
   List<JournalEntry> journalEntries = [];
   bool _didInit = false;
 
-  final int _userChronologicalAge = 34;
   bool _showAnalysisDisclaimerBanner = true;
 
   // Gemini Vision analysis state
@@ -134,8 +133,6 @@ class _ActiveSkincareDetailsScreenState
     }
   }
 
-  bool get _hasEnoughScansForAge => scans.length >= 2;
-
   bool get _hasBothPhotos =>
       scans.length >= 2 &&
       (scans.first.imagePath?.isNotEmpty ?? false) &&
@@ -149,16 +146,25 @@ class _ActiveSkincareDetailsScreenState
       scans.length >= 2 ? scans.skip(1).toList() : const [];
 
   // ==================== SKIN AGE ====================
-  int _getEstimatedSkinAge() {
-    if (scans.isEmpty) return _userChronologicalAge;
-    return ((_userChronologicalAge - (scans.length - 1) * 1.5).clamp(
-      29,
-      42,
-    )).round();
+  // Real value only: this reuses the same estimatedSkinAge already computed
+  // honestly per-scan elsewhere in the app (see ScanHistoryEntry). Returns
+  // null (never a fabricated number) when no scan has a trustworthy estimate.
+  int? _getEstimatedSkinAge() {
+    if (scans.isEmpty) return null;
+    final latest = scans.last;
+    if (!latest.hasTrustworthyEstimatedSkinAge) return null;
+    return latest.estimatedSkinAge.round();
   }
 
-  Color _getSkinAgeColor(int skinAge) =>
-      skinAge < _userChronologicalAge ? Colors.green : Colors.orange;
+  Color _getSkinAgeColor(int skinAge) {
+    final baseline = scans.isNotEmpty ? scans.first : null;
+    if (baseline == null || !baseline.hasTrustworthyEstimatedSkinAge) {
+      return MyApp.textBrown;
+    }
+    return skinAge < baseline.estimatedSkinAge.round()
+        ? Colors.green
+        : Colors.orange;
+  }
 
   String _scanLabel(int index) => index == 0 ? 'Baseline' : 'After $index';
 
@@ -227,7 +233,8 @@ class _ActiveSkincareDetailsScreenState
   }
 
   Widget _buildSkinAgeCard() {
-    if (!_hasEnoughScansForAge) {
+    final skinAge = _getEstimatedSkinAge();
+    if (skinAge == null) {
       return Center(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
@@ -245,7 +252,7 @@ class _ActiveSkincareDetailsScreenState
                 style: TextStyle(fontSize: 15, color: Colors.grey),
               ),
               Text(
-                'Waiting for second scan to estimate skin age...',
+                'Not enough data yet to estimate skin age.',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
@@ -259,7 +266,6 @@ class _ActiveSkincareDetailsScreenState
       );
     }
 
-    final skinAge = _getEstimatedSkinAge();
     final skinAgeColor = _getSkinAgeColor(skinAge);
 
     return Center(
@@ -328,30 +334,25 @@ class _ActiveSkincareDetailsScreenState
     );
   }
 
-  Map<String, double> _getMetricsForScan(ScanHistoryEntry scan) {
-    final index = scans.indexOf(scan);
+  // Real metric values only. Returns null when the scan has no usable
+  // metric data, and omits any individual metric key that wasn't actually
+  // recorded — never fabricates a placeholder/neutral number for it.
+  Map<String, double>? _getMetricsForScan(ScanHistoryEntry scan) {
+    if (scan.metrics.isEmpty) return null;
 
-    if (scan.metrics.isNotEmpty) {
-      return {
-        'Redness': scan.metrics['redness'] ?? 5.0,
-        'Texture': scan.metrics['texture'] ?? 5.0,
-        'Wrinkle': scan.metrics['wrinkles'] ?? scan.metrics['wrinkle'] ?? 5.0,
-        'Pore': scan.metrics['pores'] ?? scan.metrics['pore'] ?? 5.0,
-        'Dark Spots': scan.metrics['darkSpots'] ?? 5.0,
-        'Firmness': scan.metrics['elasticity'] ?? 5.0,
-      };
+    final result = <String, double>{};
+    void putIfPresent(String label, double? value) {
+      if (value != null) result[label] = value;
     }
 
-    final result = {
-      'Redness': (5.8 - index * 0.9).clamp(2.8, 7.2),
-      'Texture': (6.4 - index * 1.0).clamp(3.2, 7.8),
-      'Wrinkle': (5.2 - index * 0.85).clamp(2.5, 6.8),
-      'Pore': (6.1 - index * 0.95).clamp(3.0, 7.5),
-      'Dark Spots': (5.5 - index * 0.8).clamp(2.7, 7.0),
-      'Firmness': (4.1 + index * 0.95).clamp(3.5, 8.2),
-    };
+    putIfPresent('Redness', scan.metrics['redness']);
+    putIfPresent('Texture', scan.metrics['texture']);
+    putIfPresent('Wrinkle', scan.metrics['wrinkles'] ?? scan.metrics['wrinkle']);
+    putIfPresent('Pore', scan.metrics['pores'] ?? scan.metrics['pore']);
+    putIfPresent('Dark Spots', scan.metrics['darkSpots']);
+    putIfPresent('Firmness', scan.metrics['elasticity']);
 
-    return result;
+    return result.isEmpty ? null : result;
   }
 
   // ==================== IMAGE BUILDER ====================
@@ -598,7 +599,12 @@ class _ActiveSkincareDetailsScreenState
                       if (showMetrics)
                         Padding(
                           padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                          child: Column(
+                          child: metricsWithChange.isEmpty
+                              ? const Text(
+                                  'Not enough recorded metric data yet to compare.',
+                                  style: TextStyle(fontSize: 15, color: Colors.grey),
+                                )
+                              : Column(
                             children: metricsWithChange.map((metric) {
                               return Padding(
                                 padding: const EdgeInsets.symmetric(
@@ -681,8 +687,10 @@ class _ActiveSkincareDetailsScreenState
 
     final baseline = _getMetricsForScan(scans.first);
     final latest = _getMetricsForScan(scans.last);
+    if (baseline == null || latest == null) return [];
 
-    return baseline.keys.map((metric) {
+    final sharedKeys = baseline.keys.toSet().intersection(latest.keys.toSet());
+    return sharedKeys.map((metric) {
       final baselineValue = baseline[metric]!;
       final latestValue = latest[metric]!;
       final trend = resolveMetricTrend(
@@ -702,17 +710,51 @@ class _ActiveSkincareDetailsScreenState
     }).toList();
   }
 
+  // Real percentage of actually-recorded metrics that meaningfully improved,
+  // out of those that meaningfully changed at all. Returns null (never a
+  // hardcoded placeholder) when there isn't enough real signal to compute it.
+  int? _getOverallImprovementPercent() {
+    if (scans.length < 2) return null;
+    final baseline = _getMetricsForScan(scans.first);
+    final latest = _getMetricsForScan(scans.last);
+    if (baseline == null || latest == null) return null;
+
+    final sharedKeys = baseline.keys.toSet().intersection(latest.keys.toSet());
+    if (sharedKeys.isEmpty) return null;
+
+    var improvedCount = 0;
+    var meaningfulCount = 0;
+    for (final metric in sharedKeys) {
+      final trend = resolveMetricTrend(
+        metric,
+        baseline: baseline[metric]!,
+        current: latest[metric]!,
+      );
+      if (trend.hasMeaningfulChange) {
+        meaningfulCount++;
+        if (trend.isImproved) improvedCount++;
+      }
+    }
+    if (meaningfulCount == 0) return null;
+    return ((improvedCount / meaningfulCount) * 100).round();
+  }
+
   // ==================== NATURAL LANGUAGE INSIGHTS ====================
   List<String> _generateProgressInsights() {
     if (scans.length < 2) return [];
 
     final baseline = _getMetricsForScan(scans.first);
     final latest = _getMetricsForScan(scans.last);
+    if (baseline == null || latest == null) {
+      return ['Not enough scan data yet to generate insights for this product.'];
+    }
     final insights = <String>[];
 
-    // Analyze each metric and generate natural language
-    baseline.forEach((metric, baselineValue) {
-      final latestValue = latest[metric] ?? baselineValue;
+    // Analyze each metric that was actually recorded on both scans.
+    final sharedKeys = baseline.keys.toSet().intersection(latest.keys.toSet());
+    for (final metric in sharedKeys) {
+      final baselineValue = baseline[metric]!;
+      final latestValue = latest[metric]!;
       final change = latestValue - baselineValue;
       final percentChange = baselineValue > 0
           ? (change.abs() / baselineValue * 100)
@@ -752,7 +794,7 @@ class _ActiveSkincareDetailsScreenState
           }
         }
       }
-    });
+    }
 
     // If no significant changes, add encouraging message
     if (insights.isEmpty) {
@@ -772,49 +814,45 @@ class _ActiveSkincareDetailsScreenState
     if (scans.isEmpty) return [];
 
     final metrics = _getMetricsForScan(scans.last);
-    final redness = metrics['Redness'] ?? 5.0;
-    final texture = metrics['Texture'] ?? 5.0;
-    final wrinkle = metrics['Wrinkle'] ?? 5.0;
-    final pore = metrics['Pore'] ?? 5.0;
-    final darkSpots = metrics['Dark Spots'] ?? 5.0;
+    if (metrics == null) return [];
+    final redness = metrics['Redness'];
+    final texture = metrics['Texture'];
+    final wrinkle = metrics['Wrinkle'];
+    final pore = metrics['Pore'];
+    final darkSpots = metrics['Dark Spots'];
 
     List<Map<String, String>> recs = [];
 
-    if (redness > 5.0 || texture > 5.5) {
+    if ((redness != null && redness > 5.0) || (texture != null && texture > 5.5)) {
       recs.add({
         'name': 'RF Microneedling',
         'benefit':
             'Reduces redness and improves skin texture by stimulating collagen production with minimal downtime.',
       });
     }
-    if (wrinkle > 4.5 || texture > 5.5) {
+    if ((wrinkle != null && wrinkle > 4.5) || (texture != null && texture > 5.5)) {
       recs.add({
         'name': 'Morpheus8',
         'benefit':
             'Deep fractional RF treatment that tightens skin and reduces fine lines and wrinkles.',
       });
     }
-    if (darkSpots > 5.0 || redness > 5.5) {
+    if ((darkSpots != null && darkSpots > 5.0) || (redness != null && redness > 5.5)) {
       recs.add({
         'name': 'IPL Photofacial',
         'benefit':
             'Reduces pigmentation, redness, and sun damage for a more even skin tone.',
       });
     }
-    if (pore > 5.5 || texture > 5.5) {
+    if ((pore != null && pore > 5.5) || (texture != null && texture > 5.5)) {
       recs.add({
         'name': 'Fractional Laser Resurfacing',
         'benefit': 'Improves pore size, skin texture, and overall smoothness.',
       });
     }
 
-    if (recs.isEmpty) {
-      recs.add({
-        'name': 'Gentle Chemical Peel',
-        'benefit':
-            'Exfoliates the skin surface to improve texture and brightness with little downtime.',
-      });
-    }
+    // No fallback recommendation when no real metric crossed a threshold —
+    // an empty list is honest; a generic pick would imply unearned signal.
 
     return recs;
   }
@@ -874,7 +912,7 @@ class _ActiveSkincareDetailsScreenState
     final metricsWithChange = _getMetricsWithChange();
     final totalScans = scans.length;
     final afters = _afterPhotos;
-    final improvementPercent = _hasBothPhotos ? 65 : 0;
+    final improvementPercent = _getOverallImprovementPercent();
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -1113,7 +1151,7 @@ class _ActiveSkincareDetailsScreenState
                       ),
                       const SizedBox(height: 6),
                       LinearProgressIndicator(
-                        value: improvementPercent / 100,
+                        value: (improvementPercent ?? 0) / 100,
                         backgroundColor: Colors.grey[200],
                         color: MyApp.goldShimmer,
                         minHeight: 10,
@@ -1124,11 +1162,11 @@ class _ActiveSkincareDetailsScreenState
                 ),
                 const SizedBox(width: 16),
                 Text(
-                  '$improvementPercent%',
+                  improvementPercent == null ? 'Not enough data yet' : '$improvementPercent%',
                   style: TextStyle(
-                    fontSize: 22,
+                    fontSize: improvementPercent == null ? 13 : 22,
                     fontWeight: FontWeight.bold,
-                    color: MyApp.goldShimmer,
+                    color: improvementPercent == null ? Colors.grey : MyApp.goldShimmer,
                   ),
                 ),
               ],
@@ -1397,7 +1435,7 @@ class _ActiveSkincareDetailsScreenState
             const SizedBox(height: 40),
 
             // --- Skin Metrics ---
-            if (scans.length > 1 && !_geminiVisionUsed) ...[
+            if (scans.length > 1 && !_geminiVisionUsed && metricsWithChange.isNotEmpty) ...[
               ExpansionTile(
                 title: Text(
                   'View Detailed Metrics',
@@ -1472,6 +1510,12 @@ class _ActiveSkincareDetailsScreenState
                 style: TextStyle(fontSize: 16, color: Colors.grey),
               ),
               const SizedBox(height: 24),
+            ] else ...[
+              const Text(
+                'Not enough recorded metric data yet to show a comparison.',
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+              ),
+              const SizedBox(height: 24),
             ],
 
             const SizedBox(height: 40),
@@ -1510,16 +1554,25 @@ class _ActiveSkincareDetailsScreenState
                       ),
                     ),
                     const SizedBox(height: 12),
-                    ...recommendedProcedures.map(
-                      (proc) => ListTile(
-                        leading: const Icon(
-                          Icons.arrow_forward,
-                          color: Colors.green,
+                    if (recommendedProcedures.isEmpty)
+                      Text(
+                        'Not enough scan data yet to recommend a next procedure.',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: textColor.withValues(alpha: 0.6),
                         ),
-                        title: Text(proc['name']!),
-                        subtitle: Text(proc['benefit']!),
+                      )
+                    else
+                      ...recommendedProcedures.map(
+                        (proc) => ListTile(
+                          leading: const Icon(
+                            Icons.arrow_forward,
+                            color: Colors.green,
+                          ),
+                          title: Text(proc['name']!),
+                          subtitle: Text(proc['benefit']!),
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
