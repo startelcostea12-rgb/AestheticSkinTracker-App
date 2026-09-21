@@ -6234,6 +6234,7 @@ def analyze_skin_patch(
         "raw_pore_density": normalized_top_level_metrics["raw_pore_density"],
         "metric_confidence": metric_confidence,
         "metric_status": metric_status,
+        "omitted_metric_reasons": omitted_metric_reasons,
         "fallback_reason": fallback_reason,
         "metric_extraction_paths": metric_extraction_paths,
         "baseline_metric_extraction_paths": normalized_baseline_paths,

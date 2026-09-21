@@ -81,6 +81,27 @@ Map<String, dynamic> _dynamicMap(dynamic value) {
   return const <String, dynamic>{};
 }
 
+Map<String, String> buildAiSkinAnalysisBackendFields({
+  String? procedureType,
+  String? customDescription,
+  required String focusArea,
+  String? currentCaptureQuality,
+  String? baselineCaptureQuality,
+}) {
+  return {
+    if ((procedureType ?? '').trim().isNotEmpty)
+      'procedure_type': procedureType!.trim(),
+    if ((customDescription ?? '').trim().isNotEmpty)
+      'skin_profile_note': customDescription!.trim(),
+    if (focusArea.trim().isNotEmpty)
+      'selected_skin_profile_note': focusArea.trim(),
+    if ((currentCaptureQuality ?? '').trim().isNotEmpty)
+      'capture_quality': currentCaptureQuality!.trim(),
+    if ((baselineCaptureQuality ?? '').trim().isNotEmpty)
+      'baseline_capture_quality': baselineCaptureQuality!.trim(),
+  };
+}
+
 MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
   List<Map<String, dynamic>> responses, {
   required int requestedFrames,
@@ -284,6 +305,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   Map<String, double> _previousMetrics = const {};
   ScanHistoryEntry? _previousFocusAreaScan;
   ScanHistoryEntry? _baselineFocusAreaScan;
+  String? _currentCaptureQuality;
   List<ScanHistoryEntry> _priorFocusAreaScans = const [];
   bool _hasPriorFocusAreaScan = false;
   int _localHistoryCountForFocusArea = 1;
@@ -582,9 +604,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         if (captured is AiSkinAnalysisCaptureResult) {
           _analysisFrameBytes = captured.croppedFrames;
           _croppedBytes = captured.croppedFrames.first;
+          _currentCaptureQuality = captured.captureQuality;
         } else {
           _analysisFrameBytes = const [];
           _croppedBytes = null;
+          _currentCaptureQuality = null;
         }
         _explicitBaselineSelection = false;
       });
@@ -845,15 +869,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       // Server-first execution: route this scan through the backend multipart
       // endpoint and parse canonical metrics + trend deltas from the payload.
       final backendBytes = imageBytes ?? await XFile(path).readAsBytes();
-      final backendFields = <String, String>{
-        if ((_selectedProcedureType ?? '').trim().isNotEmpty)
-          'procedure_type': (_selectedProcedureType ?? '').trim(),
-        if ((_selectedProcedureCustomDescription ?? '').trim().isNotEmpty)
-          'skin_profile_note': (_selectedProcedureCustomDescription ?? '')
-              .trim(),
-        if (_resolvedFocusArea().trim().isNotEmpty)
-          'selected_skin_profile_note': _resolvedFocusArea().trim(),
-      };
+      final backendFields = buildAiSkinAnalysisBackendFields(
+        procedureType: _selectedProcedureType,
+        customDescription: _selectedProcedureCustomDescription,
+        focusArea: _resolvedFocusArea(),
+        currentCaptureQuality: _currentCaptureQuality,
+        baselineCaptureQuality: _previousFocusAreaScan?.captureQuality,
+      );
 
       final frames = _analysisFrameBytes.isNotEmpty
           ? _analysisFrameBytes

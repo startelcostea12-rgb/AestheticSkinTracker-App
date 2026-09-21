@@ -182,4 +182,24 @@ void main() {
     expect(source, contains('for (var index = 0; index < 3; index++)'));
     expect(source, contains('AiSkinAnalysisCaptureResult('));
   });
+
+  test('AI backend fields carry distinct current and previous capture quality tags', () {
+    final fields = buildAiSkinAnalysisBackendFields(
+      focusArea: 'Full Face',
+      currentCaptureQuality: 'normal',
+      baselineCaptureQuality: 'normal',
+    );
+
+    expect(fields['capture_quality'], 'normal');
+    expect(fields['baseline_capture_quality'], 'normal');
+    expect(fields['capture_quality'], fields['baseline_capture_quality']);
+
+    final mismatched = buildAiSkinAnalysisBackendFields(
+      focusArea: 'Full Face',
+      currentCaptureQuality: 'normal',
+      baselineCaptureQuality: 'low_light',
+    );
+    expect(mismatched['capture_quality'], 'normal');
+    expect(mismatched['baseline_capture_quality'], 'low_light');
+  });
 }

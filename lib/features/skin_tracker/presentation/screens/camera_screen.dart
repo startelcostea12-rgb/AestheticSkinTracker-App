@@ -379,10 +379,12 @@ class AiSkinAnalysisCaptureResult {
   const AiSkinAnalysisCaptureResult({
     required this.primaryImagePath,
     required this.croppedFrames,
+    required this.captureQuality,
   });
 
   final String primaryImagePath;
   final List<Uint8List> croppedFrames;
+  final String captureQuality;
 }
 
 class _CameraScreenState extends State<CameraScreen>
@@ -4185,11 +4187,17 @@ class _CameraScreenState extends State<CameraScreen>
         prefix: 'ai_skin_analysis_frame_1',
       );
 
+      final captureQuality = await _resolveSelectedFrameCaptureQuality(
+        capturedFiles.first,
+      );
+      _lastCaptureQualityTag = captureQuality;
+
       if (!mounted) return;
       Navigator.of(context).pop(
         AiSkinAnalysisCaptureResult(
           primaryImagePath: primaryImagePath,
           croppedFrames: List<Uint8List>.unmodifiable(croppedFrames),
+          captureQuality: captureQuality,
         ),
       );
     } catch (e) {

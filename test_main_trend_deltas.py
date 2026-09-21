@@ -103,6 +103,35 @@ class BodyConsistentScanCountTests(unittest.TestCase):
 
 
 class SourceResolutionTrendHonestyTests(unittest.TestCase):
+    def test_matching_capture_quality_does_not_force_capture_quality_lock(self) -> None:
+        statuses = _compute_trend_statuses(
+            {"localized_redness": 20.0},
+            {"localized_redness": 50.0},
+            current_paths={"localized_redness": "primary_roi"},
+            baseline_paths={"localized_redness": "primary_roi"},
+            current_capture_quality="normal",
+            baseline_capture_quality="normal",
+            current_source_width=1000,
+            current_source_height=750,
+            baseline_source_width=1000,
+            baseline_source_height=750,
+        )
+        reasons = _compute_trend_lock_reasons(
+            {"localized_redness": 20.0},
+            {"localized_redness": 50.0},
+            current_paths={"localized_redness": "primary_roi"},
+            baseline_paths={"localized_redness": "primary_roi"},
+            current_capture_quality="normal",
+            baseline_capture_quality="normal",
+            current_source_width=1000,
+            current_source_height=750,
+            baseline_source_width=1000,
+            baseline_source_height=750,
+        )
+
+        self.assertEqual(statuses["localized_redness"], "improved")
+        self.assertIsNone(reasons["localized_redness"])
+
     def test_face_resolution_mismatch_forces_stable(self) -> None:
         delta, status = _trend_delta_and_status(
             "localized_redness",
