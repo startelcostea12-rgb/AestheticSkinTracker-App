@@ -5375,9 +5375,8 @@ class _StackCorrelationList extends StatelessWidget {
     final conc = p.concentration != null
         ? '${p.concentration!.toStringAsFixed(1)}% '
         : '';
-    final dir = top.value >= 0 ? 'improved' : 'declined';
     return 'After ${r.daysTracked}d of $conc${p.name}, '
-        '${top.key} $dir by ${top.value.abs().toStringAsFixed(1)} pts.';
+      '${top.key} changed by ${top.value.abs().toStringAsFixed(1)} pts.';
   }
 
   @override

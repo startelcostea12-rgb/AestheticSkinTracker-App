@@ -18,14 +18,13 @@ library ai_intelligence_engine;
 
 import 'package:flutter/material.dart';
 
-import 'dart:math' as math;
-
 import '../models/procedure.dart';
 import '../models/product_tracker.dart';
 import '../models/scan_history.dart';
 import 'app_logger.dart';
 import 'procedure_intelligence.dart';
 import 'procedure_metric_set.dart';
+import 'trend_label_resolver.dart';
 
 // ---------------------------------------------------------------------------
 // Data Classes
@@ -835,6 +834,14 @@ class AiIntelligenceEngine {
   /// Generates a full AI-interpreted report for a skin scan.
   /// [metrics] is the current scan. [baseline] is the earliest reference scan.
   /// [procedureType] and [daysSinceProcedure] add clinical context.
+  ///
+  /// [trendStatus] / [trendLockReason] are the backend's own per-metric
+  /// trend_status/trend_lock_reason maps (canonical metric key -> value),
+  /// e.g. from the latest scan's rawPayload. When supplied, they are the
+  /// ONLY source used to decide whether a metric's trend note says
+  /// "improvement"/"worsening" — never a locally recomputed threshold on
+  /// the raw value delta. A metric with no entry in these maps gets no
+  /// trend note at all, even if a numeric baseline is available.
   static ScanAiReport interpretScanMetrics(
     SkinMetrics metrics, {
     SkinMetrics? baseline,
@@ -844,6 +851,8 @@ class AiIntelligenceEngine {
     int? daysSinceProcedure,
     Map<String, double>? rawMetrics,
     Map<String, double>? baselineRawMetrics,
+    Map<String, String>? trendStatus,
+    Map<String, String>? trendLockReason,
   }) {
     final resolvedProcedureType = (() {
       final normalized = (procedureType ?? '').trim();
@@ -873,6 +882,8 @@ class AiIntelligenceEngine {
             daysSinceProcedure: daysSinceProcedure,
             rawMetrics: rawMetrics,
             baselineRawMetrics: baselineRawMetrics,
+            trendStatus: trendStatus,
+            trendLockReason: trendLockReason,
           ),
         )
         .where((insight) => insight != null)
@@ -940,6 +951,8 @@ class AiIntelligenceEngine {
     int? daysSinceProcedure,
     Map<String, double>? rawMetrics,
     Map<String, double>? baselineRawMetrics,
+    Map<String, String>? trendStatus,
+    Map<String, String>? trendLockReason,
   }) {
     final bool isRawSourced =
         def.rawSourceKeys != null || def.extractFromRaw != null;
@@ -997,34 +1010,45 @@ class AiIntelligenceEngine {
         break;
     }
 
-    // Build trend note from baseline if available. Prefer the raw baseline
-    // map when available so body-comp deltas reflect real units.
+    // Trend wording is decided EXCLUSIVELY by the backend's trend_status for
+    // this metric (via resolveTrendLabel) — never by locally comparing value
+    // vs baselineValue. The point-delta below is only ever used as a
+    // descriptive magnitude string once the backend has already authorized
+    // a direction; it is never used to pick "improvement" vs "worsening"
+    // itself.
     String? trendNote;
     bool? isPositiveTrend;
     final double? baselineValue = def.valueFromRaw(
       baselineRawMetrics,
       baseline,
     );
-    if (baselineValue != null &&
+    final canonicalKey = shortMetricKeyToCanonical[def.sourceKey];
+    final String? backendTrendStatus =
+        canonicalKey == null ? null : trendStatus?[canonicalKey];
+    final String? backendTrendLockReason =
+        canonicalKey == null ? null : trendLockReason?[canonicalKey];
+    final resolvedTrend = resolveTrendLabel(
+      trendStatus: backendTrendStatus,
+      trendLockReason: backendTrendLockReason,
+    );
+    if (resolvedTrend != null &&
+        baselineValue != null &&
         (baseline != null || baselineRawMetrics != null)) {
       final delta = value - baselineValue;
-      // Threshold scales with the metric magnitude — 0.1 is fine for 0–10
-      // skin metrics, but weight/waist need a slightly larger band.
-      final threshold = isRawSourced ? math.max(0.2, value.abs() * 0.005) : 0.1;
-      if (delta.abs() > threshold) {
-        final improved = def.lowerIsBetter ? delta < 0 : delta > 0;
-        isPositiveTrend = improved;
-        final arrow = delta < 0 ? '↓' : '↑';
-        final magnitude = def.valueFormatter != null
-            ? def.valueFormatter!(delta.abs())
-            : delta.abs().toStringAsFixed(1);
-        trendNote = improved
-            ? 'Trend: $arrow $magnitude vs baseline — improvement.'
-            : 'Trend: $arrow $magnitude vs baseline — worsening.';
-      } else {
-        trendNote = 'Trend: stable vs baseline.';
+      final magnitude = def.valueFormatter != null
+          ? def.valueFormatter!(delta.abs())
+          : delta.abs().toStringAsFixed(1);
+      if (resolvedTrend.isImproved) {
+        isPositiveTrend = true;
+        trendNote = 'Trend: ↓ $magnitude vs baseline — improvement.';
+      } else if (resolvedTrend.isWorsened) {
+        isPositiveTrend = false;
+        trendNote = 'Trend: ↑ $magnitude vs baseline — worsening.';
+      } else if (resolvedTrend.isStable) {
         isPositiveTrend = null;
+        trendNote = resolvedTrend.lockDetail ?? 'Trend: stable vs baseline.';
       }
+      // insufficientSignal: leave trendNote null, matching "no usable trend".
     }
 
     // Procedure phase context appended to clinical narrative

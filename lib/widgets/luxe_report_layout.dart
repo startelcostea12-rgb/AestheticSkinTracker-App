@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import '../utils/capture_consistency.dart';
 import '../utils/severity_band.dart';
+import '../utils/trend_label_resolver.dart';
 import '../utils/trend_lock_reason.dart';
 import 'before_after_split_slider.dart';
 
@@ -1165,10 +1166,28 @@ _HonestyAssessment _assessMetricHonesty({
   final normalizedBackendTrendStatus = backendTrendStatus
       ?.trim()
       .toLowerCase();
-  final mappedBackendStatus = _mapBackendTrendStatus(normalizedBackendTrendStatus);
-  if (usesBackendTrend && mappedBackendStatus != null && backendTrendDeltaPct != null) {
+  final resolvedFromBackend = resolveTrendLabel(
+    trendStatus: backendTrendStatus,
+    trendLockReason: backendTrendLockReason,
+    trendDeltaPct: backendTrendDeltaPct,
+  );
+  // The legacy local-recompute fallback below must be reachable ONLY when
+  // the backend genuinely sent no trend_status for this metric (i.e.
+  // resolvedFromBackend is null) — never merely because a caller forgot to
+  // set usesBackendTrend while real status data was available. Gating on
+  // resolvedFromBackend alone (not on usesBackendTrend) makes that
+  // structural; this assertion catches a caller whose flag disagrees with
+  // that fact instead of letting it fail silently.
+  assert(
+    resolvedFromBackend != null || !usesBackendTrend,
+    'usesBackendTrend=true was passed for metric "$metricKey" but no usable '
+    'backendTrendStatus was supplied ("$backendTrendStatus") — fix the '
+    'caller instead of relying on the local-recompute fallback.',
+  );
+  if (resolvedFromBackend != null) {
+    final mappedBackendStatus = _fromTrendDirection(resolvedFromBackend.direction);
     if (emitLog) {
-      final formattedDelta = backendTrendDeltaPct.toStringAsFixed(1);
+      final formattedDelta = backendTrendDeltaPct?.toStringAsFixed(1) ?? 'null';
       debugPrint(
         'HONESTY [$metricKey]= current=${current.toStringAsFixed(2)} baseline=${baseline.toStringAsFixed(2)} deltaPct=$formattedDelta source=payload.trend_deltas status=${mappedBackendStatus.name} rawStatus=$normalizedBackendTrendStatus',
       );
@@ -1176,13 +1195,9 @@ _HonestyAssessment _assessMetricHonesty({
     return _HonestyAssessment(
       status: mappedBackendStatus,
       reason: 'backend trend_status=${normalizedBackendTrendStatus ?? 'unknown'}',
-      deltaPct: mappedBackendStatus == _HonestyStatus.insufficientSignal
-          ? null
-          : backendTrendDeltaPct,
+      deltaPct: resolvedFromBackend.deltaPct,
       hasRealBaseline: hasRealBaseline,
-      lockReason: mappedBackendStatus == _HonestyStatus.stable
-          ? backendTrendLockReason
-          : null,
+      lockReason: resolvedFromBackend.lockReason,
     );
   }
 
@@ -1304,18 +1319,15 @@ double _getMaxConfidenceSwingThreshold(String metricKey) {
   }
 }
 
-_HonestyStatus? _mapBackendTrendStatus(String? status) {
-  if (status == null || status.isEmpty) return null;
-  switch (status) {
-    case 'improved':
+_HonestyStatus _fromTrendDirection(TrendDirection direction) {
+  switch (direction) {
+    case TrendDirection.improved:
       return _HonestyStatus.improved;
-    case 'worsened':
+    case TrendDirection.worsened:
       return _HonestyStatus.worsened;
-    case 'stable':
+    case TrendDirection.stable:
       return _HonestyStatus.stable;
-    case 'insufficient_signal':
-      return _HonestyStatus.insufficientSignal;
-    default:
+    case TrendDirection.insufficientSignal:
       return _HonestyStatus.insufficientSignal;
   }
 }

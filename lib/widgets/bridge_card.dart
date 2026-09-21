@@ -4,7 +4,7 @@ import '../app_theme.dart';
 import '../models/peptide_model.dart';
 import '../models/procedure.dart' as models;
 import '../models/scan_history.dart';
-import '../utils/trend_lock_reason.dart';
+import '../utils/trend_label_resolver.dart';
 
 class BridgeCard extends StatelessWidget {
   const BridgeCard({
@@ -374,42 +374,29 @@ class BridgeCard extends StatelessWidget {
         ? _asMap(nestedLuxe['trend_lock_reasons'])
         : _asMap(payload['trend_lock_reasons']);
     final metricKey = _preferredMetricKey(latest);
-    final status = trendSource[metricKey]?.toString().trim().toLowerCase();
-    final lockReason = lockReasonSource[metricKey]?.toString().trim();
+    final resolvedTrend = resolveTrendLabel(
+      trendStatus: trendSource[metricKey]?.toString(),
+      trendLockReason: lockReasonSource[metricKey]?.toString(),
+    );
 
     final baselineComparable = _hasBaselineInfo(payload, nestedLuxe);
-    if (!baselineComparable || status == null || status.isEmpty) {
+    if (!baselineComparable || resolvedTrend == null) {
       return isBodyProcedure
           ? 'Body tracking is still building your baseline — trends will appear as more scans accumulate. Check back after a few more sessions.'
           : 'baseline set';
     }
 
-    final currentPath = _metricPath(payload, nestedLuxe, metricKey, isBaseline: false);
-    final baselinePath = _metricPath(payload, nestedLuxe, metricKey, isBaseline: true);
-    final pathsComparable = currentPath.isNotEmpty && baselinePath.isNotEmpty && currentPath == baselinePath;
-    final captureQuality = (latest.captureQuality ?? '').trim().toLowerCase();
-
-    if (status == 'insufficient_signal') {
+    if (resolvedTrend.isInsufficientSignal) {
       return isBodyProcedure
           ? 'Body tracking is still building your baseline — trends will appear as more scans accumulate. Check back after a few more sessions.'
           : 'steady since baseline';
     }
 
-    if (status == 'improved') {
-      if (captureQuality != 'normal' || !pathsComparable) {
-        return isBodyProcedure
-            ? 'Body tracking is still building your baseline — trends will appear as more scans accumulate. Check back after a few more sessions.'
-            : 'steady since baseline';
-      }
+    if (resolvedTrend.isImproved) {
       return '${_metricLabel(metricKey)} trending down since baseline';
     }
 
-    if (status == 'worsened') {
-      if (captureQuality != 'normal' || !pathsComparable) {
-        return isBodyProcedure
-            ? 'Body tracking is still building your baseline — trends will appear as more scans accumulate. Check back after a few more sessions.'
-            : 'steady since baseline';
-      }
+    if (resolvedTrend.isWorsened) {
       return '${_metricLabel(metricKey)} trending up since baseline';
     }
 
@@ -420,7 +407,7 @@ class BridgeCard extends StatelessWidget {
     // delta (real, honest stability) or a forced lock because this scan's
     // capture conditions weren't comparable to the baseline. Only the latter
     // gets a distinct label — a genuine stable keeps "steady since baseline".
-    final lockLabel = trendLockReasonShortLabel(lockReason);
+    final lockLabel = resolvedTrend.lockShortLabel;
     return lockLabel ?? 'steady since baseline';
   }
 

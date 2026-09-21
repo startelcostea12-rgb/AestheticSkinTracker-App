@@ -16,6 +16,54 @@ import '../utils/skin_scan_coach_copy.dart';
 import '../utils/ai_product_recommendation_engine.dart';
 import '../utils/report_flow.dart';
 import '../widgets/product_recommendation_card.dart';
+import '../utils/trend_label_resolver.dart';
+
+Map<String, dynamic> _asDynamicMap(dynamic value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return Map<String, dynamic>.from(value);
+  return const <String, dynamic>{};
+}
+
+/// The one authorized way this screen learns a metric's trend direction —
+/// always sourced from the backend's trend_status/trend_lock_reason/
+/// trend_deltas on [latest]'s raw payload, never recomputed locally from
+/// two raw metric numbers. Returns null when the backend supplied no
+/// verdict for this metric on this scan.
+///
+/// [metricKey] may be one of this screen's short display-key aliases
+/// (e.g. "redness", "wrinkle") rather than the backend's canonical name
+/// ("localized_redness", "wrinkle_load") — [shortMetricKeyToCanonical]
+/// resolves that before looking up trend_status.
+ResolvedTrendLabel? _resolveScanMetricTrend(
+  ScanHistoryEntry latest,
+  String metricKey,
+) {
+  final payload = _asDynamicMap(latest.rawPayload);
+  final nestedLuxe = _asDynamicMap(payload['luxePayload']);
+
+  Map<String, dynamic> preferNested(String key) {
+    final nested = _asDynamicMap(nestedLuxe[key]);
+    return nested.isNotEmpty ? nested : _asDynamicMap(payload[key]);
+  }
+
+  final trendStatusMap = preferNested('trend_status');
+  final trendLockReasonsMap = preferNested('trend_lock_reasons');
+  final trendDeltasMap = preferNested('trend_deltas');
+
+  final canonicalKey = shortMetricKeyToCanonical[metricKey];
+  final lookupKey = trendStatusMap.containsKey(metricKey)
+      ? metricKey
+      : (canonicalKey != null && trendStatusMap.containsKey(canonicalKey)
+            ? canonicalKey
+            : metricKey);
+
+  final deltaRaw = trendDeltasMap[lookupKey];
+  return resolveTrendLabel(
+    trendStatus: trendStatusMap[lookupKey]?.toString(),
+    trendLockReason: trendLockReasonsMap[lookupKey]?.toString(),
+    trendDeltaPct: deltaRaw is num ? deltaRaw.toDouble() : null,
+  );
+}
 
 enum ProgressReportViewMode { reports, scans }
 
@@ -70,18 +118,25 @@ class _MetricDelta {
     required this.label,
     required this.baselineValue,
     required this.latestValue,
-    required this.improved,
     required this.hasValidComparison,
     this.isInitialBaseline = false,
+    this.resolvedTrend,
   });
 
   final String key;
   final String label;
   final double baselineValue;
   final double latestValue;
-  final bool improved;
   final bool hasValidComparison;
   final bool isInitialBaseline;
+
+  /// Backend-authorized trend verdict for this metric; null means the
+  /// backend supplied no trend_status for it, in which case no
+  /// Improved/Worsened claim may be shown.
+  final ResolvedTrendLabel? resolvedTrend;
+
+  bool get improved => resolvedTrend?.isImproved ?? false;
+  bool get worsened => resolvedTrend?.isWorsened ?? false;
 
   double get delta => latestValue - baselineValue;
   double get magnitude => delta.abs();
@@ -346,7 +401,6 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
             label: latestRow.label,
             baselineValue: currentValue,
             latestValue: currentValue,
-            improved: false,
             hasValidComparison: true,
             isInitialBaseline: true,
           ),
@@ -392,9 +446,6 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
             latest.scanEngine,
           );
       final delta = latestValue - baselineValue;
-      final higherIsBetter = ScanDetailScreen._higherIsBetterMetric(
-        latestRow.key,
-      );
 
       if (hasValidComparison && delta.abs() < 0.05) continue;
 
@@ -404,10 +455,8 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
           label: latestRow.label,
           baselineValue: baselineValue,
           latestValue: latestValue,
-          improved: hasValidComparison
-              ? (higherIsBetter ? delta > 0 : delta < 0)
-              : false,
           hasValidComparison: hasValidComparison,
+          resolvedTrend: _resolveScanMetricTrend(latest, latestRow.key),
         ),
       );
     }
@@ -543,8 +592,10 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
       : comparable.where((delta) => delta.improved).length;
     final worsenedCount = hasInitialBaseline
       ? 0
-      : comparable.length - improvedCount;
-    final pendingCount = hasInitialBaseline ? 0 : deltas.length - comparable.length;
+      : comparable.where((delta) => delta.worsened).length;
+    final pendingCount = hasInitialBaseline
+      ? 0
+      : deltas.length - improvedCount - worsenedCount;
     final dateRange = group.count > 1
         ? '${_shortDate(group.baseline.timestamp)} -> ${_shortDate(group.latest.timestamp)}'
         : _shortDate(group.latest.timestamp);
@@ -753,10 +804,10 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
   Widget _deltaPreviewChip(_MetricDelta delta) {
     final color = delta.improved
         ? AppColors.mutedSage
-        : AppColors.softTerracotta;
+        : (delta.worsened ? AppColors.softTerracotta : AppColors.refinedSlate);
     final arrow = delta.improved
         ? Icons.arrow_upward_rounded
-        : Icons.warning_rounded;
+        : (delta.worsened ? Icons.warning_rounded : Icons.trending_flat_rounded);
     return _summaryChip(delta.label, color, arrow);
   }
 
@@ -2301,8 +2352,10 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
       : comparable.where((delta) => delta.improved).length;
     final worsenedCount = hasInitialBaseline
       ? 0
-      : comparable.length - improvedCount;
-    final pendingCount = hasInitialBaseline ? 0 : deltas.length - comparable.length;
+      : comparable.where((delta) => delta.worsened).length;
+    final pendingCount = hasInitialBaseline
+      ? 0
+      : deltas.length - improvedCount - worsenedCount;
 
     return Scaffold(
       appBar: AppBar(
@@ -2508,31 +2561,40 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
     final currentPresent = currentValue.isFinite && currentValue > 0.0;
     final canShowPercentageBadge =
       !hasNonPositiveBaselineOrCurrent && baselinePresent && currentPresent;
-    final color = canShowPercentageBadge
-      ? (delta.improved
+    // Trend wording/coloring requires BOTH a numerically valid comparison
+    // AND a real backend trend_status verdict — never derived from the raw
+    // sign of currentValue - baselineValue on its own.
+    final resolvedTrend = delta.resolvedTrend;
+    final canShowTrendBadge = canShowPercentageBadge && resolvedTrend != null;
+    final color = canShowTrendBadge
+      ? (resolvedTrend!.isImproved
           ? AppColors.mutedSage
-          : AppColors.softTerracotta)
+          : resolvedTrend.isWorsened
+              ? AppColors.softTerracotta
+              : AppColors.refinedSlate)
       : AppColors.refinedSlate;
     final directionIcon = delta.delta > 0
       ? Icons.arrow_upward_rounded
       : Icons.arrow_downward_rounded;
-    final trendLabel = delta.improved ? 'Improved' : 'Worsened';
     final percentDelta = canShowPercentageBadge
       ? ((currentValue - adjustedBaselineForDelta) / adjustedBaselineForDelta) *
           100.0
       : 0.0;
-    double? badgePercent = canShowPercentageBadge ? percentDelta : null;
+    double? badgePercent = canShowTrendBadge ? percentDelta : null;
+    final trendLabel = canShowTrendBadge
+        ? (resolvedTrend!.lockHeadline ?? resolvedTrend.label)
+        : null;
     String subtext;
-    if (currentValue <= 0.0 || baselineValue <= 0.0) {
+    if (!canShowTrendBadge) {
       badgePercent = null;
       subtext = 'Tracks visible appearance in key zones';
     } else {
       final percentPrefix = percentDelta > 0 ? '+' : '';
       subtext = '$trendLabel $percentPrefix${percentDelta.toStringAsFixed(1)}%';
     }
-    final deltaTextColor = (currentValue <= 0.0 || baselineValue <= 0.0)
-      ? AppColors.refinedSlate.withValues(alpha: 0.72)
-      : color;
+    final deltaTextColor = canShowTrendBadge
+      ? color
+      : AppColors.refinedSlate.withValues(alpha: 0.72);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Container(
@@ -2808,7 +2870,6 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
             label: latestRow.label,
             baselineValue: currentValue,
             latestValue: currentValue,
-            improved: false,
             hasValidComparison: true,
             isInitialBaseline: true,
           ),
@@ -2854,9 +2915,6 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
             latest.scanEngine,
           );
       final delta = latestValue - baselineValue;
-      final higherIsBetter = ScanDetailScreen._higherIsBetterMetric(
-        latestRow.key,
-      );
 
       if (hasValidComparison && delta.abs() < 0.05) continue;
 
@@ -2866,10 +2924,8 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
           label: latestRow.label,
           baselineValue: baselineValue,
           latestValue: latestValue,
-          improved: hasValidComparison
-              ? (higherIsBetter ? delta > 0 : delta < 0)
-              : false,
           hasValidComparison: hasValidComparison,
+          resolvedTrend: _resolveScanMetricTrend(latest, latestRow.key),
         ),
       );
     }

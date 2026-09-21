@@ -190,8 +190,8 @@ void main() {
       ),
     );
 
-    expect(find.textContaining('steady since baseline'), findsOneWidget);
-    expect(find.textContaining('redness trending down since baseline'), findsNothing);
+    expect(find.textContaining('redness trending down since baseline'), findsOneWidget);
+    expect(find.textContaining('steady since baseline'), findsNothing);
   });
 
   testWidgets('BridgeCard keeps "steady since baseline" for a genuine small-delta stable trend', (tester) async {

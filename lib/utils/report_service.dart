@@ -28,6 +28,7 @@ import '../widgets/report_share_helper.dart' as rsh;
 import 'app_logger.dart';
 import 'app_prefs.dart';
 import 'procedure_intelligence.dart';
+import 'trend_label_resolver.dart';
 import 'report_disclaimer.dart';
 import 'tracked_item_display.dart';
 
@@ -1002,6 +1003,8 @@ class ReportService {
                 procedureType: metricProcedureType,
                 baselineRaw: scans.last.metrics,
                 latestRaw: scans.first.metrics,
+                trendStatus: _scanTrendStatusMap(scans.first),
+                trendLockReason: _scanTrendLockReasonMap(scans.first),
               ),
             ],
           ]),
@@ -2349,6 +2352,36 @@ class ReportService {
     );
   }
 
+  static Map<String, dynamic> _asDynamicMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return const <String, dynamic>{};
+  }
+
+  /// Extracts the backend's per-metric trend_status map from [scan]'s raw
+  /// payload (preferring a nested luxePayload if present), so the PDF
+  /// report's metric table can defer to it instead of recomputing trend
+  /// direction from a raw percent change.
+  static Map<String, String> _scanTrendStatusMap(ScanHistoryEntry? scan) {
+    if (scan == null) return const {};
+    final payload = _asDynamicMap(scan.rawPayload);
+    final nestedLuxe = _asDynamicMap(payload['luxePayload']);
+    final source = nestedLuxe['trend_status'] != null
+        ? _asDynamicMap(nestedLuxe['trend_status'])
+        : _asDynamicMap(payload['trend_status']);
+    return source.map((key, value) => MapEntry(key, value.toString()));
+  }
+
+  static Map<String, String> _scanTrendLockReasonMap(ScanHistoryEntry? scan) {
+    if (scan == null) return const {};
+    final payload = _asDynamicMap(scan.rawPayload);
+    final nestedLuxe = _asDynamicMap(payload['luxePayload']);
+    final source = nestedLuxe['trend_lock_reasons'] != null
+        ? _asDynamicMap(nestedLuxe['trend_lock_reasons'])
+        : _asDynamicMap(payload['trend_lock_reasons']);
+    return source.map((key, value) => MapEntry(key, value.toString()));
+  }
+
   static pw.Widget _metricsTable(
     SkinMetrics baseline,
     SkinMetrics latest,
@@ -2361,6 +2394,8 @@ class ReportService {
     String? procedureType,
     Map<String, double>? baselineRaw,
     Map<String, double>? latestRaw,
+    Map<String, String>? trendStatus,
+    Map<String, String>? trendLockReason,
   }) {
     // Clinical color tokens (kept here to avoid extra params from caller).
     const navy = PdfColor.fromInt(0xFF1E2A3A);
@@ -2392,6 +2427,7 @@ class ReportService {
         'suggestionImproving': def.suggestionImproving,
         'suggestionWorsening': def.suggestionWorsening,
         'formatter': def.valueFormatter,
+        'sourceKey': def.sourceKey,
       });
     }
 
@@ -2447,8 +2483,30 @@ class ReportService {
       final isImprovement = pct >= 0;
       final sign = isImprovement ? '+' : '-';
       final changeText = '$sign${pct.abs().toStringAsFixed(1)}%';
-      final isImproving = isImprovement && pct.abs() > 0.5;
-      final isWorsening = !isImprovement && pct.abs() > 0.5;
+      // Trend wording (IMPROVING/DECLINING/STABLE) must defer to the
+      // backend's honesty-gated trend_status for this metric when
+      // available — never a raw percent-change threshold. When no
+      // backend verdict exists for this metric (e.g. no prior comparable
+      // scan, or the backend judged the comparison invalid), fall back to
+      // a neutral "TRACKING" label rather than guessing a direction.
+      final sourceKey = row['sourceKey'] as String?;
+      final canonicalKey = sourceKey == null
+          ? null
+          : shortMetricKeyToCanonical[sourceKey];
+      final backendTrendStatus = canonicalKey == null
+          ? null
+          : trendStatus?[canonicalKey];
+      final backendTrendLockReason = canonicalKey == null
+          ? null
+          : trendLockReason?[canonicalKey];
+      final resolvedTrend = resolveTrendLabel(
+        trendStatus: backendTrendStatus,
+        trendLockReason: backendTrendLockReason,
+      );
+      final isImproving = resolvedTrend?.isImproved ?? false;
+      final isWorsening = resolvedTrend?.isWorsened ?? false;
+      final isStableVerdict = resolvedTrend?.isStable ?? false;
+      final hasBackendVerdict = resolvedTrend != null;
       final suggestion = isImproving
           ? (row['suggestionImproving'] as String? ?? '')
           : isWorsening
@@ -2469,7 +2527,11 @@ class ReportService {
           ? 'IMPROVING'
           : isWorsening
           ? 'DECLINING'
-          : 'STABLE';
+          : isStableVerdict
+          ? (resolvedTrend?.lockShortLabel?.toUpperCase() ?? 'STABLE')
+          : hasBackendVerdict && !resolvedTrend!.isInsufficientSignal
+          ? 'STABLE'
+          : 'TRACKING';
       final statusColor = isImproving
           ? greenOk
           : isWorsening

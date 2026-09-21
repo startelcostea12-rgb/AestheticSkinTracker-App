@@ -42,6 +42,7 @@ import 'package:aesthetic_skin_tracker/utils/skin_analysis_service.dart' as remo
 import 'package:aesthetic_skin_tracker/utils/procedure_intelligence.dart' as procedure_intel;
 import 'package:aesthetic_skin_tracker/utils/procedure_metric_set.dart';
 import 'package:aesthetic_skin_tracker/utils/skin_metric_labels.dart';
+import 'package:aesthetic_skin_tracker/utils/trend_label_resolver.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_product_recommendation_engine.dart';
 import 'package:aesthetic_skin_tracker/widgets/clinical_section_header.dart';
 import 'package:aesthetic_skin_tracker/widgets/image_crop_dialog.dart';
@@ -289,6 +290,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   bool _explicitLocalFollowUpFlag = false;
   bool _explicitBaselineSelection = false;
   Map<String, double> _serverTrendDeltas = const {};
+  Map<String, String> _serverTrendStatus = const {};
+  Map<String, String> _serverTrendLockReasons = const {};
   Map<String, dynamic>? _latestBackendAnalysisPayload;
   Map<String, int> _metricContributorCounts = const {};
   int _successfulAnalysisFrameCount = 0;
@@ -424,6 +427,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       _manualBaselineMetricMatrix = null;
       _awaitingBaselineOnboarding = true;
       _serverTrendDeltas = const {};
+      _serverTrendStatus = const {};
+      _serverTrendLockReasons = const {};
     });
   }
 
@@ -881,6 +886,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       final Map<String, double> fullMetrics = parsedBackend.fullMetrics;
       final Map<String, double> serverTrendDeltas =
           parsedBackend.serverTrendDeltas;
+      final Map<String, String> serverTrendStatus =
+          parsedBackend.serverTrendStatus;
+      final Map<String, String> serverTrendLockReasons =
+          parsedBackend.serverTrendLockReasons;
       final luxePayload = _buildLuxeResultsPayload(
         report,
         backendResponse: backendResponse,
@@ -980,6 +989,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         _fullMetrics = fullMetrics;
         _previousMetrics = previousMetrics;
         _serverTrendDeltas = serverTrendDeltas;
+        _serverTrendStatus = serverTrendStatus;
+        _serverTrendLockReasons = serverTrendLockReasons;
         _latestBackendAnalysisPayload = backendResponse;
         _metricContributorCounts = aggregate.metricContributorCounts;
         _successfulAnalysisFrameCount = aggregate.successfulFrames;
@@ -1521,7 +1532,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     return merged;
   }
 
-  ({Map<String, double> fullMetrics, Map<String, double> serverTrendDeltas})
+  ({
+    Map<String, double> fullMetrics,
+    Map<String, double> serverTrendDeltas,
+    Map<String, String> serverTrendStatus,
+    Map<String, String> serverTrendLockReasons,
+  })
   _parseBackendAnalysisPayload(Map<String, dynamic> payload) {
     final metricsNode = _asDynamicMap(payload['metrics']) ?? payload;
     final metricMatrix =
@@ -1531,6 +1547,14 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final trendNode =
         _asDynamicMap(payload['trend_deltas']) ??
         _asDynamicMap(metricsNode['trend_deltas']) ??
+        const <String, dynamic>{};
+    final trendStatusNode =
+        _asDynamicMap(payload['trend_status']) ??
+        _asDynamicMap(metricsNode['trend_status']) ??
+        const <String, dynamic>{};
+    final trendLockReasonsNode =
+        _asDynamicMap(payload['trend_lock_reasons']) ??
+        _asDynamicMap(metricsNode['trend_lock_reasons']) ??
         const <String, dynamic>{};
 
     double? number(dynamic value) {
@@ -1588,7 +1612,26 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       mappedTrend[entry.key] = parsed;
     }
 
-    return (fullMetrics: fullMetrics, serverTrendDeltas: mappedTrend);
+    final mappedTrendStatus = <String, String>{};
+    for (final entry in trendStatusNode.entries) {
+      final value = entry.value?.toString().trim();
+      if (value == null || value.isEmpty) continue;
+      mappedTrendStatus[entry.key] = value;
+    }
+
+    final mappedTrendLockReasons = <String, String>{};
+    for (final entry in trendLockReasonsNode.entries) {
+      final value = entry.value?.toString().trim();
+      if (value == null || value.isEmpty) continue;
+      mappedTrendLockReasons[entry.key] = value;
+    }
+
+    return (
+      fullMetrics: fullMetrics,
+      serverTrendDeltas: mappedTrend,
+      serverTrendStatus: mappedTrendStatus,
+      serverTrendLockReasons: mappedTrendLockReasons,
+    );
   }
 
   Map<String, dynamic>? _baselineMetricMatrixForBackend(
@@ -3459,13 +3502,18 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       );
       if (trend == null) continue;
 
-      if (trend.label == 'Stable') {
-        sentences.add('${spec.label} is stable versus baseline, so there is no need to chase a bigger change right now.');
-      } else {
+      if (trend.label == 'Improved' || trend.label == 'Worsened') {
         final direction = trend.label == 'Improved' ? 'improved' : 'worsened';
-        final qualifier = trend.percentDelta.abs() >= 5.0 ? 'meaningfully' : 'slightly';
+        final percentDelta = trend.percentDelta;
+        final qualifier = (percentDelta != null && percentDelta.abs() >= 5.0)
+            ? 'meaningfully'
+            : 'slightly';
         sentences.add('${spec.label} has $direction $qualifier versus baseline.');
+      } else if (trend.label == 'Stable') {
+        sentences.add('${spec.label} is stable versus baseline, so there is no need to chase a bigger change right now.');
       }
+      // Any other backend verdict (a standalone-entry lock, or insufficient
+      // signal) intentionally produces no sentence here rather than guessing.
 
       if (sentences.length >= 2) break;
     }
@@ -4824,15 +4872,16 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       IconData icon,
       Color color,
       String label,
-      double delta,
-      double percentDelta,
+      double? delta,
+      double? percentDelta,
     })
     trend,
   ) {
-    final isStable = trend.label == 'Stable';
-    final deltaText = isStable
-        ? ''
-        : ' ${trend.percentDelta > 0 ? '+' : ''}${trend.percentDelta.toStringAsFixed(0)}%';
+    final showsPercent = trend.label == 'Improved' || trend.label == 'Worsened';
+    final percentDelta = trend.percentDelta;
+    final deltaText = (showsPercent && percentDelta != null)
+        ? ' ${percentDelta > 0 ? '+' : ''}${percentDelta.toStringAsFixed(0)}%'
+        : '';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: BoxDecoration(
@@ -4862,17 +4911,19 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     );
   }
 
-  /// Computes the trend for [metricKey] by comparing the current 0–10
-  /// [current] value against the same metric from the previous scan.
-  /// Returns null when there is no prior value to compare. All six
-  /// metrics are "higher = worse", so a DROP is an improvement. The
-  /// returned [delta] is the signed change (current - previous).
+  /// Resolves the trend for [metricKey] using ONLY the backend's own
+  /// trend_status/trend_lock_reason for that metric (via [resolveTrendLabel])
+  /// — never a locally recomputed threshold on raw deltas. Returns null when
+  /// the backend supplied no verdict for this metric (e.g. no prior scan on
+  /// record yet, or a metric this backend build doesn't trend), which
+  /// callers must treat as "no trend chip", not as license to fall back to
+  /// comparing two raw numbers themselves.
   ({
     IconData icon,
     Color color,
     String label,
-    double delta,
-    double percentDelta,
+    double? delta,
+    double? percentDelta,
   })?
   _trendFor(String metricKey, double current, {bool lowerIsBetter = true}) {
     String? serverKeyForMetric(String key) {
@@ -4889,76 +4940,61 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           return 'pigment_load';
         case 'wrinkle':
           return 'wrinkle_load';
+        case 'rosacea_intensity':
+          return 'rosacea_severity';
       }
       return null;
     }
 
     final serverKey = serverKeyForMetric(metricKey);
-    if (serverKey != null) {
-      final serverDelta = _serverTrendDeltas[serverKey];
-      if (serverDelta != null) {
-        if (serverDelta.abs() < 1.0) {
-          return (
-            icon: Icons.trending_flat_rounded,
-            color: MyApp.clinicalSlate,
-            label: 'Stable',
-            delta: 0,
-            percentDelta: serverDelta,
-          );
-        }
-        final improved = lowerIsBetter ? serverDelta < 0 : serverDelta > 0;
-        return (
-          icon: improved
-              ? (lowerIsBetter
-                    ? Icons.arrow_downward_rounded
-                    : Icons.arrow_upward_rounded)
-              : (lowerIsBetter
-                    ? Icons.arrow_upward_rounded
-                    : Icons.arrow_downward_rounded),
-          color: improved ? AppColors.mutedSage : AppColors.softTerracotta,
-          label: improved ? 'Improved' : 'Worsened',
-          delta: serverDelta,
-          percentDelta: serverDelta,
-        );
-      }
-    }
+    if (serverKey == null) return null;
 
-    final previous = _previousMetrics[metricKey];
-    if (previous == null) return null;
-    final delta = current - previous;
-    final denominator = previous.abs() < 0.1 ? 0.1 : previous.abs();
-    final percentDelta = (delta / denominator) * 100.0;
-    // Ignore sub-0.25 wobble on the 0–10 scale to avoid noisy flips.
-    if (delta.abs() < 0.25) {
-      return (
-        icon: Icons.trending_flat_rounded,
-        color: MyApp.clinicalSlate,
-        label: 'Stable',
-        delta: delta,
-        percentDelta: percentDelta,
-      );
-    }
-    final improved = lowerIsBetter ? delta < 0 : delta > 0;
-    if (improved) {
-      return (
-        icon: lowerIsBetter
-            ? Icons.arrow_downward_rounded
-            : Icons.arrow_upward_rounded,
-        color: AppColors.mutedSage,
-        label: 'Improved',
-        delta: delta,
-        percentDelta: percentDelta,
-      );
-    }
-    return (
-      icon: lowerIsBetter
-          ? Icons.arrow_upward_rounded
-          : Icons.arrow_downward_rounded,
-      color: AppColors.softTerracotta,
-      label: 'Worsened',
-      delta: delta,
-      percentDelta: percentDelta,
+    final resolved = resolveTrendLabel(
+      trendStatus: _serverTrendStatus[serverKey],
+      trendLockReason: _serverTrendLockReasons[serverKey],
+      trendDeltaPct: _serverTrendDeltas[serverKey],
     );
+    if (resolved == null) return null;
+
+    final label = resolved.lockHeadline ?? resolved.label;
+    switch (resolved.direction) {
+      case TrendDirection.improved:
+        return (
+          icon: lowerIsBetter
+              ? Icons.arrow_downward_rounded
+              : Icons.arrow_upward_rounded,
+          color: AppColors.mutedSage,
+          label: label,
+          delta: resolved.deltaPct,
+          percentDelta: resolved.deltaPct,
+        );
+      case TrendDirection.worsened:
+        return (
+          icon: lowerIsBetter
+              ? Icons.arrow_upward_rounded
+              : Icons.arrow_downward_rounded,
+          color: AppColors.softTerracotta,
+          label: label,
+          delta: resolved.deltaPct,
+          percentDelta: resolved.deltaPct,
+        );
+      case TrendDirection.stable:
+        return (
+          icon: Icons.trending_flat_rounded,
+          color: MyApp.clinicalSlate,
+          label: label,
+          delta: 0,
+          percentDelta: resolved.deltaPct,
+        );
+      case TrendDirection.insufficientSignal:
+        return (
+          icon: Icons.trending_flat_rounded,
+          color: MyApp.clinicalSlate,
+          label: label,
+          delta: null,
+          percentDelta: null,
+        );
+    }
   }
 
   Color _directedValueColor(double value, {required bool lowerIsBetter}) {

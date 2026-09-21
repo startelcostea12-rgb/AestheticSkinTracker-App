@@ -451,6 +451,20 @@ class AnalysisResultsScreen extends StatelessWidget {
           // muscle mass, appetite control, body-composition score) can be
           // sourced beyond the 6 facial-skin fields that [SkinMetrics] holds.
           final ScanHistoryEntry baselineEntry = sortedRaw.first;
+          final trendPayload = latestEntry.rawPayload;
+          Map<String, dynamic> asMap(dynamic value) {
+            if (value is Map<String, dynamic>) return value;
+            if (value is Map) return Map<String, dynamic>.from(value);
+            return const <String, dynamic>{};
+          }
+          final nestedLuxe = asMap(asMap(trendPayload)['luxePayload']);
+          final trendStatusSource = asMap(nestedLuxe['trend_status']).isNotEmpty
+              ? asMap(nestedLuxe['trend_status'])
+              : asMap(asMap(trendPayload)['trend_status']);
+          final trendLockReasonSource =
+              asMap(nestedLuxe['trend_lock_reasons']).isNotEmpty
+              ? asMap(nestedLuxe['trend_lock_reasons'])
+              : asMap(asMap(trendPayload)['trend_lock_reasons']);
           final aiReport = AiIntelligenceEngine.interpretScanMetrics(
             latest,
             baseline: baseline,
@@ -459,6 +473,12 @@ class AnalysisResultsScreen extends StatelessWidget {
             focusArea: latestEntry.focusArea,
             rawMetrics: latestEntry.metrics,
             baselineRawMetrics: baselineEntry.metrics,
+            trendStatus: trendStatusSource.map(
+              (key, value) => MapEntry(key, value.toString()),
+            ),
+            trendLockReason: trendLockReasonSource.map(
+              (key, value) => MapEntry(key, value.toString()),
+            ),
           );
 
           return ListView(
@@ -620,13 +640,7 @@ String _getProductInsight(TrackedProduct product, {ScanAiReport? report}) {
   // Identify top concern from AI report for personalised context
   final concernList =
       report?.metricInsights
-          .where(
-            (i) {
-              final score100 = _unifiedMetricScore100(i);
-              final status = _statusFromUnifiedScore(score100);
-              return i.isConcerning || status == 'Worsened';
-            },
-          )
+          .where((i) => i.isConcerning || i.isPositiveTrend == false)
           .toList() ??
       [];
   concernList.sort(
@@ -953,7 +967,7 @@ Widget _buildAiNarrativeCard(
 
 Widget _buildAiMetricCard(MetricInsight insight) {
   final score100 = _unifiedMetricScore100(insight);
-  final statusLabel = _statusFromUnifiedScore(score100);
+  final statusLabel = _statusFromInsight(insight);
   final chipColor = _statusColor(statusLabel);
 
   return Container(
@@ -1385,10 +1399,17 @@ double _unifiedMetricScore100(MetricInsight insight) {
   return score.clamp(0.0, 100.0).toDouble();
 }
 
-String _statusFromUnifiedScore(double score100) {
-  if (score100 >= 67.0) return 'Improved';
-  if (score100 >= 34.0) return 'Stable';
-  return 'Worsened';
+/// The ONLY authorized source for this screen's Improved/Worsened/Stable
+/// chip: derived from [MetricInsight.trendNote]/[isPositiveTrend], which
+/// are themselves already gated by the backend's trend_status (see
+/// ai_intelligence_engine.dart's _buildInsightFromDef). Never derived from
+/// the metric's absolute current value alone — a metric can be severe right
+/// now and still show no trend claim if the backend supplied no verdict.
+String _statusFromInsight(MetricInsight insight) {
+  if (insight.trendNote == null) return 'Tracking';
+  if (insight.isPositiveTrend == true) return 'Improved';
+  if (insight.isPositiveTrend == false) return 'Worsened';
+  return 'Stable';
 }
 
 Color _statusColor(String status) {

@@ -48,6 +48,15 @@ class ProcedureCompletionData {
 
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
+// NOT CURRENTLY REACHABLE: confirmed (2026-09-21 trend-honesty audit) that
+// nothing in the app ever constructs a ProcedureCompletionData or navigates
+// to this screen — it is dead code. Its row()-level Improved/Worsened/Stable
+// wording below is therefore intentionally left as a raw percent-threshold
+// computation rather than wired to the shared resolveTrendLabel()/backend
+// trend_status, since there is no live caller to source that data from. If
+// this screen is ever wired up again, it must be updated to use
+// resolveTrendLabel() first, per the same rule applied to every other
+// trend-word location in the app.
 class ProcedureCompletionReportScreen extends StatelessWidget {
   final ProcedureCompletionData data;
 

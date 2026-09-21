@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import '../models/peptide_model.dart';
 import '../models/scan_history.dart';
 import 'app_prefs.dart';
+import 'trend_label_resolver.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Journal entry
@@ -390,24 +391,6 @@ class PeptideService {
     }
   }
 
-  /// Direction word for a body metric given a stored delta (positive = improvement).
-  static String _bodyDirection(String name, double storedDelta) {
-    final improved = storedDelta >= 0;
-    switch (name) {
-      case 'Weight':
-      case 'Body Fat %':
-      case 'Waist Circumference':
-        return improved ? 'decreased' : 'increased';
-      case 'Muscle Mass':
-        return improved ? 'increased' : 'decreased';
-      case 'Appetite Control':
-      case 'Body Composition Score':
-        return improved ? 'improved' : 'declined';
-      default:
-        return improved ? 'improved' : 'declined';
-    }
-  }
-
   /// Raw scan-metric keys for a body metric name.
   static List<String> _bodyKeysFor(String name) {
     switch (name) {
@@ -588,21 +571,41 @@ class PeptideService {
       final String insight;
       if (isBody) {
         final unit = _bodyUnit(top.key);
-        final dir = _bodyDirection(top.key, top.value);
         final bVal = rawOf(beforeMetrics, _bodyKeysFor(top.key));
         final aVal = rawOf(afterMetrics, _bodyKeysFor(top.key));
         if (bVal != null && aVal != null) {
           insight =
               'After ${peptide.daysTracked}d of $conc${peptide.name}, '
-              '${top.key} $dir '
+              '${top.key} changed '
               '(${bVal.toStringAsFixed(1)}$unit \u2192 ${aVal.toStringAsFixed(1)}$unit).';
         } else {
           insight =
               'After ${peptide.daysTracked}d of $conc${peptide.name}, '
-              '${top.key} $dir by ${top.value.abs().toStringAsFixed(1)}$unit.';
+              '${top.key} changed by ${top.value.abs().toStringAsFixed(1)}$unit.';
         }
       } else {
-        final dir = top.value >= 0 ? 'improved' : 'declined';
+        final canonicalKey = switch (top.key) {
+          'Redness / Swelling' => 'localized_redness',
+          'Texture' => 'texture_smoothness',
+          'Fine Lines / Wrinkles' => 'wrinkle_load',
+          'Pore Visibility' => 'pore_visibility',
+          'Dark Spots' => 'pigment_load',
+          'Skin Elasticity' => 'structural_firmness_elasticity',
+          _ => null,
+        };
+        final trendStatus = trendStatusMapFromRawPayload(latestScan.rawPayload);
+        final trendLockReasons = trendLockReasonMapFromRawPayload(
+          latestScan.rawPayload,
+        );
+        final resolvedTrend = resolveTrendLabel(
+          trendStatus: canonicalKey == null ? null : trendStatus[canonicalKey],
+          trendLockReason: canonicalKey == null
+              ? null
+              : trendLockReasons[canonicalKey],
+        );
+        final dir = resolvedTrend == null || resolvedTrend.isInsufficientSignal
+            ? 'changed'
+            : (resolvedTrend.lockShortLabel ?? resolvedTrend.label.toLowerCase());
         insight =
             'After ${peptide.daysTracked}d of $conc${peptide.name}, '
             '${top.key} $dir by ${top.value.abs().toStringAsFixed(1)} pts.';

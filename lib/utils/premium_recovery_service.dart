@@ -13,6 +13,7 @@ import 'ai_intelligence_engine.dart';
 import 'backend_config.dart';
 import 'procedure_intelligence.dart';
 import 'report_service.dart';
+import 'trend_label_resolver.dart';
 // --- Storage keys for AppPrefs ---
 const String _reportRecordsKey = 'premium_report_records';
 const String _coachMessagesKey = 'premium_coach_messages';
@@ -306,22 +307,51 @@ class PremiumRecoveryService {
       latestMetrics.elasticity,
     );
 
-    final positiveScores = [
-      swellingDelta,
-      textureDelta,
-      wrinkleDelta,
-      contourDelta,
-    ].map((e) => e.isFinite ? e : 0).toList();
+    final trendStatus = trendStatusMapFromRawPayload(latest.rawPayload);
+    final trendLockReasons = trendLockReasonMapFromRawPayload(latest.rawPayload);
 
-    final avg = positiveScores.reduce((a, b) => a + b) / positiveScores.length;
-    final direction = avg >= 0 ? 'improved' : 'mildly regressed';
-    final pct = avg.abs().round();
+    ResolvedTrendLabel? trendFor(String key) {
+      final canonicalKey = shortMetricKeyToCanonical[key];
+      return resolveTrendLabel(
+        trendStatus: canonicalKey == null ? null : trendStatus[canonicalKey],
+        trendLockReason: canonicalKey == null
+            ? null
+            : trendLockReasons[canonicalKey],
+      );
+    }
+
+    String directionWord(ResolvedTrendLabel? trend, String fallback) {
+      if (trend == null || trend.isInsufficientSignal) return 'tracking';
+      if (trend.isImproved) return 'improving';
+      if (trend.isWorsened) return 'worsening';
+      return trend.lockShortLabel ?? fallback;
+    }
+
+    final metricTrends = [
+      trendFor('redness'),
+      trendFor('texture'),
+      trendFor('wrinkle'),
+      trendFor('elasticity'),
+    ];
+    final improvedCount = metricTrends.where((trend) => trend?.isImproved ?? false).length;
+    final worsenedCount = metricTrends.where((trend) => trend?.isWorsened ?? false).length;
+    final direction = improvedCount > worsenedCount && improvedCount > 0
+        ? 'improving'
+        : worsenedCount > improvedCount && worsenedCount > 0
+        ? 'worsening'
+        : 'tracking';
+    final pct = ((swellingDelta.abs() +
+              textureDelta.abs() +
+              wrinkleDelta.abs() +
+              contourDelta.abs()) /
+          4)
+        .round();
 
     final highlights = <String>[
-      '${ProcedureIntelligence.metricLabel('redness', procedureType)} trend: ${swellingDelta >= 0 ? 'down' : 'up'} by ${swellingDelta.abs().round()}%',
-      '${ProcedureIntelligence.metricLabel('texture', procedureType)} trend: ${textureDelta >= 0 ? 'smoother' : 'rougher'} by ${textureDelta.abs().round()}%',
-      '${ProcedureIntelligence.metricLabel('wrinkle', procedureType)} trend: ${wrinkleDelta >= 0 ? 'reduced' : 'increased'} by ${wrinkleDelta.abs().round()}%',
-      '${ProcedureIntelligence.metricLabel('elasticity', procedureType)} trend: ${contourDelta >= 0 ? 'better definition' : 'less defined'} by ${contourDelta.abs().round()}%',
+      '${ProcedureIntelligence.metricLabel('redness', procedureType)} trend: ${directionWord(trendFor('redness'), 'stable')} by ${swellingDelta.abs().round()}%',
+      '${ProcedureIntelligence.metricLabel('texture', procedureType)} trend: ${directionWord(trendFor('texture'), 'stable')} by ${textureDelta.abs().round()}%',
+      '${ProcedureIntelligence.metricLabel('wrinkle', procedureType)} trend: ${directionWord(trendFor('wrinkle'), 'stable')} by ${wrinkleDelta.abs().round()}%',
+      '${ProcedureIntelligence.metricLabel('elasticity', procedureType)} trend: ${directionWord(trendFor('elasticity'), 'stable')} by ${contourDelta.abs().round()}%',
     ];
 
     final scope = (procedureType ?? '').trim().isNotEmpty
@@ -332,8 +362,7 @@ class PremiumRecoveryService {
 
     return ProgressPhotoInsight(
       id: premiumEntityId('insight'),
-      summary:
-          '$scope appears $direction by about $pct% vs your baseline photo.',
+      summary: '$scope appears $direction by about $pct% vs your baseline photo.',
       highlights: highlights,
       createdAt: DateTime.now(),
       procedureType: procedureType,

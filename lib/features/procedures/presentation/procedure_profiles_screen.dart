@@ -951,6 +951,8 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     final latest = _latestMetrics;
     final baseline = _baselineMetrics;
     if (latest == null) return [];
+    final latestScanEntry =
+        _findScanById(_latestScanId) ?? (_scans.isNotEmpty ? _scans.first : null);
     final report = AiIntelligenceEngine.interpretScanMetrics(
       latest,
       baseline: baseline,
@@ -959,8 +961,41 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       focusArea: _procedure.focusArea,
       daysSinceProcedure:
           DateTime.now().difference(_procedure.startDate).inDays + 1,
+      trendStatus: _scanTrendStatusMap(latestScanEntry),
+      trendLockReason: _scanTrendLockReasonMap(latestScanEntry),
     );
     return report.metricInsights;
+  }
+
+  /// Backend trend_status map (canonical metric key -> status) from
+  /// [scan]'s raw payload, checking the nested luxePayload too. Empty when
+  /// the scan carries no backend verdict at all.
+  Map<String, String> _scanTrendStatusMap(ScanHistoryEntry? scan) {
+    if (scan == null) return const {};
+    final payload = _asDynamicMapForTrend(scan.rawPayload);
+    final nestedLuxe = _asDynamicMapForTrend(payload['luxePayload']);
+    final nested = _asDynamicMapForTrend(nestedLuxe['trend_status']);
+    final source = nested.isNotEmpty
+        ? nested
+        : _asDynamicMapForTrend(payload['trend_status']);
+    return source.map((key, value) => MapEntry(key, value.toString()));
+  }
+
+  Map<String, String> _scanTrendLockReasonMap(ScanHistoryEntry? scan) {
+    if (scan == null) return const {};
+    final payload = _asDynamicMapForTrend(scan.rawPayload);
+    final nestedLuxe = _asDynamicMapForTrend(payload['luxePayload']);
+    final nested = _asDynamicMapForTrend(nestedLuxe['trend_lock_reasons']);
+    final source = nested.isNotEmpty
+        ? nested
+        : _asDynamicMapForTrend(payload['trend_lock_reasons']);
+    return source.map((key, value) => MapEntry(key, value.toString()));
+  }
+
+  Map<String, dynamic> _asDynamicMapForTrend(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return const <String, dynamic>{};
   }
 
   Widget _metricGridCard(Map<String, dynamic> metric) {
