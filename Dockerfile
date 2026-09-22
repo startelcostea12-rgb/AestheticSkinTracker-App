@@ -12,7 +12,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# torch/torchvision from the default index pull the full CUDA runtime
+# stack (nvidia-cublas-cu12, nvidia-cudnn-cu12, etc.) even though this
+# service only ever does CPU inference -- that alone is several GB and is
+# what exhausts the build. Installing the CPU-only build first satisfies
+# requirements.txt's torch>=2.0.0/torchvision>=0.15.0 constraints (a
+# "2.x+cpu" version numerically satisfies ">=2.0.0"), so the second
+# install step recognizes them as already satisfied and does not reinstall
+# from the default index.
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch torchvision \
+    && pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
 COPY scin_experimental_models.py .
