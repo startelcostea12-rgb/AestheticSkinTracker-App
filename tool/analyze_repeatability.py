@@ -63,11 +63,32 @@ CANONICAL_METRIC_ORDER = [
     "skin_tone_radiance_evenness",
 ]
 
+# main.py's own logger.info call always writes all six fields in this
+# order -- there is only one CALIBRATION_LOG format in the source (see the
+# comment directly above that logger.info call for the investigation this
+# confirmed). Real captured logs have nonetheless been observed with only
+# "metric=... value=..." present, everything after it missing. That is log
+# capture/transport truncation (e.g. terminal line-wrapping or an
+# ANSI-sequence interaction when output is captured via a transcript/session
+# tool rather than a plain shell redirect), not a second emission site, so
+# only metric= and value= are required here -- every field after value= is
+# optional and, being a fixed trailing run in a single format string, can
+# only ever be missing from the end, never reordered or missing from the
+# middle.
 CALIBRATION_LOG_RE = re.compile(
-    r"CALIBRATION_LOG\s+metric=(?P<metric>\S+)\s+value=(?P<value>[-+0-9.eEnaif]+)\s+"
-    r"confidence=(?P<confidence>\S+)\s+path=(?P<path>\S+)\s+"
-    r"capture_quality=(?P<capture_quality>\S+)\s+roi_pixels=(?P<roi_pixels>\d+)"
+    r"CALIBRATION_LOG\s+metric=(?P<metric>\S+)\s+value=(?P<value>[-+0-9.eEnaif]+)"
+    r"(?:\s+confidence=(?P<confidence>\S+))?"
+    r"(?:\s+path=(?P<path>\S+))?"
+    r"(?:\s+capture_quality=(?P<capture_quality>\S+))?"
+    r"(?:\s+roi_pixels=(?P<roi_pixels>\d+))?"
 )
+
+# Strips ANSI/VT100 escape sequences (SGR color codes, cursor movement,
+# line-clear codes, etc.) that can end up embedded in a captured log line --
+# e.g. from a colorized console session recorded through a transcript tool
+# rather than a plain shell redirect -- and would otherwise break a field
+# match that happens to land right where a sequence was inserted.
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
 # Optional leading timestamp produced by main.py's own logging.basicConfig
 # format ("%(asctime)s [%(levelname)s] %(message)s"), e.g.
@@ -85,10 +106,10 @@ class Reading:
     line_no: int
     metric: str
     value: float
-    confidence: str
-    path: str
-    capture_quality: str
-    roi_pixels: int
+    confidence: str | None
+    path: str | None
+    capture_quality: str | None
+    roi_pixels: int | None
     timestamp: datetime | None
 
 
@@ -116,8 +137,9 @@ def parse_log(paths: list[Path]) -> list[Reading]:
     line_no = 0
     for path in paths:
         text = path.read_text(encoding="utf-8", errors="replace")
-        for line in text.splitlines():
+        for raw_line in text.splitlines():
             line_no += 1
+            line = ANSI_ESCAPE_RE.sub("", raw_line)
             match = CALIBRATION_LOG_RE.search(line)
             if not match:
                 continue
@@ -127,6 +149,7 @@ def parse_log(paths: list[Path]) -> list[Reading]:
                 continue
             if value != value:  # NaN never represents a usable measurement.
                 continue
+            roi_pixels_text = match.group("roi_pixels")
             readings.append(
                 Reading(
                     line_no=line_no,
@@ -135,7 +158,7 @@ def parse_log(paths: list[Path]) -> list[Reading]:
                     confidence=match.group("confidence"),
                     path=match.group("path"),
                     capture_quality=match.group("capture_quality"),
-                    roi_pixels=int(match.group("roi_pixels")),
+                    roi_pixels=int(roi_pixels_text) if roi_pixels_text else None,
                     timestamp=_parse_timestamp(line),
                 )
             )

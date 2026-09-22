@@ -46,6 +46,66 @@ class TestParsing:
         assert r.roi_pixels == 9000
         assert r.timestamp == datetime(2026, 9, 22, 10, 5, 3, 1000)
 
+    def test_a_real_truncated_line_with_only_metric_value_and_confidence_parses(
+        self, tmp_path
+    ):
+        # Exact line observed in a real captured log: everything after
+        # confidence= (path=, capture_quality=, roi_pixels=) is missing.
+        # This is the truncation the parser must tolerate -- only metric=
+        # and value= are required; every field after value= is optional.
+        log = tmp_path / "backend.log"
+        log.write_text(
+            "2026-09-22 14:30:49,404 [INFO] CALIBRATION_LOG "
+            "metric=localized_redness value=2.1 confidence=high\n"
+        )
+
+        readings = ar.parse_log([log])
+
+        assert len(readings) == 1
+        r = readings[0]
+        assert r.metric == "localized_redness"
+        assert r.value == 2.1
+        assert r.confidence == "high"
+        assert r.path is None
+        assert r.capture_quality is None
+        assert r.roi_pixels is None
+        assert r.timestamp == datetime(2026, 9, 22, 14, 30, 49, 404000)
+
+    def test_a_line_truncated_immediately_after_value_still_parses(self, tmp_path):
+        log = tmp_path / "backend.log"
+        log.write_text(
+            "CALIBRATION_LOG metric=texture_smoothness value=19.4\n"
+        )
+
+        readings = ar.parse_log([log])
+
+        assert len(readings) == 1
+        r = readings[0]
+        assert r.metric == "texture_smoothness"
+        assert r.value == 19.4
+        assert r.confidence is None
+        assert r.path is None
+        assert r.capture_quality is None
+        assert r.roi_pixels is None
+
+    def test_ansi_escape_codes_around_the_line_do_not_break_parsing(self, tmp_path):
+        log = tmp_path / "backend.log"
+        log.write_text(
+            "2026-09-22 14:30:49,404 [INFO] \x1b[32mCALIBRATION_LOG "
+            "metric=texture_smoothness value=39.4\x1b[0m confidence=high "
+            "path=cheek_primary capture_quality=normal roi_pixels=9000\n"
+        )
+
+        readings = ar.parse_log([log])
+
+        assert len(readings) == 1
+        r = readings[0]
+        assert r.metric == "texture_smoothness"
+        assert r.value == 39.4
+        assert r.confidence == "high"
+        assert r.path == "cheek_primary"
+        assert r.roi_pixels == 9000
+
     def test_a_line_with_no_recognizable_timestamp_still_parses_with_none(
         self, tmp_path
     ):

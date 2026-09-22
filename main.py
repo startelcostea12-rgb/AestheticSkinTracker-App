@@ -6099,6 +6099,18 @@ def analyze_skin_patch(
             roi_pixels = 0
         else:
             roi_pixels = int(raw_components.get(roi_key, 0.0))
+        # This is the ONLY place CALIBRATION_LOG is emitted (confirmed via
+        # `git log -S "CALIBRATION_LOG"` -- this exact 6-field format has
+        # been here, unchanged, since it was introduced). Real captured logs
+        # have nonetheless shown truncated lines with only
+        # "metric=... value=..." and nothing after it. Since there is no
+        # second logger.info call producing a shorter format, that
+        # truncation happens downstream of this call -- in how the console
+        # output was captured to a file (e.g. terminal line-wrapping or an
+        # ANSI-sequence interaction from a colorized/transcript-style
+        # capture, rather than a plain shell redirect) -- not from this
+        # code path itself. tool/analyze_repeatability.py's parser treats
+        # every field after value= as optional for exactly this reason.
         logger.info(
             "CALIBRATION_LOG metric=%s value=%s confidence=%s path=%s capture_quality=%s roi_pixels=%d",
             metric_key,
