@@ -61,6 +61,8 @@ CANONICAL_METRIC_ORDER = [
     "wrinkle_load",
     "structural_firmness_elasticity",
     "skin_tone_radiance_evenness",
+    "pore_visibility",
+    "breakout_activity",
 ]
 
 # main.py's own logger.info call always writes all six fields in this

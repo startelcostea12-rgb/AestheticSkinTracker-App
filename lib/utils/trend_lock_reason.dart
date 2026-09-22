@@ -14,9 +14,10 @@ library;
 
 /// Recognized `trend_lock_reason` values. Most match main.py's
 /// `_trend_lock_reason` / `_body_trend_lock_reason`; `frame_range_overlap`
-/// is the one exception — it is applied entirely client-side, by
-/// downgradeTrendForOverlappingFrameRanges, after the backend's own gates
-/// have already run (see that function's doc comment).
+/// and `below_noise_floor` are the exceptions — both are applied entirely
+/// client-side (by downgradeTrendForOverlappingFrameRanges and
+/// downgradeTrendBelowMeasuredNoiseFloor respectively), after the backend's
+/// own gates have already run (see each function's doc comment).
 const Set<String> knownTrendLockReasons = {
   'capture_quality_mismatch',
   'path_mismatch',
@@ -24,6 +25,7 @@ const Set<String> knownTrendLockReasons = {
   'capture_mode_mismatch',
   'scale_mismatch',
   'frame_range_overlap',
+  'below_noise_floor',
 };
 
 /// Very short (headline/badge-safe) replacement for a bare "Stable" label
@@ -54,6 +56,8 @@ String? trendLockReasonShortLabel(String? reason) {
       return 'Standalone entry — framing/distance differed too much from your last scan to compare';
     case 'frame_range_overlap':
       return 'Standalone entry — frame-to-frame variability was too high to confirm a real change';
+    case 'below_noise_floor':
+      return 'Standalone entry — the change is smaller than this metric\'s known measurement noise';
     default:
       return null;
   }
@@ -76,6 +80,8 @@ String? trendLockReasonDetail(String? reason) {
       return 'Framing or distance differed too much from your baseline capture to compare reliably.';
     case 'frame_range_overlap':
       return "This scan's and your baseline's own frame-to-frame readings overlapped too much to confirm a real change — capture noise could explain the difference on its own.";
+    case 'below_noise_floor':
+      return "This metric's measured change is smaller than its known scan-to-scan measurement noise, so it can't be confirmed as a real change yet.";
     default:
       return null;
   }

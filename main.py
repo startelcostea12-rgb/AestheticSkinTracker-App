@@ -6153,6 +6153,13 @@ def analyze_skin_patch(
         "wrinkle_load",
         "structural_firmness_elasticity",
         "skin_tone_radiance_evenness",
+        # Added so a future repeatability session (tool/analyze_repeatability.py)
+        # can measure noise floors for these two -- they had none of the ten
+        # metrics above's CALIBRATION_LOG history to measure from. pore_visibility
+        # is currently fully ungated (no honesty-band-equivalent floor at all)
+        # and was observed reporting a 17% "improvement" on an unchanged face.
+        "pore_visibility",
+        "breakout_activity",
     ]
     calibration_roi_pixels = {
         "localized_redness": "localized_redness_roi_pixels",
@@ -6165,6 +6172,8 @@ def analyze_skin_patch(
         "wrinkle_load": "wrinkle_roi_pixels",
         "structural_firmness_elasticity": "full_face_skin_pixels",
         "skin_tone_radiance_evenness": "full_face_skin_pixels",
+        "pore_visibility": "primary_pore_roi_pixels",
+        "breakout_activity": "breakout_roi_pixels",
     }
     for metric_key in calibration_log_metrics:
         if metric_key not in metric_matrix:
@@ -6374,6 +6383,19 @@ def analyze_skin_patch(
             for key in canonical_metric_order
         },
         "honesty_band_percent": HONESTY_STABLE_BAND_PCT,
+        # Published so a caller that aggregates multiple backend calls
+        # itself (e.g. the app's multi-frame capture, which averages several
+        # single-frame responses into one displayed value the backend never
+        # sees) can re-apply the SAME noise-floor policy to that aggregated
+        # value, instead of either skipping the check or hardcoding a second,
+        # driftable copy of these constants client-side. See
+        # METRIC_NOISE_FLOOR_2SD's comment for what these mean and their
+        # single-session/single-device provenance.
+        "metric_noise_floor_2sd": METRIC_NOISE_FLOOR_2SD,
+        "trend_noise_floor_exceeds_useful_range": sorted(
+            TREND_NOISE_FLOOR_EXCEEDS_USEFUL_RANGE
+        ),
+        "trend_noise_floor_excluded_multiplier": TREND_NOISE_FLOOR_EXCLUDED_MULTIPLIER,
         "low_confidence_majority": low_confidence_majority,
         "low_confidence_count": low_conf_count,
         "model_debug": {

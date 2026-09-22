@@ -80,6 +80,11 @@ Map<String, dynamic> _dynamicMap(dynamic value) {
   return const <String, dynamic>{};
 }
 
+Set<String> _stringSetFromDynamic(dynamic value) {
+  if (value is! List) return const <String>{};
+  return value.map((e) => e.toString()).toSet();
+}
+
 Map<String, String> buildAiSkinAnalysisBackendFields({
   String? procedureType,
   String? customDescription,
@@ -346,6 +351,110 @@ downgradeTrendForOverlappingFrameRanges({
       updatedStatus[key] = 'stable';
       updatedDeltas[key] = 0.0;
       updatedLockReasons[key] = 'frame_range_overlap';
+    }
+  }
+
+  return (
+    trendStatus: updatedStatus,
+    trendDeltas: updatedDeltas,
+    trendLockReasons: updatedLockReasons,
+  );
+}
+
+/// Client-side honesty gate that re-applies the backend's OWN measured
+/// noise-floor policy (main.py's METRIC_NOISE_FLOOR_2SD /
+/// TREND_NOISE_FLOOR_EXCEEDS_USEFUL_RANGE /
+/// TREND_NOISE_FLOOR_EXCLUDED_MULTIPLIER, echoed back in the response as
+/// metric_noise_floor_2sd / trend_noise_floor_exceeds_useful_range /
+/// trend_noise_floor_excluded_multiplier) against the value actually shown
+/// on screen.
+///
+/// Why this exists: _trend_delta_and_status runs once per backend call, and
+/// the app calls the backend once PER CAPTURED FRAME, then averages the
+/// frames' values client-side into the number that's displayed. The
+/// backend's noise-floor gate (and every other gate in
+/// _trend_delta_and_status) is therefore checked against a single frame's
+/// raw value, never the averaged value the user sees -- even after nearest-
+/// frame trend selection (see averageBackendAnalysisFrames), which only
+/// narrows this gap, it doesn't close it. A frame can sit close to the
+/// average yet still independently clear the floor on its own, while the
+/// average itself does not: e.g. frames [20.0, 33.0, 37.6] average to 30.2
+/// (a 3.2 delta against a 27.0 baseline, below texture_smoothness's 5.4
+/// floor), but the nearest-to-average frame (33.0) has its own delta of
+/// 6.0, clearing both the floor and the relative honesty band on its own
+/// and reporting "Improved" -- a verdict about a number that isn't the one
+/// on screen.
+///
+/// The thresholds themselves are read from the backend response rather
+/// than duplicated as Dart constants, specifically so this can never drift
+/// from main.py's calibration table -- see downgradeTrendForOverlappingFrameRanges's
+/// doc comment for the same downgrade-only design this mirrors.
+///
+/// Downgrade-only, same as the overlap gate: only "improved"/"worsened" is
+/// ever rewritten, only ever to "stable" (or, for a metric in
+/// trendNoiseFloorExceedsUsefulRange, to "insufficient_signal" -- "stable"
+/// is itself an overconfident claim once that metric's floor swallows most
+/// of the range real users show, per main.py's own reasoning for that set).
+/// A currently-"stable" excluded-metric verdict below its 3x threshold is
+/// also corrected to "insufficient_signal" for the same reason. This layer
+/// never invents a direction or upgrades a hedge into a stronger claim --
+/// it has no way to independently verify a real "improved"/"worsened" would
+/// be correct, only whether an existing directional claim should be
+/// withdrawn.
+///
+/// Per (1): if the backend response is missing the threshold fields
+/// entirely (an older backend build, or a metric absent from the table),
+/// this falls back to existing behavior for the affected metric(s) --
+/// leaving trendStatus/trendDeltas/trendLockReasons exactly as computed
+/// upstream -- rather than skipping evaluation for every metric or forcing
+/// a result. Same precedent as a missing frame range above.
+({
+  Map<String, String> trendStatus,
+  Map<String, double> trendDeltas,
+  Map<String, String> trendLockReasons,
+})
+downgradeTrendBelowMeasuredNoiseFloor({
+  required Map<String, String> trendStatus,
+  required Map<String, double> trendDeltas,
+  required Map<String, String> trendLockReasons,
+  required Map<String, dynamic> averagedMetricMatrix,
+  required Map<String, dynamic> baselineMetricMatrix,
+  required Map<String, dynamic> metricNoiseFloor2sd,
+  required Set<String> trendNoiseFloorExceedsUsefulRange,
+  required double? trendNoiseFloorExcludedMultiplier,
+}) {
+  final updatedStatus = Map<String, String>.from(trendStatus);
+  final updatedDeltas = Map<String, double>.from(trendDeltas);
+  final updatedLockReasons = Map<String, String>.from(trendLockReasons);
+
+  for (final entry in trendStatus.entries) {
+    final key = entry.key;
+    final status = entry.value.trim().toLowerCase();
+    if (status != 'improved' && status != 'worsened' && status != 'stable') {
+      continue;
+    }
+
+    final floor = _parseFiniteDouble(metricNoiseFloor2sd[key]);
+    final current = _parseFiniteDouble(averagedMetricMatrix[key]);
+    final baseline = _parseFiniteDouble(baselineMetricMatrix[key]);
+    if (floor == null || current == null || baseline == null) continue;
+
+    final absoluteDelta = (current - baseline).abs();
+    final isExcluded = trendNoiseFloorExceedsUsefulRange.contains(key);
+
+    if (isExcluded) {
+      if (trendNoiseFloorExcludedMultiplier == null) continue;
+      final required = floor * trendNoiseFloorExcludedMultiplier;
+      if (absoluteDelta < required && status != 'insufficient_signal') {
+        updatedStatus[key] = 'insufficient_signal';
+        updatedDeltas[key] = 0.0;
+        updatedLockReasons.remove(key);
+      }
+    } else if (absoluteDelta < floor &&
+        (status == 'improved' || status == 'worsened')) {
+      updatedStatus[key] = 'stable';
+      updatedDeltas[key] = 0.0;
+      updatedLockReasons[key] = 'below_noise_floor';
     }
   }
 
@@ -1279,6 +1388,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       final frames = _analysisFrameBytes.isNotEmpty
           ? _analysisFrameBytes
           : <Uint8List>[backendBytes];
+      final baselineMetricMatrixForTrend =
+          _manualBaselineMetricMatrix ??
+          _baselineMetricMatrixForBackend(previousMetrics);
       final aggregate = await analyzeBackendFrames(
         frames,
         uploadFrame: (frame, frameNumber) =>
@@ -1289,9 +1401,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 mimeType: 'image/jpeg',
               ),
               fields: backendFields,
-              baselineMetricMatrix:
-                  _manualBaselineMetricMatrix ??
-                  _baselineMetricMatrixForBackend(previousMetrics),
+              baselineMetricMatrix: baselineMetricMatrixForTrend,
               baselineExtractionPaths: _manualBaselineMetricMatrix != null
                   ? null
                   : _buildLuxeBaselineExtractionPaths(),
@@ -1326,12 +1436,35 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         currentMetricRanges: currentMetricRanges,
         baselineMetricRanges: baselineMetricRanges,
       );
+      // Second client-side-only honesty gate, chained after the overlap
+      // gate above: re-applies the backend's OWN measured noise-floor
+      // policy (echoed back in the response, never duplicated as Dart
+      // constants -- see downgradeTrendBelowMeasuredNoiseFloor's doc
+      // comment) against the averaged metric_matrix value actually shown
+      // on screen, since the backend's own noise-floor check ran per-frame
+      // against a value that isn't the one displayed.
+      final noiseFloorAdjustedTrend = downgradeTrendBelowMeasuredNoiseFloor(
+        trendStatus: overlapAdjustedTrend.trendStatus,
+        trendDeltas: overlapAdjustedTrend.trendDeltas,
+        trendLockReasons: overlapAdjustedTrend.trendLockReasons,
+        averagedMetricMatrix: _dynamicMap(backendResponse['metric_matrix']),
+        baselineMetricMatrix: baselineMetricMatrixForTrend ?? const {},
+        metricNoiseFloor2sd: _dynamicMap(
+          backendResponse['metric_noise_floor_2sd'],
+        ),
+        trendNoiseFloorExceedsUsefulRange: _stringSetFromDynamic(
+          backendResponse['trend_noise_floor_exceeds_useful_range'],
+        ),
+        trendNoiseFloorExcludedMultiplier: _parseFiniteDouble(
+          backendResponse['trend_noise_floor_excluded_multiplier'],
+        ),
+      );
       final Map<String, double> serverTrendDeltas =
-          overlapAdjustedTrend.trendDeltas;
+          noiseFloorAdjustedTrend.trendDeltas;
       final Map<String, String> serverTrendStatus =
-          overlapAdjustedTrend.trendStatus;
+          noiseFloorAdjustedTrend.trendStatus;
       final Map<String, String> serverTrendLockReasons =
-          overlapAdjustedTrend.trendLockReasons;
+          noiseFloorAdjustedTrend.trendLockReasons;
       // Write the (possibly downgraded) trend fields back into
       // backendResponse -- both locations _mergePayloadForPersistence reads
       // from -- so what gets persisted to ScanHistoryEntry.rawPayload

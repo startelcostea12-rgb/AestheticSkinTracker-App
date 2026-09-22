@@ -69,6 +69,22 @@ void main() {
       },
     );
 
+    test(
+      'maps "stable" + "below_noise_floor" (the client-side measured-noise-'
+      'floor downgrade lock) to a standalone-entry lock with its own copy',
+      () {
+        final resolved = resolveTrendLabel(
+          trendStatus: 'stable',
+          trendLockReason: 'below_noise_floor',
+        );
+        expect(resolved!.direction, TrendDirection.stable);
+        expect(resolved.lockReason, 'below_noise_floor');
+        expect(resolved.lockHeadline, 'Standalone entry');
+        expect(resolved.lockShortLabel, isNotNull);
+        expect(resolved.lockDetail, isNotNull);
+      },
+    );
+
     test('maps "insufficient_signal" to no usable delta', () {
       final resolved = resolveTrendLabel(
         trendStatus: 'insufficient_signal',
