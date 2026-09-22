@@ -6,6 +6,11 @@
     "camera_qa": false,
     "camera_qa_reason": "Calibration references include clinical crops that are not representative camera captures. Formula and ROI processing remain fully enabled."
   },
+  "noise_floor_pinned_metrics": {
+    "metrics": ["texture_smoothness", "glabellar_wrinkle_depth", "wrinkle_load"],
+    "methodology": "Unlike this file's other metric bands (pigment_load, localized_redness, etc.), which use a uniform +/-5.0 tolerance around a human-reviewed 'confirmed' value, these three metrics' min/max are simply the CURRENT pipeline's own output on each photo, widened by that metric's own measured 2-SD scan-to-scan noise floor from tool/analyze_repeatability.py (texture_smoothness=5.4, glabellar_wrinkle_depth=6.4, wrinkle_load=3.7; see METRIC_NOISE_FLOOR_2SD in main.py), clipped to [0, 100].",
+    "caveat": "These bands are PINNED TO CURRENT FORMULA BEHAVIOR, not validated against clinical/visual judgment of the actual photos the way the confirmed values elsewhere in this file are -- nobody has reviewed whether 'clear_face scores 72.6 for texture_smoothness' is a CORRECT score, only that it is what analyze_skin_patch produces today. Their sole purpose is to catch an accidental regression in these three formulas before a deliberate fix; they must not be treated as ground truth, and are expected to change (a new confirmed value, likely with a much narrower band) once texture_smoothness's and glabellar_wrinkle_depth's known score-amplification issue is actually fixed -- see the investigation that found two real repeatability sessions on the same, unchanged face produced texture_smoothness means approximately 70% apart (28.2 vs 47.9) despite the underlying raw signal ('energy') moving only about 20%, traced to var_p80/lap_p80 each contributing to the score twice (directly via n_var/n_lap and indirectly via texture_energy -> n_energy)."
+  },
   "cases": [
     {
       "id": "clear_face",
@@ -20,7 +25,10 @@
         "rosacea_severity": {"confirmed": 3.0, "min": 0.0, "max": 8.0},
         "sebum_excess_oil_gloss": {"confirmed": 3.4, "min": 0.0, "max": 8.4},
         "under_eye_texture_density": {"confirmed": 21.0, "min": 16.0, "max": 26.0},
-        "under_eye_dark_circle_density": {"confirmed": 17.8, "min": 12.8, "max": 22.8}
+        "under_eye_dark_circle_density": {"confirmed": 17.8, "min": 12.8, "max": 22.8},
+        "texture_smoothness": {"confirmed": 72.6, "min": 67.2, "max": 78.0},
+        "glabellar_wrinkle_depth": {"confirmed": 17.0, "min": 10.6, "max": 23.4},
+        "wrinkle_load": {"confirmed": 6.5, "min": 2.8, "max": 10.2}
       }
     },
     {
@@ -30,14 +38,17 @@
       "notes": "Real visible cheek redness. Uses the exact first accepted crop from tool/smoke_test_analyze_skin.py. The p95 single-formula baseline was recalibrated after removing the mean-based canonical collision.",
       "strict": true,
       "metrics": {
-        "localized_redness": {"confirmed": 13.5, "min": 8.5, "max": 18.5}
+        "localized_redness": {"confirmed": 13.5, "min": 8.5, "max": 18.5},
+        "texture_smoothness": {"confirmed": 1.3, "min": 0.0, "max": 6.7},
+        "glabellar_wrinkle_depth": {"confirmed": 26.2, "min": 19.8, "max": 32.6},
+        "wrinkle_load": {"confirmed": 75.5, "min": 71.8, "max": 79.2}
       }
     },
     {
       "id": "nikki3",
       "photo_path": "test_fixtures/metric_regression/nikki3.jpg",
       "preprocess": {"mode": "center_crop_resize_jpeg", "crop_fraction": 0.9, "size": 512},
-      "notes": "Companion visible-redness reference using the recalibrated p95 single-formula baseline. pore_visibility was recalibrated after fixing a bug where _extract_normalized_pore_roi upsampled a small (~80-120px) native crop to a fixed 512x512 canvas before DoG frequency analysis, destroying real pore-scale detail and making the pore_roi_pixels size gate measure the resized canvas instead of real detail. Post-fix, DoG runs on the native-resolution crop (main._extract_native_resolution_pore_roi); real measured value is 11.7 (was 3.4 pre-fix on the same photo).",
+      "notes": "Companion visible-redness reference using the recalibrated p95 single-formula baseline. pore_visibility was recalibrated after fixing a bug where _extract_normalized_pore_roi upsampled a small (~80-120px) native crop to a fixed 512x512 canvas before DoG frequency analysis, destroying real pore-scale detail and making the pore_roi_pixels size gate measure the resized canvas instead of real detail. Post-fix, DoG runs on the native-resolution crop (main._extract_native_resolution_pore_roi); real measured value is 11.7 (was 3.4 pre-fix on the same photo). glabellar_wrinkle_depth is omitted (None) by the current pipeline on this photo -- not tracked here for that reason, not an oversight.",
       "strict": true,
       "metrics": {
         "localized_redness": {"confirmed": 23.0, "min": 18.0, "max": 28.0},
@@ -45,7 +56,9 @@
         "sebum_excess_oil_gloss": {"confirmed": 6.4, "min": 1.4, "max": 11.4},
         "pore_visibility": {"confirmed": 11.7, "min": 6.7, "max": 16.7},
         "under_eye_texture_density": {"confirmed": 96.0, "min": 91.0, "max": 100.0},
-        "under_eye_dark_circle_density": {"confirmed": 72.6, "min": 67.6, "max": 77.6}
+        "under_eye_dark_circle_density": {"confirmed": 72.6, "min": 67.6, "max": 77.6},
+        "texture_smoothness": {"confirmed": 6.9, "min": 1.5, "max": 12.3},
+        "wrinkle_load": {"confirmed": 61.5, "min": 57.8, "max": 65.2}
       }
     },
     {
@@ -60,7 +73,10 @@
         "rosacea_severity": {"confirmed": 48.0, "min": 43.0, "max": 53.0},
         "sebum_excess_oil_gloss": {"confirmed": 0.6, "min": 0.0, "max": 5.6},
         "under_eye_texture_density": {"confirmed": 100.0, "min": 95.0, "max": 100.0},
-        "under_eye_dark_circle_density": {"confirmed": 13.2, "min": 8.2, "max": 18.2}
+        "under_eye_dark_circle_density": {"confirmed": 13.2, "min": 8.2, "max": 18.2},
+        "texture_smoothness": {"confirmed": 11.5, "min": 6.1, "max": 16.9},
+        "glabellar_wrinkle_depth": {"confirmed": 30.5, "min": 24.1, "max": 36.9},
+        "wrinkle_load": {"confirmed": 84.2, "min": 80.5, "max": 87.9}
       }
     },
     {
