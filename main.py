@@ -3512,6 +3512,70 @@ HIGHER_IS_BETTER_METRICS = {
 }
 
 HONESTY_STABLE_BAND_PCT = 8.0
+
+# PROVISIONAL, single-session calibration. Measured via
+# tool/analyze_repeatability.py from ONE 5-scan repeatability run: one
+# person, one device (iPhone), one lighting condition, back-to-back captures
+# in a single session. This is a single-subject/single-device/single-lighting
+# noise estimate, NOT a validated population constant -- it has not been
+# checked across different people, skin tones, other devices (Android
+# cameras in particular may differ substantially), or other lighting
+# conditions, and must be re-measured on other devices and lighting before
+# being treated as general. Revisit once more repeatability sessions (ideally
+# multiple subjects and devices) accumulate. Values are 2 standard
+# deviations of the 5 scan means, in each metric's own 0-100 units -- see
+# _trend_delta_and_status's use of this table for how it gates trend claims.
+METRIC_NOISE_FLOOR_2SD: Dict[str, float] = {
+    "localized_redness": 6.4,
+    "rosacea_severity": 3.5,
+    "glabellar_wrinkle_depth": 6.4,
+    "texture_smoothness": 5.4,
+    "wrinkle_load": 3.7,
+    "under_eye_dark_circle_density": 7.6,
+    "under_eye_texture_density": 3.2,
+    "structural_firmness_elasticity": 3.0,
+    "pigment_load": 2.0,
+    "skin_tone_radiance_evenness": 1.1,
+}
+
+# Human-judgment call, not derived from a formula: these two metrics'
+# measured noise floors are comparable to or larger than the range most real
+# users ever show -- this app's own "calm" reference band uses
+# localized_redness=5.0 / rosacea_severity=4.0 (see
+# TestLocalizedRednessAndRosacea in test_scoring_formulas.py), and prior
+# real-log evidence showed rosacea staying <=3.8 across frames -- unlike e.g.
+# glabellar_wrinkle_depth or under_eye_dark_circle_density, whose floors are
+# similarly sized in absolute terms but small relative to their own much
+# wider typical population range (wrinkle depth in particular spans
+# near-0 to 40+ across a real population). Revisit per-metric as real usage
+# data accumulates; this is a curated set, not an automatic ratio, because
+# "useful range" is a domain judgment no existing constant encodes.
+TREND_NOISE_FLOOR_EXCEEDS_USEFUL_RANGE = {
+    "localized_redness",
+    "rosacea_severity",
+}
+
+# For a metric in TREND_NOISE_FLOOR_EXCEEDS_USEFUL_RANGE, a delta must
+# exceed this many multiples of its measured 2-SD noise floor before any
+# directional (improved/worsened) claim is made; below that the comparison
+# is reported as insufficient_signal, never "stable" -- for these metrics
+# "stable" is itself an overconfident claim, since their floor already
+# swallows most of the range real users show, so an ordinary below-floor
+# reading would report "stable" for nearly everyone, always, regardless of
+# whether the true value moved.
+#
+# 3x is deliberately conservative. 2 SD alone only bounds ~95% of a single
+# scan-to-scan comparison's noise under a normal-distribution assumption --
+# and that assumption itself rests on a 5-scan sample, whose own estimate of
+# the true standard deviation carries real sampling uncertainty at that size
+# (a 5-sample stdev can easily be off by 30-40% from the true population
+# value). Requiring 3x the measured floor, rather than 1x, pushes the
+# effective margin well past that estimation error specifically for the two
+# metrics whose usable signal is already the narrowest -- at the deliberate
+# cost of also requiring a materially larger real change before either can
+# ever report a directional trend at all.
+TREND_NOISE_FLOOR_EXCLUDED_MULTIPLIER = 3.0
+
 # Body silhouette comparisons are materially noisier than face metrics: in real validation,
 # two different full-body stock photos varied by ~56% in normalized_area_index purely due to
 # different people, poses, and framing. This means a body-area trend cannot be treated like a
@@ -3802,6 +3866,25 @@ def _trend_delta_and_status(
         directional_delta = ((baseline - current) / denominator) * 100.0
     else:
         directional_delta = ((current - baseline) / denominator) * 100.0
+
+    # Measured-noise-floor gate (see METRIC_NOISE_FLOOR_2SD's comment):
+    # requires an absolute minimum change, sized to this specific metric's
+    # own measured scan-to-scan noise, in addition to the relative honesty
+    # band below. A metric with no measured floor is unaffected.
+    noise_floor = METRIC_NOISE_FLOOR_2SD.get(metric_key)
+    if noise_floor is not None:
+        absolute_delta = abs(current - baseline)
+        if metric_key in TREND_NOISE_FLOOR_EXCEEDS_USEFUL_RANGE:
+            required_delta = noise_floor * TREND_NOISE_FLOOR_EXCLUDED_MULTIPLIER
+            if absolute_delta < required_delta:
+                # Not "stable" -- for this metric, a below-floor reading
+                # doesn't mean "confirmed no change", it means the pipeline
+                # cannot resolve real change from noise at all. Saying
+                # "stable" here would be a confident-sounding claim this
+                # metric's own measured noise floor doesn't support.
+                return 0.0, "insufficient_signal"
+        elif absolute_delta < noise_floor:
+            return 0.0, "stable"
 
     if abs(directional_delta) < honesty_band_pct:
         return 0.0, "stable"
