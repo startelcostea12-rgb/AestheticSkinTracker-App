@@ -5513,6 +5513,17 @@ class _CameraScreenState extends State<CameraScreen>
       'landmark pipeline totals — conversion-null: $debugConversionNullCount'
           '  zero-detections: $debugZeroDetectionsCount'
           '  found: $debugDetectedCount',
+      // Added to investigate a centerDelta miscalculation on rotated
+      // (90/270deg) frames: the raw Face.boundingBox center ML Kit
+      // returned, and the width/height _assessFace actually divided by to
+      // normalize it into centerOffsetX/Y (see that function's doc
+      // comment in landmark_assessment_mlkit.dart). Compare these against
+      // the raw CameraImage line above to check normalization is using
+      // the coordinate space the box is actually in.
+      'raw face box center (px): (${fmt(debugFaceBoxCenterXPx, decimals: 1)}, '
+          '${fmt(debugFaceBoxCenterYPx, decimals: 1)})'
+          '  normalize w/h (px): (${fmt(debugNormalizeWidthPx, decimals: 1)}, '
+          '${fmt(debugNormalizeHeightPx, decimals: 1)})',
     ];
 
     return Positioned(

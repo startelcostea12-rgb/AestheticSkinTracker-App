@@ -27,6 +27,18 @@ int debugConversionNullCount = 0;
 int debugZeroDetectionsCount = 0;
 int debugDetectedCount = 0;
 
+// ── Debug-only raw face-box geometry (kDebugMode) ───────────────────────
+// The most recent live-stream face detection's raw Face.boundingBox center
+// (in pixels, ML Kit's own coordinate space) and the width/height _assessFace
+// actually divided by to normalize it into centerOffsetX/Y. Purely
+// observational — added to investigate/verify a centerDelta miscalculation
+// on rotated (90/270deg) iOS frames; never read by any gating logic. Left
+// null outside kDebugMode (and whenever no face has been detected yet).
+double? debugFaceBoxCenterXPx;
+double? debugFaceBoxCenterYPx;
+double? debugNormalizeWidthPx;
+double? debugNormalizeHeightPx;
+
 final FaceDetector _streamFaceDetector = FaceDetector(
   options: FaceDetectorOptions(
     enableLandmarks: true,
@@ -259,20 +271,32 @@ Future<LandmarkAssessment> _assessFace(
   final face = faces.first;
   final imageSize = inputImage.metadata?.size;
 
-  // The raw camera frame can arrive in landscape sensor dimensions even when the
-  // preview is shown in portrait orientation. Use the metadata size as the
-  // actual preview coordinate system, and account for rotation so the face box
-  // and target mask share the same coordinate space.
-  double imageWidth = imageSize?.width ?? face.boundingBox.width;
-  double imageHeight = imageSize?.height ?? face.boundingBox.height;
-  final rotation = inputImage.metadata?.rotation ?? InputImageRotation.rotation0deg;
-  final requiresSwap = rotation == InputImageRotation.rotation90deg ||
-      rotation == InputImageRotation.rotation270deg;
-  if (requiresSwap) {
-    final swapped = imageWidth;
-    imageWidth = imageHeight;
-    imageHeight = swapped;
-  }
+  // ML Kit's Face.boundingBox is returned in the SAME coordinate space as
+  // the InputImageMetadata.size you supplied when constructing the
+  // InputImage (i.e. the raw, pre-rotation buffer: image.width/image.height
+  // from the CameraImage) -- NOT pre-rotated into "upright" display
+  // coordinates. This matches _assessBody below, which normalizes pose
+  // landmarks against this same raw metadata.size without ever swapping,
+  // and is the standard CoordinatesTranslator convention documented across
+  // the google_mlkit_face_detection/pose_detection plugin ecosystem for
+  // painting these results onto a rotated preview.
+  //
+  // A previous version of this function swapped width/height whenever
+  // `rotation` was 90/270deg, on the (unverified, and incorrect)
+  // assumption that the bounding box was already upright. That swap
+  // divided each axis by the WRONG dimension on any 90/270deg frame:
+  // faceFillRatio still looked plausible because it only uses the
+  // width*height PRODUCT (swap-invariant), but centerOffsetX/Y -- which
+  // divide dx and dy independently -- came out badly wrong (observed:
+  // centerDelta ~0.65 for a visibly centered face at sensorOrientation
+  // =90deg, since a perfectly-centered dx/dy divided by the wrong,
+  // swapped axis length is not 0.5 unless the frame happens to be
+  // square). Do not reintroduce a swap here without first confirming,
+  // on-device via the debug overlay's raw bounding-box-center/normalize-
+  // dimensions readout, which coordinate space this plugin version
+  // actually returns.
+  final imageWidth = imageSize?.width ?? face.boundingBox.width;
+  final imageHeight = imageSize?.height ?? face.boundingBox.height;
 
   const guideCenterX = 0.5;
   const guideCenterY = 0.48;
@@ -281,6 +305,12 @@ Future<LandmarkAssessment> _assessFace(
 
   final faceCenterX = face.boundingBox.center.dx / imageWidth;
   final faceCenterY = face.boundingBox.center.dy / imageHeight;
+  if (kDebugMode && !useSingle) {
+    debugFaceBoxCenterXPx = face.boundingBox.center.dx;
+    debugFaceBoxCenterYPx = face.boundingBox.center.dy;
+    debugNormalizeWidthPx = imageWidth;
+    debugNormalizeHeightPx = imageHeight;
+  }
   final guideArea =
       (imageWidth * imageHeight * guideWidthRatio * guideHeightRatio)
           .clamp(1.0, double.infinity);

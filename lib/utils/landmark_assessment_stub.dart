@@ -30,3 +30,11 @@ Future<void> closeLandmarkAnalyzers() async {}
 int debugConversionNullCount = 0;
 int debugZeroDetectionsCount = 0;
 int debugDetectedCount = 0;
+
+// Web/unsupported-platform counterparts to the mlkit implementation's
+// debug-only raw face-box geometry — always null here. See
+// landmark_assessment_mlkit.dart for what these mean.
+double? debugFaceBoxCenterXPx;
+double? debugFaceBoxCenterYPx;
+double? debugNormalizeWidthPx;
+double? debugNormalizeHeightPx;

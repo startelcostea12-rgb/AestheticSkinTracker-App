@@ -110,3 +110,12 @@ Future<void> closeLandmarkAnalyzers() {
 int get debugConversionNullCount => impl.debugConversionNullCount;
 int get debugZeroDetectionsCount => impl.debugZeroDetectionsCount;
 int get debugDetectedCount => impl.debugDetectedCount;
+
+// ── Debug-only raw face-box geometry (kDebugMode) ───────────────────────
+// Forwards to the platform implementation's most recent live-stream face
+// detection (always null on the stub/web build). See the doc comment on
+// these in landmark_assessment_mlkit.dart for what each one means.
+double? get debugFaceBoxCenterXPx => impl.debugFaceBoxCenterXPx;
+double? get debugFaceBoxCenterYPx => impl.debugFaceBoxCenterYPx;
+double? get debugNormalizeWidthPx => impl.debugNormalizeWidthPx;
+double? get debugNormalizeHeightPx => impl.debugNormalizeHeightPx;
