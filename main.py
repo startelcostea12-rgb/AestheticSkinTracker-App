@@ -3597,6 +3597,24 @@ TREND_NOISE_FLOOR_EXCEEDS_USEFUL_RANGE = {
 # ever report a directional trend at all.
 TREND_NOISE_FLOOR_EXCLUDED_MULTIPLIER = 3.0
 
+# Registry of scoring-formula changes, per metric. Empty until a metric's
+# formula actually changes -- every metric implicitly starts at version 1
+# (see _metric_formula_version), so nothing needs an entry here just to
+# exist. When a metric's scoring formula changes (e.g. a future fix to
+# texture_smoothness's or glabellar_wrinkle_depth's amplification), bump
+# its entry here in the SAME change. That is what lets
+# _trend_delta_and_status / _trend_lock_reason detect that a baseline
+# score and a current score for that metric were produced by different
+# formulas -- and are therefore not comparable -- even though capture
+# quality, extraction path, and resolution all match. This registry does
+# NOT itself change any formula; it only lets the trend gate react once a
+# future change bumps an entry.
+METRIC_FORMULA_VERSION: Dict[str, int] = {}
+
+
+def _metric_formula_version(metric_key: str) -> int:
+    return METRIC_FORMULA_VERSION.get(metric_key, 1)
+
 # Body silhouette comparisons are materially noisier than face metrics: in real validation,
 # two different full-body stock photos varied by ~56% in normalized_area_index purely due to
 # different people, poses, and framing. This means a body-area trend cannot be treated like a
@@ -3682,6 +3700,43 @@ def _normalize_metric_extraction_paths(raw: Any, metric_keys: list[str]) -> Dict
         if canonical_key not in normalized:
             continue
         normalized[canonical_key] = _normalize_extraction_path_label(value)
+
+    return normalized
+
+
+def _normalize_metric_formula_versions(raw: Any, metric_keys: list[str]) -> Dict[str, int]:
+    """Missing/invalid entries default to 1 -- a scan saved before this
+    field existed, or a metric this session doesn't track a version for,
+    is treated as the original formula, never as a value the trend gate
+    should refuse to compare."""
+    normalized = {key: 1 for key in metric_keys}
+    if raw is None:
+        return normalized
+
+    payload = raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return normalized
+        try:
+            payload = json.loads(text)
+        except (TypeError, ValueError):
+            return normalized
+
+    if not isinstance(payload, dict):
+        return normalized
+
+    for key, value in payload.items():
+        canonical_map = _coalesce_metric_aliases({str(key): 1.0})
+        if not canonical_map:
+            continue
+        canonical_key = next(iter(canonical_map.keys()))
+        if canonical_key not in normalized:
+            continue
+        try:
+            normalized[canonical_key] = int(value)
+        except (TypeError, ValueError):
+            continue
 
     return normalized
 
@@ -3851,6 +3906,8 @@ def _trend_delta_and_status(
     current_source_height: int | None = None,
     baseline_source_width: int | None = None,
     baseline_source_height: int | None = None,
+    current_formula_version: int = 1,
+    baseline_formula_version: int = 1,
 ) -> tuple[float, str]:
     if abs(baseline) < 1e-9:
         return 0.0, "stable"
@@ -3880,6 +3937,13 @@ def _trend_delta_and_status(
         baseline_source_width,
         baseline_source_height,
     ):
+        return 0.0, "stable"
+    # A scoring-formula change for this metric (see METRIC_FORMULA_VERSION)
+    # makes its baseline and current values incomparable even though
+    # capture quality/path/resolution all match -- a stored score from the
+    # old formula doesn't mean the same thing as one from the new formula.
+    # Missing tags (scans saved before this field existed) default to 1.
+    if current_formula_version != baseline_formula_version:
         return 0.0, "stable"
 
     denominator = abs(baseline)
@@ -3927,6 +3991,8 @@ def _trend_lock_reason(
     current_source_height: int | None = None,
     baseline_source_width: int | None = None,
     baseline_source_height: int | None = None,
+    current_formula_version: int = 1,
+    baseline_formula_version: int = 1,
 ) -> str | None:
     """Purely-informational companion to _trend_delta_and_status.
 
@@ -3964,6 +4030,9 @@ def _trend_lock_reason(
         baseline_source_height,
     ):
         return "resolution_mismatch"
+
+    if current_formula_version != baseline_formula_version:
+        return "formula_version_mismatch"
 
     return None
 
@@ -4276,6 +4345,8 @@ def _compute_trend_deltas(
     current_source_height: int | None = None,
     baseline_source_width: int | None = None,
     baseline_source_height: int | None = None,
+    current_formula_versions: Dict[str, int] | None = None,
+    baseline_formula_versions: Dict[str, int] | None = None,
     honesty_band_pct: float = HONESTY_STABLE_BAND_PCT,
 ) -> Dict[str, float]:
     current_canonical = _coalesce_metric_aliases(current_matrix)
@@ -4288,6 +4359,14 @@ def _compute_trend_deltas(
     )
     baseline_paths_norm = _normalize_metric_extraction_paths(
         baseline_paths,
+        CANONICAL_METRIC_ORDER,
+    )
+    current_versions_norm = _normalize_metric_formula_versions(
+        current_formula_versions,
+        CANONICAL_METRIC_ORDER,
+    )
+    baseline_versions_norm = _normalize_metric_formula_versions(
+        baseline_formula_versions,
         CANONICAL_METRIC_ORDER,
     )
     current_capture_quality_norm = (
@@ -4325,6 +4404,8 @@ def _compute_trend_deltas(
             current_source_height,
             baseline_source_width,
             baseline_source_height,
+            current_versions_norm.get(key, 1),
+            baseline_versions_norm.get(key, 1),
         )
         deltas[key] = delta_pct
     return deltas
@@ -4342,6 +4423,8 @@ def _compute_trend_statuses(
     current_source_height: int | None = None,
     baseline_source_width: int | None = None,
     baseline_source_height: int | None = None,
+    current_formula_versions: Dict[str, int] | None = None,
+    baseline_formula_versions: Dict[str, int] | None = None,
     honesty_band_pct: float = HONESTY_STABLE_BAND_PCT,
 ) -> Dict[str, str]:
     current_canonical = _coalesce_metric_aliases(current_matrix)
@@ -4353,6 +4436,14 @@ def _compute_trend_statuses(
     )
     baseline_paths_norm = _normalize_metric_extraction_paths(
         baseline_paths,
+        CANONICAL_METRIC_ORDER,
+    )
+    current_versions_norm = _normalize_metric_formula_versions(
+        current_formula_versions,
+        CANONICAL_METRIC_ORDER,
+    )
+    baseline_versions_norm = _normalize_metric_formula_versions(
+        baseline_formula_versions,
         CANONICAL_METRIC_ORDER,
     )
     current_capture_quality_norm = (
@@ -4388,6 +4479,8 @@ def _compute_trend_statuses(
             current_source_height,
             baseline_source_width,
             baseline_source_height,
+            current_versions_norm.get(key, 1),
+            baseline_versions_norm.get(key, 1),
         )
         out[key] = status
     return out
@@ -4405,6 +4498,8 @@ def _compute_trend_lock_reasons(
     current_source_height: int | None = None,
     baseline_source_width: int | None = None,
     baseline_source_height: int | None = None,
+    current_formula_versions: Dict[str, int] | None = None,
+    baseline_formula_versions: Dict[str, int] | None = None,
 ) -> Dict[str, str | None]:
     """Per-metric companion to _compute_trend_statuses: explains WHY a metric
     that came back "stable" was locked there, when it was a mismatch gate
@@ -4420,6 +4515,14 @@ def _compute_trend_lock_reasons(
     )
     baseline_paths_norm = _normalize_metric_extraction_paths(
         baseline_paths,
+        CANONICAL_METRIC_ORDER,
+    )
+    current_versions_norm = _normalize_metric_formula_versions(
+        current_formula_versions,
+        CANONICAL_METRIC_ORDER,
+    )
+    baseline_versions_norm = _normalize_metric_formula_versions(
+        baseline_formula_versions,
         CANONICAL_METRIC_ORDER,
     )
     current_capture_quality_norm = (
@@ -4451,6 +4554,8 @@ def _compute_trend_lock_reasons(
             current_source_height,
             baseline_source_width,
             baseline_source_height,
+            current_versions_norm.get(key, 1),
+            baseline_versions_norm.get(key, 1),
         )
     return out
 
@@ -5047,6 +5152,7 @@ def analyze_skin_patch(
     bgr_image: np.ndarray,
     baseline_matrix: Dict[str, float] | None = None,
     baseline_extraction_paths: Dict[str, str] | None = None,
+    baseline_formula_versions: Dict[str, int] | None = None,
     capture_quality: str | None = None,
     baseline_capture_quality: str | None = None,
     quality_profile: Dict[str, Any] | None = None,
@@ -6057,6 +6163,13 @@ def analyze_skin_patch(
         baseline_extraction_paths,
         canonical_metric_order,
     )
+    metric_formula_versions = {
+        key: _metric_formula_version(key) for key in canonical_metric_order
+    }
+    normalized_baseline_formula_versions = _normalize_metric_formula_versions(
+        baseline_formula_versions,
+        canonical_metric_order,
+    )
     normalized_capture_quality = _normalize_capture_quality(capture_quality)
     normalized_baseline_capture_quality = _normalize_capture_quality(
         baseline_capture_quality
@@ -6072,6 +6185,8 @@ def analyze_skin_patch(
         current_source_height=source_image_height,
         baseline_source_width=baseline_source_image_width,
         baseline_source_height=baseline_source_image_height,
+        current_formula_versions=metric_formula_versions,
+        baseline_formula_versions=normalized_baseline_formula_versions,
         honesty_band_pct=HONESTY_STABLE_BAND_PCT,
     )
     trend_status = _compute_trend_statuses(
@@ -6085,6 +6200,8 @@ def analyze_skin_patch(
         current_source_height=source_image_height,
         baseline_source_width=baseline_source_image_width,
         baseline_source_height=baseline_source_image_height,
+        current_formula_versions=metric_formula_versions,
+        baseline_formula_versions=normalized_baseline_formula_versions,
         honesty_band_pct=HONESTY_STABLE_BAND_PCT,
     )
     # Purely informational: explains WHY a "stable" trend_status was reached
@@ -6102,6 +6219,8 @@ def analyze_skin_patch(
         current_source_height=source_image_height,
         baseline_source_width=baseline_source_image_width,
         baseline_source_height=baseline_source_image_height,
+        current_formula_versions=metric_formula_versions,
+        baseline_formula_versions=normalized_baseline_formula_versions,
     )
     trend_deltas = _stabilize_trend_deltas_for_near_identical_scan(
         trend_deltas,
@@ -6375,6 +6494,11 @@ def analyze_skin_patch(
         "fallback_reason": fallback_reason,
         "metric_extraction_paths": metric_extraction_paths,
         "baseline_metric_extraction_paths": normalized_baseline_paths,
+        # Provenance for the trend gate's formula_version_mismatch check
+        # (see METRIC_FORMULA_VERSION) -- lets a client echo this scan's
+        # versions back as baseline_formula_versions on a later comparison.
+        "metric_formula_versions": metric_formula_versions,
+        "baseline_metric_formula_versions": normalized_baseline_formula_versions,
         "capture_quality": normalized_capture_quality,
         "baseline_capture_quality": normalized_baseline_capture_quality,
         "source_image_width": source_image_width,
@@ -6809,6 +6933,10 @@ async def analyze_skin(request: Request):
             body.get("baselineExtractionPaths") or body.get("baseline_extraction_paths"),
             CANONICAL_METRIC_ORDER,
         )
+        baseline_formula_versions = _normalize_metric_formula_versions(
+            body.get("baselineFormulaVersions") or body.get("baseline_formula_versions"),
+            CANONICAL_METRIC_ORDER,
+        )
         capture_quality = _normalize_capture_quality(
             body.get("captureQuality") or body.get("capture_quality")
         )
@@ -6852,6 +6980,7 @@ async def analyze_skin(request: Request):
             normalized_image,
             baseline_matrix=baseline_matrix,
             baseline_extraction_paths=baseline_extraction_paths,
+            baseline_formula_versions=baseline_formula_versions,
             capture_quality=capture_quality,
             baseline_capture_quality=baseline_capture_quality,
             quality_profile=quality_profile,
@@ -6942,6 +7071,7 @@ async def analyze_skin_single(
     compromised_barrier: str | None = Form(None),
     baseline_metric_matrix: str | None = Form(None),
     baseline_extraction_paths: str | None = Form(None),
+    baseline_formula_versions: str | None = Form(None),
     source_image_width: int | None = Form(None),
     source_image_height: int | None = Form(None),
     baseline_source_image_width: int | None = Form(None),
@@ -6953,6 +7083,10 @@ async def analyze_skin_single(
         parsed_baseline_matrix = _parse_baseline_metric_matrix(baseline_metric_matrix)
         parsed_baseline_paths = _normalize_metric_extraction_paths(
             baseline_extraction_paths,
+            CANONICAL_METRIC_ORDER,
+        )
+        parsed_baseline_formula_versions = _normalize_metric_formula_versions(
+            baseline_formula_versions,
             CANONICAL_METRIC_ORDER,
         )
         parsed_capture_quality = _normalize_capture_quality(capture_quality)
@@ -6986,6 +7120,7 @@ async def analyze_skin_single(
             img_bgr,
             baseline_matrix=parsed_baseline_matrix,
             baseline_extraction_paths=parsed_baseline_paths,
+            baseline_formula_versions=parsed_baseline_formula_versions,
             capture_quality=parsed_capture_quality,
             baseline_capture_quality=parsed_baseline_capture_quality,
             quality_profile=quality_profile,
@@ -7178,6 +7313,11 @@ async def analyze_skin_single(
             "metric_extraction_paths": results.get("metric_extraction_paths", {}),
             "baseline_metric_extraction_paths": results.get(
                 "baseline_metric_extraction_paths",
+                {},
+            ),
+            "metric_formula_versions": results.get("metric_formula_versions", {}),
+            "baseline_metric_formula_versions": results.get(
+                "baseline_metric_formula_versions",
                 {},
             ),
             "capture_quality": results.get("capture_quality", "unknown"),

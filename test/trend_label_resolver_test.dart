@@ -54,6 +54,22 @@ void main() {
     });
 
     test(
+      'maps "stable" + "formula_version_mismatch" (a backend scoring-'
+      'formula change) to a standalone-entry lock with its own copy',
+      () {
+        final resolved = resolveTrendLabel(
+          trendStatus: 'stable',
+          trendLockReason: 'formula_version_mismatch',
+        );
+        expect(resolved!.direction, TrendDirection.stable);
+        expect(resolved.lockReason, 'formula_version_mismatch');
+        expect(resolved.lockHeadline, 'Standalone entry');
+        expect(resolved.lockShortLabel, isNotNull);
+        expect(resolved.lockDetail, isNotNull);
+      },
+    );
+
+    test(
       'maps "stable" + "frame_range_overlap" (the client-side frame-range '
       'downgrade lock) to a standalone-entry lock with its own copy',
       () {

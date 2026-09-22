@@ -4,6 +4,7 @@ import numpy as np
 
 import main
 from main import (
+    METRIC_FORMULA_VERSION,
     METRIC_NOISE_FLOOR_2SD,
     TREND_NOISE_FLOOR_EXCEEDS_USEFUL_RANGE,
     TREND_NOISE_FLOOR_EXCLUDED_MULTIPLIER,
@@ -16,7 +17,9 @@ from main import (
     _compute_trend_deltas,
     _compute_trend_lock_reasons,
     _compute_trend_statuses,
+    _metric_formula_version,
     _normalize_capture_quality,
+    _normalize_metric_formula_versions,
     _trend_delta_and_status,
     _trend_lock_reason,
 )
@@ -873,6 +876,188 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         )
         self.assertEqual(status, "stable")
         self.assertEqual(delta, 0.0)
+
+
+class NormalizeMetricFormulaVersionsTests(unittest.TestCase):
+    def test_none_input_defaults_every_metric_to_1(self) -> None:
+        result = _normalize_metric_formula_versions(None, ["texture_smoothness", "wrinkle_load"])
+        self.assertEqual(result, {"texture_smoothness": 1, "wrinkle_load": 1})
+
+    def test_empty_string_defaults_every_metric_to_1(self) -> None:
+        result = _normalize_metric_formula_versions("", ["texture_smoothness"])
+        self.assertEqual(result, {"texture_smoothness": 1})
+
+    def test_a_provided_version_overrides_the_default(self) -> None:
+        result = _normalize_metric_formula_versions(
+            {"texture_smoothness": 2},
+            ["texture_smoothness", "wrinkle_load"],
+        )
+        self.assertEqual(result, {"texture_smoothness": 2, "wrinkle_load": 1})
+
+    def test_json_string_payload_is_parsed(self) -> None:
+        result = _normalize_metric_formula_versions(
+            '{"texture_smoothness": 2}',
+            ["texture_smoothness"],
+        )
+        self.assertEqual(result, {"texture_smoothness": 2})
+
+    def test_malformed_json_string_falls_back_to_defaults(self) -> None:
+        result = _normalize_metric_formula_versions(
+            "{not valid json",
+            ["texture_smoothness"],
+        )
+        self.assertEqual(result, {"texture_smoothness": 1})
+
+    def test_a_non_numeric_value_falls_back_to_the_default_for_that_key(self) -> None:
+        result = _normalize_metric_formula_versions(
+            {"texture_smoothness": "not-a-number"},
+            ["texture_smoothness"],
+        )
+        self.assertEqual(result, {"texture_smoothness": 1})
+
+    def test_a_key_outside_the_known_metric_list_is_ignored(self) -> None:
+        result = _normalize_metric_formula_versions(
+            {"not_a_real_metric": 5},
+            ["texture_smoothness"],
+        )
+        self.assertEqual(result, {"texture_smoothness": 1})
+
+    def test_a_canonical_key_is_applied_directly(self) -> None:
+        result = _normalize_metric_formula_versions(
+            {"glabellar_wrinkle_depth": 4},
+            ["texture_smoothness", "glabellar_wrinkle_depth"],
+        )
+        self.assertEqual(
+            result,
+            {"texture_smoothness": 1, "glabellar_wrinkle_depth": 4},
+        )
+
+
+class MetricFormulaVersionRegistryTests(unittest.TestCase):
+    def test_registry_is_empty_until_a_formula_actually_changes(self) -> None:
+        # No metric's scoring formula has changed yet -- this gate is
+        # infrastructure only. Bumping an entry here is a separate,
+        # deliberate change made alongside an actual formula fix.
+        self.assertEqual(METRIC_FORMULA_VERSION, {})
+
+    def test_every_metric_defaults_to_version_1(self) -> None:
+        self.assertEqual(_metric_formula_version("texture_smoothness"), 1)
+        self.assertEqual(_metric_formula_version("glabellar_wrinkle_depth"), 1)
+        self.assertEqual(_metric_formula_version("anything_unknown"), 1)
+
+
+class FormulaVersionMismatchGateTests(unittest.TestCase):
+    """Covers the formula_version_mismatch provenance gate: a scoring-
+    formula change for a metric makes its baseline and current values
+    incomparable, the same way a capture-quality/path/resolution mismatch
+    already does -- so it belongs in the SAME provenance chain, checked the
+    same way, not as a separate mechanism.
+    """
+
+    def test_matching_versions_do_not_affect_a_real_delta(self) -> None:
+        delta, status = _trend_delta_and_status(
+            "wrinkle_load", 10.0, 20.0, "primary_roi", "primary_roi", 8.0,
+            "normal", "normal", 1000, 750, 1000, 750,
+            current_formula_version=1,
+            baseline_formula_version=1,
+        )
+        self.assertEqual(status, "improved")
+        self.assertEqual(delta, 50.0)
+
+    def test_mismatched_versions_force_stable_even_for_a_large_real_delta(
+        self,
+    ) -> None:
+        delta, status = _trend_delta_and_status(
+            "wrinkle_load", 10.0, 20.0, "primary_roi", "primary_roi", 8.0,
+            "normal", "normal", 1000, 750, 1000, 750,
+            current_formula_version=2,
+            baseline_formula_version=1,
+        )
+        self.assertEqual(status, "stable")
+        self.assertEqual(delta, 0.0)
+
+    def test_missing_versions_default_to_1_and_are_therefore_comparable(
+        self,
+    ) -> None:
+        # Neither side specifies a version (an older scan, or a metric with
+        # no registry entry) -- both default to 1 and compare normally.
+        delta, status = _trend_delta_and_status(
+            "wrinkle_load", 10.0, 20.0, "primary_roi", "primary_roi", 8.0,
+            "normal", "normal", 1000, 750, 1000, 750,
+        )
+        self.assertEqual(status, "improved")
+        self.assertEqual(delta, 50.0)
+
+    def test_lock_reason_reports_formula_version_mismatch(self) -> None:
+        reason = _trend_lock_reason(
+            "primary_roi", "primary_roi", "normal", "normal",
+            1000, 750, 1000, 750,
+            current_formula_version=2,
+            baseline_formula_version=1,
+        )
+        self.assertEqual(reason, "formula_version_mismatch")
+
+    def test_lock_reason_is_none_when_versions_match(self) -> None:
+        reason = _trend_lock_reason(
+            "primary_roi", "primary_roi", "normal", "normal",
+            1000, 750, 1000, 750,
+            current_formula_version=1,
+            baseline_formula_version=1,
+        )
+        self.assertIsNone(reason)
+
+    def test_capture_quality_mismatch_is_reported_before_formula_version_mismatch(
+        self,
+    ) -> None:
+        # Provenance checks run in a fixed order; an earlier, more
+        # fundamental mismatch (capture quality) must still win over a
+        # later one (formula version) when both are present.
+        reason = _trend_lock_reason(
+            "primary_roi", "primary_roi", "blurry", "normal",
+            1000, 750, 1000, 750,
+            current_formula_version=2,
+            baseline_formula_version=1,
+        )
+        self.assertEqual(reason, "capture_quality_mismatch")
+
+    def test_compute_trend_wrappers_thread_formula_versions_through(self) -> None:
+        current = {"wrinkle_load": 10.0}
+        baseline = {"wrinkle_load": 20.0}
+        paths = {"wrinkle_load": "primary_roi"}
+
+        matched = _compute_trend_statuses(
+            current, baseline,
+            current_paths=paths, baseline_paths=paths,
+            current_capture_quality="normal", baseline_capture_quality="normal",
+            current_formula_versions={"wrinkle_load": 1},
+            baseline_formula_versions={"wrinkle_load": 1},
+        )
+        mismatched = _compute_trend_statuses(
+            current, baseline,
+            current_paths=paths, baseline_paths=paths,
+            current_capture_quality="normal", baseline_capture_quality="normal",
+            current_formula_versions={"wrinkle_load": 2},
+            baseline_formula_versions={"wrinkle_load": 1},
+        )
+        mismatched_deltas = _compute_trend_deltas(
+            current, baseline,
+            current_paths=paths, baseline_paths=paths,
+            current_capture_quality="normal", baseline_capture_quality="normal",
+            current_formula_versions={"wrinkle_load": 2},
+            baseline_formula_versions={"wrinkle_load": 1},
+        )
+        mismatched_reasons = _compute_trend_lock_reasons(
+            current, baseline,
+            current_paths=paths, baseline_paths=paths,
+            current_capture_quality="normal", baseline_capture_quality="normal",
+            current_formula_versions={"wrinkle_load": 2},
+            baseline_formula_versions={"wrinkle_load": 1},
+        )
+
+        self.assertEqual(matched["wrinkle_load"], "improved")
+        self.assertEqual(mismatched["wrinkle_load"], "stable")
+        self.assertEqual(mismatched_deltas["wrinkle_load"], 0.0)
+        self.assertEqual(mismatched_reasons["wrinkle_load"], "formula_version_mismatch")
 
 
 if __name__ == "__main__":
