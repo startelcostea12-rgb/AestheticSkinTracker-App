@@ -271,32 +271,44 @@ Future<LandmarkAssessment> _assessFace(
   final face = faces.first;
   final imageSize = inputImage.metadata?.size;
 
-  // ML Kit's Face.boundingBox is returned in the SAME coordinate space as
-  // the InputImageMetadata.size you supplied when constructing the
-  // InputImage (i.e. the raw, pre-rotation buffer: image.width/image.height
-  // from the CameraImage) -- NOT pre-rotated into "upright" display
-  // coordinates. This matches _assessBody below, which normalizes pose
-  // landmarks against this same raw metadata.size without ever swapping,
-  // and is the standard CoordinatesTranslator convention documented across
-  // the google_mlkit_face_detection/pose_detection plugin ecosystem for
-  // painting these results onto a rotated preview.
+  // ML Kit's Face.boundingBox coordinate space relative to the raw
+  // InputImageMetadata.size (image.width/image.height from the
+  // CameraImage) is PLATFORM-DEPENDENT at 90/270deg rotation — confirmed
+  // against the official coordinates_translator.dart shipped with the
+  // google_mlkit_face_detection/pose_detection example app (flutter-ml/
+  // google_ml_kit_flutter, packages/example/lib/vision_detector_views/
+  // painters/coordinates_translator.dart):
   //
-  // A previous version of this function swapped width/height whenever
-  // `rotation` was 90/270deg, on the (unverified, and incorrect)
-  // assumption that the bounding box was already upright. That swap
-  // divided each axis by the WRONG dimension on any 90/270deg frame:
-  // faceFillRatio still looked plausible because it only uses the
-  // width*height PRODUCT (swap-invariant), but centerOffsetX/Y -- which
-  // divide dx and dy independently -- came out badly wrong (observed:
-  // centerDelta ~0.65 for a visibly centered face at sensorOrientation
-  // =90deg, since a perfectly-centered dx/dy divided by the wrong,
-  // swapped axis length is not 0.5 unless the frame happens to be
-  // square). Do not reintroduce a swap here without first confirming,
-  // on-device via the debug overlay's raw bounding-box-center/normalize-
-  // dimensions readout, which coordinate space this plugin version
-  // actually returns.
-  final imageWidth = imageSize?.width ?? face.boundingBox.width;
-  final imageHeight = imageSize?.height ?? face.boundingBox.height;
+  //   translateX/Y at rotation90deg/270deg divide by `imageSize.width`/
+  //   `.height` UNSWAPPED on iOS, but by the SWAPPED dimension
+  //   (`.height` for x, `.width` for y) on Android. i.e. iOS's native ML
+  //   Kit returns boxes in the raw, pre-rotation buffer's coordinate
+  //   space; Android's returns them already in upright/rotated
+  //   coordinates, so normalizing them needs the raw dimensions swapped
+  //   to match.
+  //
+  // A previous version of this function swapped unconditionally (right
+  // for Android, wrong for iOS — the bug this file's history was written
+  // to explain); the version before that never swapped at all (right for
+  // iOS, wrong for Android). Both were guesses never checked against the
+  // platform split above. This now matches the official translator
+  // exactly. faceFillRatio was never a reliable signal for catching either
+  // mistake: it only uses the width*height PRODUCT, which is swap-
+  // invariant, so it looks "correct" regardless of whether the swap
+  // direction is right for the running platform. Re-verify against the
+  // debug overlay's raw bounding-box-center/normalize-dimensions readout
+  // before changing this again.
+  final rotation = inputImage.metadata?.rotation ?? InputImageRotation.rotation0deg;
+  final requiresSwapOnAndroid = Platform.isAndroid &&
+      (rotation == InputImageRotation.rotation90deg ||
+          rotation == InputImageRotation.rotation270deg);
+  double imageWidth = imageSize?.width ?? face.boundingBox.width;
+  double imageHeight = imageSize?.height ?? face.boundingBox.height;
+  if (requiresSwapOnAndroid) {
+    final swapped = imageWidth;
+    imageWidth = imageHeight;
+    imageHeight = swapped;
+  }
 
   const guideCenterX = 0.5;
   const guideCenterY = 0.48;
@@ -465,14 +477,32 @@ Future<LandmarkAssessment> _assessBody(
     );
   }
 
+  // Same platform-dependent rotation handling as _assessFace above (see
+  // that function's doc comment for the full explanation, sourced from
+  // the official coordinates_translator.dart): iOS's pose landmarks are
+  // in the raw, pre-rotation metadata.size coordinate space at
+  // 90/270deg; Android's are already upright, so the raw dimensions must
+  // be swapped to normalize them correctly.
+  final rotation = inputImage.metadata?.rotation ?? InputImageRotation.rotation0deg;
+  final requiresSwapOnAndroid = Platform.isAndroid &&
+      (rotation == InputImageRotation.rotation90deg ||
+          rotation == InputImageRotation.rotation270deg);
+  double imageWidth = inputImage.metadata?.size.width ?? 1.0;
+  double imageHeight = inputImage.metadata?.size.height ?? 1.0;
+  if (requiresSwapOnAndroid) {
+    final swapped = imageWidth;
+    imageWidth = imageHeight;
+    imageHeight = swapped;
+  }
+
   final centerX =
       (leftShoulder.x + rightShoulder.x + leftHip.x + rightHip.x) / 4;
   final centerY =
       (leftShoulder.y + rightShoulder.y + leftHip.y + rightHip.y) / 4;
-  final centerOffsetX = ((centerX / inputImage.metadata!.size.width) - 0.5)
+  final centerOffsetX = ((centerX / imageWidth) - 0.5)
       .clamp(-0.5, 0.5)
       .toDouble();
-  final centerOffsetY = ((centerY / inputImage.metadata!.size.height) - 0.5)
+  final centerOffsetY = ((centerY / imageHeight) - 0.5)
       .clamp(-0.5, 0.5)
       .toDouble();
   final shoulderTilt =
@@ -485,8 +515,6 @@ Future<LandmarkAssessment> _assessBody(
   final shoulderWidth = (rightShoulder.x - leftShoulder.x).abs();
   final hipWidth = (rightHip.x - leftHip.x).abs().clamp(1, double.infinity);
   final widthRatio = shoulderWidth / hipWidth;
-  final imageWidth = inputImage.metadata?.size.width ?? 1.0;
-  final imageHeight = inputImage.metadata?.size.height ?? 1.0;
   final shoulderMidX = ((leftShoulder.x + rightShoulder.x) / 2.0) / imageWidth;
   final shoulderMidY = ((leftShoulder.y + rightShoulder.y) / 2.0) / imageHeight;
   final hipMidX = ((leftHip.x + rightHip.x) / 2.0) / imageWidth;
