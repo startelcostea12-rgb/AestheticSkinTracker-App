@@ -96,11 +96,6 @@ class SkinScanCoachCopy {
       }
     }
 
-    final matrixNote = _matrixNote(metricMatrix);
-    if (matrixNote != null) {
-      sentences.add(matrixNote);
-    }
-
     return sentences.where((sentence) => sentence.trim().isNotEmpty).take(6).join(' ');
   }
 
@@ -248,44 +243,6 @@ class SkinScanCoachCopy {
       if (sentences.length >= 2) break;
     }
     return sentences;
-  }
-
-  static String? _matrixNote(Map<String, dynamic> metricMatrix) {
-    if (metricMatrix.isEmpty) return null;
-    final supportedKeys = <String>[
-      'localized_redness',
-      'texture_smoothness',
-      'pigment_load',
-      'wrinkle_load',
-      'pore_visibility',
-      'breakout_activity',
-    ];
-    final available = supportedKeys
-        .where((key) => metricMatrix.containsKey(key))
-        .take(3)
-        .toList();
-    if (available.isEmpty) return null;
-
-    return 'The report payload also includes calibrated metric_matrix values for ${_joinWithCommasAndAnd(available.map(_matrixLabel).toList())}, which keeps the advice tied to the actual scan rather than a generic template.';
-  }
-
-  static String _matrixLabel(String key) {
-    switch (key) {
-      case 'localized_redness':
-        return 'localized redness';
-      case 'texture_smoothness':
-        return 'texture smoothness';
-      case 'pigment_load':
-        return 'pigment load';
-      case 'wrinkle_load':
-        return 'wrinkle load';
-      case 'pore_visibility':
-        return 'pore visibility';
-      case 'breakout_activity':
-        return 'breakout activity';
-      default:
-        return key;
-    }
   }
 
   static String _joinWithCommasAndAnd(List<String> items) {

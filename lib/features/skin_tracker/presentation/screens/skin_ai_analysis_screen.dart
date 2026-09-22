@@ -3588,11 +3588,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       }
     }
 
-    final matrixNote = _coachMatrixNote(metricMatrix);
-    if (matrixNote != null) {
-      sentences.add(matrixNote);
-    }
-
     return sentences.where((sentence) => sentence.trim().isNotEmpty).take(6).join(' ');
   }
 
@@ -3633,44 +3628,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     ]..sort((a, b) => b.value.compareTo(a.value));
 
     return concerns.where((entry) => entry.value >= 0.5).take(3).toList();
-  }
-
-  String? _coachMatrixNote(Map<String, dynamic> metricMatrix) {
-    if (metricMatrix.isEmpty) return null;
-    final supportedKeys = <String>[
-      'localized_redness',
-      'texture_smoothness',
-      'pigment_load',
-      'wrinkle_load',
-      'pore_visibility',
-      'breakout_activity',
-    ];
-    final available = supportedKeys
-        .where((key) => metricMatrix.containsKey(key))
-        .take(3)
-        .toList();
-    if (available.isEmpty) return null;
-
-    return 'The report payload also includes calibrated metric_matrix values for ${_joinWithCommasAndAnd(available.map(_coachMatrixLabel).toList())}, which keeps the advice tied to the actual scan rather than a generic template.';
-  }
-
-  String _coachMatrixLabel(String key) {
-    switch (key) {
-      case 'localized_redness':
-        return 'localized redness';
-      case 'texture_smoothness':
-        return 'texture smoothness';
-      case 'pigment_load':
-        return 'pigment load';
-      case 'wrinkle_load':
-        return 'wrinkle load';
-      case 'pore_visibility':
-        return 'pore visibility';
-      case 'breakout_activity':
-        return 'breakout activity';
-      default:
-        return key;
-    }
   }
 
   List<String> _coachTrendSentences(Map<String, double> scores) {
