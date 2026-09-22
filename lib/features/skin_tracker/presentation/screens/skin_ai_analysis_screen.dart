@@ -101,11 +101,31 @@ Map<String, String> buildAiSkinAnalysisBackendFields({
   };
 }
 
+/// Reads a per-frame `trend_deltas` / `trend_status` / `trend_lock_reasons`
+/// map from a single frame's raw backend response, preferring a top-level
+/// key and falling back to the same key nested under `metrics` -- mirrors
+/// _parseBackendAnalysisPayload's own dual lookup so a per-frame response is
+/// read the exact same way it would be if it were the only frame.
+Map<String, dynamic> _perFrameTrendNode(
+  Map<String, dynamic> response,
+  Map<String, dynamic> metricsNode,
+  String key,
+) {
+  final topLevel = _dynamicMap(response[key]);
+  if (topLevel.isNotEmpty) return topLevel;
+  return _dynamicMap(metricsNode[key]);
+}
+
 MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
   List<Map<String, dynamic>> responses, {
   required int requestedFrames,
 }) {
   final samples = <String, List<double>>{};
+  // Parallel to `samples`: which successfulResponses index each sample came
+  // from, so a metric's trend verdict can later be taken from whichever
+  // frame's own value is closest to that metric's average -- the same value
+  // this aggregate actually reports -- instead of always frame 1's.
+  final sampleFrameIndices = <String, List<int>>{};
   final confidenceSamples = <String, List<Object>>{};
   final successfulResponses = <Map<String, dynamic>>[];
 
@@ -143,8 +163,12 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     }
     if (frameMetrics.isEmpty) continue;
     successfulResponses.add(response);
+    final frameIndex = successfulResponses.length - 1;
     for (final entry in frameMetrics.entries) {
       samples.putIfAbsent(entry.key, () => <double>[]).add(entry.value);
+      sampleFrameIndices
+          .putIfAbsent(entry.key, () => <int>[])
+          .add(frameIndex);
       final confidence = confidenceForMetric(response, metricsNode, entry.key);
       if (confidence != null) {
         confidenceSamples.putIfAbsent(entry.key, () => <Object>[]).add(
@@ -178,16 +202,59 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     correctedConfidence[entry.key] = entry.value.first;
   }
 
+  // For each metric, the trend verdict (status/delta/lock reason) must come
+  // from the same frame whose raw value the averaged, displayed value is
+  // closest to -- never unconditionally frame 1, which previously left the
+  // shown verdict describing a different number than the one on screen.
+  final resolvedTrendStatus = <String, dynamic>{};
+  final resolvedTrendDeltas = <String, dynamic>{};
+  final resolvedTrendLockReasons = <String, dynamic>{};
+  for (final key in averagedMatrix.keys) {
+    final values = samples[key];
+    final indices = sampleFrameIndices[key];
+    if (values == null || indices == null || values.isEmpty) continue;
+    final target = averagedMatrix[key]!;
+    var nearestIndex = indices.first;
+    var nearestDistance = (values.first - target).abs();
+    for (var i = 1; i < values.length; i++) {
+      final distance = (values[i] - target).abs();
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = indices[i];
+      }
+    }
+    final nearestResponse = successfulResponses[nearestIndex];
+    final nearestMetricsNode = _dynamicMap(nearestResponse['metrics']);
+    final status =
+        _perFrameTrendNode(nearestResponse, nearestMetricsNode, 'trend_status')[key];
+    if (status != null) resolvedTrendStatus[key] = status;
+    final delta =
+        _perFrameTrendNode(nearestResponse, nearestMetricsNode, 'trend_deltas')[key];
+    if (delta != null) resolvedTrendDeltas[key] = delta;
+    final lockReason = _perFrameTrendNode(
+      nearestResponse,
+      nearestMetricsNode,
+      'trend_lock_reasons',
+    )[key];
+    if (lockReason != null) resolvedTrendLockReasons[key] = lockReason;
+  }
+
   final first = successfulResponses.first;
   final response = Map<String, dynamic>.from(first);
   final metricsNode = Map<String, dynamic>.from(_dynamicMap(first['metrics']));
   response['metric_matrix'] = averagedMatrix;
   response['metric_confidence'] = correctedConfidence;
+  response['trend_status'] = resolvedTrendStatus;
+  response['trend_deltas'] = resolvedTrendDeltas;
+  response['trend_lock_reasons'] = resolvedTrendLockReasons;
   response.addAll(averagedMatrix);
   metricsNode
     ..addAll(averagedMatrix)
     ..['metric_matrix'] = averagedMatrix
-    ..['metric_confidence'] = correctedConfidence;
+    ..['metric_confidence'] = correctedConfidence
+    ..['trend_status'] = resolvedTrendStatus
+    ..['trend_deltas'] = resolvedTrendDeltas
+    ..['trend_lock_reasons'] = resolvedTrendLockReasons;
   response['metrics'] = metricsNode;
   response['multi_frame_analysis'] = <String, dynamic>{
     'requested_frames': requestedFrames,
@@ -205,6 +272,87 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     metricContributorCounts: contributorCounts,
     successfulFrames: successfulResponses.length,
     requestedFrames: requestedFrames,
+  );
+}
+
+double? _parseFiniteDouble(dynamic value) {
+  final parsed = value is num ? value.toDouble() : double.tryParse('$value');
+  if (parsed == null || !parsed.isFinite) return null;
+  return parsed;
+}
+
+({double min, double max})? _parseMetricRange(dynamic rawRange) {
+  final map = _dynamicMap(rawRange);
+  final min = _parseFiniteDouble(map['min']);
+  final max = _parseFiniteDouble(map['max']);
+  if (min == null || max == null) return null;
+  return (min: min, max: max);
+}
+
+/// Client-side honesty gate that runs on top of the backend's own
+/// trend_status: an "improved"/"worsened" verdict is downgraded to
+/// "stable" (with lock reason "frame_range_overlap") whenever the current
+/// scan's and the baseline scan's own multi-frame value ranges for that
+/// metric substantially overlap -- meaning frame-to-frame capture noise
+/// alone could explain the gap between their averages, regardless of how
+/// large that gap looks as a percentage. This is exactly the case that let
+/// texture_smoothness 19.4 -> 39.4 ("+100%") through as "Improved" while
+/// the two scans' own frame ranges (11.2-30.3 baseline, 28.7-50.2 current)
+/// overlapped from 28.7-30.3.
+///
+/// Downgrade-only: a "stable" or "insufficient_signal" verdict is never
+/// touched, and a downgraded verdict is never flipped to the opposite
+/// direction or upgraded to a stronger one -- this layer can only pull an
+/// improved/worsened claim back to stable, never invent one. [trendDeltas]
+/// is zeroed alongside any downgraded key, matching the backend's own
+/// invariant that a "stable" status always carries a 0 delta.
+///
+/// A metric missing a usable range on either side -- an older scan
+/// persisted before per-frame ranges existed, or a single-frame capture
+/// with no spread to report -- is left exactly as the backend verdict
+/// reported it. Missing range data is never treated as evidence of overlap.
+({
+  Map<String, String> trendStatus,
+  Map<String, double> trendDeltas,
+  Map<String, String> trendLockReasons,
+})
+downgradeTrendForOverlappingFrameRanges({
+  required Map<String, String> trendStatus,
+  required Map<String, double> trendDeltas,
+  required Map<String, String> trendLockReasons,
+  required Map<String, dynamic> currentMetricRanges,
+  required Map<String, dynamic> baselineMetricRanges,
+}) {
+  final updatedStatus = Map<String, String>.from(trendStatus);
+  final updatedDeltas = Map<String, double>.from(trendDeltas);
+  final updatedLockReasons = Map<String, String>.from(trendLockReasons);
+
+  for (final entry in trendStatus.entries) {
+    final key = entry.key;
+    final status = entry.value.trim().toLowerCase();
+    if (status != 'improved' && status != 'worsened') continue;
+
+    final currentRange = _parseMetricRange(currentMetricRanges[key]);
+    final baselineRange = _parseMetricRange(baselineMetricRanges[key]);
+    if (currentRange == null || baselineRange == null) continue;
+
+    final overlapLength =
+        math.min(currentRange.max, baselineRange.max) -
+        math.max(currentRange.min, baselineRange.min);
+    // Conservative: any real overlap counts, not just a large fraction of
+    // either range's width. A 1e-9 floor only excludes the two ranges
+    // merely touching at a shared boundary value, not a genuine overlap.
+    if (overlapLength > 1e-9) {
+      updatedStatus[key] = 'stable';
+      updatedDeltas[key] = 0.0;
+      updatedLockReasons[key] = 'frame_range_overlap';
+    }
+  }
+
+  return (
+    trendStatus: updatedStatus,
+    trendDeltas: updatedDeltas,
+    trendLockReasons: updatedLockReasons,
   );
 }
 
@@ -1157,12 +1305,51 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       );
       final parsedBackend = _parseBackendAnalysisPayload(backendResponse);
       final Map<String, double> fullMetrics = parsedBackend.fullMetrics;
+      // Client-side-only honesty gate: downgrades improved/worsened to
+      // stable when this scan's and the baseline scan's own multi-frame
+      // value ranges substantially overlap (see
+      // downgradeTrendForOverlappingFrameRanges). Backend-reported
+      // capture-quality/path/resolution/confidence gates are untouched --
+      // this only ever pulls a claim back toward stable, never invents one.
+      final currentMetricRanges = _dynamicMap(
+        _dynamicMap(backendResponse['multi_frame_analysis'])['metric_ranges'],
+      );
+      final baselineMetricRanges = _dynamicMap(
+        _dynamicMap(
+          _previousFocusAreaScan?.rawPayload?['multi_frame_analysis'],
+        )['metric_ranges'],
+      );
+      final overlapAdjustedTrend = downgradeTrendForOverlappingFrameRanges(
+        trendStatus: parsedBackend.serverTrendStatus,
+        trendDeltas: parsedBackend.serverTrendDeltas,
+        trendLockReasons: parsedBackend.serverTrendLockReasons,
+        currentMetricRanges: currentMetricRanges,
+        baselineMetricRanges: baselineMetricRanges,
+      );
       final Map<String, double> serverTrendDeltas =
-          parsedBackend.serverTrendDeltas;
+          overlapAdjustedTrend.trendDeltas;
       final Map<String, String> serverTrendStatus =
-          parsedBackend.serverTrendStatus;
+          overlapAdjustedTrend.trendStatus;
       final Map<String, String> serverTrendLockReasons =
-          parsedBackend.serverTrendLockReasons;
+          overlapAdjustedTrend.trendLockReasons;
+      // Write the (possibly downgraded) trend fields back into
+      // backendResponse -- both locations _mergePayloadForPersistence reads
+      // from -- so what gets persisted to ScanHistoryEntry.rawPayload
+      // matches what is displayed now, rather than the pre-downgrade
+      // backend verdict.
+      backendResponse['trend_status'] = serverTrendStatus;
+      backendResponse['trend_deltas'] = serverTrendDeltas;
+      backendResponse['trend_lock_reasons'] = serverTrendLockReasons;
+      final backendResponseMetricsNode = _asDynamicMap(
+        backendResponse['metrics'],
+      );
+      if (backendResponseMetricsNode != null) {
+        backendResponseMetricsNode['trend_status'] = serverTrendStatus;
+        backendResponseMetricsNode['trend_deltas'] = serverTrendDeltas;
+        backendResponseMetricsNode['trend_lock_reasons'] =
+            serverTrendLockReasons;
+        backendResponse['metrics'] = backendResponseMetricsNode;
+      }
       final luxePayload = _buildLuxeResultsPayload(
         report,
         backendResponse: backendResponse,

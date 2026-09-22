@@ -53,6 +53,22 @@ void main() {
       expect(resolved.lockDetail, isNotNull);
     });
 
+    test(
+      'maps "stable" + "frame_range_overlap" (the client-side frame-range '
+      'downgrade lock) to a standalone-entry lock with its own copy',
+      () {
+        final resolved = resolveTrendLabel(
+          trendStatus: 'stable',
+          trendLockReason: 'frame_range_overlap',
+        );
+        expect(resolved!.direction, TrendDirection.stable);
+        expect(resolved.lockReason, 'frame_range_overlap');
+        expect(resolved.lockHeadline, 'Standalone entry');
+        expect(resolved.lockShortLabel, isNotNull);
+        expect(resolved.lockDetail, isNotNull);
+      },
+    );
+
     test('maps "insufficient_signal" to no usable delta', () {
       final resolved = resolveTrendLabel(
         trendStatus: 'insufficient_signal',

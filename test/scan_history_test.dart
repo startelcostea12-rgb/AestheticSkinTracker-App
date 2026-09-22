@@ -23,6 +23,43 @@ void main() {
       expect(roundTrip.customDescription, 'hips and lower glute transition');
     });
 
+    test(
+      'rawPayload.multi_frame_analysis.metric_ranges round-trips through '
+      'JSON, so a later scan can read this scan\'s own per-metric frame '
+      'spread as its trend-overlap baseline',
+      () {
+        final entry = ScanHistoryEntry(
+          id: 'frame_ranges_1',
+          timestamp: DateTime.parse('2026-09-22T09:00:00Z'),
+          estimatedSkinAge: 28,
+          metrics: const {'texture': 1.9},
+          rawPayload: {
+            'metric_matrix': {'texture_smoothness': 19.4},
+            'multi_frame_analysis': {
+              'requested_frames': 3,
+              'successful_frames': 3,
+              'metric_ranges': {
+                'texture_smoothness': {
+                  'min': 11.2,
+                  'max': 30.3,
+                  'count': 3,
+                },
+              },
+            },
+          },
+        );
+
+        final roundTrip = ScanHistoryEntry.fromJson(entry.toJson());
+
+        final ranges = (((roundTrip.rawPayload?['multi_frame_analysis']
+                    as Map)['metric_ranges']
+                as Map)['texture_smoothness']
+            as Map);
+        expect(ranges['min'], 11.2);
+        expect(ranges['max'], 30.3);
+      },
+    );
+
     test('source image dimensions round-trip through JSON', () {
       final entry = ScanHistoryEntry(
         id: 'source_dimensions',

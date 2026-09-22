@@ -114,6 +114,94 @@ void main() {
     });
   });
 
+  test(
+    'trend verdict for a metric is taken from the frame whose own value is '
+    'closest to the displayed average, not always frame 1',
+    () {
+      // texture_smoothness values 28.7, 39.5, 50.2 average to 39.466..., so
+      // frame 2 (39.5) is the nearest contributor -- its own backend-computed
+      // trend fields for texture_smoothness must be the ones surfaced,
+      // reproducing the bug where frame 1's "improved" was shown next to the
+      // averaged value even though frame 1's own raw value never justified it.
+      final aggregate = averageBackendAnalysisFrames(
+        [
+          {
+            'metric_matrix': {'texture_smoothness': 28.7},
+            'trend_status': {'texture_smoothness': 'improved'},
+            'trend_deltas': {'texture_smoothness': 100.0},
+            'trend_lock_reasons': <String, dynamic>{},
+          },
+          {
+            'metric_matrix': {'texture_smoothness': 39.5},
+            'trend_status': {'texture_smoothness': 'stable'},
+            'trend_deltas': {'texture_smoothness': 5.0},
+            'trend_lock_reasons': <String, dynamic>{},
+          },
+          {
+            'metric_matrix': {'texture_smoothness': 50.2},
+            'trend_status': {'texture_smoothness': 'improved'},
+            'trend_deltas': {'texture_smoothness': 158.0},
+            'trend_lock_reasons': <String, dynamic>{},
+          },
+        ],
+        requestedFrames: 3,
+      );
+
+      expect(aggregate.response['trend_status'], {
+        'texture_smoothness': 'stable',
+      });
+      expect(aggregate.response['trend_deltas'], {
+        'texture_smoothness': 5.0,
+      });
+      final nestedMetrics =
+          aggregate.response['metrics'] as Map<String, dynamic>;
+      expect(nestedMetrics['trend_status'], {'texture_smoothness': 'stable'});
+      expect(nestedMetrics['trend_deltas'], {'texture_smoothness': 5.0});
+    },
+  );
+
+  test(
+    'trend fields read from a nested metrics node are honored the same as '
+    'top-level ones when picking the nearest frame',
+    () {
+      final aggregate = averageBackendAnalysisFrames(
+        [
+          {
+            'metrics': {
+              'metric_matrix': {'localized_redness': 10.0},
+              'trend_status': {'localized_redness': 'worsened'},
+              'trend_deltas': {'localized_redness': -40.0},
+              'trend_lock_reasons': {
+                'localized_redness': 'some_reason',
+              },
+            },
+          },
+          {
+            'metrics': {
+              'metric_matrix': {'localized_redness': 30.0},
+              'trend_status': {'localized_redness': 'stable'},
+              'trend_deltas': {'localized_redness': 2.0},
+            },
+          },
+        ],
+        requestedFrames: 2,
+      );
+
+      // Average is 20.0, exactly between the two frames' own values (10.0
+      // and 30.0) -- both are equally close, so the tie-break (first
+      // strictly-smaller distance wins) keeps frame 1's worsened verdict.
+      expect(aggregate.response['metric_matrix'], {
+        'localized_redness': 20.0,
+      });
+      expect(aggregate.response['trend_status'], {
+        'localized_redness': 'worsened',
+      });
+      expect(aggregate.response['trend_lock_reasons'], {
+        'localized_redness': 'some_reason',
+      });
+    },
+  );
+
   test('throws when no frame contributes a finite metric', () {
     expect(
       () => averageBackendAnalysisFrames(

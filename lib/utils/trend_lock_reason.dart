@@ -12,14 +12,18 @@
 /// "steady"/"stable" language unchanged.
 library;
 
-/// Recognized `trend_lock_reason` values, matching main.py's
-/// `_trend_lock_reason` / `_body_trend_lock_reason`.
+/// Recognized `trend_lock_reason` values. Most match main.py's
+/// `_trend_lock_reason` / `_body_trend_lock_reason`; `frame_range_overlap`
+/// is the one exception — it is applied entirely client-side, by
+/// downgradeTrendForOverlappingFrameRanges, after the backend's own gates
+/// have already run (see that function's doc comment).
 const Set<String> knownTrendLockReasons = {
   'capture_quality_mismatch',
   'path_mismatch',
   'resolution_mismatch',
   'capture_mode_mismatch',
   'scale_mismatch',
+  'frame_range_overlap',
 };
 
 /// Very short (headline/badge-safe) replacement for a bare "Stable" label
@@ -48,6 +52,8 @@ String? trendLockReasonShortLabel(String? reason) {
       return 'Standalone entry — capture setup (mirror/assisted/timer) differed from your last scan';
     case 'scale_mismatch':
       return 'Standalone entry — framing/distance differed too much from your last scan to compare';
+    case 'frame_range_overlap':
+      return 'Standalone entry — frame-to-frame variability was too high to confirm a real change';
     default:
       return null;
   }
@@ -68,6 +74,8 @@ String? trendLockReasonDetail(String? reason) {
       return 'This scan used a different capture setup (mirror/assisted/timer) than your baseline, so it is not directly comparable.';
     case 'scale_mismatch':
       return 'Framing or distance differed too much from your baseline capture to compare reliably.';
+    case 'frame_range_overlap':
+      return "This scan's and your baseline's own frame-to-frame readings overlapped too much to confirm a real change — capture noise could explain the difference on its own.";
     default:
       return null;
   }
