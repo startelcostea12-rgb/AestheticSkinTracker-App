@@ -357,6 +357,144 @@ String _joinWithCommasAndAndPure(List<String> items) {
   return (headline: headline, subheadline: subheadline);
 }
 
+/// Backend-only timeline metrics for persistence (Skin Tracker / Recovery
+/// Timeline history, and the visual skin-age estimate derived from them —
+/// see estimateVisualSkinAgeFromAiMetrics). Each of the six base values
+/// (pigment, redness, texture, wrinkle, acne_severity, rosacea_intensity)
+/// is read ONLY from [unifiedMetrics] — this scan's freshly-parsed
+/// backend metric_matrix (see _parseBackendAnalysisPayload) — never from
+/// AcneRosaceaPhotoAnalyzer's local pixel-heuristic report, the on-device
+/// EfficientNet quality scores, or a stale previous scan's cached
+/// `_fullMetrics` reading. All three of those were previously used as
+/// silent substitutes whenever the backend didn't have a value, which is
+/// exactly the "looks precise, isn't backed by anything" problem this
+/// function existed to avoid.
+///
+/// When the backend has no usable value for a metric, that metric — and
+/// every aggregate metric derived from it (swelling, firmness,
+/// overallHealingScore, etc.) — is OMITTED from the result entirely
+/// rather than computed from a fabricated or partial substitute. Callers
+/// (and anything reading persisted scan history later) must treat a
+/// missing key as "no data", not "zero". A top-level pure function (no
+/// screen state) so it's directly unit-testable — see
+/// test/skin_ai_timeline_metrics_backend_only_test.dart.
+Map<String, double> timelineMetricsFromBackend(
+  Map<String, double>? unifiedMetrics,
+) {
+  double? backendValue(String key) {
+    final v = unifiedMetrics?[key];
+    if (v == null || v.isNaN || v.isInfinite) return null;
+    return (v * 10).clamp(0.0, 10.0).toDouble();
+  }
+
+  final pigmentFinal = backendValue('pigment');
+  final rednessFinal = backendValue('redness');
+  final textureFinal = backendValue('texture');
+  final wrinkleFinal = backendValue('wrinkle');
+  final acne = backendValue('acne_severity');
+  final rosacea = backendValue('rosacea_intensity');
+
+  final out = <String, double>{};
+  void put(String key, double? value) {
+    if (value != null) out[key] = value;
+  }
+
+  // Primary four requested timeline metrics.
+  put('pigment', pigmentFinal);
+  put('redness', rednessFinal);
+  put('texture', textureFinal);
+  put('wrinkle', wrinkleFinal);
+  // Aliases consumed by existing recovery timeline insight helpers.
+  put('pigmentation', pigmentFinal);
+  put('darkSpots', pigmentFinal);
+  put('erythema', rednessFinal);
+  put('roughness', textureFinal);
+  put('wrinkles', wrinkleFinal);
+  put('rhytids', wrinkleFinal);
+  put('hyperpigmentation', pigmentFinal);
+  // Inflammatory conditions.
+  put('acne_severity', acne);
+  put('acneSeverity', acne);
+  put('rosacea_intensity', rosacea);
+  put('rosaceaSeverity', rosacea);
+
+  // Aggregate/derived metrics — only computable when every input they
+  // depend on is itself backend-derived; omitted (not substituted)
+  // otherwise, and cascading: an aggregate whose inputs are missing
+  // can't honestly be computed even partially.
+  double? swelling;
+  if (rednessFinal != null && textureFinal != null && pigmentFinal != null) {
+    swelling = (rednessFinal * 0.50 + textureFinal * 0.30 + pigmentFinal * 0.20)
+        .clamp(0, 10)
+        .toDouble();
+  }
+  put('swelling', swelling);
+  put('edema', swelling);
+
+  double? firmness;
+  if (textureFinal != null && wrinkleFinal != null && swelling != null) {
+    firmness = (10 - (textureFinal * 0.45 + wrinkleFinal * 0.20 + swelling * 0.15))
+        .clamp(0, 10)
+        .toDouble();
+  }
+  put('firmness', firmness);
+  put('bodyFirmness', firmness);
+  put('skinLaxityFirmness', firmness);
+
+  double? smoothness;
+  if (textureFinal != null) {
+    smoothness = (10 - textureFinal).clamp(0, 10).toDouble();
+  }
+  put('smoothness', smoothness);
+  put('bodySmoothness', smoothness);
+  put('textureSmoothness', smoothness);
+
+  double? scarringBruising;
+  if (pigmentFinal != null && rednessFinal != null && textureFinal != null) {
+    scarringBruising =
+        (pigmentFinal * 0.45 + rednessFinal * 0.35 + textureFinal * 0.20)
+            .clamp(0, 10)
+            .toDouble();
+  }
+  put('scarringBruising', scarringBruising);
+  put('scarring_bruising', scarringBruising);
+  put('bruising', scarringBruising);
+
+  double? fatRetention;
+  if (swelling != null && scarringBruising != null && textureFinal != null) {
+    fatRetention =
+        (10 - (swelling * 0.30 + scarringBruising * 0.20 + textureFinal * 0.15))
+            .clamp(0, 10)
+            .toDouble();
+  }
+  put('fatRetention', fatRetention);
+  put('fat_retention', fatRetention);
+
+  double? overallHealing;
+  if (swelling != null &&
+      firmness != null &&
+      smoothness != null &&
+      scarringBruising != null &&
+      pigmentFinal != null &&
+      fatRetention != null) {
+    overallHealing = ((10 - swelling) * 0.22 +
+            firmness * 0.18 +
+            smoothness * 0.16 +
+            (10 - scarringBruising) * 0.18 +
+            (10 - pigmentFinal) * 0.12 +
+            fatRetention * 0.14)
+        .clamp(0, 10)
+        .toDouble();
+  }
+  put('overallHealingScore', overallHealing);
+  put('overall_healing_score', overallHealing);
+  put('bodyHealingScore', overallHealing);
+
+  if (out.isNotEmpty) out['sourceSkinAiAnalysis'] = 1;
+
+  return out;
+}
+
 class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   static const String _manualBaselinePrefsKey =
       'skin_ai_manual_baseline_metric_matrix_v1';
@@ -1052,7 +1190,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       // persist the current one, so the results card can show trend
       // arrows (improved / worsened) against the prior analysis.
       final timelineMetrics = _withTrendDeltaMetrics(
-        _timelineMetricsFor(report, unifiedMetrics: fullMetrics),
+        timelineMetricsFromBackend(fullMetrics),
         previousMetrics,
         serverTrendDeltas: serverTrendDeltas,
       );
@@ -1170,147 +1308,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         _latestBackendAnalysisPayload = null;
       });
     }
-  }
-
-  Map<String, double> _timelineMetricsFor(
-    PhotoAnalysisResult r, {
-    Map<String, double>? unifiedMetrics,
-  }) {
-    // Returns the strongest rule-engine score (0–10) for the given keys,
-    // or null when none of them were detected/derived for this scan.
-    double? detectedScore(List<String> keys) {
-      double? best;
-      for (final key in keys) {
-        final raw = r.detected[key].toDouble();
-        final score = raw.clamp(0, 10).toDouble();
-        if (best == null || score > best) best = score;
-      }
-      return best;
-    }
-
-    final redness =
-        detectedScore([
-          'rosaceaSeverity',
-          'rosaceaFlushing',
-          'visibleBloodVessels',
-        ]) ??
-        0.0;
-    final pigment =
-        detectedScore(['postAcneScarring', 'visibleBloodVessels']) ?? 0.0;
-    final texture =
-        ((_qualityScores?.texture != null)
-                ? (1 - _qualityScores!.texture!) * 10
-                : detectedScore(['skinSensitivity', 'postAcneScarring']) ?? 0.0)
-            .clamp(0, 10)
-            .toDouble();
-    final wrinkle = ((_qualityScores?.wrinkles ?? 0) * 10)
-        .clamp(0, 10)
-        .toDouble();
-
-    // Prefer the unified 6-metric TFLite output when available (stored on
-    // a 0–1 scale → ×10 for the timeline's 0–10 scale); otherwise fall
-    // back to the rule-engine derived value so web / model-less scans
-    // still populate every metric.
-    double metric(String key, double fallback) {
-      final v = unifiedMetrics?[key] ?? _fullMetrics[key];
-      if (v == null) return fallback.clamp(0, 10).toDouble();
-      return (v * 10).clamp(0, 10).toDouble();
-    }
-
-    final pigmentFinal = metric('pigment', pigment);
-    final rednessFinal = metric('redness', redness);
-    final textureFinal = metric('texture', texture);
-    final wrinkleFinal = metric('wrinkle', wrinkle);
-    // Fall back to the rule-engine inflammatory scores when the TFLite
-    // models are unavailable (e.g. on web) so acne/rosacea don't save as 0.
-    final acne = metric(
-      'acne_severity',
-      detectedScore([
-            'acneSeverity',
-            'cysticAcneSeverity',
-            'hormonalAcneSeverity',
-            'activeBreakouts',
-            'acneCount',
-          ]) ??
-          0.0,
-    );
-
-    final rosacea = metric(
-      'rosacea_intensity',
-      detectedScore([
-            'rosaceaSeverity',
-            'rosaceaFlushing',
-            'visibleBloodVessels',
-            'erythema',
-          ]) ??
-          0.0,
-    );
-
-    final swelling =
-        (rednessFinal * 0.50 + textureFinal * 0.30 + pigmentFinal * 0.20)
-            .clamp(0, 10)
-            .toDouble();
-    final firmness =
-        (10 - (textureFinal * 0.45 + wrinkleFinal * 0.20 + swelling * 0.15))
-            .clamp(0, 10)
-            .toDouble();
-    final smoothness = (10 - textureFinal).clamp(0, 10).toDouble();
-    final scarringBruising =
-        (pigmentFinal * 0.45 + rednessFinal * 0.35 + textureFinal * 0.20)
-            .clamp(0, 10)
-            .toDouble();
-    final fatRetention =
-        (10 - (swelling * 0.30 + scarringBruising * 0.20 + textureFinal * 0.15))
-            .clamp(0, 10)
-            .toDouble();
-    final overallHealing =
-        ((10 - swelling) * 0.22 +
-                firmness * 0.18 +
-                smoothness * 0.16 +
-                (10 - scarringBruising) * 0.18 +
-                (10 - pigmentFinal) * 0.12 +
-                fatRetention * 0.14)
-            .clamp(0, 10)
-            .toDouble();
-
-    return {
-      // Primary four requested timeline metrics.
-      'pigment': pigmentFinal,
-      'redness': rednessFinal,
-      'texture': textureFinal,
-      'wrinkle': wrinkleFinal,
-      // Aliases consumed by existing recovery timeline insight helpers.
-      'pigmentation': pigmentFinal,
-      'darkSpots': pigmentFinal,
-      'erythema': rednessFinal,
-      'roughness': textureFinal,
-      'wrinkles': wrinkleFinal,
-      'rhytids': wrinkleFinal,
-      // Inflammatory conditions — always written so the timeline can
-      // render all six metrics (0.0 when the models produced nothing).
-      'acne_severity': acne,
-      'acneSeverity': acne,
-      'rosacea_intensity': rosacea,
-      'rosaceaSeverity': rosacea,
-      'fatRetention': fatRetention,
-      'fat_retention': fatRetention,
-      'swelling': swelling,
-      'edema': swelling,
-      'firmness': firmness,
-      'bodyFirmness': firmness,
-      'skinLaxityFirmness': firmness,
-      'smoothness': smoothness,
-      'bodySmoothness': smoothness,
-      'textureSmoothness': smoothness,
-      'scarringBruising': scarringBruising,
-      'scarring_bruising': scarringBruising,
-      'bruising': scarringBruising,
-      'hyperpigmentation': pigmentFinal,
-      'overallHealingScore': overallHealing,
-      'overall_healing_score': overallHealing,
-      'bodyHealingScore': overallHealing,
-      'sourceSkinAiAnalysis': 1,
-    };
   }
 
   double? _trendMetricValueFromMap(Map<String, double> metrics, String key) {
@@ -3885,7 +3882,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final redness = (metrics['redness'] ?? 0).clamp(0, 100).toDouble();
     final textureRaw = _fullMetrics.isNotEmpty
         ? ((_fullMetrics['texture'] ?? 0) * 100)
-        : ((_timelineMetricsFor(r)['texture'] ?? 0) * 10);
+        : ((timelineMetricsFromBackend(_fullMetrics)['texture'] ?? 0) * 10);
     final texture = textureRaw.clamp(0, 100).toDouble();
     final severity = r.severityIndex.clamp(0, 10).toDouble();
     final diagnosis = r.severityBandLabel.trim().isEmpty
@@ -5456,7 +5453,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   _trendDeltaSeries() {
     final result = _result;
     if (result == null || _previousMetrics.isEmpty) return const [];
-    final current = _timelineMetricsFor(result, unifiedMetrics: _fullMetrics);
+    final current = timelineMetricsFromBackend(_fullMetrics);
     final specs = _isBodyProcedure
         ? <({String key, String label, bool lowerIsBetter, Color color})>[
             (
@@ -6288,7 +6285,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     // projection (0..10) and map to the UI's 0..100 scale.
     final result = _result;
     if (result != null) {
-      final timeline = _timelineMetricsFor(result);
+      final timeline = timelineMetricsFromBackend(_fullMetrics);
       final redness = (timeline['redness'] ?? 0) * 10;
       final wrinkles = (timeline['wrinkle'] ?? 0) * 10;
       final darkSpots = (timeline['pigment'] ?? 0) * 10;
