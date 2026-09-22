@@ -41,7 +41,6 @@ import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:aesthetic_skin_tracker/utils/skin_analysis_service.dart' as remote_analysis;
 import 'package:aesthetic_skin_tracker/utils/procedure_intelligence.dart' as procedure_intel;
 import 'package:aesthetic_skin_tracker/utils/procedure_metric_set.dart';
-import 'package:aesthetic_skin_tracker/utils/skin_metric_labels.dart';
 import 'package:aesthetic_skin_tracker/utils/trend_label_resolver.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_product_recommendation_engine.dart';
 import 'package:aesthetic_skin_tracker/widgets/clinical_section_header.dart';
@@ -243,6 +242,120 @@ Map<String, dynamic> luxePrecisionMetadataFromBackend(
         backendResponse?['multi_frame_analysis'],
       ),
     };
+
+/// Friendly capture-quality tag for the results hero badge — replaces the
+/// old "N% confidence" figure, which was never a confidence in the
+/// clinical claim shown next to it, only in whether the on-device model
+/// successfully located a face. [rawCaptureQualityTag] is the same raw
+/// tag sent to the backend (see buildAiSkinAnalysisBackendFields above /
+/// main.py's `_normalize_capture_quality`), so this is honest, real
+/// pipeline metadata rather than a fabricated number. A top-level pure
+/// function (no screen state) so it's directly unit-testable.
+String captureQualityBadgeLabel(String? rawCaptureQualityTag) {
+  switch ((rawCaptureQualityTag ?? '').trim().toLowerCase()) {
+    case 'normal':
+      return 'Good capture quality';
+    case 'low_light':
+      return 'Low light';
+    case 'poor_angle':
+      return 'Off angle';
+    case 'uneven_lighting':
+      return 'Uneven lighting';
+    case 'blurry':
+      return 'Blurry';
+    case 'face_offcenter':
+      return 'Off-center';
+    default:
+      return 'Capture quality unknown';
+  }
+}
+
+String _joinWithCommasAndAndPure(List<String> items) {
+  if (items.isEmpty) return '';
+  if (items.length == 1) return items.first;
+  if (items.length == 2) return '${items.first} and ${items.last}';
+  return '${items.sublist(0, items.length - 1).join(', ')}, and ${items.last}';
+}
+
+/// Backend-only, non-diagnostic hero headline + subheadline for the AI
+/// Skin Analysis results screen. Built EXCLUSIVELY from [metricMatrix]
+/// (the same cleaned backend metric_matrix LuxeReportLayout renders —
+/// see _buildLuxeResultsPayload): never reads AcneRosaceaPhotoAnalyzer's
+/// local pixel-heuristic report, the on-device TFLite model, or any
+/// other local signal. Deliberately never names a condition (acne /
+/// rosacea / telangiectasia) — only the plain-language visual concern
+/// area a metric maps to, matching the vocabulary already used in
+/// _coachTopConcerns. Keys absent from [metricMatrix] are treated as "no
+/// data" (not "no concern") and skipped entirely, since the backend only
+/// populates a key when its honesty gates trust it for this scan. A
+/// top-level pure function (no screen state) so it's directly
+/// unit-testable — see test/skin_ai_results_hero_backend_only_test.dart.
+({String headline, String subheadline}) buildBackendHeroCopy(
+  Map<String, dynamic> metricMatrix,
+) {
+  double? metricValue(String key) {
+    if (!metricMatrix.containsKey(key)) return null;
+    final raw = metricMatrix[key];
+    final parsed = raw is num ? raw.toDouble() : double.tryParse('$raw');
+    if (parsed == null || parsed.isNaN || parsed.isInfinite) return null;
+    return parsed.clamp(0.0, 100.0).toDouble();
+  }
+
+  final concerns = <String, double>{};
+  final rednessValues = [
+    metricValue('localized_redness'),
+    metricValue('rosacea_severity'),
+  ].whereType<double>().toList();
+  if (rednessValues.isNotEmpty) {
+    concerns['redness'] = rednessValues.reduce(math.max);
+  }
+  final textureSmoothness = metricValue('texture_smoothness');
+  if (textureSmoothness != null) {
+    // Inverted: texture_smoothness is "higher = smoother = better", but
+    // the hero speaks in "how much this stood out" terms.
+    concerns['texture'] = (100.0 - textureSmoothness).clamp(0.0, 100.0);
+  }
+  final pigment = metricValue('pigment_load');
+  if (pigment != null) concerns['tone evenness'] = pigment;
+  final wrinkle = metricValue('wrinkle_load');
+  if (wrinkle != null) concerns['fine lines'] = wrinkle;
+  final breakout = metricValue('breakout_activity');
+  if (breakout != null) concerns['visible breakouts'] = breakout;
+
+  if (concerns.isEmpty) {
+    return (
+      headline: 'Scan captured',
+      subheadline:
+          "Backend metrics aren't available yet for this scan — check back after processing finishes.",
+    );
+  }
+
+  final ranked = concerns.entries.toList()
+    ..sort((a, b) => b.value.compareTo(a.value));
+  final top = ranked.first;
+
+  String band(double value) {
+    if (value < 25) return 'Minimal';
+    if (value < 50) return 'Mild';
+    if (value < 70) return 'Noticeable';
+    return 'Significant';
+  }
+
+  final headline = top.value < 25
+      ? 'Calm, low-concern scan'
+      : '${band(top.value)} ${top.key} pattern in this scan';
+
+  final flagged = ranked
+      .where((entry) => entry.value >= 40)
+      .take(3)
+      .map((entry) => entry.key)
+      .toList();
+  final subheadline = flagged.isEmpty
+      ? 'No individual metric stood out beyond the typical range in this scan.'
+      : 'Most notable: ${_joinWithCommasAndAndPure(flagged)}.';
+
+  return (headline: headline, subheadline: subheadline);
+}
 
 class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   static const String _manualBaselinePrefsKey =
@@ -3183,9 +3296,15 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       r,
       backendResponse: _latestBackendAnalysisPayload,
     );
+    // Single source of truth for every results-stage widget below that
+    // must be backend-only: the same cleaned metric_matrix LuxeReportLayout
+    // itself renders (see _buildLuxeResultsPayload — sourced entirely from
+    // backendResponse, never from the local AcneRosaceaPhotoAnalyzer
+    // heuristic or the on-device TFLite model).
+    final backendMetricMatrix =
+        _asDynamicMap(luxePayload['metric_matrix']) ?? const <String, dynamic>{};
     final coachInsight = _coachInsightForPhase(
-      r,
-      luxePayload: luxePayload,
+      metricMatrix: backendMetricMatrix,
       isFollowUp: isFollowUpPhase,
     );
 
@@ -3197,7 +3316,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             children: [
               _resultsTopDisclaimer(),
               const SizedBox(height: 14),
-              _resultHeroCard(r),
+              _resultHeroCard(backendMetricMatrix),
               if (_experimentalScinCard() != null) ...[
                 const SizedBox(height: 14),
                 _experimentalScinCard()!,
@@ -3208,7 +3327,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               ],
               const SizedBox(height: 14),
               isFollowUpPhase
-                  ? _followUpSummaryLine(r)
+                  ? _followUpSummaryLine()
                   : _baselinePhaseSummaryCard(),
               const SizedBox(height: 18),
               ClinicalSectionHeader(
@@ -3224,7 +3343,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               LuxeReportLayout(
                 rawPayload: luxePayload,
                 baselineImageProvider: _resultsBaselineImageProvider(r),
-                currentImageProvider: _imageProviderForPath(r.input.imagePath),
+                currentImageProvider: _imageProviderForPath(_imagePath),
                 baselineLabel: 'Baseline',
                 currentLabel: isFollowUpPhase ? 'Current Follow-Up' : 'Current Scan',
                 localHistoryCount: _localHistoryCountForFocusArea,
@@ -3240,38 +3359,21 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               const SizedBox(height: 10),
               SmartNarrativeContainer(narrativeText: coachInsight),
               const SizedBox(height: 18),
-              if (r.isClear) ...[_clearStateCard(r), const SizedBox(height: 18)],
-              if (!r.isClear) ...[
-                const ClinicalSectionHeader(
-                  icon: Icons.assessment_rounded,
-                  eyebrow: 'PHOTO OBSERVATIONS',
-                  title: 'What the current scan highlighted',
-                ),
-                const SizedBox(height: 8),
-                _aiModelBanner(),
-                const SizedBox(height: 10),
-                _scoreDirectionLegend(),
-                const SizedBox(height: 10),
-                _detectedMetricsCard(r),
-                const SizedBox(height: 18),
-              ],
-              if (r.insights.isNotEmpty) ...[
-                const ClinicalSectionHeader(
-                  icon: Icons.lightbulb_outline_rounded,
-                  eyebrow: 'EDUCATIONAL INSIGHTS',
-                  title: 'Clinical-style interpretation',
-                ),
-                const SizedBox(height: 10),
-                _insightsCard(r),
-                const SizedBox(height: 18),
-              ],
+              const ClinicalSectionHeader(
+                icon: Icons.assessment_rounded,
+                eyebrow: 'PHOTO OBSERVATIONS',
+                title: 'What the current scan highlighted',
+              ),
+              const SizedBox(height: 8),
+              _aiModelBanner(),
+              const SizedBox(height: 18),
               const ClinicalSectionHeader(
                 icon: Icons.spa_rounded,
                 eyebrow: 'SAFETY & PRODUCTS',
                 title: 'Recommended for your skin today',
               ),
               const SizedBox(height: 10),
-              _buildRecommendationsSection(r),
+              _buildRecommendationsSection(backendMetricMatrix),
               const SizedBox(height: 18),
               _scanPhaseCtaCard(isFollowUpPhase),
               const SizedBox(height: 14),
@@ -3357,14 +3459,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     );
   }
 
-  Widget _followUpSummaryLine(PhotoAnalysisResult r) {
-    final summary = r.detectionSummary.trim();
-    final firstSentence = summary.contains('.')
-        ? '${summary.split('.').first.trim()}.'
-        : summary;
-    final safeText = firstSentence.isEmpty
-        ? 'Follow-up scan captured. Progress metrics are now compared against your saved baseline.'
-        : firstSentence;
+  // Generic, non-diagnostic text only — this used to summarize
+  // AcneRosaceaPhotoAnalyzer's (local heuristic) detectionSummary, which
+  // could name conditions the backend never confirmed.
+  Widget _followUpSummaryLine() {
+    const safeText =
+        'Follow-up scan captured. Progress metrics are now compared against your saved baseline.';
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -3394,21 +3494,17 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     );
   }
 
-  String _coachInsightForPhase(
-    PhotoAnalysisResult r, {
+  String _coachInsightForPhase({
+    required Map<String, dynamic> metricMatrix,
     required bool isFollowUp,
-    required Map<String, dynamic> luxePayload,
   }) {
-    final scores = _recommendationScoresFor(r);
-    final metricMatrix = _asDynamicMap(luxePayload['metric_matrix']) ??
-        const <String, dynamic>{};
+    final scores = _recommendationScoresFromMetricMatrix(metricMatrix);
     final topConcerns = _coachTopConcerns(scores);
-    final sensitivitySignal = _coachDetectedSignal(
-      r,
-      const ['skinSensitivity', 'skin_sensitivity', 'sensitivity'],
-    );
+    // No backend equivalent exists for the old local-heuristic "skin
+    // sensitivity" proxy, so barrier-stress is now judged purely from the
+    // real redness/rosacea formula metrics instead of adding an invented
+    // backend proxy for a signal the backend doesn't measure.
     final barrierStressed =
-        sensitivitySignal >= 4.0 ||
         (scores['redness'] ?? 0) >= 4.0 ||
         (scores['rosacea_intensity'] ?? 0) >= 4.0;
     final sentences = <String>[];
@@ -3471,7 +3567,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
     final rosaceaSignal = scores['rosacea_intensity'] ?? 0;
     final acneSignal = scores['acne_severity'] ?? 0;
-    if (rosaceaSignal >= 4.0 || sensitivitySignal >= 4.0) {
+    if (rosaceaSignal >= 4.0) {
       sentences.add(
         'Avoid fragrance, menthol, scrubs, and high-strength acids for now, because those are more likely to aggravate redness or stinging than to help this pattern.',
       );
@@ -3618,18 +3714,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     }
 
     return sentences;
-  }
-
-  double _coachDetectedSignal(PhotoAnalysisResult r, List<String> keys) {
-    for (final key in keys) {
-      dynamic raw = r.detected[key];
-      raw ??= r.detected[key.replaceAll('_', '')];
-      final parsed = raw is num
-          ? raw.toDouble()
-          : double.tryParse(raw?.toString() ?? '');
-      if (parsed != null && parsed.isFinite) return parsed.clamp(0, 10).toDouble();
-    }
-    return 0;
   }
 
   String _joinWithCommasAndAnd(List<String> items) {
@@ -5577,10 +5661,19 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     );
   }
 
-  Widget _resultHeroCard(PhotoAnalysisResult r) {
-    final confidence = (r.confidence * 100).round();
-    final image = _imageProviderForPath(r.input.imagePath);
-    final metrics = _singleScanMetricMap();
+  /// Backend-only, non-diagnostic hero card. Built exclusively from
+  /// [metricMatrix] (the same cleaned backend metric_matrix
+  /// LuxeReportLayout renders — see _buildLuxeResultsPayload) and honest
+  /// capture-pipeline metadata (capture-quality tag, frame count). Does
+  /// NOT read AcneRosaceaPhotoAnalyzer's report, the on-device TFLite
+  /// model, or any local pixel heuristic, and never names a condition
+  /// (acne/rosacea/telangiectasia) — see [buildBackendHeroCopy], the
+  /// top-level pure function (testable without this screen's state) that
+  /// actually derives the copy.
+  Widget _resultHeroCard(Map<String, dynamic> metricMatrix) {
+    final heroCopy = buildBackendHeroCopy(metricMatrix);
+    final captureQualityLabel = captureQualityBadgeLabel(_currentCaptureQuality);
+    final image = _imageProviderForPath(_imagePath);
 
     return Container(
       decoration: BoxDecoration(
@@ -5649,9 +5742,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                           children: [
                             _heroBadge('Single Scan'),
                             const SizedBox(width: 8),
-                            _heroBadge('$confidence% confidence'),
-                            const Spacer(),
-                            _heroBadge(r.severityBandLabel),
+                            _heroBadge(captureQualityLabel),
                           ],
                         ),
                       ),
@@ -5663,7 +5754,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              r.headline,
+                              heroCopy.headline,
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 24,
@@ -5673,7 +5764,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              r.subheadline,
+                              heroCopy.subheadline,
                               style: TextStyle(
                                 color: Colors.white.withValues(alpha: 0.88),
                                 fontSize: 12.5,
@@ -5733,9 +5824,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 const SizedBox(height: 10),
                 Row(
                   children: [
-                    _miniStat('Severity', r.severityIndex.toStringAsFixed(1)),
+                    _miniStat('Metrics', metricMatrix.length.toString()),
                     const SizedBox(width: 10),
-                    _miniStat('Metrics', metrics.length.toString()),
+                    _miniStat(
+                      'Frames',
+                      '$_successfulAnalysisFrameCount/$_requestedAnalysisFrameCount',
+                    ),
                     const SizedBox(width: 10),
                     _miniStat(
                       'Mode',
@@ -6230,170 +6324,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     );
   }
 
-  Widget _clearStateCard(PhotoAnalysisResult r) {
-    final lowConf = r.isLowConfidence && !r.isClear;
-    final accent = lowConf ? MyApp.clinicalSlate : const Color(0xFF4FAE8B);
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            accent.withValues(alpha: 0.10),
-            accent.withValues(alpha: 0.04),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: accent.withValues(alpha: 0.40), width: 0.7),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            lowConf ? Icons.help_outline_rounded : Icons.verified_rounded,
-            color: accent,
-            size: 28,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  lowConf
-                      ? 'Low-confidence read'
-                      : 'No significant issues detected',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w900,
-                    color: accent,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  r.detectionSummary,
-                  style: TextStyle(
-                    fontSize: 12,
-                    height: 1.4,
-                    color: MyApp.textBrown.withValues(alpha: 0.85),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _detectedMetricsCard(PhotoAnalysisResult r) {
-    final entries = r.detected.values.entries
-        .where((e) => e.value > 0)
-        .where((e) => !_isHiddenConditionMetricKey(e.key))
-        .toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    if (entries.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(14),
-        decoration: _cardDecoration(),
-        child: Text(
-          'No comparison-focused metrics scored above zero in this photo.',
-          style: TextStyle(fontSize: 12, color: MyApp.clinicalSlate),
-        ),
-      );
-    }
-    final top = entries.first;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: _cardDecoration(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _topFindingBanner(top.key, top.value),
-          const SizedBox(height: 12),
-          for (int i = 0; i < entries.length; i++) ...[
-            if (i > 0)
-              Divider(
-                height: 18,
-                color: MyApp.clinicalSlate.withValues(alpha: 0.12),
-              ),
-            _metricRow(
-              entries[i].key,
-              entries[i].value,
-              r.derivations[entries[i].key],
-            ),
-          ],
-          // Always surface post-acne marks / scarring (virtual metric,
-          // not in the registry) when the analyzer detected any pigment
-          // or textural residue. Clarifies that the AI IS seeing
-          // something — just classifying it as scarring rather than
-          // active disease.
-          if ((r.derivations['postAcneScarring']?.score ?? 0) > 0 &&
-              !_isHiddenConditionMetricKey('postAcneScarring')) ...[
-            Divider(
-              height: 18,
-              color: MyApp.clinicalSlate.withValues(alpha: 0.12),
-            ),
-            _metricRow(
-              'postAcneScarring',
-              r.derivations['postAcneScarring']!.score,
-              r.derivations['postAcneScarring'],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _topFindingBanner(String key, int value) {
-    final spec = SkinMetricRegistry.byKey(key);
-    final label = spec?.clinicalName ?? key;
-    final color = _valueColor(value);
-    final band = _severityBandForValue(value);
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withValues(alpha: 0.40), width: 0.6),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.priority_high_rounded, size: 16, color: color),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text.rich(
-              TextSpan(
-                style: TextStyle(
-                  fontSize: 11.5,
-                  height: 1.35,
-                  color: MyApp.textBrown.withValues(alpha: 0.92),
-                ),
-                children: [
-                  const TextSpan(
-                    text: 'MOST PROMINENT · ',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.7,
-                    ),
-                  ),
-                  TextSpan(
-                    text: '$label — $band ($value/10). ',
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  const TextSpan(
-                    text:
-                        'This is what the photo emphasised most — a helpful '
-                        'starting point for a conversation with a licensed '
-                        'professional.',
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   /// Honest-disclosure banner shown above the metrics. When a real AI
   /// model is loaded it surfaces the model name, dataset, and reported
   /// accuracy alongside a "research-grade, not diagnostic" caveat. When
@@ -6533,44 +6463,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     return parts.isEmpty ? '' : ' (${parts.join(", ")})';
   }
 
-  bool _isHiddenConditionMetricKey(String key) {
-    final normalized = key
-        .trim()
-        .toLowerCase()
-        .replaceAll('-', '_')
-        .replaceAll(' ', '_');
-    const blocked = <String>{
-      'visible_blood_vessels',
-      'vessel_visibility',
-      'telangiectasia',
-      'rosacea_flushing_episodes',
-      'flushing_episodes',
-      'erythema',
-      'redness',
-      'diffuse_flushing_erythema',
-      'localized_redness',
-      'skin_sensitivity',
-      'sensitivity',
-      'rosacea_severity',
-      'rosacea_intensity',
-      'acne_severity',
-      'postacnescarring',
-      'post_acne_scarring',
-      'postacne_scarring',
-      'postacne_marks',
-    };
-    if (blocked.contains(normalized)) return true;
-    if (normalized.contains('erythema')) return true;
-    if (normalized.contains('flushing')) return true;
-    if (normalized.contains('rosacea')) return true;
-    if (normalized.contains('blood_vessel')) return true;
-    if (normalized.contains('vessel')) return true;
-    if (normalized.contains('sensitivity')) return true;
-    if (normalized.contains('acne_severity')) return true;
-    if (normalized.contains('post_acne')) return true;
-    return false;
-  }
-
   String _qualitySummary(SkinQualityScores q) {
     int pct(double? v) => ((v ?? 0) * 100).round();
     final parts = <String>[
@@ -6580,296 +6472,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       if (q.pores != null) 'pores ${pct(q.pores)}%',
       if (q.elasticity != null) 'elasticity ${pct(q.elasticity)}%',
     ];
-    return parts.join(' \u00b7 ');
-  }
-
-  Widget _scoreDirectionLegend() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            const Color(0xFFC76A55).withValues(alpha: 0.08),
-            const Color(0xFF4FAE8B).withValues(alpha: 0.08),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: MyApp.clinicalSlate.withValues(alpha: 0.20),
-          width: 0.6,
-        ),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.straighten_rounded, size: 14, color: MyApp.clinicalNavy),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text.rich(
-              TextSpan(
-                style: TextStyle(
-                  fontSize: 11.5,
-                  height: 1.4,
-                  color: MyApp.textBrown.withValues(alpha: 0.92),
-                ),
-                children: const [
-                  TextSpan(
-                    text: 'How to read these scores: ',
-                    style: TextStyle(fontWeight: FontWeight.w900),
-                  ),
-                  TextSpan(
-                    text:
-                        'higher = more prominent in this photo. Lower is '
-                        'generally better. Each item below is a 0–10 visual '
-                        'estimate, not a diagnosis or medical grade.',
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _metricRow(String key, int value, MetricDerivation? d) {
-    final spec = SkinMetricRegistry.byKey(key);
-    final label = key == 'postAcneScarring'
-        ? 'Post-Acne Marks / Scarring'
-        : (spec?.clinicalName ?? key);
-    final color = _valueColor(value);
-    final band = _severityBandForValue(value);
-    final meaning = _metricMeaning(key);
-    final isLowConf = (d?.confidence ?? 1.0) < 0.50;
-    final fromModel = _modelOwnedMetrics.contains(key);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          label,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                            color: MyApp.clinicalNavy,
-                          ),
-                        ),
-                      ),
-                      if (fromModel) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 5,
-                            vertical: 1,
-                          ),
-                          decoration: BoxDecoration(
-                            color: MyApp.clinicalTeal,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: const Text(
-                            'AI',
-                            style: TextStyle(
-                              fontSize: 8,
-                              letterSpacing: 0.7,
-                              fontWeight: FontWeight.w900,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.arrow_upward_rounded,
-                        size: 10,
-                        color: MyApp.clinicalSlate.withValues(alpha: 0.85),
-                      ),
-                      const SizedBox(width: 3),
-                      Text(
-                        'Higher = more severe',
-                        style: TextStyle(
-                          fontSize: 9.5,
-                          letterSpacing: 0.4,
-                          fontWeight: FontWeight.w700,
-                          color: MyApp.clinicalSlate.withValues(alpha: 0.85),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    '$value / 10',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w900,
-                      color: color,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  band.toUpperCase(),
-                  style: TextStyle(
-                    fontSize: 9,
-                    letterSpacing: 0.9,
-                    fontWeight: FontWeight.w900,
-                    color: color,
-                  ),
-                ),
-                if (isLowConf) ...[
-                  const SizedBox(height: 4),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 1,
-                    ),
-                    decoration: BoxDecoration(
-                      color: MyApp.clinicalSlate.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: MyApp.clinicalSlate.withValues(alpha: 0.35),
-                        width: 0.5,
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.help_outline_rounded,
-                          size: 8,
-                          color: MyApp.clinicalSlate,
-                        ),
-                        const SizedBox(width: 3),
-                        Text(
-                          'LOW CONFIDENCE',
-                          style: TextStyle(
-                            fontSize: 7.5,
-                            letterSpacing: 0.8,
-                            fontWeight: FontWeight.w900,
-                            color: MyApp.clinicalSlate,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(6),
-          child: LinearProgressIndicator(
-            value: value / 10,
-            minHeight: 6,
-            backgroundColor: color.withValues(alpha: 0.12),
-            valueColor: AlwaysStoppedAnimation(color),
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          meaning,
-          style: TextStyle(
-            fontSize: 11.5,
-            height: 1.45,
-            color: MyApp.textBrown.withValues(alpha: 0.85),
-          ),
-        ),
-        if (d != null) ...[
-          const SizedBox(height: 6),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.science_outlined,
-                size: 11,
-                color: MyApp.clinicalSlate,
-              ),
-              const SizedBox(width: 5),
-              Expanded(
-                child: Text(
-                  '${d.methodLabel} · ${d.methodDetail}',
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    height: 1.4,
-                    fontStyle: FontStyle.italic,
-                    color: MyApp.clinicalSlate,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ],
-    );
-  }
-
-  /// Plain-English one-liner explaining what each acne/rosacea metric
-  /// measures and reinforcing that higher numbers indicate a worse
-  /// finding. Keyed by `SkinMetricRegistry.acneAndRosacea` keys.
-  String _metricMeaning(String key) {
-    switch (key) {
-      case 'acneSeverity':
-        return 'Overall density and intensity of active breakouts '
-            '(papules + pustules) across the face. Higher = more '
-            'active inflammation.';
-      case 'cysticAcneSeverity':
-        return 'Deep, painful nodules and cysts under the skin. '
-            'Higher = larger or more clustered lesions that usually '
-            'need prescription care.';
-      case 'hormonalAcneSeverity':
-        return 'Breakouts concentrated along the jawline, chin and '
-            'lower face — the classic androgen-driven pattern. Higher '
-            '= more lower-face involvement.';
-      case 'rosaceaSeverity':
-        return 'Persistent central-face redness and rosacea-pattern '
-            'inflammation. Higher = stronger standing erythema.';
-      case 'rosaceaFlushing':
-        return 'Uneven, transient redness suggesting flushing '
-            'episodes. Higher = more variable / reactive blush.';
-      case 'visibleBloodVessels':
-        return 'Telangiectasia — thin red vessels visible at the '
-            'skin surface. Higher = more vessels (structural, '
-            'usually treated with vascular laser / IPL).';
-      case 'skinSensitivity':
-        return 'Reactive-skin proxy from persistent redness + '
-            'distribution variance. Higher = more likely to sting '
-            'or react to actives. Hard to measure from a photo — '
-            'override if you know how your skin actually feels.';
-      case 'postAcneScarring':
-        return 'Residual marks from PRIOR acne — post-inflammatory '
-            'pigmentation (PIH) and surface texture changes. Distinct '
-            'from active disease; treated with retinoids, peels, '
-            'microneedling, or pigment-targeted laser.';
-      default:
-        return 'Higher scores indicate a more pronounced finding.';
-    }
+    return parts.join(' · ');
   }
 
   /// Severity band label matching the overall band convention used by
@@ -6882,78 +6485,18 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     return 'Severe';
   }
 
-  Widget _insightsCard(PhotoAnalysisResult r) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: _cardDecoration(),
-      child: Column(
-        children: [
-          for (int i = 0; i < r.insights.length; i++) ...[
-            if (i > 0)
-              Divider(
-                height: 18,
-                color: MyApp.clinicalSlate.withValues(alpha: 0.12),
-              ),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 30,
-                  height: 30,
-                  decoration: BoxDecoration(
-                    color: r.insights[i].accent.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(9),
-                  ),
-                  child: Icon(
-                    r.insights[i].icon,
-                    size: 16,
-                    color: r.insights[i].accent,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        r.insights[i].title,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w900,
-                          color: MyApp.clinicalNavy,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        r.insights[i].detail,
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          height: 1.45,
-                          color: MyApp.textBrown.withValues(alpha: 0.85),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRecommendationsSection(PhotoAnalysisResult r) {
-    final scores = _recommendationScoresFor(r);
+  Widget _buildRecommendationsSection(Map<String, dynamic> metricMatrix) {
+    final scores = _recommendationScoresFromMetricMatrix(metricMatrix);
     if (_isBodyProcedure) {
       return _buildBodyRecoveryRecommendationsSection(scores);
     }
 
     final isFollowUp = _explicitLocalFollowUpFlag || _localHistoryCountForFocusArea >= 2;
-    final sensitivitySignal = _coachDetectedSignal(
-      r,
-      const ['skinSensitivity', 'skin_sensitivity', 'sensitivity'],
-    );
+    // No backend equivalent exists for the old local-heuristic "skin
+    // sensitivity" proxy (see _coachInsightForPhase's identical note) —
+    // kept as an explicit 0.0 rather than removed from
+    // _routineForScores/_coachRoutineHeaderText's shared signatures below.
+    const sensitivitySignal = 0.0;
     final barrierStressed =
         sensitivitySignal >= 4.0 ||
         (scores['redness'] ?? 0) >= 4.0 ||
@@ -7186,29 +6729,37 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     );
   }
 
-  Map<String, double> _recommendationScoresFor(PhotoAnalysisResult r) {
-    if (_fullMetrics.isNotEmpty) {
-      double score(String key) =>
-          ((_fullMetrics[key] ?? 0) * 10).clamp(0, 10).toDouble();
-      return {
-        'pigment': score('pigment'),
-        'redness': score('redness'),
-        'texture': score('texture'),
-        'wrinkle': score('wrinkle'),
-        'acne_severity': score('acne_severity'),
-        'rosacea_intensity': score('rosacea_intensity'),
-      };
+  /// Backend-only replacement for the old `_recommendationScoresFor`,
+  /// which sourced these six scores from the on-device TFLite model
+  /// (`_fullMetrics`) or, failing that, the local pixel-heuristic
+  /// AcneRosaceaPhotoAnalyzer report — neither backed by the real
+  /// backend. [metricMatrix] is the same cleaned backend metric_matrix
+  /// LuxeReportLayout renders (see _buildLuxeResultsPayload). Maps each
+  /// real formula-metric key onto the 0–10 scale this screen's
+  /// recommendation/coach copy already expects; a key absent from
+  /// metricMatrix (the backend didn't trust it for this scan) scores 0,
+  /// same as "no concern found" rather than a fabricated guess.
+  Map<String, double> _recommendationScoresFromMetricMatrix(
+    Map<String, dynamic> metricMatrix,
+  ) {
+    double pct10(String key) {
+      final raw = metricMatrix[key];
+      final parsed = raw is num ? raw.toDouble() : double.tryParse('$raw');
+      if (parsed == null || parsed.isNaN || parsed.isInfinite) return 0.0;
+      return (parsed.clamp(0.0, 100.0) / 10.0).toDouble();
     }
 
-    final timeline = _timelineMetricsFor(r);
-    double score(String key) => (timeline[key] ?? 0).clamp(0, 10).toDouble();
+    final textureSmoothness = pct10('texture_smoothness');
     return {
-      'pigment': score('pigment'),
-      'redness': score('redness'),
-      'texture': score('texture'),
-      'wrinkle': score('wrinkle'),
-      'acne_severity': score('acne_severity'),
-      'rosacea_intensity': score('rosacea_intensity'),
+      'pigment': pct10('pigment_load'),
+      'redness': pct10('localized_redness'),
+      // Inverted: texture_smoothness is "higher = smoother = better", but
+      // this map's convention (matching the rest of this file) is
+      // "higher = more concern".
+      'texture': (10.0 - textureSmoothness).clamp(0.0, 10.0).toDouble(),
+      'wrinkle': pct10('wrinkle_load'),
+      'acne_severity': pct10('breakout_activity'),
+      'rosacea_intensity': pct10('rosacea_severity'),
     };
   }
 
