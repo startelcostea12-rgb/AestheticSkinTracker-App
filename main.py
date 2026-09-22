@@ -2165,6 +2165,18 @@ def compute_under_eye_dark_circle_density(
     return float(np.clip(effective_delta * multiplier, 0.0, 100.0))
 
 
+def _is_missing_metric_value(value: float | None) -> bool:
+    """True only when a metric value represents "never measured" -- absent,
+    NaN, or infinite. A finite value of exactly 0.0 (or a negative raw
+    value that clips to 0.0) is a genuine reading -- "no visible redness",
+    "no detected breakouts" -- and must be emitted, not treated as missing.
+    Only a producer that truly could not measure (ROI too small, an
+    exception during extraction) should ever route a metric here; those
+    paths must represent that with None, never with a fabricated 0.0.
+    """
+    return value is None or not math.isfinite(value)
+
+
 def is_redness_unset(current_value):
     """True when localized_redness is missing/invalid/non-positive and is
     therefore eligible for the mean-based cheek-ROI fallback in
@@ -5040,11 +5052,15 @@ def analyze_skin_patch(
             "Zone-based feature extraction failed; using fallbacks. Details: %s",
             exc,
         )
+        # None, not 0.0: extraction failed outright, so these were never
+        # measured. A 0.0 here would be indistinguishable downstream from a
+        # genuine "no redness/rosacea detected" reading and get emitted as
+        # if it were real data.
         zone_metrics = {
-            "localized_redness": 0.0,
-            "rosacea_severity": 0.0,
-            "under_eye_texture_density": 0.0,
-            "under_eye_dark_circle_density": 0.0,
+            "localized_redness": None,
+            "rosacea_severity": None,
+            "under_eye_texture_density": None,
+            "under_eye_dark_circle_density": None,
         }
 
     lab = cv2.cvtColor(norm, cv2.COLOR_BGR2LAB)
@@ -5096,10 +5112,12 @@ def analyze_skin_patch(
             "Additional feature extraction failed; using fallback values. Details: %s",
             exc,
         )
+        # None, not 0.0: see the zone_metrics exception handler above for why
+        # a failure placeholder must never look like a measured zero.
         additional_metrics = {
-            "sebum_excess_oil_gloss": 0.0,
-            "diffuse_flushing_erythema": 0.0,
-            "skin_tone_radiance_evenness": 0.0,
+            "sebum_excess_oil_gloss": None,
+            "diffuse_flushing_erythema": None,
+            "skin_tone_radiance_evenness": None,
         }
 
     try:
@@ -5115,10 +5133,12 @@ def analyze_skin_patch(
             "Structural feature extraction failed; using fallback values. Details: %s",
             exc,
         )
+        # None, not 0.0: see the zone_metrics exception handler above for why
+        # a failure placeholder must never look like a measured zero.
         structural_metrics = {
-            "glabellar_wrinkle_depth": 0.0,
-            "pore_contraction_index": 0.0,
-            "structural_firmness_elasticity": 0.0,
+            "glabellar_wrinkle_depth": None,
+            "pore_contraction_index": None,
+            "structural_firmness_elasticity": None,
         }
 
     canonical_metric_matrix, metric_confidence, raw_components = _compute_canonical_patch_metrics(
@@ -5185,7 +5205,7 @@ def analyze_skin_patch(
         medium_pixels: int,
     ) -> str:
         numeric = safe_float(value)
-        if numeric is None or numeric <= 0.0:
+        if _is_missing_metric_value(numeric):
             return "low"
         if pixel_count >= high_pixels:
             return "high"
@@ -5525,9 +5545,7 @@ def analyze_skin_patch(
         else "cheek_primary"
     )
     if (
-        pigment_numeric is not None
-        and math.isfinite(pigment_numeric)
-        and pigment_numeric > 0.0
+        not _is_missing_metric_value(pigment_numeric)
         and pigment_roi_pixels >= 500
     ):
         forced_metric_values["pigment_load"] = round(
@@ -5550,9 +5568,7 @@ def analyze_skin_patch(
 
     rosacea_numeric = safe_float(candidate_values.get("rosacea_severity"))
     if (
-        rosacea_numeric is not None
-        and math.isfinite(rosacea_numeric)
-        and rosacea_numeric > 0.0
+        not _is_missing_metric_value(rosacea_numeric)
         and full_face_pixels >= 3000
     ):
         forced_metric_values["rosacea_severity"] = round(
@@ -5584,9 +5600,7 @@ def analyze_skin_patch(
     )
     radiance_numeric = safe_float(candidate_values.get("skin_tone_radiance_evenness"))
     if (
-        radiance_numeric is not None
-        and math.isfinite(radiance_numeric)
-        and radiance_numeric > 0.0
+        not _is_missing_metric_value(radiance_numeric)
         and full_face_pixels >= 3000
     ):
         radiance_emit_value = round(
@@ -5613,9 +5627,7 @@ def analyze_skin_patch(
 
     firmness_numeric = safe_float(candidate_values.get("structural_firmness_elasticity"))
     if (
-        firmness_numeric is not None
-        and math.isfinite(firmness_numeric)
-        and firmness_numeric > 0.0
+        not _is_missing_metric_value(firmness_numeric)
         and full_face_pixels >= 3000
     ):
         forced_metric_values["structural_firmness_elasticity"] = round(
@@ -5690,7 +5702,7 @@ def analyze_skin_patch(
     for metric_key in canonical_metric_order:
         if metric_key in forced_metric_values:
             forced_numeric = safe_float(forced_metric_values.get(metric_key))
-            if forced_numeric is None or not math.isfinite(forced_numeric) or forced_numeric <= 0.0:
+            if _is_missing_metric_value(forced_numeric):
                 metric_status.setdefault(metric_key, "unavailable")
                 omitted_metric_reasons[metric_key] = "non_usable_forced_value"
                 fallback_reason.setdefault(metric_key, forced_metric_paths.get(metric_key, "fallback"))
@@ -5764,7 +5776,7 @@ def analyze_skin_patch(
             fallback_reason.setdefault(metric_key, "pore_gate_not_usable")
             continue
 
-        if numeric_value is None or not math.isfinite(numeric_value) or numeric_value <= 0.0:
+        if _is_missing_metric_value(numeric_value):
             metric_status.setdefault(metric_key, "unavailable")
             omitted_metric_reasons[metric_key] = "non_usable_value"
             fallback_reason.setdefault(metric_key, "non_usable_value")
@@ -5779,12 +5791,12 @@ def analyze_skin_patch(
             fallback_reason.setdefault(metric_key, f"confidence_{confidence_level}")
             continue
 
+        # A measured value that clips/rounds to exactly 0.0 (e.g. at or
+        # below the zero-reference floor) is a genuine reading -- "no
+        # visible redness", "no detected breakouts" -- not a failure, and
+        # must be emitted honestly rather than omitted. Only a truly
+        # missing/NaN/Infinite value (caught above) means unmeasurable.
         rounded_value = round(float(np.clip(numeric_value, 0.0, 100.0)), 1)
-        if rounded_value <= 0.0:
-            metric_status.setdefault(metric_key, "unavailable")
-            omitted_metric_reasons[metric_key] = "rounded_to_floor"
-            fallback_reason.setdefault(metric_key, "rounded_to_floor")
-            continue
 
         if (
             metric_key == "skin_tone_radiance_evenness"
