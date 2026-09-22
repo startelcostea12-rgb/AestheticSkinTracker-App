@@ -210,12 +210,11 @@ class TrendLockReasonTests(unittest.TestCase):
         # A real small delta that legitimately falls inside the honesty band
         # (comparable paths, matching normal capture quality, comparable
         # resolutions) is genuine stability, not a mismatch lock.
-        # breakout_activity has no measured noise floor (not one of the 10
-        # metrics from the repeatability session), so this exercises the
-        # honesty-band gate alone, not the noise-floor gate -- see
-        # TestNoiseFloorGate for that.
+        # pore_contraction_index has no measured noise floor, so this
+        # exercises the honesty-band gate alone, not the noise-floor gate --
+        # see MeasuredNoiseFloorGateTests for that.
         delta, status = _trend_delta_and_status(
-            "breakout_activity",
+            "pore_contraction_index",
             51.0,
             50.0,
             "primary_roi",
@@ -535,9 +534,13 @@ class ComputeTrendDeltasTests(unittest.TestCase):
         # TREND_NOISE_FLOOR_EXCEEDS_USEFUL_RANGE) so this test still
         # exercises pure sign-handling for "higher is worse" metrics, not
         # the noise-floor gate -- that gate has its own dedicated tests.
+        # breakout_activity is deliberately excluded from this set: it is
+        # now a measured, TREND_NOISE_FLOOR_EXCEEDS_USEFUL_RANGE metric (see
+        # MeasuredNoiseFloorGateTests), so a plain sign-handling example
+        # would need values sized around its 3x-floor threshold rather than
+        # this test's small illustrative deltas.
         current = {
             "localized_redness": 5.0,
-            "breakout_activity": 12.0,
             "diffuse_flushing_erythema": 11.0,
             "sebum_excess_oil_gloss": 9.0,
             "glabellar_wrinkle_depth": 10.0,
@@ -545,7 +548,6 @@ class ComputeTrendDeltasTests(unittest.TestCase):
         }
         baseline = {
             "localized_redness": 30.0,
-            "breakout_activity": 15.0,
             "diffuse_flushing_erythema": 22.0,
             "sebum_excess_oil_gloss": 12.0,
             "glabellar_wrinkle_depth": 20.0,
@@ -561,7 +563,6 @@ class ComputeTrendDeltasTests(unittest.TestCase):
         )
 
         self.assertEqual(deltas["localized_redness"], 83.3)
-        self.assertEqual(deltas["breakout_activity"], 20.0)
         self.assertEqual(deltas["diffuse_flushing_erythema"], 50.0)
         self.assertEqual(deltas["sebum_excess_oil_gloss"], 25.0)
         self.assertEqual(deltas["glabellar_wrinkle_depth"], 50.0)
@@ -730,26 +731,28 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
     """
 
     def test_setup_constants_match_the_measured_repeatability_session(self) -> None:
-        # Pins the actual measured values so a future edit to the table
-        # can't silently drift without a test noticing.
+        # Pins the actual measured values (max of two sessions) so a future
+        # edit to the table can't silently drift without a test noticing.
         self.assertEqual(
             METRIC_NOISE_FLOOR_2SD,
             {
-                "localized_redness": 6.4,
-                "rosacea_severity": 3.5,
+                "localized_redness": 6.8,
+                "rosacea_severity": 3.9,
                 "glabellar_wrinkle_depth": 6.4,
                 "texture_smoothness": 5.4,
                 "wrinkle_load": 3.7,
-                "under_eye_dark_circle_density": 7.6,
-                "under_eye_texture_density": 3.2,
+                "under_eye_dark_circle_density": 14.1,
+                "under_eye_texture_density": 6.0,
                 "structural_firmness_elasticity": 3.0,
                 "pigment_load": 2.0,
                 "skin_tone_radiance_evenness": 1.1,
+                "pore_visibility": 1.0,
+                "breakout_activity": 13.1,
             },
         )
         self.assertEqual(
             TREND_NOISE_FLOOR_EXCEEDS_USEFUL_RANGE,
-            {"localized_redness", "rosacea_severity"},
+            {"localized_redness", "rosacea_severity", "breakout_activity"},
         )
         self.assertEqual(TREND_NOISE_FLOOR_EXCLUDED_MULTIPLIER, 3.0)
 
@@ -790,13 +793,15 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         self.assertEqual(delta, 50.0)
 
     def test_a_metric_with_no_measured_floor_is_unaffected(self) -> None:
-        # breakout_activity was not part of the repeatability session, so a
-        # tiny absolute move (0.5) that nonetheless clears the relative
-        # band must still report a direction exactly as before this
-        # feature existed.
-        self.assertNotIn("breakout_activity", METRIC_NOISE_FLOOR_2SD)
+        # diffuse_flushing_erythema has never been part of a repeatability
+        # session (unlike pore_visibility and breakout_activity, which now
+        # have measured floors from the second session -- see
+        # METRIC_NOISE_FLOOR_2SD), so a tiny absolute move (0.5) that
+        # nonetheless clears the relative band must still report a
+        # direction exactly as before this feature existed.
+        self.assertNotIn("diffuse_flushing_erythema", METRIC_NOISE_FLOOR_2SD)
         delta, status = _trend_delta_and_status(
-            "breakout_activity", 1.5, 1.0, "primary_roi", "primary_roi", 8.0,
+            "diffuse_flushing_erythema", 1.5, 1.0, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
         )
         self.assertEqual(status, "worsened")
@@ -805,7 +810,7 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
     def test_excluded_metric_below_3x_floor_is_insufficient_signal_not_stable(
         self,
     ) -> None:
-        # localized_redness's floor is 6.4; 3x is 19.2. A 5-point move is
+        # localized_redness's floor is 6.8; 3x is 20.4. A 5-point move is
         # comfortably below that -- for this metric, that must report
         # insufficient_signal, never "stable": "stable" is itself an
         # overconfident claim once the floor swallows most of the range
@@ -821,7 +826,7 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         self,
     ) -> None:
         # A 25-point move (10 -> 35) clears 3x localized_redness's floor
-        # (19.2) by a wide margin -- a real, obvious change must still be
+        # (20.4) by a wide margin -- a real, obvious change must still be
         # reported. The exclusion only withholds the ambiguous "we can't
         # tell" claim, never suppresses an unambiguous one.
         delta, status = _trend_delta_and_status(
@@ -832,7 +837,7 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         self.assertEqual(delta, -250.0)
 
     def test_second_excluded_metric_rosacea_severity_below_threshold(self) -> None:
-        # rosacea_severity's floor is 3.5; 3x is 10.5. A 4-point move stays
+        # rosacea_severity's floor is 3.9; 3x is 11.7. A 4-point move stays
         # below that.
         delta, status = _trend_delta_and_status(
             "rosacea_severity", 14.0, 10.0, "primary_roi", "primary_roi", 8.0,

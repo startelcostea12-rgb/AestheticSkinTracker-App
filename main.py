@@ -3513,46 +3513,67 @@ HIGHER_IS_BETTER_METRICS = {
 
 HONESTY_STABLE_BAND_PCT = 8.0
 
-# PROVISIONAL, single-session calibration. Measured via
-# tool/analyze_repeatability.py from ONE 5-scan repeatability run: one
-# person, one device (iPhone), one lighting condition, back-to-back captures
-# in a single session. This is a single-subject/single-device/single-lighting
-# noise estimate, NOT a validated population constant -- it has not been
-# checked across different people, skin tones, other devices (Android
-# cameras in particular may differ substantially), or other lighting
-# conditions, and must be re-measured on other devices and lighting before
-# being treated as general. Revisit once more repeatability sessions (ideally
-# multiple subjects and devices) accumulate. Values are 2 standard
-# deviations of the 5 scan means, in each metric's own 0-100 units -- see
-# _trend_delta_and_status's use of this table for how it gates trend claims.
+# PROVISIONAL, two-session calibration. Measured via
+# tool/analyze_repeatability.py from TWO separate 5-scan repeatability runs:
+# same person, same device (iPhone), back-to-back captures within each
+# session. Each value is the MAX of the two sessions' own 2-SD figures, not
+# an average -- picking the larger of two small samples is itself a
+# conservative choice, but it is still just two data points per metric.
+# This is a single-subject/single-device noise estimate, NOT a validated
+# population constant -- it has not been checked across different people,
+# skin tones, other devices (Android cameras in particular may differ
+# substantially), or lighting conditions, and must be re-measured on other
+# devices/lighting before being treated as general.
+#
+# The two sessions themselves disagreed more than a single-session snapshot
+# would suggest: the under-eye metrics roughly DOUBLED between sessions
+# (under_eye_dark_circle_density 7.6 -> 14.1, under_eye_texture_density
+# 3.2 -> 6.0) and are the least settled figures in this table -- treat them
+# as the most likely to move again on a third session. More broadly, the
+# metrics' own absolute readings shifted substantially between the two
+# sessions (e.g. texture_smoothness's mean moved from roughly 28.2 to 47.9),
+# so it is NOT established that the two sessions are even measuring
+# comparable conditions (lighting/framing/skin state could differ) -- these
+# floors should be read as "the largest noise observed so far", not as
+# values known to be cross-session comparable. Revisit once more
+# repeatability sessions (ideally multiple subjects and devices) accumulate.
+# Values are 2 standard deviations of a session's 5 scan means, in each
+# metric's own 0-100 units -- see _trend_delta_and_status's use of this
+# table for how it gates trend claims.
 METRIC_NOISE_FLOOR_2SD: Dict[str, float] = {
-    "localized_redness": 6.4,
-    "rosacea_severity": 3.5,
+    "localized_redness": 6.8,
+    "rosacea_severity": 3.9,
     "glabellar_wrinkle_depth": 6.4,
     "texture_smoothness": 5.4,
     "wrinkle_load": 3.7,
-    "under_eye_dark_circle_density": 7.6,
-    "under_eye_texture_density": 3.2,
+    "under_eye_dark_circle_density": 14.1,
+    "under_eye_texture_density": 6.0,
     "structural_firmness_elasticity": 3.0,
     "pigment_load": 2.0,
     "skin_tone_radiance_evenness": 1.1,
+    "pore_visibility": 1.0,
+    "breakout_activity": 13.1,
 }
 
-# Human-judgment call, not derived from a formula: these two metrics'
-# measured noise floors are comparable to or larger than the range most real
-# users ever show -- this app's own "calm" reference band uses
+# Human-judgment call, not derived from a formula: these metrics' measured
+# noise floors are comparable to or larger than the range most real users
+# ever show -- this app's own "calm" reference band uses
 # localized_redness=5.0 / rosacea_severity=4.0 (see
-# TestLocalizedRednessAndRosacea in test_scoring_formulas.py), and prior
-# real-log evidence showed rosacea staying <=3.8 across frames -- unlike e.g.
-# glabellar_wrinkle_depth or under_eye_dark_circle_density, whose floors are
-# similarly sized in absolute terms but small relative to their own much
-# wider typical population range (wrinkle depth in particular spans
-# near-0 to 40+ across a real population). Revisit per-metric as real usage
-# data accumulates; this is a curated set, not an automatic ratio, because
-# "useful range" is a domain judgment no existing constant encodes.
+# TestLocalizedRednessAndRosacea in test_scoring_formulas.py), prior
+# real-log evidence showed rosacea staying <=3.8 across frames, and
+# breakout_activity's own measured floor (13.1) is comparable to its whole
+# observed range in real logs (near-zero to the low teens for most
+# non-severe scans) -- unlike e.g. glabellar_wrinkle_depth or
+# under_eye_dark_circle_density, whose floors are similarly sized in
+# absolute terms but small relative to their own much wider typical
+# population range (wrinkle depth in particular spans near-0 to 40+ across
+# a real population). Revisit per-metric as real usage data accumulates;
+# this is a curated set, not an automatic ratio, because "useful range" is
+# a domain judgment no existing constant encodes.
 TREND_NOISE_FLOOR_EXCEEDS_USEFUL_RANGE = {
     "localized_redness",
     "rosacea_severity",
+    "breakout_activity",
 }
 
 # For a metric in TREND_NOISE_FLOOR_EXCEEDS_USEFUL_RANGE, a delta must
