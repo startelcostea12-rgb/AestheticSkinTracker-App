@@ -1,0 +1,57 @@
+# Flutter/Dart app - not part of the backend image
+lib/
+test/
+android/
+ios/
+linux/
+macos/
+windows/
+web/
+build/
+.dart_tool/
+.flutter-plugins-dependencies
+.metadata
+pubspec.yaml
+pubspec.lock
+
+# Python virtualenv / caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Test fixtures, calibration photos, ad-hoc scratch images
+test_fixtures/
+calibration_stock_batch/
+candidate_body_*.jpg
+tmp_*.jpg
+tmp_*.png
+nikki2.jpg
+red.jpg
+stock_body_photo_*.jpg
+stock_full_body_reference.jpg
+
+# Logs, diagnostics, analyzer/history scratch output
+*.log
+backend*.log
+diagnostics/
+analyze_*.txt
+history_recent.txt
+skin_ai_pass.txt
+windows_build_log.txt
+pub_out.txt
+iris_ab_results.json
+
+# Version control / editor / misc
+.git/
+.github/
+.vscode/
+.claude/
+docs/
+tool/
+*.md
+!README.md
+
+# Env files - never bake secrets into the image
+.env
+.env.*

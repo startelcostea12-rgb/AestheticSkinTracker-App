@@ -1,5 +1,6 @@
 import hashlib
 import base64
+import hmac
 from dotenv import load_dotenv
 load_dotenv(override=True)
 import json
@@ -18,6 +19,7 @@ import numpy as np
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import google.genai as genai
 
 from scin_experimental_models import ScinExperimentalModels
@@ -6605,19 +6607,51 @@ async def lifespan(app: FastAPI):
             "Startup troubleshooting: verify MediaPipe installation, model file permissions, and configured "
             "FACE_DETECTOR_MODEL_PATH / FACE_LANDMARK_MODEL_PATH values."
         )
-    logger.info("AestheticSkin backend started on http://127.0.0.1:8000")
+    logger.info("AestheticSkin backend started (port=%s)", os.getenv("PORT", "8000"))
     yield
     logger.info("AestheticSkin backend shutting down")
 
 
 app = FastAPI(title="AestheticSkin Analysis API", version="0.3.2", lifespan=lifespan)
 
+# Defaults to localhost-only for local dev; set ALLOWED_ORIGIN_REGEX in any
+# deployed environment that serves the Flutter web build from a real origin.
+_CORS_ORIGIN_REGEX = os.getenv(
+    "ALLOWED_ORIGIN_REGEX", r"http://(127\.0\.0\.1|localhost)(:\d+)?"
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"http://(127\.0\.0\.1|localhost)(:\d+)?",
+    allow_origin_regex=_CORS_ORIGIN_REGEX,
     allow_methods=["POST", "GET", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
+
+# Simple shared-secret auth for every /api/ route. Missing the env var is
+# treated as local development: requests are allowed through, but loudly
+# logged so this is never silently deployed unauthenticated.
+_BACKEND_API_KEY = os.getenv("BACKEND_API_KEY", "").strip()
+if not _BACKEND_API_KEY:
+    logger.warning(
+        "SECURITY WARNING: BACKEND_API_KEY is not set. Every /api/ endpoint is "
+        "UNAUTHENTICATED. This is only acceptable for local development - set "
+        "BACKEND_API_KEY before deploying anywhere reachable over the network."
+    )
+
+
+@app.middleware("http")
+async def _require_api_key(request: Request, call_next):
+    if (
+        _BACKEND_API_KEY
+        and request.method != "OPTIONS"
+        and request.url.path.startswith("/api/")
+    ):
+        provided = request.headers.get("x-api-key", "")
+        if not hmac.compare_digest(provided, _BACKEND_API_KEY):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Missing or invalid X-API-Key header."},
+            )
+    return await call_next(request)
 
 
 def _decode_image_bytes(raw: bytes) -> np.ndarray:
@@ -7527,4 +7561,9 @@ async def ai_coach(request: Request):
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "8000")),
+        reload=bool(os.getenv("UVICORN_RELOAD")),
+    )
