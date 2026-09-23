@@ -13,7 +13,8 @@
 // in debug builds, and any time the user has explicitly enabled testing
 // mode from the Settings screen.
 
-import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show kDebugMode, kIsWeb, visibleForTesting;
 import 'package:purchases_flutter/purchases_flutter.dart';
 
 import 'app_prefs.dart';
@@ -76,13 +77,31 @@ class PremiumAccess {
   /// "Test Premium" toggle even in release.
   static const String _testingModeKey = 'premium_testing_mode_enabled';
 
+  /// Build-time override for testers/reviewers: pass
+  /// `--dart-define=TESTER_PREMIUM_UNLOCK=true` to grant Premium in every
+  /// build without touching persisted prefs or the store. Off by default.
+  static const bool _testerPremiumUnlockFlag =
+      String.fromEnvironment('TESTER_PREMIUM_UNLOCK') == 'true';
+
+  /// Test-only override so both states of [_testerPremiumUnlockFlag] are
+  /// reachable in a single `flutter test` run. Null in production, where
+  /// [testerPremiumUnlockEnabled] always reflects the real compile-time flag.
+  @visibleForTesting
+  static bool? debugTesterPremiumUnlockOverride;
+
+  /// Resolved value of the TESTER_PREMIUM_UNLOCK build flag.
+  static bool get testerPremiumUnlockEnabled =>
+      debugTesterPremiumUnlockOverride ?? _testerPremiumUnlockFlag;
+
   // Entitlement checks -------------------------------------------------------
 
   /// True if the user should see all Premium features. Honors:
-  ///   1. Local testing override (always wins when present).
-  ///   2. Cached real entitlement.
-  ///   3. Live RevenueCat lookup (mobile only).
+  ///   1. Build-time TESTER_PREMIUM_UNLOCK flag (always wins when set).
+  ///   2. Local testing override.
+  ///   3. Cached real entitlement.
+  ///   4. Live RevenueCat lookup (mobile only).
   static Future<bool> isPremiumUser() async {
+    if (testerPremiumUnlockEnabled) return true;
     if (await isTestingPremiumActive()) return true;
 
     final cached = await AppPrefs.getString(_premiumUnlockedKey);
@@ -116,9 +135,10 @@ class PremiumAccess {
   // Testing mode -------------------------------------------------------------
 
   /// True when the testing affordances (Test Premium / Reset to Free) should
-  /// be visible to the user. Always on in debug + web; opt-in elsewhere.
+  /// be visible to the user. Always on in debug + web, or when
+  /// TESTER_PREMIUM_UNLOCK is set; opt-in elsewhere.
   static Future<bool> isTestingModeAvailable() async {
-    if (kDebugMode || kIsWeb) return true;
+    if (kDebugMode || kIsWeb || testerPremiumUnlockEnabled) return true;
     final raw = await AppPrefs.getString(_testingModeKey);
     return (raw ?? '').toLowerCase() == 'true';
   }
