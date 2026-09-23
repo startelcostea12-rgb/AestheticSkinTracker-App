@@ -47,6 +47,24 @@ void main() {
   );
 
   testWidgets(
+    'system back does not dismiss the consent dialog',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+
+      await pumpCoachScreen(tester);
+
+      expect(find.text('Before you chat with AI Coach'), findsOneWidget);
+
+      // Simulates the Android system back button/gesture, which routes
+      // through PopScope exactly like a hardware back press would.
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+
+      expect(find.text('Before you chat with AI Coach'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'declining consent blocks AI Coach and explains why',
     (tester) async {
       SharedPreferences.setMockInitialValues({});

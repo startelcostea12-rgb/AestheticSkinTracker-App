@@ -367,31 +367,35 @@ class _AIRecoveryCoachScreenState extends State<AIRecoveryCoachScreen> {
   }
 
   /// Shows the one-time data-sharing disclosure. The dialog is not
-  /// dismissible by tapping outside — the user must explicitly accept or
-  /// decline so the choice is unambiguous and can be safely persisted.
+  /// dismissible by tapping outside, nor by the system back gesture/button —
+  /// the user must explicitly accept or decline so the choice is unambiguous
+  /// and can be safely persisted.
   Future<void> _promptForConsent() async {
     if (!mounted) return;
     final accepted = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Before you chat with AI Coach'),
-        content: const Text(
-          'AI Recovery Coach sends your recovery/scan metrics (procedure type, '
-          'recovery day, and metric trends) to Google\'s Gemini API to generate '
-          'personalized responses. No photos are sent unless you attach one to '
-          'a message.',
+      builder: (dialogContext) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          title: const Text('Before you chat with AI Coach'),
+          content: const Text(
+            'AI Recovery Coach sends your recovery/scan metrics (procedure type, '
+            'recovery day, and metric trends) to Google\'s Gemini API to generate '
+            'personalized responses. No photos are sent unless you attach one to '
+            'a message.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Decline'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Accept & Continue'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Decline'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Accept & Continue'),
-          ),
-        ],
       ),
     );
     final decision = accepted ?? false;
