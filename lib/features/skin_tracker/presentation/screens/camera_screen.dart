@@ -1258,7 +1258,7 @@ class _CameraScreenState extends State<CameraScreen>
 
     if (faceRoiLuma > 0 && faceRoiLuma < thresholds.darkMeanFloor) {
       return const _LightingGuidance(
-        level: _LightingLevel.tooDark,
+        level: LightingLevel.tooDark,
         label: 'Too dark',
         instruction: 'Move to better light for a cleaner scan.',
       );
@@ -1267,7 +1267,7 @@ class _CameraScreenState extends State<CameraScreen>
     if (summary.mean < thresholds.darkMeanFloor ||
         summary.darkRatio > thresholds.darkRatioCeil) {
       return _LightingGuidance(
-        level: _LightingLevel.tooDark,
+        level: LightingLevel.tooDark,
         label: 'Too dark',
         instruction: _buildLightingInstruction(summary, tooDark: true),
       );
@@ -1275,13 +1275,13 @@ class _CameraScreenState extends State<CameraScreen>
     if (summary.mean > thresholds.harshMeanCeil ||
         summary.brightRatio > thresholds.harshRatioCeil) {
       return _LightingGuidance(
-        level: _LightingLevel.tooHarsh,
+        level: LightingLevel.tooHarsh,
         label: 'Too harsh',
         instruction: _buildLightingInstruction(summary, tooDark: false),
       );
     }
     return const _LightingGuidance(
-      level: _LightingLevel.optimal,
+      level: LightingLevel.optimal,
       label: 'Lighting optimal',
       instruction:
           'Lighting is optimal. Keep this exact setup for reliable comparison.',
@@ -1430,7 +1430,7 @@ class _CameraScreenState extends State<CameraScreen>
           final landmarkQuality =
               ref?.metrics['capture_landmark_quality'] ?? 0.0;
           selectedGoodReference =
-              candidateLighting.level == _LightingLevel.optimal &&
+              candidateLighting.level == LightingLevel.optimal &&
               landmarkQuality >= 0.72;
         }
       }
@@ -1459,7 +1459,7 @@ class _CameraScreenState extends State<CameraScreen>
       final poseSimilarity = entry.metrics['capture_pose_similarity'] ?? 0.0;
       final isGood =
           entry.preferredReference ||
-          candidateLighting.level == _LightingLevel.optimal;
+          candidateLighting.level == LightingLevel.optimal;
       final score =
           (samePose ? 45.0 : 0.0) +
           (isGood ? 30.0 : 0.0) +
@@ -1543,7 +1543,7 @@ class _CameraScreenState extends State<CameraScreen>
     if (summary.mean < thresholds.darkMeanFloor ||
         summary.darkRatio > thresholds.darkRatioCeil) {
       return _LightingGuidance(
-        level: _LightingLevel.tooDark,
+        level: LightingLevel.tooDark,
         label: 'Too dark',
         instruction: _buildLightingInstruction(summary, tooDark: true),
       );
@@ -1551,14 +1551,14 @@ class _CameraScreenState extends State<CameraScreen>
     if (summary.mean > thresholds.harshMeanCeil ||
         summary.brightRatio > thresholds.harshRatioCeil) {
       return _LightingGuidance(
-        level: _LightingLevel.tooHarsh,
+        level: LightingLevel.tooHarsh,
         label: 'Too harsh',
         instruction: _buildLightingInstruction(summary, tooDark: false),
       );
     }
 
     return const _LightingGuidance(
-      level: _LightingLevel.optimal,
+      level: LightingLevel.optimal,
       label: 'Lighting optimal',
       instruction:
           'Lighting is optimal. Keep this exact setup for reliable comparison.',
@@ -2135,13 +2135,13 @@ class _CameraScreenState extends State<CameraScreen>
 
   double _lightingConfidenceFromGuidance(_LightingGuidance guidance) {
     switch (guidance.level) {
-      case _LightingLevel.optimal:
+      case LightingLevel.optimal:
         return 0.84;
-      case _LightingLevel.tooHarsh:
+      case LightingLevel.tooHarsh:
         return 0.46;
-      case _LightingLevel.tooDark:
+      case LightingLevel.tooDark:
         return 0.38;
-      case _LightingLevel.unknown:
+      case LightingLevel.unknown:
         return 0.56;
     }
   }
@@ -2375,8 +2375,8 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   String get _liveAlignmentInstruction {
-    if (_lightingGuidance.level == _LightingLevel.tooDark ||
-        _lightingGuidance.level == _LightingLevel.tooHarsh) {
+    if (_lightingGuidance.level == LightingLevel.tooDark ||
+        _lightingGuidance.level == LightingLevel.tooHarsh) {
       return _lightingGuidance.instruction;
     }
     if (_liveLandmarkAssessment.available) {
@@ -3543,7 +3543,7 @@ class _CameraScreenState extends State<CameraScreen>
       debugPrint('[_saveWebGalleryBytes] consistencyScore=$consistencyScore');
 
       final preferredReference =
-          liveLighting.level == _LightingLevel.optimal &&
+          liveLighting.level == LightingLevel.optimal &&
           lightingConfidence >= 0.72 &&
           (!capturedLandmarks.available ||
               capturedLandmarks.landmarkQuality >= 0.76) &&
@@ -3892,7 +3892,7 @@ class _CameraScreenState extends State<CameraScreen>
         landmarkAssessment: capturedLandmarks,
       );
       final preferredReference =
-          liveLighting.level == _LightingLevel.optimal &&
+          liveLighting.level == LightingLevel.optimal &&
           lightingConfidence >= 0.72 &&
           (!capturedLandmarks.available ||
               capturedLandmarks.landmarkQuality >= 0.76) &&
@@ -4085,7 +4085,7 @@ class _CameraScreenState extends State<CameraScreen>
       1.0,
     );
     final pitchScore = (1.0 - pitchPenalty.clamp(0.0, 1.0)).clamp(0.0, 1.0);
-    final exposureScore = _lightingGuidance.level == _LightingLevel.optimal
+    final exposureScore = _lightingGuidance.level == LightingLevel.optimal
         ? 1.0
         : 0.6;
 
@@ -4106,7 +4106,7 @@ class _CameraScreenState extends State<CameraScreen>
       return 'blurry';
     }
     final lowLight =
-        _lightingGuidance.level == _LightingLevel.tooDark ||
+        _lightingGuidance.level == LightingLevel.tooDark ||
         (_liveFaceRoiLuma > 0
             ? _liveFaceRoiLuma < _lightingThresholds.darkMeanFloor
             : _liveMeanBrightness < _lightingThresholds.darkMeanFloor);
@@ -4648,7 +4648,7 @@ class _CameraScreenState extends State<CameraScreen>
 
   bool _isLowLightWarningActive() {
     final darkFloor = _lightingThresholds.darkMeanFloor;
-    return _lightingGuidance.level == _LightingLevel.tooDark ||
+    return _lightingGuidance.level == LightingLevel.tooDark ||
         (_liveFaceRoiLuma > 0 && _liveFaceRoiLuma < darkFloor);
   }
 
@@ -4774,7 +4774,7 @@ class _CameraScreenState extends State<CameraScreen>
     }
     final thresholds = _lightingThresholds;
     final lowLight =
-        _lightingGuidance.level == _LightingLevel.tooDark ||
+        _lightingGuidance.level == LightingLevel.tooDark ||
         (_liveFaceRoiLuma > 0
             ? _liveFaceRoiLuma < thresholds.darkMeanFloor
             : _liveMeanBrightness < thresholds.darkMeanFloor);
@@ -4912,20 +4912,20 @@ class _CameraScreenState extends State<CameraScreen>
 
     // ── Lighting & luminance/backlight checks ────────────────────────────
     QualitySignal lighting;
-    if (_lightingGuidance.level == _LightingLevel.tooDark) {
+    if (_lightingGuidance.level == LightingLevel.tooDark) {
       lighting = const QualitySignal(
         label: 'Lighting',
         state: QualityState.yellow,
         detail: 'Dim light — try a brighter angle or softer front light',
       );
-    } else if (_lightingGuidance.level == _LightingLevel.tooHarsh ||
+    } else if (_lightingGuidance.level == LightingLevel.tooHarsh ||
         _liveBacklightDelta > _backlightDeltaCeil) {
       lighting = const QualitySignal(
         label: 'Lighting',
         state: QualityState.yellow,
         detail: 'Harsh backlighting detected',
       );
-    } else if (_lightingGuidance.level == _LightingLevel.unknown) {
+    } else if (_lightingGuidance.level == LightingLevel.unknown) {
       lighting = const QualitySignal(
         label: 'Lighting',
         state: QualityState.yellow,
@@ -5816,37 +5816,24 @@ class _CameraScreenState extends State<CameraScreen>
 
   Widget _buildCameraStatusBar() {
     final hasMultiLens = _availableCameras.length > 1;
-    final fullMode = _cameraReady && _lightingStreamActive;
-    final simulatedMode = _cameraReady && kIsWeb;
-    final fallbackMode = _cameraReady && !fullMode && !simulatedMode;
 
-    final badgeColor = fullMode
-        ? AppColors.mutedSage
-        : simulatedMode
-        ? AppColors.champagneGold
-        : AppColors.softTerracotta;
+    final resolved = _cameraReady
+        ? resolveReadyCameraStatusBarContent(
+            streamLive: _lightingStreamActive,
+            isWeb: kIsWeb,
+            lightingLevel: _lightingGuidance.level,
+          )
+        : (
+            badgeLabel: 'Needs Light',
+            badgeColor: AppColors.softTerracotta,
+            primaryStatus: _cameraError ?? 'Starting camera...',
+            secondaryStatus: null,
+          );
 
-    final badgeLabel = fullMode
-        ? 'Optimal'
-        : simulatedMode
-        ? 'Web Analysis'
-        : 'Needs Light';
-
-    final primaryStatus = !_cameraReady
-        ? (_cameraError ?? 'Starting camera...')
-        : fullMode
-        ? 'Lighting is well-calibrated for accurate comparisons.'
-        : simulatedMode
-        ? 'Guidance is active with browser-safe analysis mode.'
-        : fallbackMode
-        ? 'Move to softer front light for the most reliable results.'
-        : 'Camera ready.';
-
-    final secondaryStatus = simulatedMode
-        ? 'Using photo analysis'
-        : fallbackMode
-        ? 'Tip: face a window or soft front light to improve consistency.'
-        : null;
+    final badgeColor = resolved.badgeColor;
+    final badgeLabel = resolved.badgeLabel;
+    final primaryStatus = resolved.primaryStatus;
+    final secondaryStatus = resolved.secondaryStatus;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -6110,10 +6097,10 @@ class _CameraScreenState extends State<CameraScreen>
 
   Widget _buildClinicalControlsCard() {
     final lightingColor = switch (_lightingGuidance.level) {
-      _LightingLevel.optimal => AppColors.mutedSage,
-      _LightingLevel.tooDark => AppColors.softTerracotta,
-      _LightingLevel.tooHarsh => AppColors.softTerracotta,
-      _LightingLevel.unknown => MyApp.textBrown,
+      LightingLevel.optimal => AppColors.mutedSage,
+      LightingLevel.tooDark => AppColors.softTerracotta,
+      LightingLevel.tooHarsh => AppColors.softTerracotta,
+      LightingLevel.unknown => MyApp.textBrown,
     };
 
     final modeLabel = switch (_guideType) {
@@ -6588,10 +6575,85 @@ class _CameraScreenState extends State<CameraScreen>
   }
 }
 
-enum _LightingLevel { unknown, tooDark, tooHarsh, optimal }
+enum LightingLevel { unknown, tooDark, tooHarsh, optimal }
+
+/// Badge label/color + primary/secondary status text for the top camera
+/// status card, once the camera itself is ready (the caller still owns the
+/// separate "camera not ready yet" / [_cameraError] branch).
+///
+/// When [streamLive] is true, this branches on [lightingLevel] -- the SAME
+/// signal that drives the "Smart lighting guidance" chip
+/// ([lightingChipLabelForLevel]) and the bottom QA banner -- instead of
+/// unconditionally claiming "Optimal" the instant the frame stream starts.
+/// That is the fix for the two surfaces previously being able to disagree
+/// (e.g. this card saying "Optimal" while the chip said "Too dark") even
+/// though both were describing the same live frame.
+({String badgeLabel, Color badgeColor, String primaryStatus, String? secondaryStatus})
+resolveReadyCameraStatusBarContent({
+  required bool streamLive,
+  required bool isWeb,
+  required LightingLevel lightingLevel,
+}) {
+  if (streamLive) {
+    return switch (lightingLevel) {
+      LightingLevel.optimal => (
+        badgeLabel: 'Optimal',
+        badgeColor: AppColors.mutedSage,
+        primaryStatus: 'Lighting is well-calibrated for accurate comparisons.',
+        secondaryStatus: null,
+      ),
+      LightingLevel.tooDark => (
+        badgeLabel: 'Needs Light',
+        badgeColor: AppColors.softTerracotta,
+        primaryStatus: 'Dim light — move to better light.',
+        secondaryStatus: null,
+      ),
+      LightingLevel.tooHarsh => (
+        badgeLabel: 'Too Bright',
+        badgeColor: AppColors.softTerracotta,
+        primaryStatus: 'Harsh lighting detected — move away from direct light.',
+        secondaryStatus: null,
+      ),
+      LightingLevel.unknown => (
+        badgeLabel: 'Calibrating',
+        badgeColor: MyApp.textBrown,
+        primaryStatus: 'Calibrating exposure…',
+        secondaryStatus: null,
+      ),
+    };
+  }
+  if (isWeb) {
+    return (
+      badgeLabel: 'Web Analysis',
+      badgeColor: AppColors.champagneGold,
+      primaryStatus: 'Guidance is active with browser-safe analysis mode.',
+      secondaryStatus: 'Using photo analysis',
+    );
+  }
+  // Neither the live stream nor web-simulated mode: the frame stream hasn't
+  // started yet (or errored out), so lighting genuinely can't be measured.
+  return (
+    badgeLabel: 'Needs Light',
+    badgeColor: AppColors.softTerracotta,
+    primaryStatus: 'Move to softer front light for the most reliable results.',
+    secondaryStatus: 'Tip: face a window or soft front light to improve consistency.',
+  );
+}
+
+/// The exact chip label text for each [LightingLevel], matching the labels
+/// [_LightingGuidance] instances are constructed with in
+/// [_lightingFromCameraImage]/[_analyzeLighting]/[_LightingGuidance.unknown].
+/// Exposed standalone so tests can confirm [resolveReadyCameraStatusBarContent]
+/// never disagrees with it.
+String lightingChipLabelForLevel(LightingLevel level) => switch (level) {
+  LightingLevel.optimal => 'Lighting optimal',
+  LightingLevel.tooDark => 'Too dark',
+  LightingLevel.tooHarsh => 'Too harsh',
+  LightingLevel.unknown => 'Calibration needed',
+};
 
 class _LightingGuidance {
-  final _LightingLevel level;
+  final LightingLevel level;
   final String label;
   final String instruction;
 
@@ -6602,7 +6664,7 @@ class _LightingGuidance {
   });
 
   const _LightingGuidance.unknown()
-    : level = _LightingLevel.unknown,
+    : level = LightingLevel.unknown,
       label = 'Calibration needed',
       instruction =
           'Capture a baseline image to calibrate lighting recommendations.';
