@@ -20,11 +20,12 @@ import 'dart:convert' show base64Decode, base64Encode, jsonDecode, jsonEncode;
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -755,6 +756,33 @@ Map<String, double> timelineMetricsFromBackend(
 class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   static const String _manualBaselinePrefsKey =
       'skin_ai_manual_baseline_metric_matrix_v1';
+
+  /// Debug-only: shares camera_screen.dart's burst_luminance.log via the
+  /// native share sheet, for pulling burst-luminance logging data off a
+  /// physical device without Xcode's Devices and Simulators window.
+  Future<void> _exportBurstLuminanceLog() async {
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final logFile = File(
+        '${docsDir.path}${Platform.pathSeparator}burst_luminance.log',
+      );
+      if (!await logFile.exists()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No burst_luminance.log found yet.')),
+          );
+        }
+        return;
+      }
+      await Share.shareXFiles([XFile(logFile.path)], text: 'Burst luminance log');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to export burst log: $e')));
+      }
+    }
+  }
 
   _Stage _stage = _Stage.capture;
 
@@ -2265,6 +2293,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           ],
         ),
         actions: [
+          if (kDebugMode)
+            TextButton.icon(
+              onPressed: _exportBurstLuminanceLog,
+              icon: const Icon(Icons.bug_report_outlined, size: 16),
+              label: const Text('Export Burst Log'),
+            ),
           if (_stage == _Stage.results)
             IconButton(
               tooltip: 'New progress report',
