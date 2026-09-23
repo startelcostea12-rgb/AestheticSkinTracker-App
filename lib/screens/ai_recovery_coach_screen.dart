@@ -1306,6 +1306,43 @@ class _AIRecoveryCoachScreenState extends State<AIRecoveryCoachScreen> {
     );
   }
 
+  /// Persistent AI-generated content disclosure shown on every assistant
+  /// bubble (Apple App Review Guideline requires this on each display, not
+  /// as a one-time acknowledgement).
+  Widget _aiGeneratedBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: MyApp.goldShimmer.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: MyApp.goldShimmer.withValues(alpha: 0.4),
+          width: 0.8,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.auto_awesome_rounded,
+            size: 9,
+            color: MyApp.goldShimmer.withValues(alpha: 0.9),
+          ),
+          const SizedBox(width: 3),
+          Text(
+            'AI-generated',
+            style: TextStyle(
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.3,
+              color: MyApp.textBrown.withValues(alpha: 0.75),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _messageBubble(RecoveryCoachMessage message, {required int index}) {
     final screenWidth = MediaQuery.sizeOf(context).width;
     final isVeryNarrow = screenWidth < 340;
@@ -1393,27 +1430,36 @@ class _AIRecoveryCoachScreenState extends State<AIRecoveryCoachScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 5,
+                runSpacing: 4,
                 children: [
-                  Icon(
-                    isUser
-                        ? Icons.person_outline
-                        : Icons.medical_information_outlined,
-                    size: 15,
-                    color: isUser
-                        ? MyApp.goldShimmer.withValues(alpha: 0.7)
-                        : MyApp.goldShimmer.withValues(alpha: 0.7),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        isUser
+                            ? Icons.person_outline
+                            : Icons.medical_information_outlined,
+                        size: 15,
+                        color: isUser
+                            ? MyApp.goldShimmer.withValues(alpha: 0.7)
+                            : MyApp.goldShimmer.withValues(alpha: 0.7),
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        isUser ? 'You' : 'Expert Recovery Coach',
+                        style: const TextStyle(
+                          color: Colors.black,
+                          fontSize: 11.2,
+                          letterSpacing: 0.32,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 5),
-                  Text(
-                    isUser ? 'You' : 'Expert Recovery Coach',
-                    style: const TextStyle(
-                      color: Colors.black,
-                      fontSize: 11.2,
-                      letterSpacing: 0.32,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
+                  if (!isUser) _aiGeneratedBadge(),
                 ],
               ),
               const SizedBox(height: 6),
