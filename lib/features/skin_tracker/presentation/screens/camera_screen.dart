@@ -90,6 +90,40 @@ QualityState alignmentQualityStatus({
   return QualityState.green;
 }
 
+/// Mean luminance for one decoded burst-capture JPEG. Logging-only support
+/// for the 3-frame burst in `_captureFromLiveCamera` — see that function's
+/// comment for why this exists as a standalone top-level function instead
+/// of reusing `_summarizeDecodedImage` (an instance method) or
+/// `_summarizeCameraImage` (which needs a live CameraImage's planes/format,
+/// not decoded JPEG bytes, and cannot run on captured burst frames at all).
+/// Uses the same luminance weights (0.299/0.587/0.114) as
+/// `_summarizeDecodedImage` for consistency with the rest of this file's
+/// decoded-photo lighting analysis. Returns null if the bytes don't decode.
+double? meanLuminanceFromImageBytes(Uint8List bytes) {
+  img.Image? decoded;
+  try {
+    decoded = img.decodeImage(bytes);
+  } catch (_) {
+    // decodeImage's format-sniffing can throw (not just return null) on
+    // malformed/truncated input — same RangeError case documented on
+    // flipForStorageIfMirror above.
+    return null;
+  }
+  if (decoded == null || decoded.width == 0 || decoded.height == 0) {
+    return null;
+  }
+  var total = 0.0;
+  var count = 0;
+  for (var y = 0; y < decoded.height; y++) {
+    for (var x = 0; x < decoded.width; x++) {
+      final pixel = decoded.getPixel(x, y);
+      total += (0.299 * pixel.r) + (0.587 * pixel.g) + (0.114 * pixel.b);
+      count += 1;
+    }
+  }
+  return count == 0 ? null : total / count;
+}
+
 /// How a body-procedure photo was captured. Only meaningful for body scans
 /// (face/general scans are always a direct front-camera selfie, equivalent
 /// to [assisted] in framing terms, and don't set this).
@@ -4156,6 +4190,16 @@ class _CameraScreenState extends State<CameraScreen>
 
       var bestFile = burstFiles.first;
       var bestScore = double.negativeInfinity;
+      // Logging-only: per-frame mean luminance, purely for observability.
+      // No measured luminance noise floor exists anywhere in this codebase
+      // (checked METRIC_NOISE_FLOOR_2SD/tool/analyze_repeatability.py and
+      // _lightingThresholds, which are tuned classification bounds, not
+      // statistically-measured repeatability floors) to derive a real
+      // keep/drop band from, and backward-deriving one from an unrelated
+      // metric's score formula (e.g. redness's a*-unit floor) is invalid —
+      // brightness doesn't pass through that formula. This must NOT affect
+      // which frame gets selected below.
+      final burstLuminances = <double?>[];
       for (final file in burstFiles) {
         final bytes = await file.readAsBytes();
         final sharpness = _sharpnessFromImageBytes(bytes);
@@ -4164,7 +4208,9 @@ class _CameraScreenState extends State<CameraScreen>
           bestScore = score;
           bestFile = file;
         }
+        burstLuminances.add(meanLuminanceFromImageBytes(bytes));
       }
+      debugPrint('[BURST_LUMINANCE] frames=$burstLuminances (logging only, selection unaffected)');
 
       for (final file in burstFiles) {
         if (file.path == bestFile.path) continue;
