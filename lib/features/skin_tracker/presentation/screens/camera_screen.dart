@@ -1108,11 +1108,6 @@ class _CameraScreenState extends State<CameraScreen>
     } catch (e) {
       debugPrint('Camera exposure auto mode unsupported: $e');
     }
-    try {
-      await (controller as dynamic).setWhiteBalanceMode('auto');
-    } catch (e) {
-      debugPrint('Camera white balance auto mode unsupported: $e');
-    }
   }
 
   Future<void> _toggleCameraLens() async {
@@ -4146,13 +4141,6 @@ class _CameraScreenState extends State<CameraScreen>
       } catch (e) {
         debugPrint('Camera exposure lock unsupported; continuing capture: $e');
       }
-      try {
-        await (controller as dynamic).setWhiteBalanceMode('locked');
-      } catch (e) {
-        debugPrint(
-          'Camera white balance lock unsupported; continuing capture: $e',
-        );
-      }
 
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
@@ -4203,11 +4191,6 @@ class _CameraScreenState extends State<CameraScreen>
       } catch (e) {
         debugPrint('Camera exposure reset unsupported: $e');
       }
-      try {
-        await (controller as dynamic).setWhiteBalanceMode('auto');
-      } catch (e) {
-        debugPrint('Camera white balance reset unsupported: $e');
-      }
       _startLightingStream(controller);
     }
   }
@@ -4236,11 +4219,6 @@ class _CameraScreenState extends State<CameraScreen>
         await controller.setExposureMode(ExposureMode.locked);
       } catch (e) {
         debugPrint('AI burst exposure lock unsupported: $e');
-      }
-      try {
-        await (controller as dynamic).setWhiteBalanceMode('locked');
-      } catch (e) {
-        debugPrint('AI burst white balance lock unsupported: $e');
       }
 
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -4305,11 +4283,6 @@ class _CameraScreenState extends State<CameraScreen>
         await controller.setExposureMode(ExposureMode.auto);
       } catch (e) {
         debugPrint('AI burst exposure reset unsupported: $e');
-      }
-      try {
-        await (controller as dynamic).setWhiteBalanceMode('auto');
-      } catch (e) {
-        debugPrint('AI burst white balance reset unsupported: $e');
       }
       _startLightingStream(controller);
       if (mounted) setState(() => _capturing = false);

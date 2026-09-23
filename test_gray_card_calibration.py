@@ -8,7 +8,6 @@ from main import (
     GRAY_CARD_MAX_CHROMA_OFFSET,
     GRAY_CARD_MIN_REGION_PIXELS,
     GRAY_CARD_NEUTRAL_TARGET,
-    apply_gray_card_lab_correction,
     compute_gray_card_correction,
 )
 
@@ -84,26 +83,6 @@ class ComputeGrayCardCorrectionTests(unittest.TestCase):
         self.assertLessEqual(correction["l_gain"], 2.0)
 
 
-class ApplyGrayCardLabCorrectionTests(unittest.TestCase):
-    @staticmethod
-    def _synthetic_bgr(size: int = 32, color_bgr: tuple[int, int, int] = (120, 130, 140)) -> np.ndarray:
-        image = np.zeros((size, size, 3), dtype=np.uint8)
-        image[:, :] = color_bgr
-        return image
-
-    def test_rejected_region_returns_an_unmodified_copy(self) -> None:
-        img_bgr = self._synthetic_bgr()
-        # A tiny 2x2 region can never satisfy GRAY_CARD_MIN_REGION_PIXELS.
-        card_region_bgr = img_bgr[0:2, 0:2]
-
-        corrected, correction = apply_gray_card_lab_correction(img_bgr, card_region_bgr)
-
-        self.assertFalse(correction["accepted"])
-        self.assertTrue(np.array_equal(corrected, img_bgr))
-        # Must be a copy, not the same underlying array.
-        self.assertIsNot(corrected, img_bgr)
-
-
 class QualityProfileUnaffectedByCalibrationTests(unittest.TestCase):
     def test_quality_profile_is_identical_whether_or_not_calibration_ran(self) -> None:
         synthetic_image = np.full((64, 64, 3), (90, 95, 100), dtype=np.uint8)
@@ -115,7 +94,8 @@ class QualityProfileUnaffectedByCalibrationTests(unittest.TestCase):
         snapshot_before = img_before.copy()
 
         card_region_bgr = np.full((24, 24, 3), (200, 128, 128), dtype=np.uint8)
-        apply_gray_card_lab_correction(img_before, card_region_bgr)
+        card_region_lab = cv2.cvtColor(card_region_bgr, cv2.COLOR_BGR2LAB)
+        compute_gray_card_correction(card_region_lab)
 
         # Re-running the IQA step on the same raw bytes must produce a
         # bit-for-bit identical quality_profile regardless of whether

@@ -828,16 +828,17 @@ def _apply_capture_white_balance_correction(bgr_image: np.ndarray) -> Tuple[np.n
 
 
 # Optional gray-card calibration. A user-marked card region's mean LAB is
-# measured against a neutral target and, if plausible, used to correct a
-# SEPARATE copy of the analyzed image before redness/rosacea/pigment
-# scoring. This must never be applied to (or derived from) the image used
-# by assess_and_normalize_image()'s quality_profile (lighting_mean_l,
+# measured against a neutral target to produce a correction (delta_a,
+# delta_b, l_gain) that a future integration can apply to a SEPARATE copy
+# of the analyzed image before redness/rosacea/pigment scoring. This must
+# never be applied to (or derived from) the image used by
+# assess_and_normalize_image()'s quality_profile (lighting_mean_l,
 # lighting_balance_score, confidence) — that signal has to keep reflecting
 # the true, uncorrected capture, or a genuinely dim photo could have its
 # low-light confidence downgrade masked by the very correction meant to fix
-# its color, not its exposure gate. Callers must insert this strictly after
-# assess_and_normalize_image() returns and before analyze_skin_patch()/
-# _compute_canonical_patch_metrics() runs.
+# its color, not its exposure gate. Whatever integration consumes this must
+# insert its correction strictly after assess_and_normalize_image() returns
+# and before analyze_skin_patch()/_compute_canonical_patch_metrics() runs.
 #
 # Target: OpenCV's 8-bit LAB encodes neutral chroma as a*=b*=128 by
 # definition. A standard 18%-reflectance gray card measures L*≈49-50 under
@@ -948,33 +949,6 @@ def compute_gray_card_correction(card_region_lab: np.ndarray) -> Dict[str, Any]:
         "raw_l_gain": round(float(raw_l_gain), 4),
         "l_gain": round(l_gain, 4),
     }
-
-
-def apply_gray_card_lab_correction(
-    img_bgr: np.ndarray, card_region_bgr: np.ndarray
-) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """Returns a CORRECTED COPY of [img_bgr] plus the correction profile,
-    never mutating [img_bgr] itself. Callers must only ever pass this
-    corrected copy into analyze_skin_patch()/_compute_canonical_patch_metrics
-    — the original [img_bgr] (and any quality_profile already computed from
-    it by assess_and_normalize_image()) must stay untouched.
-    """
-    if img_bgr is None or img_bgr.size == 0:
-        return img_bgr, {"accepted": False, "reason": "empty_image"}
-    if card_region_bgr is None or card_region_bgr.size == 0:
-        return img_bgr.copy(), {"accepted": False, "reason": "empty_region"}
-
-    card_region_lab = cv2.cvtColor(card_region_bgr, cv2.COLOR_BGR2LAB)
-    correction = compute_gray_card_correction(card_region_lab)
-    if not correction.get("accepted"):
-        return img_bgr.copy(), correction
-
-    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
-    lab[:, :, 0] = np.clip(lab[:, :, 0] * correction["l_gain"], 0.0, 255.0)
-    lab[:, :, 1] = np.clip(lab[:, :, 1] + correction["delta_a"], 0.0, 255.0)
-    lab[:, :, 2] = np.clip(lab[:, :, 2] + correction["delta_b"], 0.0, 255.0)
-    corrected_bgr = cv2.cvtColor(lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
-    return corrected_bgr, correction
 
 
 def _compute_ssim_gray(gray_a: np.ndarray, gray_b: np.ndarray) -> float:
