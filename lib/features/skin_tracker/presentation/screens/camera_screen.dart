@@ -96,9 +96,27 @@ QualityState alignmentQualityStatus({
 /// of reusing `_summarizeDecodedImage` (an instance method) or
 /// `_summarizeCameraImage` (which needs a live CameraImage's planes/format,
 /// not decoded JPEG bytes, and cannot run on captured burst frames at all).
-/// Uses the same luminance weights (0.299/0.587/0.114) as
-/// `_summarizeDecodedImage` for consistency with the rest of this file's
-/// decoded-photo lighting analysis. Returns null if the bytes don't decode.
+///
+/// This is a DENSE, every-pixel mean — deliberately different from
+/// `_summarizeDecodedImage`'s `mean` field, which samples a sparse ~36x36
+/// grid instead of every pixel. Both apply the same Rec.601 luma weights
+/// (0.299/0.587/0.114) to the same gamma-encoded (sRGB-style) JPEG byte
+/// values — neither linearizes first — so that part is consistent. Neither
+/// function itself applies any additional rotation; whatever EXIF-
+/// orientation handling `img.decodeImage` performs by default happens
+/// identically upstream of both, so orientation cannot be a source of
+/// difference between them specifically — this is not a claim that no
+/// rotation happens at all, only that it can't explain a divergence here.
+/// Because the two functions visit different pixel sets (every pixel vs.
+/// a coarse grid), they will NOT produce the same number on a real photo.
+/// Do not average, scale, or reconcile this value against
+/// `_summarizeDecodedImage.mean`, and do not use
+/// `_summarizeDecodedImage.mean` as a substitute floor for burst-luminance
+/// logging — they are two independent measurements. `uneven_lighting`
+/// (left-minus-right on the LIVE preview, via `_summarizeCameraImage`) is a
+/// third, unrelated measurement, derived from neither function here.
+///
+/// Returns null if the bytes don't decode.
 double? meanLuminanceFromImageBytes(Uint8List bytes) {
   img.Image? decoded;
   try {
