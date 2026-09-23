@@ -137,3 +137,19 @@ def test_tracked_outliers_are_reported_without_gating(
 
     assert tracked_lines, "Manifest must contain at least one tracked non-gating case."
     warnings.warn("TRACKED SKIN METRIC OUTLIER: " + " | ".join(tracked_lines), stacklevel=1)
+
+
+def test_glabellar_wrinkle_depth_no_longer_zeroes_out_on_nikki3(
+    regression_results: tuple[dict[str, Any], dict[str, dict[str, float]]],
+) -> None:
+    """Regression guard for the specific bug fixed in formula v2: nikki3 used
+    to have glabellar_wrinkle_depth entirely omitted (the 82nd-percentile
+    threshold + (3,5) opening kernel erased its real-but-thin furrow response
+    completely). This asserts the value is present and non-zero directly,
+    independent of the manifest's numeric band, so a future retune can't
+    silently reintroduce the omission while still passing a loosened band.
+    """
+    _manifest, results = regression_results
+    value = results["nikki3"].get("glabellar_wrinkle_depth")
+    assert value is not None, "glabellar_wrinkle_depth is missing again on nikki3"
+    assert value > 0.0, f"glabellar_wrinkle_depth zeroed out again on nikki3: {value}"

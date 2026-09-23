@@ -2631,24 +2631,48 @@ def _compute_structural_opencv_metrics(
         vertical_response = np.clip(np.abs(dxx) - (0.35 * np.abs(dyy)), 0.0, None)
 
         response_values = vertical_response[glabella_mask > 0]
-        threshold = float(np.percentile(response_values, 82)) if response_values.size > 0 else 9999.0
+        # 75th (was 82nd): the glabella ROI is small, and genuinely real
+        # "11 lines" are frequently only 1-2px wide -- an 82nd-percentile cut
+        # left the opening step below almost nothing to preserve on a
+        # meaningful share of real photos, zeroing the metric outright
+        # rather than just scoring it low. See GLABELLAR_ZERO_OUT_FIX below.
+        threshold = float(np.percentile(response_values, 75)) if response_values.size > 0 else 9999.0
         wrinkle_binary = np.logical_and(glabella_mask > 0, vertical_response >= threshold).astype(np.uint8) * 255
+        # GLABELLAR_ZERO_OUT_FIX: (3,5) required a blob ~3px wide to survive
+        # this opening at all, which erased thin-but-real furrow responses
+        # entirely (not just down-scored them) on ~26-32% of real photos.
+        # (2,4) still removes true single-pixel noise specks while letting a
+        # genuinely thin vertical furrow survive.
         wrinkle_binary = cv2.morphologyEx(
             wrinkle_binary,
             cv2.MORPH_OPEN,
-            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 5)),
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 4)),
         )
 
         contours, _ = cv2.findContours(wrinkle_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         widths: list[float] = []
         intensities: list[float] = []
-        min_component_area = max(8, int(glabella_area * 0.0012))
+        # 5 (was a floor of 8): 8px was almost always the binding constraint
+        # on this small ROI (glabella_area * 0.0012 rarely exceeds it),
+        # pruning legitimate small-but-real components more aggressively
+        # than this metric's own small scale warrants.
+        min_component_area = max(5, int(glabella_area * 0.0012))
         for contour in contours:
             area = float(cv2.contourArea(contour))
             if area < min_component_area:
                 continue
             x, y, bw, bh = cv2.boundingRect(contour)
-            widths.append(float(bw))
+            # GLABELLAR_WIDTH_QUANTIZATION_FIX: cv2.boundingRect returns
+            # integer pixel width, so on this small crop avg_width could
+            # only ever land on a handful of achievable values (each unit of
+            # bw swings width_norm by ~8.3 points). minAreaRect fits a
+            # rotated rectangle to the contour's convex hull, which yields a
+            # continuous, sub-pixel-precision size even for an
+            # axis-aligned blob -- the narrower of its two dimensions is the
+            # furrow's width (the longer dimension is its length along the
+            # line), giving smooth rather than stair-stepped output.
+            (_, _), (rect_w, rect_h), _ = cv2.minAreaRect(contour)
+            widths.append(float(min(rect_w, rect_h)))
             roi = vertical_response[y : y + bh, x : x + bw]
             if roi.size > 0:
                 intensities.append(float(np.mean(roi)))
@@ -3761,7 +3785,15 @@ TREND_NOISE_FLOOR_EXCLUDED_MULTIPLIER = 3.0
 # quality, extraction path, and resolution all match. This registry does
 # NOT itself change any formula; it only lets the trend gate react once a
 # future change bumps an entry.
-METRIC_FORMULA_VERSION: Dict[str, int] = {}
+METRIC_FORMULA_VERSION: Dict[str, int] = {
+    # v2: fixed avg_width quantization (boundingRect integer px -> minAreaRect
+    # continuous size) and the 26-32%-of-photos zero-out (82nd-percentile
+    # threshold + (3,5) opening kernel erasing thin-but-real furrow
+    # responses entirely). See the GLABELLAR_ZERO_OUT_FIX /
+    # GLABELLAR_WIDTH_QUANTIZATION_FIX comments in
+    # _compute_structural_opencv_metrics.
+    "glabellar_wrinkle_depth": 2,
+}
 
 
 def _metric_formula_version(metric_key: str) -> int:

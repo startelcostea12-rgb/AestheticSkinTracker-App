@@ -934,16 +934,21 @@ class NormalizeMetricFormulaVersionsTests(unittest.TestCase):
 
 
 class MetricFormulaVersionRegistryTests(unittest.TestCase):
-    def test_registry_is_empty_until_a_formula_actually_changes(self) -> None:
-        # No metric's scoring formula has changed yet -- this gate is
-        # infrastructure only. Bumping an entry here is a separate,
-        # deliberate change made alongside an actual formula fix.
-        self.assertEqual(METRIC_FORMULA_VERSION, {})
+    def test_registry_only_contains_deliberately_bumped_metrics(self) -> None:
+        # glabellar_wrinkle_depth is the only metric whose formula has
+        # actually changed so far (v2: fixed avg_width quantization and the
+        # 26-32%-of-photos zero-out -- see METRIC_FORMULA_VERSION's comment
+        # in main.py). Every other metric's formula is unchanged, so this
+        # registry must not silently grow beyond that one deliberate bump.
+        self.assertEqual(METRIC_FORMULA_VERSION, {"glabellar_wrinkle_depth": 2})
 
     def test_every_metric_defaults_to_version_1(self) -> None:
         self.assertEqual(_metric_formula_version("texture_smoothness"), 1)
-        self.assertEqual(_metric_formula_version("glabellar_wrinkle_depth"), 1)
+        self.assertEqual(_metric_formula_version("wrinkle_load"), 1)
         self.assertEqual(_metric_formula_version("anything_unknown"), 1)
+
+    def test_glabellar_wrinkle_depth_is_pinned_to_version_2(self) -> None:
+        self.assertEqual(_metric_formula_version("glabellar_wrinkle_depth"), 2)
 
 
 class FormulaVersionMismatchGateTests(unittest.TestCase):
