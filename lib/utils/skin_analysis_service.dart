@@ -97,7 +97,10 @@ class SkinAnalysisService {
     try {
       final response = await http.post(
         uri,
-        headers: const {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          ...BackendConfig.apiKeyHeaders,
+        },
         body: jsonEncode({
           'imageBytes': base64Encode(bytes),
           if (filename != null) 'filename': filename,
@@ -179,7 +182,10 @@ class SkinAnalysisService {
       final poster = httpClient?.post ?? http.post;
       final response = await poster(
         uri,
-        headers: const {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          ...BackendConfig.apiKeyHeaders,
+        },
         body: jsonEncode({
           'imageBytes': base64Encode(bytes),
           if (captureMode != null) 'captureMode': captureMode,
@@ -264,7 +270,8 @@ class SkinAnalysisService {
     }
 
     final request = http.MultipartRequest('POST', targetUri)
-      ..fields.addAll(mergedFields);
+      ..fields.addAll(mergedFields)
+      ..headers.addAll(BackendConfig.apiKeyHeaders);
 
     request.files.add(
       http.MultipartFile.fromBytes(

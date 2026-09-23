@@ -65,7 +65,10 @@ class AiService {
       final response = await client
           .post(
             uri,
-            headers: const {'Content-Type': 'application/json'},
+            headers: {
+              'Content-Type': 'application/json',
+              ...BackendConfig.apiKeyHeaders,
+            },
             body: jsonEncode({
               'systemPrompt': systemPrompt,
               'userPrompt': userPrompt,

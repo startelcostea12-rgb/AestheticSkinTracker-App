@@ -624,7 +624,10 @@ class PremiumRecoveryService {
           final response = await client
               .post(
                 endpoint,
-                headers: const {'Content-Type': 'application/json'},
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...BackendConfig.apiKeyHeaders,
+                },
                 body: jsonEncode(requestBody),
               )
               .timeout(const Duration(seconds: 25));
