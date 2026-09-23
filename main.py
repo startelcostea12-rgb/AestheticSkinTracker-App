@@ -827,6 +827,156 @@ def _apply_capture_white_balance_correction(bgr_image: np.ndarray) -> Tuple[np.n
     }
 
 
+# Optional gray-card calibration. A user-marked card region's mean LAB is
+# measured against a neutral target and, if plausible, used to correct a
+# SEPARATE copy of the analyzed image before redness/rosacea/pigment
+# scoring. This must never be applied to (or derived from) the image used
+# by assess_and_normalize_image()'s quality_profile (lighting_mean_l,
+# lighting_balance_score, confidence) — that signal has to keep reflecting
+# the true, uncorrected capture, or a genuinely dim photo could have its
+# low-light confidence downgrade masked by the very correction meant to fix
+# its color, not its exposure gate. Callers must insert this strictly after
+# assess_and_normalize_image() returns and before analyze_skin_patch()/
+# _compute_canonical_patch_metrics() runs.
+#
+# Target: OpenCV's 8-bit LAB encodes neutral chroma as a*=b*=128 by
+# definition. A standard 18%-reflectance gray card measures L*≈49-50 under
+# correct neutral exposure, which is 49.5 * 255/100 ≈ 126 — close enough to
+# the same 128 midpoint already used for a*/b* elsewhere in this file that
+# anchoring all three channels to 128 is a reasonable, consistent target
+# rather than a separate constant to justify.
+GRAY_CARD_NEUTRAL_TARGET = 128.0
+
+# A user-drawn card region is a small, deliberately-cropped box (unlike the
+# whole-frame neutral-pixel search in _apply_capture_white_balance_correction,
+# which needs 800+ pixels out of a full photo) — 200 px is enough to average
+# out sensor noise/JPEG blocking in a region that small without requiring an
+# unreasonably large card mark.
+GRAY_CARD_MIN_REGION_PIXELS = 200
+
+# _apply_capture_white_balance_correction caps ITS correction at ±8 a*/b*
+# units because it only nudges gently for ordinary ambient variation. A
+# gray-card correction is meant to fix stronger casts than that pass already
+# handles, so it must tolerate a much bigger measured offset. But it still
+# needs a ceiling to reject a region that isn't a neutral card at all: skin
+# tone commonly reads well off neutral (a*~140-150, b*~145-160 in this
+# encoding, i.e. offset magnitude ~30-48), so 45 sits just below typical
+# mis-marked-skin offsets while still accepting strong-but-real colored-light
+# casts on an actual gray card (published incandescent/mixed-lighting neutral
+# shifts commonly stay within this range).
+GRAY_CARD_MAX_CHROMA_OFFSET = 45.0
+
+# Reject a region that reads as crushed-black or blown-out-white: the mean
+# color in either extreme is unreliable/clipped, and any gain computed from
+# it would be untrustworthy regardless of the chroma check above.
+GRAY_CARD_MIN_MEASURED_L = 20.0
+GRAY_CARD_MAX_MEASURED_L = 240.0
+
+# Even for an accepted region, clamp the resulting exposure gain itself.
+# Requiring more than roughly half-to-double brightness scaling is a sign of
+# a badly exposed or misidentified region rather than a fixable lighting
+# cast, so the gain is clamped (not the whole correction rejected) to avoid
+# an aggressive correction distorting the redness/pigment signal more than
+# it fixes it.
+GRAY_CARD_MIN_L_GAIN = 0.5
+GRAY_CARD_MAX_L_GAIN = 2.0
+
+
+def compute_gray_card_correction(card_region_lab: np.ndarray) -> Dict[str, Any]:
+    """Measures a user-marked gray-card region's mean LAB (OpenCV's 0-255
+    encoding) and returns the correction to apply toward a neutral target,
+    or a rejection reason if the region doesn't plausibly look like a
+    photographed neutral card. Pure measurement — does not touch any image
+    pixels itself.
+    """
+    if card_region_lab is None or card_region_lab.size == 0:
+        return {"accepted": False, "reason": "empty_region"}
+
+    flat = card_region_lab.reshape(-1, 3).astype(np.float32)
+    pixel_count = int(flat.shape[0])
+    if pixel_count < GRAY_CARD_MIN_REGION_PIXELS:
+        return {
+            "accepted": False,
+            "reason": "insufficient_region_pixels",
+            "region_pixels": pixel_count,
+            "minimum_pixels": GRAY_CARD_MIN_REGION_PIXELS,
+        }
+
+    measured_l = float(np.mean(flat[:, 0]))
+    measured_a = float(np.mean(flat[:, 1]))
+    measured_b = float(np.mean(flat[:, 2]))
+
+    if measured_l < GRAY_CARD_MIN_MEASURED_L or measured_l > GRAY_CARD_MAX_MEASURED_L:
+        return {
+            "accepted": False,
+            "reason": "implausible_exposure",
+            "measured_l": round(measured_l, 2),
+            "min_measured_l": GRAY_CARD_MIN_MEASURED_L,
+            "max_measured_l": GRAY_CARD_MAX_MEASURED_L,
+        }
+
+    chroma_offset = float(
+        math.sqrt(
+            (measured_a - GRAY_CARD_NEUTRAL_TARGET) ** 2
+            + (measured_b - GRAY_CARD_NEUTRAL_TARGET) ** 2
+        )
+    )
+    if chroma_offset > GRAY_CARD_MAX_CHROMA_OFFSET:
+        return {
+            "accepted": False,
+            "reason": "implausible_card_color",
+            "measured_a": round(measured_a, 2),
+            "measured_b": round(measured_b, 2),
+            "chroma_offset": round(chroma_offset, 2),
+            "max_chroma_offset": GRAY_CARD_MAX_CHROMA_OFFSET,
+        }
+
+    delta_a = GRAY_CARD_NEUTRAL_TARGET - measured_a
+    delta_b = GRAY_CARD_NEUTRAL_TARGET - measured_b
+    raw_l_gain = GRAY_CARD_NEUTRAL_TARGET / max(measured_l, 1e-6)
+    l_gain = float(np.clip(raw_l_gain, GRAY_CARD_MIN_L_GAIN, GRAY_CARD_MAX_L_GAIN))
+
+    return {
+        "accepted": True,
+        "region_pixels": pixel_count,
+        "measured_l": round(measured_l, 2),
+        "measured_a": round(measured_a, 2),
+        "measured_b": round(measured_b, 2),
+        "chroma_offset": round(chroma_offset, 2),
+        "delta_a": round(float(delta_a), 3),
+        "delta_b": round(float(delta_b), 3),
+        "raw_l_gain": round(float(raw_l_gain), 4),
+        "l_gain": round(l_gain, 4),
+    }
+
+
+def apply_gray_card_lab_correction(
+    img_bgr: np.ndarray, card_region_bgr: np.ndarray
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Returns a CORRECTED COPY of [img_bgr] plus the correction profile,
+    never mutating [img_bgr] itself. Callers must only ever pass this
+    corrected copy into analyze_skin_patch()/_compute_canonical_patch_metrics
+    — the original [img_bgr] (and any quality_profile already computed from
+    it by assess_and_normalize_image()) must stay untouched.
+    """
+    if img_bgr is None or img_bgr.size == 0:
+        return img_bgr, {"accepted": False, "reason": "empty_image"}
+    if card_region_bgr is None or card_region_bgr.size == 0:
+        return img_bgr.copy(), {"accepted": False, "reason": "empty_region"}
+
+    card_region_lab = cv2.cvtColor(card_region_bgr, cv2.COLOR_BGR2LAB)
+    correction = compute_gray_card_correction(card_region_lab)
+    if not correction.get("accepted"):
+        return img_bgr.copy(), correction
+
+    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+    lab[:, :, 0] = np.clip(lab[:, :, 0] * correction["l_gain"], 0.0, 255.0)
+    lab[:, :, 1] = np.clip(lab[:, :, 1] + correction["delta_a"], 0.0, 255.0)
+    lab[:, :, 2] = np.clip(lab[:, :, 2] + correction["delta_b"], 0.0, 255.0)
+    corrected_bgr = cv2.cvtColor(lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
+    return corrected_bgr, correction
+
+
 def _compute_ssim_gray(gray_a: np.ndarray, gray_b: np.ndarray) -> float:
     if gray_a.size == 0 or gray_b.size == 0:
         return 0.0
