@@ -50,6 +50,7 @@ class AppPrefs {
       'scan_history_storage_warning';
   static const String verboseDiagnosticsKey = 'verbose_diagnostics_enabled';
   static const String notificationsEnabledKey = 'notifications_enabled';
+  static const String aiCoachConsentKey = 'ai_coach_consent_granted';
   static const int maxStoredScans = 50;
   static const int minStoredScansOnQuotaRetry = 30;
   static const int maxStoredScanImages = 12;
@@ -80,6 +81,18 @@ class AppPrefs {
   static Future<void> setNotificationsEnabled(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(notificationsEnabledKey, enabled);
+  }
+
+  /// Null means the user has not yet been asked to consent to sending
+  /// recovery/scan data to the AI Coach backend (Gemini).
+  static Future<bool?> getAiCoachConsent() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(aiCoachConsentKey);
+  }
+
+  static Future<void> setAiCoachConsent(bool granted) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(aiCoachConsentKey, granted);
   }
 
   // ── Journal Support Methods (getString / setString) ──

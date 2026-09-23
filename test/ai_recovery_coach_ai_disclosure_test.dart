@@ -9,7 +9,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() async {
-    SharedPreferences.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({
+      'ai_coach_consent_granted': true,
+    });
     PremiumAccess.debugTesterPremiumUnlockOverride = true;
     await PremiumRecoveryService.saveCoachMessages([
       {

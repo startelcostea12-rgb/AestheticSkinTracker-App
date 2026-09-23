@@ -37,6 +37,9 @@ class _AIRecoveryCoachScreenState extends State<AIRecoveryCoachScreen> {
   bool _isPremium = false;
   bool _sending = false;
 
+  /// null = not yet asked; true = user accepted sending data to Gemini; false = declined.
+  bool? _aiCoachConsent;
+
   Procedure? _activeProcedure;
   List<ScanHistoryEntry> _scopedScans = const [];
   List<RecoveryCoachMessage> _messages = const [];
@@ -203,6 +206,7 @@ class _AIRecoveryCoachScreenState extends State<AIRecoveryCoachScreen> {
         ),
         Future.value(widget.procedure),
         AppPrefs.getScanEntries(),
+        AppPrefs.getAiCoachConsent(),
       ]).timeout(const Duration(seconds: 10));
 
       final premium = result[0] as bool;
@@ -210,6 +214,7 @@ class _AIRecoveryCoachScreenState extends State<AIRecoveryCoachScreen> {
       final procedure =
           result[2] as Procedure? ?? await _resolveActiveProcedure();
       final scans = result[3] as List<ScanHistoryEntry>;
+      final consent = result[4] as bool?;
       final scopedScans = _scopeScans(scans, procedure);
 
       if (!mounted) return;
@@ -218,11 +223,16 @@ class _AIRecoveryCoachScreenState extends State<AIRecoveryCoachScreen> {
         _activeProcedure = procedure;
         _messages = messages;
         _scopedScans = scopedScans;
+        _aiCoachConsent = consent;
         _loading = false;
       });
 
       if (premium && procedure != null && messages.isEmpty) {
         _injectWelcomeMessage(procedure);
+      }
+
+      if (premium && consent == null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _promptForConsent());
       }
     } on TimeoutException {
       if (!mounted) return;
@@ -356,10 +366,45 @@ class _AIRecoveryCoachScreenState extends State<AIRecoveryCoachScreen> {
     }
   }
 
+  /// Shows the one-time data-sharing disclosure. The dialog is not
+  /// dismissible by tapping outside — the user must explicitly accept or
+  /// decline so the choice is unambiguous and can be safely persisted.
+  Future<void> _promptForConsent() async {
+    if (!mounted) return;
+    final accepted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Before you chat with AI Coach'),
+        content: const Text(
+          'AI Recovery Coach sends your recovery/scan metrics (procedure type, '
+          'recovery day, and metric trends) to Google\'s Gemini API to generate '
+          'personalized responses. No photos are sent unless you attach one to '
+          'a message.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Decline'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Accept & Continue'),
+          ),
+        ],
+      ),
+    );
+    final decision = accepted ?? false;
+    await AppPrefs.setAiCoachConsent(decision);
+    if (!mounted) return;
+    setState(() => _aiCoachConsent = decision);
+  }
+
   Future<void> _send() async {
     final question = _inputController.text.trim();
     final attached = _attachmentRef;
     if (_sending) return;
+    if (_aiCoachConsent != true) return;
     if (question.isEmpty && (attached == null || attached.trim().isEmpty)) {
       return;
     }
@@ -546,6 +591,87 @@ class _AIRecoveryCoachScreenState extends State<AIRecoveryCoachScreen> {
     return '${_scopedScans.length} scans analyzed$suffix.';
   }
 
+  Widget _buildConsentDeclinedGate() {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.all(22),
+        padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 28),
+        decoration: BoxDecoration(
+          color: MyApp.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: MyApp.goldShimmer.withValues(alpha: 0.14),
+            width: 0.8,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: MyApp.clinicalNavy.withValues(alpha: 0.08),
+              blurRadius: 20,
+              offset: const Offset(0, 7),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 92,
+              height: 92,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [
+                    MyApp.goldShimmer.withValues(alpha: 0.20),
+                    MyApp.goldShimmer.withValues(alpha: 0.10),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                border: Border.all(
+                  color: MyApp.goldShimmer.withValues(alpha: 0.32),
+                  width: 0.8,
+                ),
+              ),
+              child: Icon(
+                Icons.privacy_tip_outlined,
+                size: 40,
+                color: MyApp.goldShimmer,
+              ),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              'AI Coach unavailable',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                color: MyApp.clinicalNavy,
+                letterSpacing: -0.2,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'You declined sharing recovery/scan metrics with Google\'s Gemini API, '
+              'so AI Coach responses can\'t be generated. You can change this anytime.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.5,
+                fontWeight: FontWeight.w500,
+                color: MyApp.clinicalSlate,
+              ),
+            ),
+            const SizedBox(height: 18),
+            FilledButton(
+              onPressed: _promptForConsent,
+              child: const Text('Review & Enable AI Coach'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildPremiumGate() {
     return Center(
       child: Container(
@@ -680,6 +806,10 @@ class _AIRecoveryCoachScreenState extends State<AIRecoveryCoachScreen> {
           ? const LuxeLoadingView(label: 'Preparing your recovery coach…')
           : !_isPremium
           ? _buildPremiumGate()
+          : _aiCoachConsent == false
+          ? _buildConsentDeclinedGate()
+          : _aiCoachConsent == null
+          ? const LuxeLoadingView(label: 'Reviewing AI Coach permissions…')
           : DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
