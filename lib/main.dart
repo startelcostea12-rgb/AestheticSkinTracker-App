@@ -1,10 +1,11 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:ui' as ui;
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
@@ -155,10 +156,26 @@ Future<void> main() async {
       if (!kIsWeb) {
         try {
           await Purchases.setLogLevel(LogLevel.debug);
-          const String revenueCatPublicKey = 'test_OC0unrUAvzpxsTaSwDCvcLDueAR';
-          await Purchases.configure(
-            PurchasesConfiguration(revenueCatPublicKey),
+          const String iosKey = String.fromEnvironment('REVENUECAT_IOS_KEY');
+          const String androidKey = String.fromEnvironment(
+            'REVENUECAT_ANDROID_KEY',
           );
+          final String revenueCatPublicKey = Platform.isIOS
+              ? iosKey
+              : Platform.isAndroid
+              ? androidKey
+              : '';
+          if (revenueCatPublicKey.isEmpty) {
+            debugPrint(
+              '[RevenueCat] Skipping Purchases.configure: no key supplied '
+              'for this platform. Pass --dart-define=REVENUECAT_IOS_KEY=... '
+              'or --dart-define=REVENUECAT_ANDROID_KEY=... to enable purchases.',
+            );
+          } else {
+            await Purchases.configure(
+              PurchasesConfiguration(revenueCatPublicKey),
+            );
+          }
         } catch (_) {
           // RevenueCat is mobile-only; app should still boot for local/web testing.
         }
