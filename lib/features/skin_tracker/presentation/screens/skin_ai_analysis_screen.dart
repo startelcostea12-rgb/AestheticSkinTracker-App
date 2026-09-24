@@ -39,6 +39,7 @@ import 'package:aesthetic_skin_tracker/utils/ai/skin_analysis_runner.dart';
 import 'package:aesthetic_skin_tracker/utils/ai/skin_detections.dart';
 import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
+import 'package:aesthetic_skin_tracker/utils/backend_config.dart';
 import 'package:aesthetic_skin_tracker/utils/skin_analysis_service.dart' as remote_analysis;
 import 'package:aesthetic_skin_tracker/utils/procedure_intelligence.dart' as procedure_intel;
 import 'package:aesthetic_skin_tracker/utils/procedure_metric_set.dart';
@@ -466,6 +467,33 @@ downgradeTrendBelowMeasuredNoiseFloor({
   );
 }
 
+/// Debug-only, per-frame diagnostic string for a failed or unusable backend
+/// upload. [uploadFrame]'s only surface to analyzeBackendFrames is the
+/// exception it throws (or a successful decoded response) -- there's no
+/// direct access to the raw `http.Response` here -- so an HTTP failure is
+/// recovered by parsing the "HTTP <code>: <body>" suffix that
+/// SkinAnalysisService.uploadSingleImageFile's own exception message
+/// always contains for a non-2xx response, rather than duplicating that
+/// request/response handling in this file. Every frame in this flow
+/// uploads to the same fixed endpoint (BackendConfig.analyzeSingleSkinUri),
+/// so that constant is reported as "the request URL" without needing the
+/// callback to expose it. Anything that doesn't match an HTTP failure
+/// (timeout, socket error, etc. -- the request never completed) falls back
+/// to the exception's own type and message.
+String _describeUploadFailure(Object error) {
+  final message = error.toString();
+  final httpMatch = RegExp(r'HTTP (\d+):\s*([\s\S]*)$').firstMatch(message);
+  if (httpMatch != null) {
+    final status = httpMatch.group(1);
+    final body = httpMatch.group(2) ?? '';
+    final bodyPreview = body.length > 300 ? body.substring(0, 300) : body;
+    return 'url=${BackendConfig.analyzeSingleSkinUri} status=$status '
+        'body="$bodyPreview"';
+  }
+  return 'url=${BackendConfig.analyzeSingleSkinUri} '
+      'exception=${error.runtimeType}: $message';
+}
+
 Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
   List<Uint8List> frames, {
   required Future<Map<String, dynamic>> Function(
@@ -474,19 +502,52 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
   ) uploadFrame,
 }) async {
   final responses = <Map<String, dynamic>>[];
+  // Debug-only: one human-readable reason per frame that didn't contribute
+  // a usable metric, appended to averageBackendAnalysisFrames' StateError
+  // below so the on-screen red error banner shows why, instead of only a
+  // debugPrint the user can't see on a physical device. Never collected
+  // (and so never shown) in release builds -- release keeps today's plain
+  // message.
+  final failureReasons = <String>[];
   for (var index = 0; index < frames.length; index++) {
+    final frameNumber = index + 1;
     try {
-      responses.add(await uploadFrame(frames[index], index + 1));
+      final response = await uploadFrame(frames[index], frameNumber);
+      responses.add(response);
+      if (kDebugMode) {
+        final metricsNode = _dynamicMap(response['metrics']);
+        final matrix = _dynamicMap(response['metric_matrix']).isNotEmpty
+            ? _dynamicMap(response['metric_matrix'])
+            : _dynamicMap(metricsNode['metric_matrix']);
+        if (matrix.isEmpty) {
+          failureReasons.add(
+            'Frame $frameNumber: request succeeded (HTTP 200) but the '
+            'response had no usable metric_matrix',
+          );
+        }
+      }
     } catch (error) {
       debugPrint(
-        '[MultiFrameAnalysis] Frame ${index + 1}/${frames.length} failed: $error',
+        '[MultiFrameAnalysis] Frame $frameNumber/${frames.length} failed: $error',
       );
+      if (kDebugMode) {
+        failureReasons.add(
+          'Frame $frameNumber: ${_describeUploadFailure(error)}',
+        );
+      }
     }
   }
-  return averageBackendAnalysisFrames(
-    responses,
-    requestedFrames: frames.length,
-  );
+  try {
+    return averageBackendAnalysisFrames(
+      responses,
+      requestedFrames: frames.length,
+    );
+  } on StateError catch (e) {
+    if (kDebugMode && failureReasons.isNotEmpty) {
+      throw StateError('${e.message}\n${failureReasons.join('\n')}');
+    }
+    rethrow;
+  }
 }
 
 Map<String, dynamic> luxePrecisionMetadataFromBackend(
