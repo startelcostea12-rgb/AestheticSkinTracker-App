@@ -2685,7 +2685,18 @@ class _CameraScreenState extends State<CameraScreen>
   /// `<app documents dir>/burst_luminance.log`, alongside the existing
   /// [BURST_LUMINANCE] debugPrint — logging only, never read back by the
   /// app itself. Best-effort: a write failure must not break capture.
-  Future<void> _appendBurstLuminanceLogLine(List<double?> luminances) async {
+  ///
+  /// [source] identifies which capture path produced these frames --
+  /// "liveCamera" for `_captureFromLiveCamera`, "aiSkinAnalysis" for
+  /// `_captureAiSkinAnalysisFrames`. The two paths capture under different
+  /// conditions (single vs. multi-frame flows) and are separate measurement
+  /// series sharing one log file; every line must carry this tag so the two
+  /// series can be told apart when reading the file back later. There is no
+  /// default — every call site must pass one explicitly.
+  Future<void> _appendBurstLuminanceLogLine(
+    List<double?> luminances, {
+    required String source,
+  }) async {
     if (kIsWeb) return;
     try {
       final docsDir = await getApplicationDocumentsDirectory();
@@ -2695,7 +2706,9 @@ class _CameraScreenState extends State<CameraScreen>
       final timestamp = DateTime.now().toIso8601String();
       final lines = StringBuffer();
       for (var i = 0; i < luminances.length; i++) {
-        lines.writeln('$timestamp frame=$i luminance=${luminances[i]}');
+        lines.writeln(
+          '$timestamp source=$source frame=$i luminance=${luminances[i]}',
+        );
       }
       await logFile.writeAsString(
         lines.toString(),
@@ -4254,8 +4267,8 @@ class _CameraScreenState extends State<CameraScreen>
         }
         burstLuminances.add(meanLuminanceFromImageBytes(bytes));
       }
-      debugPrint('[BURST_LUMINANCE] frames=$burstLuminances (logging only, selection unaffected)');
-      await _appendBurstLuminanceLogLine(burstLuminances);
+      debugPrint('[BURST_LUMINANCE] source=liveCamera frames=$burstLuminances (logging only, selection unaffected)');
+      await _appendBurstLuminanceLogLine(burstLuminances, source: 'liveCamera');
 
       for (final file in burstFiles) {
         if (file.path == bestFile.path) continue;
@@ -4320,6 +4333,24 @@ class _CameraScreenState extends State<CameraScreen>
         }
       }
       if (!mounted || capturedFiles.length != 3) return;
+
+      // Logging-only: per-frame mean luminance, purely for observability.
+      // Must NOT affect frame selection or anything passed to analysis --
+      // capturedFiles, their order, and every downstream use of them are
+      // untouched by this block. See _appendBurstLuminanceLogLine for why
+      // "aiSkinAnalysis" must tag every line here.
+      final burstLuminances = <double?>[];
+      for (final file in capturedFiles) {
+        final bytes = await file.readAsBytes();
+        burstLuminances.add(meanLuminanceFromImageBytes(bytes));
+      }
+      debugPrint(
+        '[BURST_LUMINANCE] source=aiSkinAnalysis frames=$burstLuminances (logging only, selection unaffected)',
+      );
+      await _appendBurstLuminanceLogLine(
+        burstLuminances,
+        source: 'aiSkinAnalysis',
+      );
 
       final firstBytes = await capturedFiles.first.readAsBytes();
       if (!mounted) return;
