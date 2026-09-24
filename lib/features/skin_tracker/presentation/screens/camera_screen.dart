@@ -4432,17 +4432,18 @@ class _CameraScreenState extends State<CameraScreen>
       final firstBytes = await capturedFiles.first.readAsBytes();
       if (!mounted) return;
 
-      // Preset the crop dialog's initial square around the detected face,
-      // so a normal arm's-length selfie doesn't default to a full-width
-      // square that undershoots the backend's face-fill floor. Detection
-      // runs on the SAME decoded (already upright) pixels the crop is cut
-      // from -- see detectPrimaryFaceBoxOnDecodedImage's doc comment for
-      // why the raw JPEG bytes are never used directly for this. Falls
-      // back to the dialog's existing full-width default (initialRegion:
-      // null) whenever the still fails to decode or no face is found --
-      // never blocks or alters capture, and never touches frame
-      // selection/anything sent to analysis.
-      NormalizedSquareCrop? initialRegion;
+      // Auto-crop around the detected face when possible, so a normal
+      // arm's-length selfie doesn't default to a full-width square that
+      // undershoots the backend's face-fill floor -- and skips the manual
+      // crop dialog entirely in that case. Detection runs on the SAME
+      // decoded (already upright) pixels the crop is cut from -- see
+      // detectPrimaryFaceBoxOnDecodedImage's doc comment for why the raw
+      // JPEG bytes are never used directly for this. Falls back to
+      // showing ImageCropDialog with its existing full-width default
+      // whenever the still fails to decode or no face is found -- never
+      // blocks or alters capture, and never touches frame selection/
+      // anything sent to analysis.
+      NormalizedSquareCrop? autoRegion;
       try {
         final decodedFirst = img.decodeImage(firstBytes);
         if (decodedFirst != null) {
@@ -4450,7 +4451,7 @@ class _CameraScreenState extends State<CameraScreen>
             decodedFirst,
           );
           if (faceBox != null) {
-            initialRegion = faceCenteredInitialCropSquare(
+            autoRegion = faceCenteredInitialCropSquare(
               faceLeft: faceBox.left,
               faceTop: faceBox.top,
               faceWidth: faceBox.width,
@@ -4465,16 +4466,22 @@ class _CameraScreenState extends State<CameraScreen>
       }
       if (!mounted) return;
 
-      ImageCropSelection? cropSelection;
-      final firstCropped = await showDialog<Uint8List>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => ImageCropDialog(
-          imageBytes: firstBytes,
-          initialRegion: initialRegion,
-          onCropSelected: (selection) => cropSelection = selection,
-        ),
+      final resolvedCrop = resolveAiScanFrame1Crop(
+        firstBytes: firstBytes,
+        autoRegion: autoRegion,
       );
+      ImageCropSelection? cropSelection = resolvedCrop.selection;
+      Uint8List? firstCropped = resolvedCrop.selection?.bytes;
+      if (resolvedCrop.showDialog) {
+        firstCropped = await showDialog<Uint8List>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => ImageCropDialog(
+            imageBytes: firstBytes,
+            onCropSelected: (selection) => cropSelection = selection,
+          ),
+        );
+      }
       if (!mounted || firstCropped == null || cropSelection == null) return;
 
       final croppedFrames = <Uint8List>[firstCropped];

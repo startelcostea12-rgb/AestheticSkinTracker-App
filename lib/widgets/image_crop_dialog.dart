@@ -23,6 +23,43 @@ class ImageCropSelection {
   final NormalizedSquareCrop region;
 }
 
+/// Result of [resolveAiScanFrame1Crop]: either a completed automatic crop
+/// ([selection] non-null, [showDialog] false), or an instruction to fall
+/// back to showing [ImageCropDialog] for manual selection ([showDialog]
+/// true, [selection] null -- the dialog's own `onCropSelected` callback
+/// supplies the real selection once the user finishes).
+class AiScanFrame1CropResult {
+  const AiScanFrame1CropResult({required this.showDialog, this.selection});
+
+  final bool showDialog;
+  final ImageCropSelection? selection;
+}
+
+/// Decides how frame 1 of an aiSkinAnalysis burst gets its crop: when a
+/// face was detected on the still ([autoRegion] non-null, computed by
+/// [faceCenteredInitialCropSquare]), the crop is applied automatically
+/// right here and the manual dialog is skipped entirely. Otherwise the
+/// caller must show [ImageCropDialog] so the user can pick a square by
+/// hand, exactly as before face detection existed.
+///
+/// Pulled out of `_captureAiSkinAnalysisFrames` as a pure function (no
+/// BuildContext, no async gap) so this decision -- and the crop it
+/// produces -- are directly unit-testable without a camera, ML Kit, or
+/// widget pumping.
+AiScanFrame1CropResult resolveAiScanFrame1Crop({
+  required Uint8List firstBytes,
+  required NormalizedSquareCrop? autoRegion,
+}) {
+  if (autoRegion == null) {
+    return const AiScanFrame1CropResult(showDialog: true);
+  }
+  final autoCropped = applyNormalizedSquareCrop(firstBytes, autoRegion);
+  return AiScanFrame1CropResult(
+    showDialog: false,
+    selection: ImageCropSelection(bytes: autoCropped, region: autoRegion),
+  );
+}
+
 Uint8List applyNormalizedSquareCrop(
   Uint8List imageBytes,
   NormalizedSquareCrop region,
