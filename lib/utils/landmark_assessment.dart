@@ -1,5 +1,6 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/services.dart';
+import 'package:image/image.dart' as img;
 
 import 'landmark_assessment_stub.dart'
     if (dart.library.io) 'landmark_assessment_mlkit.dart'
@@ -103,6 +104,15 @@ Future<LandmarkAssessment> analyzeCapturedLandmarks({
 
 Future<void> closeLandmarkAnalyzers() {
   return impl.closeLandmarkAnalyzers();
+}
+
+/// Detects the primary face's bounding box on an already-decoded still
+/// image's pixels -- see the mlkit implementation's doc comment for why
+/// it must be the decoded pixels, not the raw file bytes. Returns null on
+/// web/desktop, on any detection error, or when no face is found.
+Future<({double left, double top, double width, double height})?>
+detectPrimaryFaceBoxOnDecodedImage(img.Image decoded) {
+  return impl.detectPrimaryFaceBoxOnDecodedImage(decoded);
 }
 
 // ── Debug-only pipeline outcome counters (kDebugMode) ───────────────────

@@ -4431,12 +4431,47 @@ class _CameraScreenState extends State<CameraScreen>
 
       final firstBytes = await capturedFiles.first.readAsBytes();
       if (!mounted) return;
+
+      // Preset the crop dialog's initial square around the detected face,
+      // so a normal arm's-length selfie doesn't default to a full-width
+      // square that undershoots the backend's face-fill floor. Detection
+      // runs on the SAME decoded (already upright) pixels the crop is cut
+      // from -- see detectPrimaryFaceBoxOnDecodedImage's doc comment for
+      // why the raw JPEG bytes are never used directly for this. Falls
+      // back to the dialog's existing full-width default (initialRegion:
+      // null) whenever the still fails to decode or no face is found --
+      // never blocks or alters capture, and never touches frame
+      // selection/anything sent to analysis.
+      NormalizedSquareCrop? initialRegion;
+      try {
+        final decodedFirst = img.decodeImage(firstBytes);
+        if (decodedFirst != null) {
+          final faceBox = await detectPrimaryFaceBoxOnDecodedImage(
+            decodedFirst,
+          );
+          if (faceBox != null) {
+            initialRegion = faceCenteredInitialCropSquare(
+              faceLeft: faceBox.left,
+              faceTop: faceBox.top,
+              faceWidth: faceBox.width,
+              faceHeight: faceBox.height,
+              stillWidth: decodedFirst.width.toDouble(),
+              stillHeight: decodedFirst.height.toDouble(),
+            );
+          }
+        }
+      } catch (e) {
+        debugPrint('[AiScanCropPreset] face-centered crop preset failed: $e');
+      }
+      if (!mounted) return;
+
       ImageCropSelection? cropSelection;
       final firstCropped = await showDialog<Uint8List>(
         context: context,
         barrierDismissible: false,
         builder: (_) => ImageCropDialog(
           imageBytes: firstBytes,
+          initialRegion: initialRegion,
           onCropSelected: (selection) => cropSelection = selection,
         ),
       );

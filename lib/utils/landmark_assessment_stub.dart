@@ -1,5 +1,6 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/services.dart';
+import 'package:image/image.dart' as img;
 
 import 'landmark_assessment.dart';
 
@@ -21,6 +22,11 @@ Future<LandmarkAssessment> analyzeCapturedLandmarks({
   required String poseTemplate,
 }) async {
   return LandmarkAssessment.unsupported;
+}
+
+Future<({double left, double top, double width, double height})?>
+detectPrimaryFaceBoxOnDecodedImage(img.Image decoded) async {
+  return null;
 }
 
 Future<void> closeLandmarkAnalyzers() async {}

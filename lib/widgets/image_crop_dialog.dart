@@ -53,6 +53,92 @@ Uint8List applyNormalizedSquareCrop(
   return Uint8List.fromList(img.encodeJpg(cropped, quality: 92));
 }
 
+/// Computes the AI Skin Analysis crop dialog's initial square, centered on
+/// a detected face box, with side = max(faceWidth, faceHeight) / 0.75 so
+/// the larger face dimension fills 75% of the square (neither dimension
+/// sticks out) -- then clamped to fit entirely inside the still: side
+/// capped at the still's shorter side, and position shifted (never
+/// shrunk further) to stay in bounds. Pure and platform-independent --
+/// takes plain pixel numbers, no image decoding or ML Kit -- so the
+/// placement math is unit-testable on its own.
+///
+/// [faceLeft]/[faceTop]/[faceWidth]/[faceHeight] must be in the same
+/// pixel space as [stillWidth]/[stillHeight] -- the decoded still's own
+/// upright pixels, the same ones the crop is cut from.
+NormalizedSquareCrop faceCenteredInitialCropSquare({
+  required double faceLeft,
+  required double faceTop,
+  required double faceWidth,
+  required double faceHeight,
+  required double stillWidth,
+  required double stillHeight,
+}) {
+  final rawSide = math.max(faceWidth, faceHeight) / 0.75;
+  final shorterStillSide = math.min(stillWidth, stillHeight);
+  final side = math.min(rawSide, shorterStillSide);
+
+  final faceCenterX = faceLeft + (faceWidth / 2);
+  final faceCenterY = faceTop + (faceHeight / 2);
+  final left = (faceCenterX - (side / 2)).clamp(0.0, stillWidth - side);
+  final top = (faceCenterY - (side / 2)).clamp(0.0, stillHeight - side);
+
+  return NormalizedSquareCrop(
+    left: left / stillWidth,
+    top: top / stillHeight,
+    size: side / shorterStillSide,
+  );
+}
+
+/// Computes _ImageCropDialogState's initial crop rectangle in the
+/// dialog's own display/container coordinates. Pulled out as a pure
+/// function purely so both branches -- the "no initial region" default
+/// (centered square, 78% of the smaller container dimension) and the
+/// "initial region supplied" conversion from normalized native-image
+/// space into display space -- are unit-testable without pumping the
+/// widget.
+({double left, double top, double size}) initialCropDisplayRect({
+  required double containerWidth,
+  required double containerHeight,
+  required double imageWidth,
+  required double imageHeight,
+  NormalizedSquareCrop? initialRegion,
+}) {
+  if (initialRegion == null) {
+    final size = math.min(containerWidth, containerHeight) * 0.78;
+    return (
+      left: (containerWidth - size) / 2,
+      top: (containerHeight - size) / 2,
+      size: size,
+    );
+  }
+
+  final scale = math.min(
+    containerWidth / imageWidth,
+    containerHeight / imageHeight,
+  );
+  final displayW = imageWidth * scale;
+  final displayH = imageHeight * scale;
+  final offsetX = (containerWidth - displayW) / 2;
+  final offsetY = (containerHeight - displayH) / 2;
+
+  final sourceSize = math.min(imageWidth, imageHeight);
+  final nativeSize = (initialRegion.size * sourceSize).clamp(1.0, sourceSize);
+  final nativeLeft = (initialRegion.left * imageWidth).clamp(
+    0.0,
+    imageWidth - nativeSize,
+  );
+  final nativeTop = (initialRegion.top * imageHeight).clamp(
+    0.0,
+    imageHeight - nativeSize,
+  );
+
+  return (
+    left: offsetX + (nativeLeft * scale),
+    top: offsetY + (nativeTop * scale),
+    size: nativeSize * scale,
+  );
+}
+
 /// Pure-Flutter manual crop dialog (web + mobile + desktop).
 ///
 /// Replaces `image_cropper`, which is incompatible with Flutter 3.24+ on web.
@@ -62,10 +148,18 @@ class ImageCropDialog extends StatefulWidget {
   final Uint8List imageBytes;
   final ValueChanged<ImageCropSelection>? onCropSelected;
 
+  /// Optional preset for the initial crop square, in normalized
+  /// native-image space (same semantics as [ImageCropSelection.region]).
+  /// When null, the dialog falls back to its long-standing default: a
+  /// square 78% of the smaller container dimension, centered. The user
+  /// can still freely move (but not resize) the box afterward either way.
+  final NormalizedSquareCrop? initialRegion;
+
   const ImageCropDialog({
     super.key,
     required this.imageBytes,
     this.onCropSelected,
+    this.initialRegion,
   });
 
   @override
@@ -90,9 +184,18 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
   void _initCropRect(double w, double h) {
     _containerW = w;
     _containerH = h;
-    _cropSize = math.min(w, h) * 0.78;
-    _cropLeft = (w - _cropSize) / 2;
-    _cropTop = (h - _cropSize) / 2;
+    final src = _srcImage;
+    final rect = initialCropDisplayRect(
+      containerWidth: w,
+      containerHeight: h,
+      imageWidth: src?.width.toDouble() ?? w,
+      imageHeight: src?.height.toDouble() ?? h,
+      initialRegion: src == null ? null : widget.initialRegion,
+    );
+    _cropLeft = rect.left;
+    _cropTop = rect.top;
+    _cropSize = rect.size;
+    _clamp();
   }
 
   void _clamp() {

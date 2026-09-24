@@ -2,7 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
@@ -162,6 +162,62 @@ Future<LandmarkAssessment> analyzeCapturedLandmarks({
   return isBody
       ? _assessBody(inputImage, poseTemplate, useSingle: true)
       : _assessFace(inputImage, poseTemplate, useSingle: true);
+}
+
+/// Detects the primary (largest) face's bounding box directly on an
+/// already-decoded still image's pixels -- the exact same pixels, already
+/// EXIF-rotated to their final upright orientation, that the AI Skin
+/// Analysis crop dialog cuts its square from (see `img.decodeImage` in
+/// image_crop_dialog.dart). Uses the same [_singleFaceDetector] instance
+/// [analyzeCapturedLandmarks] uses for a captured still, fed via
+/// `InputImage.fromBitmap` on the decoded RGBA pixels at rotation 0 --
+/// never `InputImage.fromFilePath`/`fromBytes` on the raw JPEG, which
+/// would hand ML Kit whatever orientation the file's own EXIF/decoder
+/// produces and could silently disagree with the orientation the crop is
+/// actually cut from.
+///
+/// Returns null on web/desktop, on any detection error, or when no face
+/// is found -- callers should keep their own existing fallback in that
+/// case.
+Future<({double left, double top, double width, double height})?>
+detectPrimaryFaceBoxOnDecodedImage(img.Image decoded) async {
+  if (!Platform.isAndroid && !Platform.isIOS) return null;
+  try {
+    final rgbaBytes = Uint8List(decoded.width * decoded.height * 4);
+    var offset = 0;
+    for (var y = 0; y < decoded.height; y++) {
+      for (var x = 0; x < decoded.width; x++) {
+        final pixel = decoded.getPixel(x, y);
+        rgbaBytes[offset++] = pixel.r.toInt();
+        rgbaBytes[offset++] = pixel.g.toInt();
+        rgbaBytes[offset++] = pixel.b.toInt();
+        rgbaBytes[offset++] = pixel.a.toInt();
+      }
+    }
+    final inputImage = InputImage.fromBitmap(
+      bitmap: rgbaBytes,
+      width: decoded.width,
+      height: decoded.height,
+    );
+    final faces = await _singleFaceDetector.processImage(inputImage);
+    if (faces.isEmpty) return null;
+
+    faces.sort((a, b) {
+      final aArea = a.boundingBox.width * a.boundingBox.height;
+      final bArea = b.boundingBox.width * b.boundingBox.height;
+      return bArea.compareTo(aArea);
+    });
+    final box = faces.first.boundingBox;
+    return (
+      left: box.left.toDouble(),
+      top: box.top.toDouble(),
+      width: box.width.toDouble(),
+      height: box.height.toDouble(),
+    );
+  } catch (e) {
+    debugPrint('[AiScanCropPreset] face detection on captured still failed: $e');
+    return null;
+  }
 }
 
 Future<void> closeLandmarkAnalyzers() async {
