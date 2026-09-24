@@ -5646,6 +5646,25 @@ class _CameraScreenState extends State<CameraScreen>
 
     String fmt(double? v, {String unit = '', int decimals = 2}) =>
         v == null ? 'null' : '${v.toStringAsFixed(decimals)}$unit';
+    String passFail(bool pass) => pass ? 'PASS' : 'FAIL';
+
+    // Per-check pass/fail against the exact thresholds _isCaptureFramingReady
+    // (via _isLiveFacePresentAndCentered / _isAlignmentInRange /
+    // alignmentQualityStatus) actually uses -- display-only mirrors of
+    // those literal numbers, computed here purely for this readout. Never
+    // read back by any gating/threshold logic, only shown to the user.
+    const presenceCenterDeltaMax = 0.35;
+    const alignmentCenterDeltaMax = 0.25;
+    const alignmentTiltMaxDeg = 30.0;
+    final faceFillFloorScaled = _targetFaceFillFloor * 0.82;
+    final fill = a.faceFillRatio;
+    final tiltForGate = smoothedTilt ?? 999.0;
+    // alignmentQualityStatus's own red/yellow cutoffs (camera_screen.dart) —
+    // body mode uses a much smaller shoulder-line-angle threshold (15°/8°)
+    // than face mode's aggregate yaw+pitch+roll sum (40°/30°), since a
+    // single-plane angle is naturally much smaller than a 3-angle sum.
+    final headAngleRedThreshold = _isBodyGuide ? 15.0 : 40.0;
+    final headAngleYellowThreshold = _isBodyGuide ? 8.0 : 30.0;
 
     final lines = <String>[
       'DEBUG: capture framing (kDebugMode only)',
@@ -5659,8 +5678,25 @@ class _CameraScreenState extends State<CameraScreen>
           '${fmt(smoothedTilt, unit: '°', decimals: 1)}'
           ' (avg over last ${_landmarkHistory.length}/$_landmarkSmoothingWindow samples)',
       'centerDelta: ${centerDelta.toStringAsFixed(3)}',
-      'face-fill: ${a.faceFillRatio.toStringAsFixed(3)}'
+      'face-fill: ${fill.toStringAsFixed(3)}'
           ' (floor=${_targetFaceFillFloor.toStringAsFixed(3)})',
+      '— per-check pass/fail —',
+      'presence: centerDelta ${centerDelta.toStringAsFixed(3)} '
+          '≤ $presenceCenterDeltaMax '
+          '[${passFail(centerDelta <= presenceCenterDeltaMax)}]',
+      'presence: faceFill ${fill.toStringAsFixed(3)} '
+          '≥ floor×0.82 (${faceFillFloorScaled.toStringAsFixed(3)}) '
+          '[${passFail(!(fill > 0 && fill < faceFillFloorScaled))}]',
+      'alignment: centerDelta ${centerDelta.toStringAsFixed(3)} '
+          '≤ $alignmentCenterDeltaMax '
+          '[${passFail(centerDelta <= alignmentCenterDeltaMax)}]',
+      'alignment: tilt ${fmt(smoothedTilt, unit: '°', decimals: 1)} '
+          '≤ $alignmentTiltMaxDeg° '
+          '[${passFail(tiltForGate <= alignmentTiltMaxDeg)}]',
+      'headAngle: ${report.headAngle.state.name} (need green; '
+          'red>${headAngleRedThreshold.toStringAsFixed(1)}° '
+          'yellow>${headAngleYellowThreshold.toStringAsFixed(1)}°) '
+          '[${passFail(report.headAngle.state == QualityState.green)}]',
       'gate: ${_debugFramingFailureReason(report)}',
       // Added to investigate the iOS "never gets landmarks" report: what
       // CameraImage is actually arriving vs. what analyzeLiveLandmarks
