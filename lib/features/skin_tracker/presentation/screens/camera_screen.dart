@@ -111,6 +111,34 @@ bool isLightingTooDark({
   return wholeFrameMean < darkMeanFloor || wholeFrameDarkRatio > darkRatioCeil;
 }
 
+/// Pure decision of whether the current frame counts as "harsh
+/// backlighting" for the LIGHTING chip. Same principle as
+/// [isLightingTooDark] (commit 67609bd): once a face ROI sample exists,
+/// backlighting is judged by comparing the face against its surroundings
+/// -- here, [wholeFrameMean] as the simplest available "surroundings"
+/// signal -- not by [wholeFrameEdgeDelta] (the whole-frame quadrant
+/// left/right-top/bottom asymmetry) alone, which a well-lit face over a
+/// dim or unevenly-lit background can trip even when nothing is actually
+/// backlighting the subject. [backlightDeltaCeil] is reused unchanged for
+/// both branches -- no new threshold value is introduced.
+///
+/// The face-relative comparison is deliberately signed, not absolute: real
+/// backlighting means the surroundings are brighter than the face
+/// ([wholeFrameMean] pulled up past the face's own level), so a face
+/// brighter than its surroundings (a bright light on the face over a dim
+/// background) must never register as backlit.
+bool isBacklit({
+  required double faceRoiLuma,
+  required double wholeFrameMean,
+  required double wholeFrameEdgeDelta,
+  required double backlightDeltaCeil,
+}) {
+  if (faceRoiLuma > 0) {
+    return (wholeFrameMean - faceRoiLuma) > backlightDeltaCeil;
+  }
+  return wholeFrameEdgeDelta > backlightDeltaCeil;
+}
+
 /// Pure computation of _estimateFaceRoiLumaFromStream's lighting-sampling
 /// ROI rectangle, in RAW CameraImage pixel space -- pulled out purely so
 /// the ROI's placement (not the byte-sampling loop, which needs a real
@@ -5333,7 +5361,12 @@ class _CameraScreenState extends State<CameraScreen>
         detail: 'Dim light — try a brighter angle or softer front light',
       );
     } else if (_lightingGuidance.level == LightingLevel.tooHarsh ||
-        _liveBacklightDelta > _backlightDeltaCeil) {
+        isBacklit(
+          faceRoiLuma: _liveFaceRoiLuma,
+          wholeFrameMean: _liveMeanBrightness,
+          wholeFrameEdgeDelta: _liveBacklightDelta,
+          backlightDeltaCeil: _backlightDeltaCeil,
+        )) {
       lighting = const QualitySignal(
         label: 'Lighting',
         state: QualityState.yellow,
@@ -6022,6 +6055,27 @@ class _CameraScreenState extends State<CameraScreen>
           'width×bpp=${_debugPlaneWidthTimesBpp?.toString() ?? '—'}'
           ' (row padding present: '
           '${_debugPlaneBytesPerRow != null && _debugPlaneWidthTimesBpp != null ? (_debugPlaneBytesPerRow! > _debugPlaneWidthTimesBpp! ? 'y' : 'n') : '—'})',
+      // LIGHTING chip's "Harsh backlighting detected" rule (see isBacklit)
+      // -- a face sample compares the face against the whole-frame mean
+      // (mean−roiLuma, signed: only a brighter SURROUNDING counts as
+      // backlit); with no face sample it falls back to the whole-frame
+      // quadrant edgeDelta, unchanged from before.
+      'backlight: faceRoiLuma=${_liveFaceRoiLuma.toStringAsFixed(1)} '
+          'wholeFrameMean=${_liveMeanBrightness.toStringAsFixed(1)} '
+          'faceVsFrame(mean−roi)=${(_liveMeanBrightness - _liveFaceRoiLuma).toStringAsFixed(1)} '
+          'edgeDelta(whole-frame)=${_liveBacklightDelta.toStringAsFixed(1)} '
+          '(ceil=${_backlightDeltaCeil.toStringAsFixed(1)})',
+      'backlight verdict: '
+          '${isBacklit(faceRoiLuma: _liveFaceRoiLuma, wholeFrameMean: _liveMeanBrightness, wholeFrameEdgeDelta: _liveBacklightDelta, backlightDeltaCeil: _backlightDeltaCeil) ? 'BACKLIT' : 'ok'} '
+          '(rule: ${_liveFaceRoiLuma > 0 ? 'face-relative' : 'whole-frame edgeDelta'})',
+      // SCALE chip's "too close"/"too far" rule -- fill is the same
+      // converted faceFillRatio shown in the face-fill line above.
+      'scale: fill=${_liveFaceFillRatio.toStringAsFixed(3)} '
+          '(floor=${_targetFaceFillFloor.toStringAsFixed(3)} '
+          'ceil=${_targetFaceFillCeil.toStringAsFixed(3)}) '
+          '${_liveFaceFillRatio > _targetFaceFillCeil
+              ? 'TOO CLOSE'
+              : (_liveFaceFillRatio < _targetFaceFillFloor ? 'TOO FAR' : 'ok')}',
     ];
 
     return Positioned(
