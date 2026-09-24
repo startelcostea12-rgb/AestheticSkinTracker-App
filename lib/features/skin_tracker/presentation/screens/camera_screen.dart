@@ -576,6 +576,16 @@ class _CameraScreenState extends State<CameraScreen>
   int? _debugFaceRoiRight;
   int? _debugFaceRoiBottom;
 
+  // Most recent whole-frame lighting-summary darkRatio (_summarizeCameraImage)
+  // and Y/BGRA-plane row-stride info, purely observational for
+  // _buildDebugFramingOverlay -- see _lightingFromCameraImage for how
+  // darkRatio can independently drive the "Too dark" verdict even when the
+  // face-only ROI (_liveFaceRoiLuma) is bright. Left null outside
+  // kDebugMode.
+  double? _debugLiveDarkRatio;
+  int? _debugPlaneBytesPerRow;
+  int? _debugPlaneWidthTimesBpp;
+
   /// Result of the pre-scan makeup disclosure dialog. `null` until the user
   /// answers. Once the user has chosen, the scan flow proceeds and this flag
   /// is propagated onto every [ScanHistoryEntry] saved from this session.
@@ -1250,6 +1260,15 @@ class _CameraScreenState extends State<CameraScreen>
           if (shouldRefreshLighting || shouldRefreshSharpness) {
             final summary = _summarizeCameraImage(image);
             final faceRoiLuma = _estimateFaceRoiLumaFromStream(image);
+            if (kDebugMode) {
+              _debugLiveDarkRatio = summary.darkRatio;
+              final debugPlane = image.planes.firstOrNull;
+              if (debugPlane != null) {
+                _debugPlaneBytesPerRow = debugPlane.bytesPerRow;
+                _debugPlaneWidthTimesBpp =
+                    image.width * _primaryPlaneBytesPerPixel(image, debugPlane);
+              }
+            }
             final guidance = shouldRefreshLighting
                 ? _lightingFromCameraImage(image, faceRoiLuma: faceRoiLuma)
                 : _lightingGuidance;
@@ -1388,6 +1407,29 @@ class _CameraScreenState extends State<CameraScreen>
       instruction:
           'Lighting is optimal. Keep this exact setup for reliable comparison.',
     );
+  }
+
+  /// Debug-only (see [_buildDebugFramingOverlay]): names exactly which of
+  /// [_lightingFromCameraImage]'s tooDark conditions is the one currently
+  /// true, using the same fields/thresholds that function itself compares
+  /// -- so this can never disagree with the real verdict. Pure read-only
+  /// formatting, not gating logic.
+  String _debugLightingTooDarkTrigger() {
+    final thresholds = _lightingThresholds;
+    if (_liveFaceRoiLuma > 0 && _liveFaceRoiLuma < thresholds.darkMeanFloor) {
+      return 'faceRoiLuma ${_liveFaceRoiLuma.toStringAsFixed(1)} < floor '
+          '${thresholds.darkMeanFloor.toStringAsFixed(0)}';
+    }
+    if (_liveMeanBrightness < thresholds.darkMeanFloor) {
+      return 'wholeFrameMean ${_liveMeanBrightness.toStringAsFixed(1)} < floor '
+          '${thresholds.darkMeanFloor.toStringAsFixed(0)}';
+    }
+    final darkRatio = _debugLiveDarkRatio;
+    if (darkRatio != null && darkRatio > thresholds.darkRatioCeil) {
+      return 'darkRatio ${darkRatio.toStringAsFixed(3)} > ceil '
+          '${thresholds.darkRatioCeil.toStringAsFixed(2)}';
+    }
+    return 'none — not tooDark';
   }
 
   Future<void> _playSuccessBurst() async {
@@ -5932,6 +5974,24 @@ class _CameraScreenState extends State<CameraScreen>
           'top=${_debugFaceRoiTop?.toString() ?? '—'} '
           'right=${_debugFaceRoiRight?.toString() ?? '—'} '
           'bottom=${_debugFaceRoiBottom?.toString() ?? '—'}',
+      // Added to investigate the "Dim light" warning firing with a bright
+      // face: _lightingFromCameraImage (this file) can flag tooDark from
+      // EITHER the face-only ROI luma OR the whole-frame summary.mean/
+      // darkRatio -- a bright face over a dark background clears the ROI
+      // check but can still fail the whole-frame one. This re-derives
+      // (read-only) which branch actually fired, using the same
+      // darkMeanFloor/darkRatioCeil the real check compares against.
+      'lighting: roiLuma=${_liveFaceRoiLuma.toStringAsFixed(1)} '
+          'wholeFrameMean=${_liveMeanBrightness.toStringAsFixed(1)} '
+          'darkRatio=${fmt(_debugLiveDarkRatio, decimals: 3)} '
+          '(floor=${_lightingThresholds.darkMeanFloor.toStringAsFixed(0)} '
+          'darkRatioCeil=${_lightingThresholds.darkRatioCeil.toStringAsFixed(2)})',
+      'lighting verdict: ${_lightingGuidance.level.name} '
+          '(triggered by: ${_debugLightingTooDarkTrigger()})',
+      'Y/BGRA plane: bytesPerRow=${_debugPlaneBytesPerRow?.toString() ?? '—'} '
+          'width×bpp=${_debugPlaneWidthTimesBpp?.toString() ?? '—'}'
+          ' (row padding present: '
+          '${_debugPlaneBytesPerRow != null && _debugPlaneWidthTimesBpp != null ? (_debugPlaneBytesPerRow! > _debugPlaneWidthTimesBpp! ? 'y' : 'n') : '—'})',
     ];
 
     return Positioned(
