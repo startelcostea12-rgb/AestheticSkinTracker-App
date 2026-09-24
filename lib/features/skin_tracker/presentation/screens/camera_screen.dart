@@ -2744,7 +2744,13 @@ class _CameraScreenState extends State<CameraScreen>
   /// unreadable. [brightnessValue] is the EXIF APEX BrightnessValue tag, a
   /// separate field from this file's luminance= that must never be merged
   /// or compared against it in code.
-  String _burstExposureExifFields(Uint8List bytes) {
+  ///
+  /// Also returns the still's decoded pixel width/height (null if the
+  /// bytes didn't decode) -- reusing this function's own existing decode
+  /// rather than adding a second one, purely so the burst log can record
+  /// still_w/still_h alongside the EXIF fields.
+  ({String fields, int? stillWidth, int? stillHeight})
+  _burstFrameExifAndStillSize(Uint8List bytes) {
     img.Image? decoded;
     try {
       decoded = img.decodeImage(bytes);
@@ -2782,8 +2788,13 @@ class _CameraScreenState extends State<CameraScreen>
     final iso = readTag(0x8827);
     final exposureBias = readTag(0x9204);
     final brightnessValue = readTag(0x9203);
-    return 'exposure_time=$exposureTime iso=$iso '
-        'exposure_bias=$exposureBias brightness_value=$brightnessValue';
+    return (
+      fields:
+          'exposure_time=$exposureTime iso=$iso '
+          'exposure_bias=$exposureBias brightness_value=$brightnessValue',
+      stillWidth: decoded?.width,
+      stillHeight: decoded?.height,
+    );
   }
 
   // ── Deep Analysis flow (Premium gated + disclaimer + backend) ────────────
@@ -4407,19 +4418,16 @@ class _CameraScreenState extends State<CameraScreen>
       // "aiSkinAnalysis" must tag every line here.
       final burstLuminances = <double?>[];
       final burstExifFields = <String>[];
+      final burstStillWidths = <int?>[];
+      final burstStillHeights = <int?>[];
       for (final file in capturedFiles) {
         final bytes = await file.readAsBytes();
         burstLuminances.add(meanLuminanceFromImageBytes(bytes));
-        burstExifFields.add(_burstExposureExifFields(bytes));
+        final exifAndSize = _burstFrameExifAndStillSize(bytes);
+        burstExifFields.add(exifAndSize.fields);
+        burstStillWidths.add(exifAndSize.stillWidth);
+        burstStillHeights.add(exifAndSize.stillHeight);
       }
-      debugPrint(
-        '[BURST_LUMINANCE] source=aiSkinAnalysis frames=$burstLuminances (logging only, selection unaffected)',
-      );
-      await _appendBurstLuminanceLogLine(
-        burstLuminances,
-        source: 'aiSkinAnalysis',
-        extraFields: burstExifFields,
-      );
 
       final firstBytes = await capturedFiles.first.readAsBytes();
       if (!mounted) return;
@@ -4443,6 +4451,55 @@ class _CameraScreenState extends State<CameraScreen>
           ),
         );
       }
+
+      // Logging-only: per-frame still/crop/upload pixel sizes, appended
+      // after the existing exposure-EXIF fields on the same aiSkinAnalysis
+      // burst log lines -- written here (once the crop is known) rather
+      // than right after capture, since crop_px/upload_w/upload_h don't
+      // exist until the crop dialog completes. crop_px/crop_clamped mirror
+      // applyNormalizedSquareCrop's own sourceSize/clamp formula (the exact
+      // function frames 2-3 are cropped through) against each frame's own
+      // still_w/still_h and the region actually selected in the crop
+      // dialog; for frame 1 this reconstructs, rather than replays,
+      // _doCrop's own internal clamp (which additionally bounds against
+      // the crop box's on-screen position, not just the still's shorter
+      // side), so it can disagree with _doCrop's own clamp only in the
+      // rare case where the user drags the crop box hard against an edge.
+      // upload_w/upload_h are not decoded separately -- croppedFrames are
+      // always an unresized square crop of exactly crop_px pixels per side
+      // (see _doCrop / applyNormalizedSquareCrop), and nothing resizes
+      // them before upload, so upload_w = upload_h = crop_px by
+      // construction. Must NOT affect frame selection or anything passed
+      // to analysis -- capturedFiles, croppedFrames, their order, and
+      // every downstream use of them are untouched by this block.
+      final burstSizeFields = <String>[];
+      for (var i = 0; i < capturedFiles.length; i++) {
+        final stillW = burstStillWidths[i];
+        final stillH = burstStillHeights[i];
+        String sizeFields;
+        if (stillW == null || stillH == null) {
+          sizeFields =
+              'still_w=null still_h=null crop_px=null crop_clamped=null '
+              'upload_w=null upload_h=null';
+        } else {
+          final sourceSize = math.min(stillW, stillH);
+          final rawCropPx = (cropSelection!.region.size * sourceSize).round();
+          final cropPx = rawCropPx.clamp(1, sourceSize);
+          final cropClamped = cropPx != rawCropPx;
+          sizeFields =
+              'still_w=$stillW still_h=$stillH crop_px=$cropPx '
+              'crop_clamped=$cropClamped upload_w=$cropPx upload_h=$cropPx';
+        }
+        burstSizeFields.add('${burstExifFields[i]} $sizeFields');
+      }
+      debugPrint(
+        '[BURST_LUMINANCE] source=aiSkinAnalysis frames=$burstLuminances (logging only, selection unaffected)',
+      );
+      await _appendBurstLuminanceLogLine(
+        burstLuminances,
+        source: 'aiSkinAnalysis',
+        extraFields: burstSizeFields,
+      );
 
       final primaryImagePath = await _persistScanImage(
         croppedFrames.first,
