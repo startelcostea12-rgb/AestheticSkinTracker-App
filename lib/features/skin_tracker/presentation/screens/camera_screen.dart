@@ -2693,9 +2693,15 @@ class _CameraScreenState extends State<CameraScreen>
   /// series sharing one log file; every line must carry this tag so the two
   /// series can be told apart when reading the file back later. There is no
   /// default — every call site must pass one explicitly.
+  ///
+  /// [extraFields], when given, must have one entry per frame (same order
+  /// as [luminances]) and is appended verbatim to the end of that frame's
+  /// line, after the existing fields -- used by aiSkinAnalysis to log EXIF
+  /// exposure metadata without changing liveCamera's line format at all.
   Future<void> _appendBurstLuminanceLogLine(
     List<double?> luminances, {
     required String source,
+    List<String>? extraFields,
   }) async {
     if (kIsWeb) return;
     try {
@@ -2706,8 +2712,11 @@ class _CameraScreenState extends State<CameraScreen>
       final timestamp = DateTime.now().toIso8601String();
       final lines = StringBuffer();
       for (var i = 0; i < luminances.length; i++) {
+        final extra = (extraFields != null && i < extraFields.length)
+            ? ' ${extraFields[i]}'
+            : '';
         lines.writeln(
-          '$timestamp source=$source frame=$i luminance=${luminances[i]}',
+          '$timestamp source=$source frame=$i luminance=${luminances[i]}$extra',
         );
       }
       await logFile.writeAsString(
@@ -2718,6 +2727,60 @@ class _CameraScreenState extends State<CameraScreen>
     } catch (e) {
       debugPrint('[BURST_LUMINANCE] failed to append log file: $e');
     }
+  }
+
+  /// Reads EXIF exposure metadata directly from one aiSkinAnalysis burst
+  /// frame's own JPEG bytes -- logging only, so a later burst-to-burst
+  /// comparison can tell an exposure change (auto-exposure/ISO drift)
+  /// apart from a framing change. Never used for cropping, frame
+  /// selection, or anything sent to analysis.
+  ///
+  /// Each value is logged exactly as the `image` package's EXIF reader
+  /// returns it -- a rational as e.g. "1/60", a double as that double --
+  /// never rounded or reformatted, with "null" when the tag is missing or
+  /// unreadable. [brightnessValue] is the EXIF APEX BrightnessValue tag, a
+  /// separate field from this file's luminance= that must never be merged
+  /// or compared against it in code.
+  String _burstExposureExifFields(Uint8List bytes) {
+    img.Image? decoded;
+    try {
+      decoded = img.decodeImage(bytes);
+    } catch (_) {
+      decoded = null;
+    }
+    final exif = decoded?.exif;
+    String? readTag(int tag) {
+      final value = exif?.exifIfd[tag] ?? exif?.getTag(tag);
+      if (value == null) return null;
+      switch (value.type) {
+        case img.IfdValueType.rational:
+        case img.IfdValueType.sRational:
+          // Both IfdValueRational and IfdValueSRational format their own
+          // toString() as "numerator/denominator" (e.g. "1/60" or "-1/3");
+          // toRational() is NOT used here because IfdValueSRational (unlike
+          // IfdValueRational) doesn't override it and would silently return
+          // the abstract base's Rational(0, 1) stub for every signed value
+          // (ExposureBiasValue, BrightnessValue) -- verified against the
+          // image package's own source (ifd_value.dart) for this pinned
+          // version.
+          return value.toString();
+        case img.IfdValueType.single:
+        case img.IfdValueType.double:
+          return value.toDouble().toString();
+        default:
+          return value.toInt().toString();
+      }
+    }
+
+    // 0x829A ExposureTime, 0x8827 ISOSpeedRatings/PhotographicSensitivity
+    // (same tag; readers label it differently, logged once here as iso=),
+    // 0x9204 ExposureBiasValue, 0x9203 BrightnessValue.
+    final exposureTime = readTag(0x829A);
+    final iso = readTag(0x8827);
+    final exposureBias = readTag(0x9204);
+    final brightnessValue = readTag(0x9203);
+    return 'exposure_time=$exposureTime iso=$iso '
+        'exposure_bias=$exposureBias brightness_value=$brightnessValue';
   }
 
   // ── Deep Analysis flow (Premium gated + disclaimer + backend) ────────────
@@ -4340,9 +4403,11 @@ class _CameraScreenState extends State<CameraScreen>
       // untouched by this block. See _appendBurstLuminanceLogLine for why
       // "aiSkinAnalysis" must tag every line here.
       final burstLuminances = <double?>[];
+      final burstExifFields = <String>[];
       for (final file in capturedFiles) {
         final bytes = await file.readAsBytes();
         burstLuminances.add(meanLuminanceFromImageBytes(bytes));
+        burstExifFields.add(_burstExposureExifFields(bytes));
       }
       debugPrint(
         '[BURST_LUMINANCE] source=aiSkinAnalysis frames=$burstLuminances (logging only, selection unaffected)',
@@ -4350,6 +4415,7 @@ class _CameraScreenState extends State<CameraScreen>
       await _appendBurstLuminanceLogLine(
         burstLuminances,
         source: 'aiSkinAnalysis',
+        extraFields: burstExifFields,
       );
 
       final firstBytes = await capturedFiles.first.readAsBytes();
