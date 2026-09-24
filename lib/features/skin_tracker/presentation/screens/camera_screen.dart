@@ -90,6 +90,47 @@ QualityState alignmentQualityStatus({
   return QualityState.green;
 }
 
+/// Pure computation of _estimateFaceRoiLumaFromStream's lighting-sampling
+/// ROI rectangle, in RAW CameraImage pixel space -- pulled out purely so
+/// the ROI's placement (not the byte-sampling loop, which needs a real
+/// CameraImage) is unit-testable on its own.
+///
+/// [rawCenterXNorm]/[rawCenterYNorm]/[rawFaceWidthNorm]/[rawFaceHeightNorm]
+/// must be the RAW (pre-mirror, pre-crop-conversion) face box -- the same
+/// box ML Kit returned, normalized against the same raw frame [width]/
+/// [height] -- never the visible-preview-space (mirrored/BoxFit.cover-
+/// cropped) centerOffsetX/Y or faceFillRatio, which live in a different
+/// coordinate space (the visible preview, not the raw stream buffer these
+/// pixels are actually sampled from) and would misplace and mis-scale the
+/// ROI, especially vertically, since the preview is a BoxFit.cover crop of
+/// the taller raw stream.
+///
+/// Size rule is unchanged from before this fix: fill (now the RAW face
+/// box's own area, as a fraction of the full raw frame) is clamped to
+/// [0.10, 0.40], then roiW = width*sqrt(fill)*0.90, roiH =
+/// height*sqrt(fill)*1.05, each clamped to [24, that dimension].
+({int left, int top, int right, int bottom}) faceRoiRectInRawStreamPixels({
+  required double rawCenterXNorm,
+  required double rawCenterYNorm,
+  required double rawFaceWidthNorm,
+  required double rawFaceHeightNorm,
+  required int width,
+  required int height,
+}) {
+  final centerX = (rawCenterXNorm * width).round();
+  final centerY = (rawCenterYNorm * height).round();
+  final fill = (rawFaceWidthNorm * rawFaceHeightNorm).clamp(0.10, 0.40);
+  final roiW = (width * math.sqrt(fill) * 0.90).round().clamp(24, width);
+  final roiH = (height * math.sqrt(fill) * 1.05).round().clamp(24, height);
+
+  final left = (centerX - (roiW ~/ 2)).clamp(0, width - 1);
+  final top = (centerY - (roiH ~/ 2)).clamp(0, height - 1);
+  final right = (left + roiW).clamp(left + 1, width);
+  final bottom = (top + roiH).clamp(top + 1, height);
+
+  return (left: left, top: top, right: right, bottom: bottom);
+}
+
 /// Mean luminance for one decoded burst-capture JPEG. Logging-only support
 /// for the 3-frame burst in `_captureFromLiveCamera` — see that function's
 /// comment for why this exists as a standalone top-level function instead
@@ -523,6 +564,17 @@ class _CameraScreenState extends State<CameraScreen>
   Object? _debugRawFormatCode;
   int? _debugRawPlaneCount;
   int? _debugSensorOrientation;
+
+  // Most recent lighting-ROI rectangle _estimateFaceRoiLumaFromStream
+  // sampled from, in RAW CameraImage pixel space (the same buffer the Y
+  // plane bytes are indexed against) -- purely observational, for
+  // _buildDebugFramingOverlay to show alongside the raw/converted face
+  // geometry readout. Never read by any gating/threshold logic. Left null
+  // outside kDebugMode and whenever no face ROI was sampled this frame.
+  int? _debugFaceRoiLeft;
+  int? _debugFaceRoiTop;
+  int? _debugFaceRoiRight;
+  int? _debugFaceRoiBottom;
 
   /// Result of the pre-scan makeup disclosure dialog. `null` until the user
   /// answers. Once the user has chosen, the scan flow proceeds and this flag
@@ -4875,22 +4927,50 @@ class _CameraScreenState extends State<CameraScreen>
     final assessment = _liveLandmarkAssessment;
     if (!assessment.available) return 0;
 
+    // This ROI is sampled directly from the raw CameraImage Y-plane buffer,
+    // so it must be positioned/sized using the RAW (pre-mirror, pre-crop-
+    // conversion) face box -- never centerOffsetX/Y or faceFillRatio, which
+    // are in visible-preview space (mirrored and BoxFit.cover-cropped) and
+    // would misplace/mis-scale the ROI against this buffer's own raw pixel
+    // space. See faceRoiRectInRawStreamPixels's doc comment. Returns 0 (no
+    // sample, same as !available above) whenever this raw geometry isn't
+    // present -- e.g. body mode, which has no face box at all.
+    final geometry = assessment.faceReferenceGeometry;
+    final rawCenterXNorm = geometry?['rawFaceCenterXNorm'];
+    final rawCenterYNorm = geometry?['rawFaceCenterYNorm'];
+    final rawFaceWidthNorm = geometry?['faceWidthNorm'];
+    final rawFaceHeightNorm = geometry?['faceHeightNorm'];
+    if (rawCenterXNorm == null ||
+        rawCenterYNorm == null ||
+        rawFaceWidthNorm == null ||
+        rawFaceHeightNorm == null) {
+      return 0;
+    }
+
     final bytesPerPixel = _primaryPlaneBytesPerPixel(image, yPlane);
     final width = image.width;
     final height = image.height;
     final rowStride = yPlane.bytesPerRow;
     if (width <= 4 || height <= 4 || rowStride < width * bytesPerPixel) return 0;
 
-    final centerX = ((assessment.centerOffsetX + 0.5) * width).round();
-    final centerY = ((assessment.centerOffsetY + 0.5) * height).round();
-    final fill = assessment.faceFillRatio.clamp(0.10, 0.40);
-    final roiW = (width * math.sqrt(fill) * 0.90).round().clamp(24, width);
-    final roiH = (height * math.sqrt(fill) * 1.05).round().clamp(24, height);
-
-    final left = (centerX - (roiW ~/ 2)).clamp(0, width - 1);
-    final top = (centerY - (roiH ~/ 2)).clamp(0, height - 1);
-    final right = (left + roiW).clamp(left + 1, width);
-    final bottom = (top + roiH).clamp(top + 1, height);
+    final roi = faceRoiRectInRawStreamPixels(
+      rawCenterXNorm: rawCenterXNorm,
+      rawCenterYNorm: rawCenterYNorm,
+      rawFaceWidthNorm: rawFaceWidthNorm,
+      rawFaceHeightNorm: rawFaceHeightNorm,
+      width: width,
+      height: height,
+    );
+    final left = roi.left;
+    final top = roi.top;
+    final right = roi.right;
+    final bottom = roi.bottom;
+    if (kDebugMode) {
+      _debugFaceRoiLeft = left;
+      _debugFaceRoiTop = top;
+      _debugFaceRoiRight = right;
+      _debugFaceRoiBottom = bottom;
+    }
 
     var sum = 0.0;
     var count = 0;
@@ -5844,6 +5924,14 @@ class _CameraScreenState extends State<CameraScreen>
           '${fmt(debugFaceBoxCenterYPx, decimals: 1)})'
           '  normalize w/h (px): (${fmt(debugNormalizeWidthPx, decimals: 1)}, '
           '${fmt(debugNormalizeHeightPx, decimals: 1)})',
+      // Lighting-sampling ROI, in RAW CameraImage pixel space (see
+      // faceRoiRectInRawStreamPixels) -- must land on the raw face box
+      // above, never on a visible-preview-space (mirrored/cover-cropped)
+      // position.
+      'lighting ROI (raw px): left=${_debugFaceRoiLeft?.toString() ?? '—'} '
+          'top=${_debugFaceRoiTop?.toString() ?? '—'} '
+          'right=${_debugFaceRoiRight?.toString() ?? '—'} '
+          'bottom=${_debugFaceRoiBottom?.toString() ?? '—'}',
     ];
 
     return Positioned(

@@ -639,6 +639,17 @@ Future<LandmarkAssessment> _assessFace(
       'faceAspectRatio': faceAspectRatio,
       'centerOffsetX': centerOffsetX,
       'centerOffsetY': centerOffsetY,
+      // Raw (pre-mirror, pre-crop-conversion) normalized face center --
+      // plain position in the raw stream frame ([0,1], NOT an offset from
+      // the guide like centerOffsetX/Y above). Together with faceWidthNorm/
+      // faceHeightNorm (also raw), this is what
+      // _estimateFaceRoiLumaFromStream (camera_screen.dart) uses to locate
+      // its luma-sampling ROI directly on the raw CameraImage buffer --
+      // that buffer is in raw stream pixel space, so it must never be
+      // indexed with the visible-preview-space (mirrored/cover-cropped)
+      // centerOffsetX/Y or faceFillRatio above.
+      'rawFaceCenterXNorm': faceCenterX,
+      'rawFaceCenterYNorm': faceCenterY,
     },
   );
 }
