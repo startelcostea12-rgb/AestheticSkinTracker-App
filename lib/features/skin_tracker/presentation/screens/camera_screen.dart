@@ -1243,6 +1243,9 @@ class _CameraScreenState extends State<CameraScreen>
               deviceOrientation: _currentDeviceOrientation(controller),
               isBody: _isBodyGuide,
               poseTemplate: _selectedPoseTemplate,
+              previewAspectRatio: _isBodyGuide
+                  ? _bodyPreviewAspectRatio
+                  : _facePreviewAspectRatio,
             );
             if (!mounted) return;
             // Debug-only: record this frame's UNSMOOTHED result before it
@@ -5666,6 +5669,18 @@ class _CameraScreenState extends State<CameraScreen>
     final headAngleRedThreshold = _isBodyGuide ? 15.0 : 40.0;
     final headAngleYellowThreshold = _isBodyGuide ? 8.0 : 30.0;
 
+    // Pre-conversion (raw ML-Kit-normalized, no mirror/crop) numbers, for
+    // side-by-side comparison against the corrected (visible-preview-
+    // space) ones above -- see convertFaceBoxToVisiblePreviewSpace in
+    // landmark_assessment_mlkit.dart. Null before the first face has been
+    // detected this session, or on the body guide (face-only fix).
+    final rawCenterOffsetX = debugRawCenterOffsetX;
+    final rawCenterOffsetY = debugRawCenterOffsetY;
+    final rawCenterDelta = (rawCenterOffsetX == null || rawCenterOffsetY == null)
+        ? null
+        : rawCenterOffsetX.abs() + rawCenterOffsetY.abs();
+    final rawFill = debugRawFaceFillRatio;
+
     final lines = <String>[
       'DEBUG: capture framing (kDebugMode only)',
       'landmarks available: ${available ? 'y' : 'n'}'
@@ -5677,23 +5692,32 @@ class _CameraScreenState extends State<CameraScreen>
       'smoothed tilt (_headTiltAngle, gate uses this): '
           '${fmt(smoothedTilt, unit: '°', decimals: 1)}'
           ' (avg over last ${_landmarkHistory.length}/$_landmarkSmoothingWindow samples)',
-      'centerDelta: ${centerDelta.toStringAsFixed(3)}',
-      'face-fill: ${fill.toStringAsFixed(3)}'
+      'centerDelta: raw=${fmt(rawCenterDelta, decimals: 3)} '
+          'converted=${centerDelta.toStringAsFixed(3)}',
+      'face-fill: raw=${fmt(rawFill, decimals: 3)} '
+          'converted=${fill.toStringAsFixed(3)}'
           ' (floor=${_targetFaceFillFloor.toStringAsFixed(3)})',
-      '— per-check pass/fail —',
-      'presence: centerDelta ${centerDelta.toStringAsFixed(3)} '
+      '— per-check pass/fail (raw = pre-mirror/crop, converted = visible-'
+          'preview-space; checks run against converted) —',
+      'presence: centerDelta raw=${fmt(rawCenterDelta, decimals: 3)} '
+          'converted=${centerDelta.toStringAsFixed(3)} '
           '≤ $presenceCenterDeltaMax '
           '[${passFail(centerDelta <= presenceCenterDeltaMax)}]',
-      'presence: faceFill ${fill.toStringAsFixed(3)} '
+      'presence: faceFill raw=${fmt(rawFill, decimals: 3)} '
+          'converted=${fill.toStringAsFixed(3)} '
           '≥ floor×0.82 (${faceFillFloorScaled.toStringAsFixed(3)}) '
           '[${passFail(!(fill > 0 && fill < faceFillFloorScaled))}]',
-      'alignment: centerDelta ${centerDelta.toStringAsFixed(3)} '
+      'alignment: centerDelta raw=${fmt(rawCenterDelta, decimals: 3)} '
+          'converted=${centerDelta.toStringAsFixed(3)} '
           '≤ $alignmentCenterDeltaMax '
           '[${passFail(centerDelta <= alignmentCenterDeltaMax)}]',
-      'alignment: tilt ${fmt(smoothedTilt, unit: '°', decimals: 1)} '
+      'alignment: tilt raw=${fmt(smoothedTilt, unit: '°', decimals: 1)} '
+          'converted=${fmt(smoothedTilt, unit: '°', decimals: 1)} '
+          '(angle — never coordinate-converted) '
           '≤ $alignmentTiltMaxDeg° '
           '[${passFail(tiltForGate <= alignmentTiltMaxDeg)}]',
-      'headAngle: ${report.headAngle.state.name} (need green; '
+      'headAngle: ${report.headAngle.state.name} (need green; driven by '
+          'converted centerDelta/tilt above; '
           'red>${headAngleRedThreshold.toStringAsFixed(1)}° '
           'yellow>${headAngleYellowThreshold.toStringAsFixed(1)}°) '
           '[${passFail(report.headAngle.state == QualityState.green)}]',
@@ -5975,6 +5999,24 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
+  // Fixed size of the live preview's FittedBox(fit: BoxFit.cover) child
+  // below -- BoxFit.cover always crops the raw camera stream to exactly
+  // this width:height ratio before display, regardless of the final
+  // on-screen pixel size, since FittedBox scales its child while
+  // preserving its aspect ratio. The face-framing check's coordinate
+  // conversion (see analyzeLiveLandmarks/_assessFace in
+  // landmark_assessment_mlkit.dart) must crop the same ratio to reason
+  // about what the user actually sees, so it reads these same constants
+  // rather than a second, possibly-drifting copy of "300x340".
+  static const double _facePreviewWidth = 300;
+  static const double _facePreviewHeight = 340;
+  static const double _facePreviewAspectRatio =
+      _facePreviewWidth / _facePreviewHeight;
+  static const double _bodyPreviewWidth = 300;
+  static const double _bodyPreviewHeight = 380;
+  static const double _bodyPreviewAspectRatio =
+      _bodyPreviewWidth / _bodyPreviewHeight;
+
   Widget _buildLiveCameraPreview() {
     final controller = _cameraController;
     if (_cameraInitFailed) {
@@ -6004,8 +6046,8 @@ class _CameraScreenState extends State<CameraScreen>
     return FittedBox(
       fit: BoxFit.cover,
       child: SizedBox(
-        width: 300,
-        height: (_isBodyGuide ? 380 : 340),
+        width: _isBodyGuide ? _bodyPreviewWidth : _facePreviewWidth,
+        height: _isBodyGuide ? _bodyPreviewHeight : _facePreviewHeight,
         child: CameraPreview(controller),
       ),
     );

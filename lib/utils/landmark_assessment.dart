@@ -75,6 +75,7 @@ Future<LandmarkAssessment> analyzeLiveLandmarks({
   required DeviceOrientation deviceOrientation,
   required bool isBody,
   required String poseTemplate,
+  required double previewAspectRatio,
 }) {
   return impl.analyzeLiveLandmarks(
     image: image,
@@ -82,6 +83,7 @@ Future<LandmarkAssessment> analyzeLiveLandmarks({
     deviceOrientation: deviceOrientation,
     isBody: isBody,
     poseTemplate: poseTemplate,
+    previewAspectRatio: previewAspectRatio,
   );
 }
 
@@ -119,3 +121,12 @@ double? get debugFaceBoxCenterXPx => impl.debugFaceBoxCenterXPx;
 double? get debugFaceBoxCenterYPx => impl.debugFaceBoxCenterYPx;
 double? get debugNormalizeWidthPx => impl.debugNormalizeWidthPx;
 double? get debugNormalizeHeightPx => impl.debugNormalizeHeightPx;
+
+// ── Debug-only pre-conversion (raw) face geometry (kDebugMode) ──────────
+// Forwards to the platform implementation's centerOffsetX/Y and
+// faceFillRatio computed the OLD way, before the mirror/crop conversion
+// (always null on the stub/web build). See the doc comment on these in
+// landmark_assessment_mlkit.dart for what each one means.
+double? get debugRawCenterOffsetX => impl.debugRawCenterOffsetX;
+double? get debugRawCenterOffsetY => impl.debugRawCenterOffsetY;
+double? get debugRawFaceFillRatio => impl.debugRawFaceFillRatio;

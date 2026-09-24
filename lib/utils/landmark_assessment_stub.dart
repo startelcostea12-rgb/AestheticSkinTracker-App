@@ -9,6 +9,7 @@ Future<LandmarkAssessment> analyzeLiveLandmarks({
   required DeviceOrientation deviceOrientation,
   required bool isBody,
   required String poseTemplate,
+  required double previewAspectRatio,
 }) async {
   return LandmarkAssessment.unsupported;
 }
@@ -38,3 +39,10 @@ double? debugFaceBoxCenterXPx;
 double? debugFaceBoxCenterYPx;
 double? debugNormalizeWidthPx;
 double? debugNormalizeHeightPx;
+
+// Web/unsupported-platform counterparts to the mlkit implementation's
+// debug-only pre-conversion (raw) face geometry — always null here. See
+// landmark_assessment_mlkit.dart for what these mean.
+double? debugRawCenterOffsetX;
+double? debugRawCenterOffsetY;
+double? debugRawFaceFillRatio;

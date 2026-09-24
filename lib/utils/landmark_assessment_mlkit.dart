@@ -39,6 +39,18 @@ double? debugFaceBoxCenterYPx;
 double? debugNormalizeWidthPx;
 double? debugNormalizeHeightPx;
 
+// ── Debug-only pre-conversion face geometry (kDebugMode) ────────────────
+// The most recent live-stream face detection's centerOffsetX/Y and
+// faceFillRatio computed the OLD way -- directly from the raw ML-Kit-
+// normalized image, with no front-camera mirror flip and no BoxFit.cover
+// crop applied -- kept only so the debug overlay can show this value next
+// to the corrected (visible-preview-space) one LandmarkAssessment now
+// returns. Never read by any gating logic. Left null outside kDebugMode
+// (and whenever no face has been detected yet).
+double? debugRawCenterOffsetX;
+double? debugRawCenterOffsetY;
+double? debugRawFaceFillRatio;
+
 final FaceDetector _streamFaceDetector = FaceDetector(
   options: FaceDetectorOptions(
     enableLandmarks: true,
@@ -79,6 +91,7 @@ Future<LandmarkAssessment> analyzeLiveLandmarks({
   required DeviceOrientation deviceOrientation,
   required bool isBody,
   required String poseTemplate,
+  required double previewAspectRatio,
 }) async {
   if (!Platform.isAndroid && !Platform.isIOS) {
     return LandmarkAssessment.unsupported;
@@ -94,9 +107,22 @@ Future<LandmarkAssessment> analyzeLiveLandmarks({
     return LandmarkAssessment.unsupported;
   }
 
-  return isBody
-      ? _assessBody(inputImage, poseTemplate, useSingle: false)
-      : _assessFace(inputImage, poseTemplate, useSingle: false);
+  if (isBody) {
+    return _assessBody(inputImage, poseTemplate, useSingle: false);
+  }
+  // The front-facing lens is the same, single source of truth the native
+  // preview layer/widget uses to decide whether to mirror -- reusing it
+  // here (rather than adding a separate flag) guarantees this can never
+  // disagree with what's actually on screen. Body mode never receives
+  // this or previewAspectRatio: the coordinate-space fix is scoped to the
+  // face guide path only, per _assessBody's own (unconverted) geometry.
+  return _assessFace(
+    inputImage,
+    poseTemplate,
+    useSingle: false,
+    mirrorPreview: camera.lensDirection == CameraLensDirection.front,
+    previewAspectRatio: previewAspectRatio,
+  );
 }
 
 Future<LandmarkAssessment> analyzeCapturedLandmarks({
@@ -244,10 +270,65 @@ Uint8List _concatenatePlanes(CameraImage image) {
   return buffer;
 }
 
+/// Pure coordinate-space conversion for the live face-framing check: maps
+/// a face box from raw ML-Kit-normalized image space into the space the
+/// user actually sees in the live preview widget -- i.e. after whatever
+/// horizontal mirror the preview applies for a front-facing camera, and
+/// after whatever BoxFit.cover crop the preview widget applies to fit the
+/// raw camera stream's aspect ratio into its own. A pure function of its
+/// inputs only (no camera/ML Kit access), so it's unit-testable on its
+/// own. Does not touch tilt/yaw/pitch/roll -- those are angles, not
+/// positions, and are unaffected by either the mirror or the crop.
+///
+/// [mirrorPreview] must be the exact same flag the preview widget itself
+/// uses to decide whether to mirror -- this function never re-derives or
+/// guesses it, it only applies whatever the caller passed in.
+///
+/// [sourceAspectRatio] is the raw camera stream's width/height;
+/// [previewAspectRatio] is the on-screen preview viewport's width/height
+/// (the box BoxFit.cover crops the stream to fit, preserving aspect
+/// ratio). Passing `previewAspectRatio == sourceAspectRatio` makes the
+/// crop step an exact no-op, which is how the captured-still-photo path
+/// (no live preview to crop against) opts out of the crop conversion
+/// while still going through this same function.
+({double centerX, double centerY, double widthNorm, double heightNorm})
+convertFaceBoxToVisiblePreviewSpace({
+  required double rawCenterXNorm,
+  required double rawCenterYNorm,
+  required double rawWidthNorm,
+  required double rawHeightNorm,
+  required bool mirrorPreview,
+  required double sourceAspectRatio,
+  required double previewAspectRatio,
+}) {
+  final mirroredCenterX = mirrorPreview
+      ? (1.0 - rawCenterXNorm)
+      : rawCenterXNorm;
+
+  final validAspects = sourceAspectRatio > 0 && previewAspectRatio > 0;
+  final visibleWidthFrac = validAspects
+      ? math.min(1.0, previewAspectRatio / sourceAspectRatio)
+      : 1.0;
+  final visibleHeightFrac = validAspects
+      ? math.min(1.0, sourceAspectRatio / previewAspectRatio)
+      : 1.0;
+  final cropXFrac = (1.0 - visibleWidthFrac) / 2.0;
+  final cropYFrac = (1.0 - visibleHeightFrac) / 2.0;
+
+  return (
+    centerX: (mirroredCenterX - cropXFrac) / visibleWidthFrac,
+    centerY: (rawCenterYNorm - cropYFrac) / visibleHeightFrac,
+    widthNorm: rawWidthNorm / visibleWidthFrac,
+    heightNorm: rawHeightNorm / visibleHeightFrac,
+  );
+}
+
 Future<LandmarkAssessment> _assessFace(
   InputImage inputImage,
   String poseTemplate, {
   required bool useSingle,
+  bool mirrorPreview = false,
+  double? previewAspectRatio,
 }) async {
   final detector = useSingle ? _singleFaceDetector : _streamFaceDetector;
   final faces = await detector.processImage(inputImage);
@@ -317,23 +398,56 @@ Future<LandmarkAssessment> _assessFace(
 
   final faceCenterX = face.boundingBox.center.dx / imageWidth;
   final faceCenterY = face.boundingBox.center.dy / imageHeight;
+  final rawFaceWidthNorm = face.boundingBox.width / imageWidth;
+  final rawFaceHeightNorm = face.boundingBox.height / imageHeight;
   if (kDebugMode && !useSingle) {
     debugFaceBoxCenterXPx = face.boundingBox.center.dx;
     debugFaceBoxCenterYPx = face.boundingBox.center.dy;
     debugNormalizeWidthPx = imageWidth;
     debugNormalizeHeightPx = imageHeight;
+    // Old (pre-conversion) numbers, purely for the debug overlay's
+    // raw-vs-converted comparison -- see this function's guideArea/
+    // faceFillRatio computation below for why these are mathematically
+    // identical to what this file computed before the mirror/crop fix.
+    const rawGuideArea = guideWidthRatio * guideHeightRatio;
+    final rawFaceArea = (rawFaceWidthNorm * rawFaceHeightNorm).clamp(
+      0.0,
+      rawGuideArea,
+    );
+    debugRawFaceFillRatio = (rawFaceArea / rawGuideArea).clamp(0.0, 1.0);
+    debugRawCenterOffsetX = (faceCenterX - guideCenterX).clamp(-1.0, 1.0);
+    debugRawCenterOffsetY = (faceCenterY - guideCenterY).clamp(-1.0, 1.0);
   }
-  final guideArea =
-      (imageWidth * imageHeight * guideWidthRatio * guideHeightRatio)
-          .clamp(1.0, double.infinity);
-  final faceArea =
-      (face.boundingBox.width * face.boundingBox.height).clamp(0.0, guideArea);
+
+  // Convert the raw ML-Kit-normalized face box into visible-preview space
+  // -- accounting for front-camera mirroring and the BoxFit.cover crop the
+  // live preview widget applies -- before comparing it against the guide
+  // box below. See convertFaceBoxToVisiblePreviewSpace's doc comment.
+  // useSingle (captured-still-photo) calls pass no previewAspectRatio, so
+  // this resolves to sourceAspectRatio itself, making the crop step an
+  // exact no-op and leaving that path's numbers unchanged.
+  final sourceAspectRatio = imageWidth / imageHeight;
+  final converted = convertFaceBoxToVisiblePreviewSpace(
+    rawCenterXNorm: faceCenterX,
+    rawCenterYNorm: faceCenterY,
+    rawWidthNorm: rawFaceWidthNorm,
+    rawHeightNorm: rawFaceHeightNorm,
+    mirrorPreview: mirrorPreview,
+    sourceAspectRatio: sourceAspectRatio,
+    previewAspectRatio: previewAspectRatio ?? sourceAspectRatio,
+  );
+
+  const guideArea = guideWidthRatio * guideHeightRatio;
+  final faceArea = (converted.widthNorm * converted.heightNorm).clamp(
+    0.0,
+    guideArea,
+  );
   final faceFillRatio = (faceArea / guideArea).clamp(0.0, 1.0).toDouble();
 
   final centerOffsetX =
-      (faceCenterX - guideCenterX).clamp(-1.0, 1.0).toDouble();
+      (converted.centerX - guideCenterX).clamp(-1.0, 1.0).toDouble();
   final centerOffsetY =
-      (faceCenterY - guideCenterY).clamp(-1.0, 1.0).toDouble();
+      (converted.centerY - guideCenterY).clamp(-1.0, 1.0).toDouble();
   final yaw = face.headEulerAngleY ?? 0;
   final pitch = face.headEulerAngleX ?? 0;
   final roll = face.headEulerAngleZ ?? 0;
