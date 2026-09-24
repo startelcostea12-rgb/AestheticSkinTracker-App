@@ -26,6 +26,13 @@
 		<string>AestheticSkinTracker uses your photo library when you choose an existing skin, procedure, or journal photo to analyze or attach to your progress record.</string>
 		<key>NSSpeechRecognitionUsageDescription</key>
 		<string>AestheticSkinTracker uses speech recognition to turn optional voice journal entries into editable text.</string>
+		<key>NSLocalNetworkUsageDescription</key>
+		<string>AestheticSkinTracker connects to a local development server on your network while testing AI skin analysis.</string>
+		<key>NSAppTransportSecurity</key>
+		<dict>
+			<key>NSAllowsLocalNetworking</key>
+			<true/>
+		</dict>
 		<key>CFBundleShortVersionString</key>
 		<string>$(FLUTTER_BUILD_NAME)</string>
 		<key>CFBundleSignature</key>
