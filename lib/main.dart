@@ -29,6 +29,7 @@ import 'screens/legal_screen.dart';
 import 'screens/share_result_screen.dart';
 import 'screens/welcome_tour_screen.dart';
 import 'utils/app_prefs.dart';
+import 'utils/premium_access.dart';
 import 'utils/report_service.dart';
 import 'services/notification_service.dart';
 import 'widgets/paywall_screen.dart';
@@ -155,7 +156,6 @@ Future<void> main() async {
       // RevenueCat only works on mobile platforms, not on web.
       if (!kIsWeb) {
         try {
-          await Purchases.setLogLevel(LogLevel.debug);
           const String iosKey = String.fromEnvironment('REVENUECAT_IOS_KEY');
           const String androidKey = String.fromEnvironment(
             'REVENUECAT_ANDROID_KEY',
@@ -172,9 +172,11 @@ Future<void> main() async {
               'or --dart-define=REVENUECAT_ANDROID_KEY=... to enable purchases.',
             );
           } else {
+            await Purchases.setLogLevel(LogLevel.debug);
             await Purchases.configure(
               PurchasesConfiguration(revenueCatPublicKey),
             );
+            PremiumAccess.revenueCatConfigured = true;
           }
         } catch (_) {
           // RevenueCat is mobile-only; app should still boot for local/web testing.

@@ -67,6 +67,14 @@ class ReportPurchase {
       return true;
     }
 
+    if (!PremiumAccess.revenueCatConfigured) {
+      debugPrint(
+        '[ReportPurchase] RevenueCat is not configured; skipping purchase '
+        'for $procedureId',
+      );
+      return false;
+    }
+
     try {
       final products = await Purchases.getProducts(<String>[productId]);
       if (products.isEmpty) {

@@ -79,6 +79,9 @@ class _PaywallScreenState extends State<PaywallScreen> {
   Future<void> _loadOfferings() async {
     if (kIsWeb) return;
     try {
+      if (!PremiumAccess.revenueCatConfigured) {
+        throw StateError('RevenueCat is not configured for this build');
+      }
       final offerings = await Purchases.getOfferings();
       if (mounted) {
         setState(() {
@@ -166,6 +169,10 @@ class _PaywallScreenState extends State<PaywallScreen> {
         return;
       }
 
+      if (!PremiumAccess.revenueCatConfigured) {
+        throw StateError('RevenueCat is not configured for this build');
+      }
+
       final result = await Purchases.purchase(
         PurchaseParams.package(_selectedPackage!),
       );
@@ -213,6 +220,9 @@ class _PaywallScreenState extends State<PaywallScreen> {
     });
 
     try {
+      if (!PremiumAccess.revenueCatConfigured) {
+        throw StateError('RevenueCat is not configured for this build');
+      }
       final customerInfo = await Purchases.restorePurchases();
       final hasEntitlement = customerInfo.entitlements.active.isNotEmpty;
       await PremiumAccess.setPremiumUnlocked(hasEntitlement);

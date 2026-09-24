@@ -62,6 +62,16 @@ class PremiumPlans {
 class PremiumAccess {
   PremiumAccess._();
 
+  /// True once `Purchases.configure` has completed successfully in
+  /// main.dart (set there, never here). On mobile, RevenueCat's native SDK
+  /// raises a fatal platform-side error -- not a catchable Dart exception --
+  /// from any other `Purchases.*` call made before `configure` succeeds, so
+  /// every such call site must check this flag first and skip straight to
+  /// its existing not-configured fallback when it's false. Stays false for
+  /// the whole run when `REVENUECAT_IOS_KEY`/`REVENUECAT_ANDROID_KEY` is
+  /// empty, since `configure` itself is skipped in that case.
+  static bool revenueCatConfigured = false;
+
   // Storage keys -------------------------------------------------------------
 
   /// Cached "real" entitlement from RevenueCat. Persisted so the UI can be
@@ -108,6 +118,7 @@ class PremiumAccess {
     if ((cached ?? '').toLowerCase() == 'true') return true;
 
     if (kIsWeb) return false;
+    if (!revenueCatConfigured) return false;
 
     try {
       final customerInfo = await Purchases.getCustomerInfo();
