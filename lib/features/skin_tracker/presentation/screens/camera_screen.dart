@@ -90,6 +90,27 @@ QualityState alignmentQualityStatus({
   return QualityState.green;
 }
 
+/// Pure decision of whether the current frame counts as "too dark" for
+/// [_lightingFromCameraImage]'s verdict. A face ROI sample
+/// ([faceRoiLuma] > 0) is a direct read of the subject's own brightness,
+/// so once one exists it alone decides tooDark -- the whole-frame mean/
+/// darkRatio (which include the background) are used only when there is
+/// no face sample (body mode, or no face detected this frame). Without
+/// this, a bright face over a dark background could fail the whole-frame
+/// check even though the face itself is well lit.
+bool isLightingTooDark({
+  required double faceRoiLuma,
+  required double wholeFrameMean,
+  required double wholeFrameDarkRatio,
+  required double darkMeanFloor,
+  required double darkRatioCeil,
+}) {
+  if (faceRoiLuma > 0) {
+    return faceRoiLuma < darkMeanFloor;
+  }
+  return wholeFrameMean < darkMeanFloor || wholeFrameDarkRatio > darkRatioCeil;
+}
+
 /// Pure computation of _estimateFaceRoiLumaFromStream's lighting-sampling
 /// ROI rectangle, in RAW CameraImage pixel space -- pulled out purely so
 /// the ROI's placement (not the byte-sampling loop, which needs a real
@@ -1377,20 +1398,21 @@ class _CameraScreenState extends State<CameraScreen>
     final summary = _summarizeCameraImage(image);
     if (summary.isEmpty) return _lightingGuidance;
 
-    if (faceRoiLuma > 0 && faceRoiLuma < thresholds.darkMeanFloor) {
-      return const _LightingGuidance(
-        level: LightingLevel.tooDark,
-        label: 'Too dark',
-        instruction: 'Move to better light for a cleaner scan.',
-      );
-    }
-
-    if (summary.mean < thresholds.darkMeanFloor ||
-        summary.darkRatio > thresholds.darkRatioCeil) {
+    final hasFaceSample = faceRoiLuma > 0;
+    final isTooDark = isLightingTooDark(
+      faceRoiLuma: faceRoiLuma,
+      wholeFrameMean: summary.mean,
+      wholeFrameDarkRatio: summary.darkRatio,
+      darkMeanFloor: thresholds.darkMeanFloor,
+      darkRatioCeil: thresholds.darkRatioCeil,
+    );
+    if (isTooDark) {
       return _LightingGuidance(
         level: LightingLevel.tooDark,
         label: 'Too dark',
-        instruction: _buildLightingInstruction(summary, tooDark: true),
+        instruction: hasFaceSample
+            ? 'Move to better light for a cleaner scan.'
+            : _buildLightingInstruction(summary, tooDark: true),
       );
     }
     if (summary.mean > thresholds.harshMeanCeil ||
@@ -1409,27 +1431,34 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
-  /// Debug-only (see [_buildDebugFramingOverlay]): names exactly which of
-  /// [_lightingFromCameraImage]'s tooDark conditions is the one currently
-  /// true, using the same fields/thresholds that function itself compares
-  /// -- so this can never disagree with the real verdict. Pure read-only
-  /// formatting, not gating logic.
+  /// Debug-only (see [_buildDebugFramingOverlay]): names exactly which
+  /// rule [_lightingFromCameraImage] used to reach its current tooDark
+  /// verdict, using the same fields/thresholds/branch order that function
+  /// itself uses -- so this can never disagree with the real verdict. Pure
+  /// read-only formatting, not gating logic.
   String _debugLightingTooDarkTrigger() {
     final thresholds = _lightingThresholds;
-    if (_liveFaceRoiLuma > 0 && _liveFaceRoiLuma < thresholds.darkMeanFloor) {
-      return 'faceRoiLuma ${_liveFaceRoiLuma.toStringAsFixed(1)} < floor '
-          '${thresholds.darkMeanFloor.toStringAsFixed(0)}';
+    final hasFaceSample = _liveFaceRoiLuma > 0;
+    if (hasFaceSample) {
+      if (_liveFaceRoiLuma < thresholds.darkMeanFloor) {
+        return 'face-ROI rule: faceRoiLuma '
+            '${_liveFaceRoiLuma.toStringAsFixed(1)} < floor '
+            '${thresholds.darkMeanFloor.toStringAsFixed(0)}';
+      }
+      return 'none — not tooDark (face-ROI rule applies; '
+          'whole-frame mean/darkRatio ignored while a face sample exists)';
     }
     if (_liveMeanBrightness < thresholds.darkMeanFloor) {
-      return 'wholeFrameMean ${_liveMeanBrightness.toStringAsFixed(1)} < floor '
+      return 'whole-frame rule: wholeFrameMean '
+          '${_liveMeanBrightness.toStringAsFixed(1)} < floor '
           '${thresholds.darkMeanFloor.toStringAsFixed(0)}';
     }
     final darkRatio = _debugLiveDarkRatio;
     if (darkRatio != null && darkRatio > thresholds.darkRatioCeil) {
-      return 'darkRatio ${darkRatio.toStringAsFixed(3)} > ceil '
-          '${thresholds.darkRatioCeil.toStringAsFixed(2)}';
+      return 'whole-frame rule: darkRatio ${darkRatio.toStringAsFixed(3)} '
+          '> ceil ${thresholds.darkRatioCeil.toStringAsFixed(2)}';
     }
-    return 'none — not tooDark';
+    return 'none — not tooDark (whole-frame rule applies; no face sample)';
   }
 
   Future<void> _playSuccessBurst() async {
@@ -5975,11 +6004,12 @@ class _CameraScreenState extends State<CameraScreen>
           'right=${_debugFaceRoiRight?.toString() ?? '—'} '
           'bottom=${_debugFaceRoiBottom?.toString() ?? '—'}',
       // Added to investigate the "Dim light" warning firing with a bright
-      // face: _lightingFromCameraImage (this file) can flag tooDark from
-      // EITHER the face-only ROI luma OR the whole-frame summary.mean/
-      // darkRatio -- a bright face over a dark background clears the ROI
-      // check but can still fail the whole-frame one. This re-derives
-      // (read-only) which branch actually fired, using the same
+      // face: _lightingFromCameraImage (this file) now decides tooDark from
+      // the face-only ROI luma alone whenever a face sample exists (a
+      // bright face over a dark background no longer fails the whole-frame
+      // mean/darkRatio check, since that check is skipped in that case) --
+      // whole-frame rules only apply with no face sample. This re-derives
+      // (read-only) which rule actually decided, using the same
       // darkMeanFloor/darkRatioCeil the real check compares against.
       'lighting: roiLuma=${_liveFaceRoiLuma.toStringAsFixed(1)} '
           'wholeFrameMean=${_liveMeanBrightness.toStringAsFixed(1)} '
