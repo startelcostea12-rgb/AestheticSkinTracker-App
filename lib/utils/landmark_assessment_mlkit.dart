@@ -110,19 +110,52 @@ Future<LandmarkAssessment> analyzeLiveLandmarks({
   if (isBody) {
     return _assessBody(inputImage, poseTemplate, useSingle: false);
   }
-  // The front-facing lens is the same, single source of truth the native
-  // preview layer/widget uses to decide whether to mirror -- reusing it
-  // here (rather than adding a separate flag) guarantees this can never
-  // disagree with what's actually on screen. Body mode never receives
-  // this or previewAspectRatio: the coordinate-space fix is scoped to the
-  // face guide path only, per _assessBody's own (unconverted) geometry.
+  // Body mode never receives this or previewAspectRatio: the coordinate-
+  // space fix is scoped to the face guide path only, per _assessBody's
+  // own (unconverted) geometry. See shouldMirrorFaceBoxForPreview's doc
+  // comment for why whether to flip is platform-dependent.
   return _assessFace(
     inputImage,
     poseTemplate,
     useSingle: false,
-    mirrorPreview: camera.lensDirection == CameraLensDirection.front,
+    mirrorPreview: shouldMirrorFaceBoxForPreview(
+      lensDirection: camera.lensDirection,
+      isIOS: Platform.isIOS,
+    ),
     previewAspectRatio: previewAspectRatio,
   );
+}
+
+/// Whether the live face-framing conversion must apply its own X mirror
+/// flip for this platform + lens combination. Pulled out as a pure
+/// function -- taking the platform as a plain [isIOS] parameter rather
+/// than reading `dart:io`'s `Platform` internally -- purely so both
+/// platforms' behavior are directly unit-testable without needing to run
+/// on that platform.
+///
+/// The on-screen result (front camera always appears mirrored) is the
+/// same on both platforms, but whether THIS function needs to apply the
+/// flip itself is not:
+///
+///   - iOS: camera_avfoundation's DefaultCamera.createConnection sets
+///     `connection.isVideoMirrored = true` on the front camera's video
+///     data output connection -- the SAME connection/buffer that both
+///     feeds the CameraImage stream AND backs the on-screen preview
+///     texture (`copyPixelBuffer()` returns the same `latestPixelBuffer`).
+///     So on iOS the frame handed to ML Kit is already mirrored to match
+///     the screen before Dart ever sees it; flipping X again here would
+///     double-mirror it back to raw-sensor orientation.
+///   - Android (camera_android_camerax): no equivalent exists for the
+///     ImageAnalysis/CameraImage stream -- the only mirroring found is a
+///     `Transform.scale` on the on-screen PREVIEW WIDGET itself
+///     (`image_reader_rotated_preview.dart`), which never touches the
+///     analysis buffer. So the frame ML Kit sees on Android is genuinely
+///     unmirrored, and this flip is the only place that corrects it.
+bool shouldMirrorFaceBoxForPreview({
+  required CameraLensDirection lensDirection,
+  required bool isIOS,
+}) {
+  return lensDirection == CameraLensDirection.front && !isIOS;
 }
 
 Future<LandmarkAssessment> analyzeCapturedLandmarks({
