@@ -760,7 +760,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// Debug-only: shares camera_screen.dart's burst_luminance.log via the
   /// native share sheet, for pulling burst-luminance logging data off a
   /// physical device without Xcode's Devices and Simulators window.
-  Future<void> _exportBurstLuminanceLog() async {
+  Future<void> _exportBurstLuminanceLog(BuildContext buttonContext) async {
     try {
       final docsDir = await getApplicationDocumentsDirectory();
       final logFile = File(
@@ -774,7 +774,20 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         }
         return;
       }
-      await Share.shareXFiles([XFile(logFile.path)], text: 'Burst luminance log');
+      final renderObject = buttonContext.findRenderObject();
+      final box = renderObject is RenderBox ? renderObject : null;
+      final origin =
+          (box != null &&
+              box.hasSize &&
+              box.size.width > 0 &&
+              box.size.height > 0)
+          ? (box.localToGlobal(Offset.zero) & box.size)
+          : const Rect.fromLTWH(0, 0, 1, 1);
+      await Share.shareXFiles(
+        [XFile(logFile.path)],
+        text: 'Burst luminance log',
+        sharePositionOrigin: origin,
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -2294,10 +2307,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         ),
         actions: [
           if (kDebugMode)
-            TextButton.icon(
-              onPressed: _exportBurstLuminanceLog,
-              icon: const Icon(Icons.bug_report_outlined, size: 16),
-              label: const Text('Export Burst Log'),
+            Builder(
+              builder: (buttonContext) => TextButton.icon(
+                onPressed: () => _exportBurstLuminanceLog(buttonContext),
+                icon: const Icon(Icons.bug_report_outlined, size: 16),
+                label: const Text('Export Burst Log'),
+              ),
             ),
           if (_stage == _Stage.results)
             IconButton(
