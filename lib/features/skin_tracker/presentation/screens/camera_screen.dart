@@ -43,6 +43,43 @@ import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screen
 // instance state.
 // ─────────────────────────────────────────────────────────────────────────
 
+/// Resolves the camera guide type for a [CameraScreen] instance.
+///
+/// The AI Skin Analysis flow (`skin_ai_analysis_screen.dart`'s
+/// `_pickFromCamera`) never attaches a [Procedure] to [CameraScreen] --
+/// without this override, [_CameraScreenState._guideType] fell through to
+/// whatever "active procedure" happened to be stored via
+/// `AppPrefs.resolveActiveProcedureId()` (or `general` if none was set),
+/// entirely incidental to the fact that this flow always captures a face.
+/// That incidental type drove real thresholds (lighting/backlight/scale)
+/// and UI (guide shape/overlays/copy) that have nothing to do with
+/// whatever unrelated procedure the user last had active.
+///
+/// Pulled out of the `_guideType` getter as a pure function so this
+/// resolution -- and its priority order -- is unit-testable without a
+/// camera, widget, or AppPrefs.
+ProcedureCameraGuideType resolveCameraGuideType({
+  required bool isSkincareScan,
+  required CameraCapturePurpose capturePurpose,
+  required ProcedureBodyRegion? procedureBodyRegion,
+  required String effectiveGuideProcedureType,
+}) {
+  if (isSkincareScan && capturePurpose == CameraCapturePurpose.aiSkinAnalysis) {
+    return ProcedureCameraGuideType.facial;
+  }
+  if (procedureBodyRegion != null) {
+    switch (procedureBodyRegion) {
+      case ProcedureBodyRegion.face:
+        return ProcedureCameraGuideType.facial;
+      case ProcedureBodyRegion.body:
+        return ProcedureCameraGuideType.body;
+      case ProcedureBodyRegion.general:
+        return ProcedureCameraGuideType.general;
+    }
+  }
+  return procedureCameraGuideType(effectiveGuideProcedureType);
+}
+
 /// Aggregate head-tilt magnitude in degrees for FACE mode. Uses yaw+pitch+
 /// roll when available; falls back to a rotationProxy+eyeTilt synthetic
 /// value only when all three are unset (sparse-signal case — this is a
@@ -814,18 +851,12 @@ class _CameraScreenState extends State<CameraScreen>
       _isBodyGuide ? _bodyGuidanceTips : _faceGuidanceTips;
 
   ProcedureCameraGuideType get _guideType {
-    final savedRegion = widget.procedure?.bodyRegion;
-    if (savedRegion != null) {
-      switch (savedRegion) {
-        case ProcedureBodyRegion.face:
-          return ProcedureCameraGuideType.facial;
-        case ProcedureBodyRegion.body:
-          return ProcedureCameraGuideType.body;
-        case ProcedureBodyRegion.general:
-          return ProcedureCameraGuideType.general;
-      }
-    }
-    return procedureCameraGuideType(_effectiveGuideProcedureType);
+    return resolveCameraGuideType(
+      isSkincareScan: widget.isSkincareScan,
+      capturePurpose: widget.capturePurpose,
+      procedureBodyRegion: widget.procedure?.bodyRegion,
+      effectiveGuideProcedureType: _effectiveGuideProcedureType,
+    );
   }
 
   String get _effectiveGuideProcedureType {
