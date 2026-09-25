@@ -81,6 +81,7 @@ class SkinHistoryRepository {
     String? scanType,
     String? poseTemplate,
     String? guideType,
+    String? captureQuality,
     String? focusArea,
     String? customDescription,
     double estimatedSkinAge = 0,
@@ -174,6 +175,9 @@ class SkinHistoryRepository {
           : null,
       guideType: guideType?.trim().isNotEmpty == true
           ? guideType!.trim()
+          : null,
+      captureQuality: captureQuality?.trim().isNotEmpty == true
+          ? captureQuality!.trim()
           : null,
       focusArea: focusArea?.trim().isNotEmpty == true
           ? focusArea!.trim()

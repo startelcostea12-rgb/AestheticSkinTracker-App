@@ -1343,6 +1343,7 @@ class LuxeReportLayout extends StatefulWidget {
     this.localHistoryCount,
     this.isFollowUp,
     this.gateReason,
+    this.baselineNotSavedReason,
   });
 
   final Map<String, dynamic> rawPayload;
@@ -1353,6 +1354,16 @@ class LuxeReportLayout extends StatefulWidget {
   final int? localHistoryCount;
   final bool? isFollowUp;
   final String? gateReason;
+
+  /// Non-null when the caller determined this scan was ELIGIBLE to become
+  /// the baseline (no earlier one existed) but did NOT actually become one
+  /// (failed a single-scan honesty gate) -- e.g. AI Skin Analysis's
+  /// scanPassesSingleScanBaselineGates. When set, this widget must never
+  /// claim "Baseline scan captured" (that scan was never saved as a
+  /// baseline); it shows this rejection reason instead. Null preserves the
+  /// existing metrics/history-count heuristic unchanged for every other
+  /// caller (Track Procedure, progress report).
+  final String? baselineNotSavedReason;
 
   static const Color bg = Color(0xFF0F1013);
   static const Color card = Color(0xFF1A1F2C);
@@ -1483,6 +1494,54 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
   }
 
   Widget _buildBaselineCapturedMessage(String reason) {
+    final rejection = widget.baselineNotSavedReason;
+    if (rejection != null) {
+      // This scan was eligible to become the baseline but failed a single-
+      // scan honesty gate -- it was never saved as one, so this must never
+      // claim "Baseline scan captured".
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.softTerracotta.withValues(alpha: 0.35)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(
+                  Icons.flag_outlined,
+                  size: 16,
+                  color: AppColors.softTerracotta,
+                ),
+                SizedBox(width: 8),
+                Text(
+                  'Not saved as baseline',
+                  style: TextStyle(
+                    color: AppColors.textStructure,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              rejection,
+              style: TextStyle(
+                color: AppColors.textStructure.withValues(alpha: 0.80),
+                fontSize: 11.2,
+                fontWeight: FontWeight.w600,
+                height: 1.35,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(

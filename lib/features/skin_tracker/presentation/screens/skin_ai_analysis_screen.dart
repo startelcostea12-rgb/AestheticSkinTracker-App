@@ -202,13 +202,37 @@ Map<String, int> aiScanFormulaVersions(ScanHistoryEntry scan) {
 /// match, extraction-path MATCH, quality MATCH against a specific other
 /// scan) are separate and enforced by the backend's own trend gates at
 /// comparison time, not here -- see _trend_delta_and_status in main.py.
-bool scanPassesSingleScanBaselineGates(ScanHistoryEntry scan) {
-  if (scan.poseTemplate == null || scan.guideType == null) return false;
+bool scanPassesSingleScanBaselineGates(ScanHistoryEntry scan) =>
+    aiBaselineRejectionReason(scan) == null;
+
+/// Names the FIRST check [scanPassesSingleScanBaselineGates] fails for
+/// [scan], in the same order that function checks them, or null if it
+/// passes every gate. Single source of truth for both functions, so the
+/// pass/fail verdict and its user-facing explanation can never disagree.
+/// Purely a rejection MESSAGE -- never changes which scans are eligible.
+String? aiBaselineRejectionReason(ScanHistoryEntry scan) {
+  if (scan.poseTemplate == null) {
+    return "Not saved as baseline: this photo's angle was not recorded.";
+  }
+  if (scan.guideType == null) {
+    return "Not saved as baseline: this photo's region was not recorded.";
+  }
   final quality = (scan.captureQuality ?? '').trim().toLowerCase();
-  if (quality != 'normal') return false;
-  if (aiScanExtractionPaths(scan).isEmpty) return false;
-  if (aiScanFormulaVersions(scan).isEmpty) return false;
-  return true;
+  if (quality.isEmpty) {
+    return 'Not saved as baseline: capture quality was not recorded.';
+  }
+  if (quality != 'normal') {
+    return "Not saved as baseline: capture quality was '$quality'.";
+  }
+  if (aiScanExtractionPaths(scan).isEmpty) {
+    return 'Not saved as baseline: no recognized analysis method was '
+        'recorded for this scan.';
+  }
+  if (aiScanFormulaVersions(scan).isEmpty) {
+    return 'Not saved as baseline: no scoring formula version was '
+        'recorded for this scan.';
+  }
+  return null;
 }
 
 Map<String, String> buildAiSkinAnalysisBackendFields({
@@ -1190,6 +1214,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// first-ever registered baseline for its key.
   bool _currentScanBecameNewBaseline = false;
 
+  /// Non-null when this scan was eligible to become the first baseline for
+  /// its key (no earlier one existed) but was NOT saved as one because it
+  /// failed a single-scan honesty gate (see aiBaselineRejectionReason).
+  /// The results screen must show this instead of "Baseline scan
+  /// captured" -- it was never saved as a baseline.
+  String? _baselineNotSavedReason;
+
   /// Non-null when a pinned baseline existed for this key but was ignored
   /// (missing pose/guide, or failed a single-scan honesty gate) -- shown in
   /// the results so the user knows why their pin didn't take effect.
@@ -1302,6 +1333,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     setState(() {
       _aiBaselineResolution = const AiBaselineResolution();
       _currentScanBecameNewBaseline = false;
+      _baselineNotSavedReason = null;
       _ignoredBaselinePinMessage = null;
       _serverTrendDeltas = const {};
       _serverTrendStatus = const {};
@@ -1887,6 +1919,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           scanType: ScanHistoryEntry.scanTypeAiAnalysis,
           poseTemplate: _capturedPoseTemplate,
           guideType: _capturedGuideType,
+          captureQuality: _currentCaptureQuality,
           focusArea: _resolvedFocusArea(),
           customDescription: _selectedProcedureCustomDescription,
           estimatedSkinAge:
@@ -1909,6 +1942,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             procedure: _selectedProcedureType ?? 'AI Skin Analysis',
             poseTemplate: _capturedPoseTemplate,
             guideType: _capturedGuideType,
+            captureQuality: _currentCaptureQuality,
             focusArea: _resolvedFocusArea(),
             customDescription: _selectedProcedureCustomDescription,
             estimatedSkinAge:
@@ -3928,6 +3962,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 localHistoryCount: _localHistoryCountForFocusArea,
                 isFollowUp: isFollowUpPhase,
                 gateReason: gateReason,
+                baselineNotSavedReason: _baselineNotSavedReason,
               ),
               const SizedBox(height: 18),
               const ClinicalSectionHeader(
@@ -5761,7 +5796,17 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// baseline") or a reset.
   Future<void> _registerAiBaselineIfNeeded(ScanHistoryEntry savedEntry) async {
     if (!_aiBaselineResolution.isFirstForKey) return;
-    if (!scanPassesSingleScanBaselineGates(savedEntry)) return;
+    final rejectionReason = aiBaselineRejectionReason(savedEntry);
+    if (rejectionReason != null) {
+      // Eligible to be the first baseline for this key, but this scan
+      // itself failed a single-scan gate -- must not be saved as one, and
+      // the results screen must say so instead of claiming success.
+      if (!mounted) return;
+      setState(() {
+        _baselineNotSavedReason = rejectionReason;
+      });
+      return;
+    }
     final key = _aiBaselineResolution.key ?? savedEntry.aiBaselineKey;
     await AppPrefs.setAiBaselineScanId(key, savedEntry.id);
     if (!mounted) return;
@@ -5806,6 +5851,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       _noComparableBaselineMessage = null;
       _ignoredBaselinePinMessage = null;
       _currentScanBecameNewBaseline = false;
+      _baselineNotSavedReason = null;
 
       final selectedProcedureId = (_selectedProcedureId ?? '').trim();
       final key = ScanHistoryEntry.resolveAiBaselineKey(
@@ -6357,15 +6403,15 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     String? failureReason;
     if (target == null) {
       failureReason = 'Current scan could not be found.';
-    } else if (!scanPassesSingleScanBaselineGates(target)) {
-      failureReason = (target.poseTemplate == null || target.guideType == null)
-          ? "This scan doesn't have a recorded angle or region, so it "
-              "can't be a baseline."
-          : "This scan doesn't meet the quality checks required to be a "
-              "baseline.";
     } else {
-      await AppPrefs.setAiBaselineScanId(target.aiBaselineKey, target.id);
-      ok = true;
+      // Same aiBaselineRejectionReason used by automatic registration, so
+      // the button's snackbar and the results screen never disagree about
+      // which check failed.
+      failureReason = aiBaselineRejectionReason(target);
+      if (failureReason == null) {
+        await AppPrefs.setAiBaselineScanId(target.aiBaselineKey, target.id);
+        ok = true;
+      }
     }
 
     if (!mounted) return false;
