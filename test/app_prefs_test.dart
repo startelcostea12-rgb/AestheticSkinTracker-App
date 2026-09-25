@@ -471,6 +471,8 @@ void main() {
           bodyReferenceGeometry: baselineGeometry,
           captureQuality: 'normal',
           captureMode: 'mirror',
+          poseTemplate: 'Front',
+          guideType: 'body',
           rawPayload: const {
             'result': {'scale_reference_pixels': 200.0},
           },
@@ -487,6 +489,8 @@ void main() {
           bodyReferenceGeometry: poorGeometry,
           captureQuality: 'normal',
           captureMode: 'mirror',
+          poseTemplate: 'Front',
+          guideType: 'body',
           rawPayload: const {
             'result': {'scale_reference_pixels': 205.0},
           },
@@ -555,6 +559,8 @@ void main() {
           metrics: const {},
           faceReferenceGeometry: baselineGeometry,
           captureQuality: 'normal',
+          poseTemplate: 'Front',
+          guideType: 'facial',
           rawPayload: extractionPaths,
         ),
       );
@@ -568,6 +574,8 @@ void main() {
           metrics: {'capture_reference_alignment_score': poorScore},
           faceReferenceGeometry: poorGeometry,
           captureQuality: 'normal',
+          poseTemplate: 'Front',
+          guideType: 'facial',
           rawPayload: extractionPaths,
         ),
       );

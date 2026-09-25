@@ -692,11 +692,26 @@ class AiSkinAnalysisCaptureResult {
     required this.primaryImagePath,
     required this.croppedFrames,
     required this.captureQuality,
+    required this.poseTemplate,
+    required this.guideType,
   });
 
   final String primaryImagePath;
   final List<Uint8List> croppedFrames;
   final String captureQuality;
+
+  /// The view angle chip selected during this capture (see
+  /// _selectedPoseTemplate/_poseTemplates) -- e.g. "Front", "Left 45°",
+  /// "Left Profile". Never changed here; just exposed so the caller can
+  /// persist it on the saved ScanHistoryEntry for angle-matched
+  /// trend/before-after comparisons.
+  final String poseTemplate;
+
+  /// The camera guide type ([ProcedureCameraGuideType.name]) resolveCameraGuideType
+  /// actually resolved for this capture -- always 'facial' for the AI Skin
+  /// Analysis flow, but read from the real resolution rather than hardcoded
+  /// so this stays correct if that ever changes.
+  final String guideType;
 }
 
 class _CameraScreenState extends State<CameraScreen>
@@ -4154,6 +4169,7 @@ class _CameraScreenState extends State<CameraScreen>
           imagePath: imagePathToSave,
           calibrationRecord: _currentTrackProcedureCalibrationRecord(),
           poseTemplate: _selectedPoseTemplate,
+          guideType: _guideType.name,
           focusArea: _focusAreaForSave,
           customDescription: _customDescriptionForSave,
           lightingConfidence: lightingConfidence,
@@ -4190,6 +4206,7 @@ class _CameraScreenState extends State<CameraScreen>
           imagePath: imagePathToSave,
           calibrationRecord: _currentTrackProcedureCalibrationRecord(),
           poseTemplate: _selectedPoseTemplate,
+          guideType: _guideType.name,
           focusArea: _focusAreaForSave,
           customDescription: _customDescriptionForSave,
           lightingConfidence: lightingConfidence,
@@ -4499,6 +4516,7 @@ class _CameraScreenState extends State<CameraScreen>
           imagePath: imagePathToSave,
           calibrationRecord: _currentTrackProcedureCalibrationRecord(),
           poseTemplate: _selectedPoseTemplate,
+          guideType: _guideType.name,
           focusArea: _focusAreaForSave,
           customDescription: _customDescriptionForSave,
           lightingConfidence: lightingConfidence,
@@ -4530,6 +4548,7 @@ class _CameraScreenState extends State<CameraScreen>
           imagePath: imagePathToSave,
           calibrationRecord: _currentTrackProcedureCalibrationRecord(),
           poseTemplate: _selectedPoseTemplate,
+          guideType: _guideType.name,
           focusArea: _focusAreaForSave,
           customDescription: _customDescriptionForSave,
           lightingConfidence: lightingConfidence,
@@ -4993,6 +5012,8 @@ class _CameraScreenState extends State<CameraScreen>
           primaryImagePath: primaryImagePath,
           croppedFrames: List<Uint8List>.unmodifiable(croppedFrames),
           captureQuality: captureQuality,
+          poseTemplate: _selectedPoseTemplate,
+          guideType: _guideType.name,
         ),
       );
     } catch (e) {

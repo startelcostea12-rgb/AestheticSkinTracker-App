@@ -4066,6 +4066,10 @@ def _trend_delta_and_status(
     baseline_source_height: int | None = None,
     current_formula_version: int = 1,
     baseline_formula_version: int = 1,
+    current_pose_template: str | None = None,
+    baseline_pose_template: str | None = None,
+    current_guide_type: str | None = None,
+    baseline_guide_type: str | None = None,
 ) -> tuple[float, str]:
     if abs(baseline) < 1e-9:
         return 0.0, "stable"
@@ -4094,6 +4098,25 @@ def _trend_delta_and_status(
         current_source_height,
         baseline_source_width,
         baseline_source_height,
+    ):
+        return 0.0, "stable"
+    # Angle/region honesty gate: only compare scans with the SAME recorded
+    # pose template (view angle -- "Left 45°" is never "Left Profile") AND
+    # the SAME camera guide type (facial/body/general). A missing value on
+    # either side means the angle or region is unknown for that scan and is
+    # never treated as a match -- same principle as the capture-quality/
+    # path/resolution gates above, just for framing instead of exposure/
+    # analysis method.
+    if (
+        not current_pose_template
+        or not baseline_pose_template
+        or current_pose_template != baseline_pose_template
+    ):
+        return 0.0, "stable"
+    if (
+        not current_guide_type
+        or not baseline_guide_type
+        or current_guide_type != baseline_guide_type
     ):
         return 0.0, "stable"
     # A scoring-formula change for this metric (see METRIC_FORMULA_VERSION)
@@ -4151,6 +4174,10 @@ def _trend_lock_reason(
     baseline_source_height: int | None = None,
     current_formula_version: int = 1,
     baseline_formula_version: int = 1,
+    current_pose_template: str | None = None,
+    baseline_pose_template: str | None = None,
+    current_guide_type: str | None = None,
+    baseline_guide_type: str | None = None,
 ) -> str | None:
     """Purely-informational companion to _trend_delta_and_status.
 
@@ -4188,6 +4215,16 @@ def _trend_lock_reason(
         baseline_source_height,
     ):
         return "resolution_mismatch"
+
+    if (
+        not current_pose_template
+        or not baseline_pose_template
+        or current_pose_template != baseline_pose_template
+        or not current_guide_type
+        or not baseline_guide_type
+        or current_guide_type != baseline_guide_type
+    ):
+        return "angle_or_guide_mismatch"
 
     if current_formula_version != baseline_formula_version:
         return "formula_version_mismatch"
@@ -4506,6 +4543,10 @@ def _compute_trend_deltas(
     current_formula_versions: Dict[str, int] | None = None,
     baseline_formula_versions: Dict[str, int] | None = None,
     honesty_band_pct: float = HONESTY_STABLE_BAND_PCT,
+    current_pose_template: str | None = None,
+    baseline_pose_template: str | None = None,
+    current_guide_type: str | None = None,
+    baseline_guide_type: str | None = None,
 ) -> Dict[str, float]:
     current_canonical = _coalesce_metric_aliases(current_matrix)
     baseline_canonical = _coalesce_metric_aliases(baseline_matrix)
@@ -4564,6 +4605,10 @@ def _compute_trend_deltas(
             baseline_source_height,
             current_versions_norm.get(key, 1),
             baseline_versions_norm.get(key, 1),
+            current_pose_template,
+            baseline_pose_template,
+            current_guide_type,
+            baseline_guide_type,
         )
         deltas[key] = delta_pct
     return deltas
@@ -4584,6 +4629,10 @@ def _compute_trend_statuses(
     current_formula_versions: Dict[str, int] | None = None,
     baseline_formula_versions: Dict[str, int] | None = None,
     honesty_band_pct: float = HONESTY_STABLE_BAND_PCT,
+    current_pose_template: str | None = None,
+    baseline_pose_template: str | None = None,
+    current_guide_type: str | None = None,
+    baseline_guide_type: str | None = None,
 ) -> Dict[str, str]:
     current_canonical = _coalesce_metric_aliases(current_matrix)
     baseline_canonical = _coalesce_metric_aliases(baseline_matrix)
@@ -4639,6 +4688,10 @@ def _compute_trend_statuses(
             baseline_source_height,
             current_versions_norm.get(key, 1),
             baseline_versions_norm.get(key, 1),
+            current_pose_template,
+            baseline_pose_template,
+            current_guide_type,
+            baseline_guide_type,
         )
         out[key] = status
     return out
@@ -4658,6 +4711,10 @@ def _compute_trend_lock_reasons(
     baseline_source_height: int | None = None,
     current_formula_versions: Dict[str, int] | None = None,
     baseline_formula_versions: Dict[str, int] | None = None,
+    current_pose_template: str | None = None,
+    baseline_pose_template: str | None = None,
+    current_guide_type: str | None = None,
+    baseline_guide_type: str | None = None,
 ) -> Dict[str, str | None]:
     """Per-metric companion to _compute_trend_statuses: explains WHY a metric
     that came back "stable" was locked there, when it was a mismatch gate
@@ -4714,6 +4771,10 @@ def _compute_trend_lock_reasons(
             baseline_source_height,
             current_versions_norm.get(key, 1),
             baseline_versions_norm.get(key, 1),
+            current_pose_template,
+            baseline_pose_template,
+            current_guide_type,
+            baseline_guide_type,
         )
     return out
 
@@ -5319,6 +5380,10 @@ def analyze_skin_patch(
     source_image_height: int | None = None,
     baseline_source_image_width: int | None = None,
     baseline_source_image_height: int | None = None,
+    pose_template: str | None = None,
+    baseline_pose_template: str | None = None,
+    guide_type: str | None = None,
+    baseline_guide_type: str | None = None,
 ) -> Dict[str, Any]:
     """Core math analytics processor combined with 0-100 linear calibration scoring."""
     ensure_pipeline_ready()
@@ -6346,6 +6411,10 @@ def analyze_skin_patch(
         current_formula_versions=metric_formula_versions,
         baseline_formula_versions=normalized_baseline_formula_versions,
         honesty_band_pct=HONESTY_STABLE_BAND_PCT,
+        current_pose_template=pose_template,
+        baseline_pose_template=baseline_pose_template,
+        current_guide_type=guide_type,
+        baseline_guide_type=baseline_guide_type,
     )
     trend_status = _compute_trend_statuses(
         trend_metric_matrix,
@@ -6361,6 +6430,10 @@ def analyze_skin_patch(
         current_formula_versions=metric_formula_versions,
         baseline_formula_versions=normalized_baseline_formula_versions,
         honesty_band_pct=HONESTY_STABLE_BAND_PCT,
+        current_pose_template=pose_template,
+        baseline_pose_template=baseline_pose_template,
+        current_guide_type=guide_type,
+        baseline_guide_type=baseline_guide_type,
     )
     # Purely informational: explains WHY a "stable" trend_status was reached
     # (a genuine small delta vs. one of the honesty-gate mismatches) so the
@@ -6379,6 +6452,10 @@ def analyze_skin_patch(
         baseline_source_height=baseline_source_image_height,
         current_formula_versions=metric_formula_versions,
         baseline_formula_versions=normalized_baseline_formula_versions,
+        current_pose_template=pose_template,
+        baseline_pose_template=baseline_pose_template,
+        current_guide_type=guide_type,
+        baseline_guide_type=baseline_guide_type,
     )
     trend_deltas = _stabilize_trend_deltas_for_near_identical_scan(
         trend_deltas,
@@ -7145,6 +7222,14 @@ async def analyze_skin(request: Request):
         baseline_source_height = safe_float(
             body.get("baselineSourceImageHeight") or body.get("baseline_source_image_height")
         )
+        pose_template = body.get("poseTemplate") or body.get("pose_template")
+        baseline_pose_template = body.get("baselinePoseTemplate") or body.get(
+            "baseline_pose_template"
+        )
+        guide_type = body.get("guideType") or body.get("guide_type")
+        baseline_guide_type = body.get("baselineGuideType") or body.get(
+            "baseline_guide_type"
+        )
 
         if not image_b64:
             raise HTTPException(status_code=422, detail="Missing image data (imageBytes / image_bytes / image)")
@@ -7179,6 +7264,10 @@ async def analyze_skin(request: Request):
             source_image_height=int(current_source_height) if current_source_height else None,
             baseline_source_image_width=int(baseline_source_width) if baseline_source_width else None,
             baseline_source_image_height=int(baseline_source_height) if baseline_source_height else None,
+            pose_template=str(pose_template) if pose_template else None,
+            baseline_pose_template=str(baseline_pose_template) if baseline_pose_template else None,
+            guide_type=str(guide_type) if guide_type else None,
+            baseline_guide_type=str(baseline_guide_type) if baseline_guide_type else None,
         )
         debug = result.get("model_debug", {})
         logger.info(
@@ -7266,6 +7355,10 @@ async def analyze_skin_single(
     source_image_height: int | None = Form(None),
     baseline_source_image_width: int | None = Form(None),
     baseline_source_image_height: int | None = Form(None),
+    pose_template: str | None = Form(None),
+    baseline_pose_template: str | None = Form(None),
+    guide_type: str | None = Form(None),
+    baseline_guide_type: str | None = Form(None),
 ):
     try:
         ensure_pipeline_ready()
@@ -7319,6 +7412,10 @@ async def analyze_skin_single(
             source_image_height=source_image_height,
             baseline_source_image_width=baseline_source_image_width,
             baseline_source_image_height=baseline_source_image_height,
+            pose_template=pose_template,
+            baseline_pose_template=baseline_pose_template,
+            guide_type=guide_type,
+            baseline_guide_type=baseline_guide_type,
         )
         debug = results.get("model_debug", {})
         logger.info(

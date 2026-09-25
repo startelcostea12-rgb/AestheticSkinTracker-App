@@ -87,6 +87,28 @@ class ScanHistoryEntry {
     return a == b;
   }
 
+  /// True only when both scans have the SAME non-null pose template (view
+  /// angle -- e.g. "Front", "Left 45°", "Left Profile") AND the SAME
+  /// non-null guide type ("facial"/"body"/"general"). A null on either
+  /// side means the angle or region is unknown for that scan and must
+  /// never be treated as a match -- there is no "unknown matches
+  /// anything" fallback, and no falling back to a different angle (e.g.
+  /// "Left 45°" is never treated as "Left Profile"). This is in addition
+  /// to, not a replacement for, the existing procedureId and focusArea
+  /// gates callers already apply.
+  static bool scansComparableByAngleAndGuide({
+    required String? poseTemplateA,
+    required String? guideTypeA,
+    required String? poseTemplateB,
+    required String? guideTypeB,
+  }) {
+    if (poseTemplateA == null || poseTemplateB == null) return false;
+    if (poseTemplateA != poseTemplateB) return false;
+    if (guideTypeA == null || guideTypeB == null) return false;
+    if (guideTypeA != guideTypeB) return false;
+    return true;
+  }
+
   final String id;
   final DateTime timestamp;
   final String? imagePath;
@@ -103,6 +125,15 @@ class ScanHistoryEntry {
   final String? procedure;
   final String? productName;
   final String? poseTemplate;
+
+  /// The camera guide type ([ProcedureCameraGuideType.name] -- 'facial',
+  /// 'body', or 'general') actually resolved for this capture (see
+  /// resolveCameraGuideType in camera_screen.dart). Saved verbatim from what
+  /// the capture flow used, never inferred here from a product name or
+  /// procedure label. Null for scans saved before this field existed --
+  /// trend/before-after comparisons must treat a null guideType as unknown,
+  /// not as a match.
+  final String? guideType;
   final String? focusArea;
   final String? customDescription;
   final double? lightingConfidence;
@@ -173,6 +204,7 @@ class ScanHistoryEntry {
     this.procedure,
     this.productName,
     this.poseTemplate,
+    this.guideType,
     this.focusArea,
     this.customDescription,
     this.lightingConfidence,
@@ -271,6 +303,9 @@ class ScanHistoryEntry {
       procedure: json['procedure'] as String?,
       productName: json['productName'] as String?,
       poseTemplate: json['poseTemplate'] as String?,
+      guideType: (json['guideType'] as String?)?.trim().isNotEmpty == true
+          ? (json['guideType'] as String).trim()
+          : null,
       focusArea: json['focusArea'] as String?,
       customDescription:
           (json['customDescription'] as String?)?.trim().isNotEmpty == true
@@ -397,6 +432,7 @@ class ScanHistoryEntry {
       'procedure': procedure,
       'productName': productName,
       'poseTemplate': poseTemplate,
+      'guideType': guideType,
       'focusArea': focusArea,
       'customDescription': customDescription,
       'lightingConfidence': lightingConfidence,
@@ -562,6 +598,7 @@ class ScanHistoryEntry {
     if ((imagePath ?? '') != (other.imagePath ?? '')) return false;
     if ((productName ?? '') != (other.productName ?? '')) return false;
     if ((poseTemplate ?? '') != (other.poseTemplate ?? '')) return false;
+    if ((guideType ?? '') != (other.guideType ?? '')) return false;
     if ((focusArea ?? '') != (other.focusArea ?? '')) return false;
     if ((customDescription ?? '') != (other.customDescription ?? '')) {
       return false;

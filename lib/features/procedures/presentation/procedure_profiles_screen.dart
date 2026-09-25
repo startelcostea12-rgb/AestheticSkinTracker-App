@@ -345,6 +345,28 @@ ProcedurePhotoComparisonEligibility procedurePhotoComparisonEligibility({
     );
   }
 
+  // Angle/region honesty gate: only pair scans with the same recorded pose
+  // template (view angle -- "Left 45°" is never "Left Profile") AND the
+  // same camera guide type (facial/body/general). Missing on either side
+  // means the angle or region is unknown for that scan and is never
+  // treated as a match -- same principle as the gates above, just for
+  // framing instead of exposure/analysis method. Runs after the more
+  // fundamental provenance gates above so their specific caveats still win
+  // when a scan is missing multiple kinds of provenance at once.
+  if (baseline.id != latest.id &&
+      !ScanHistoryEntry.scansComparableByAngleAndGuide(
+        poseTemplateA: baseline.poseTemplate,
+        guideTypeA: baseline.guideType,
+        poseTemplateB: latest.poseTemplate,
+        guideTypeB: latest.guideType,
+      )) {
+    return const ProcedurePhotoComparisonEligibility(
+      isComparable: false,
+      caveat:
+          'Photos are shown separately because the capture angle or camera guide type differed (or wasn\'t recorded) between scans.',
+    );
+  }
+
   if (!isBodyProcedure) {
     final baselinePaths = extractionPaths(baseline);
     final latestPaths = extractionPaths(latest);
@@ -1908,14 +1930,14 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     }
   }
 
-  SkinMetrics? get _latestMetrics {
+  ScanHistoryEntry? get _resolvedLatestEntry {
     final latestEntry = _findScanById(_latestScanId);
     if (latestEntry != null) {
       debugPrint(
         '[BASELINE_READ] source=procedure_photo_comparison procedureId=${_procedure.id} '
         'baselineScanId=${_baselineScanId ?? 'none'} latestScanId=${_latestScanId ?? 'none'} reason=latest_id_hit',
       );
-      return latestEntry.toSkinMetrics();
+      return latestEntry;
     }
     if (_scans.isNotEmpty) {
       debugPrint(
@@ -1923,13 +1945,13 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
         'baselineScanId=${_baselineScanId ?? 'none'} latestScanId=${_latestScanId ?? 'none'} reason=latest_id_miss_fallback_first_scan',
       );
     }
-    return _scans.isNotEmpty ? _scans.first.toSkinMetrics() : null;
+    return _scans.isNotEmpty ? _scans.first : null;
   }
 
-  /// Returns the baseline metrics (first photo taken for this procedure).
+  /// Returns the baseline entry (first photo taken for this procedure).
   /// The baseline is ALWAYS the oldest scan (first uploaded photo).
   /// The isBaseline flag should mark it, but as fallback we use timestamp order.
-  SkinMetrics? get _baselineMetrics {
+  ScanHistoryEntry? get _resolvedBaselineEntry {
     if (_scans.isEmpty) return null;
 
     final savedBaseline = _findScanById(_baselineScanId);
@@ -1938,7 +1960,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
         '[BASELINE_READ] source=procedure_photo_comparison procedureId=${_procedure.id} '
         'baselineScanId=${_baselineScanId ?? 'none'} latestScanId=${_latestScanId ?? 'none'} reason=baseline_id_hit',
       );
-      return savedBaseline.toSkinMetrics();
+      return savedBaseline;
     }
 
     // TODO(baseline-cleanup): fallback path kept for compatibility while proving live map-based flow.
@@ -1959,7 +1981,45 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       );
     }
 
-    return baselineEntry.toSkinMetrics();
+    return baselineEntry;
+  }
+
+  /// True when the resolved baseline and latest entries can be compared:
+  /// either they're the same scan (nothing to gate), or both share a
+  /// non-null pose template (view angle) AND a non-null guide type. This
+  /// sits on top of the existing procedureId scoping ([_scans] is already
+  /// filtered to this procedure) -- it does not replace it.
+  bool get _baselineAndLatestComparable {
+    final baseline = _resolvedBaselineEntry;
+    final latest = _resolvedLatestEntry;
+    if (baseline == null || latest == null) return false;
+    if (baseline.id == latest.id) return true;
+    return ScanHistoryEntry.scansComparableByAngleAndGuide(
+      poseTemplateA: baseline.poseTemplate,
+      guideTypeA: baseline.guideType,
+      poseTemplateB: latest.poseTemplate,
+      guideTypeB: latest.guideType,
+    );
+  }
+
+  SkinMetrics? get _latestMetrics {
+    // Not gated on _baselineAndLatestComparable: the latest scan is a real,
+    // standalone reading that's always valid to show on its own -- only
+    // pairing it WITH a baseline for a delta requires the angle/guide
+    // match, which _baselineMetrics enforces below.
+    return _resolvedLatestEntry?.toSkinMetrics();
+  }
+
+  /// Returns the baseline metrics (first photo taken for this procedure),
+  /// or null when there is no baseline OR the baseline and latest scans
+  /// don't share the same angle and guide type (see
+  /// [_baselineAndLatestComparable]) -- an honesty gate, same principle as
+  /// the existing procedureId scoping: never compare across angles.
+  SkinMetrics? get _baselineMetrics {
+    final baseline = _resolvedBaselineEntry;
+    if (baseline == null) return null;
+    if (!_baselineAndLatestComparable) return null;
+    return baseline.toSkinMetrics();
   }
 
   /// Returns the baseline photo (first image taken) as bytes, or null if not available

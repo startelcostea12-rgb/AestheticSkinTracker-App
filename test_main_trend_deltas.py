@@ -121,6 +121,10 @@ class SourceResolutionTrendHonestyTests(unittest.TestCase):
             current_source_height=750,
             baseline_source_width=1000,
             baseline_source_height=750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         reasons = _compute_trend_lock_reasons(
             {"localized_redness": 20.0},
@@ -133,6 +137,10 @@ class SourceResolutionTrendHonestyTests(unittest.TestCase):
             current_source_height=750,
             baseline_source_width=1000,
             baseline_source_height=750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
 
         self.assertEqual(statuses["localized_redness"], "improved")
@@ -152,6 +160,10 @@ class SourceResolutionTrendHonestyTests(unittest.TestCase):
             1200,
             1000,
             750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(delta, 0.0)
         self.assertEqual(status, "stable")
@@ -170,6 +182,10 @@ class SourceResolutionTrendHonestyTests(unittest.TestCase):
             820,
             1000,
             750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertGreater(delta, 0.0)
         self.assertEqual(status, "improved")
@@ -229,6 +245,10 @@ class TrendLockReasonTests(unittest.TestCase):
             750,
             1000,
             750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(status, "stable")
         reason = _trend_lock_reason(
@@ -240,6 +260,10 @@ class TrendLockReasonTests(unittest.TestCase):
             750,
             1000,
             750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertIsNone(reason)
         self.assertEqual(delta, 0.0)
@@ -258,6 +282,10 @@ class TrendLockReasonTests(unittest.TestCase):
             750,
             1000,
             750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(status, "stable")
         self.assertEqual(delta, 0.0)
@@ -270,6 +298,10 @@ class TrendLockReasonTests(unittest.TestCase):
             750,
             1000,
             750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(reason, "capture_quality_mismatch")
 
@@ -283,6 +315,10 @@ class TrendLockReasonTests(unittest.TestCase):
             750,
             1000,
             750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(reason, "path_mismatch")
 
@@ -300,6 +336,10 @@ class TrendLockReasonTests(unittest.TestCase):
             1200,
             1000,
             750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(status, "stable")
         self.assertEqual(delta, 0.0)
@@ -312,6 +352,10 @@ class TrendLockReasonTests(unittest.TestCase):
             1200,
             1000,
             750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(reason, "resolution_mismatch")
 
@@ -329,6 +373,10 @@ class TrendLockReasonTests(unittest.TestCase):
             750,
             1000,
             750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(status, "improved")
         reason = _trend_lock_reason(
@@ -340,6 +388,10 @@ class TrendLockReasonTests(unittest.TestCase):
             750,
             1000,
             750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertIsNone(reason)
 
@@ -355,6 +407,10 @@ class TrendLockReasonTests(unittest.TestCase):
             baseline_paths={"localized_redness": "fallback", "texture_smoothness": "primary_roi"},
             current_capture_quality="normal",
             baseline_capture_quality="normal",
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         reasons = _compute_trend_lock_reasons(
             current,
@@ -363,6 +419,10 @@ class TrendLockReasonTests(unittest.TestCase):
             baseline_paths={"localized_redness": "fallback", "texture_smoothness": "primary_roi"},
             current_capture_quality="normal",
             baseline_capture_quality="normal",
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
 
         # localized_redness is forced stable by a path mismatch.
@@ -527,6 +587,10 @@ class ComputeTrendDeltasTests(unittest.TestCase):
             baseline,
             current_paths=self._paths("texture_smoothness"),
             baseline_paths=self._paths("texture_smoothness"),
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
 
         self.assertEqual(deltas["texture_smoothness"], 20.0)
@@ -563,6 +627,10 @@ class ComputeTrendDeltasTests(unittest.TestCase):
             baseline,
             current_paths=self._paths(*keys),
             baseline_paths=self._paths(*keys),
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
 
         self.assertEqual(deltas["localized_redness"], 83.3)
@@ -580,6 +648,10 @@ class ComputeTrendDeltasTests(unittest.TestCase):
             baseline,
             current_paths=self._paths("diffuse_flushing_erythema"),
             baseline_paths=self._paths("diffuse_flushing_erythema"),
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
 
         self.assertEqual(deltas["diffuse_flushing_erythema"], -50.0)
@@ -593,6 +665,10 @@ class ComputeTrendDeltasTests(unittest.TestCase):
             baseline,
             current_paths=self._paths("skin_tone_radiance_evenness"),
             baseline_paths=self._paths("skin_tone_radiance_evenness"),
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
 
         self.assertEqual(deltas["skin_tone_radiance_evenness"], 20.0)
@@ -606,6 +682,10 @@ class ComputeTrendDeltasTests(unittest.TestCase):
             baseline,
             current_paths=self._paths("structural_firmness_elasticity"),
             baseline_paths=self._paths("structural_firmness_elasticity"),
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
 
         self.assertEqual(deltas["structural_firmness_elasticity"], 10.0)
@@ -637,6 +717,10 @@ class ComputeTrendDeltasTests(unittest.TestCase):
             baseline,
             current_paths=self._paths(*tuple(current.keys())),
             baseline_paths=self._paths(*tuple(current.keys())),
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
 
         self.assertEqual(deltas["texture_smoothness"], 0.0)
@@ -658,7 +742,12 @@ class ComputeTrendDeltasTests(unittest.TestCase):
         current = {"localized_redness": 12.0}
         baseline = {"localized_redness": 24.0}
 
-        deltas = _compute_trend_deltas(current, baseline)
+        deltas = _compute_trend_deltas(current, baseline,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
+        )
 
         self.assertEqual(deltas["localized_redness"], 0.0)
 
@@ -671,6 +760,10 @@ class ComputeTrendDeltasTests(unittest.TestCase):
             baseline,
             current_paths={"localized_redness": "primary_roi"},
             baseline_paths={"localized_redness": "fallback"},
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
 
         self.assertEqual(deltas["localized_redness"], 0.0)
@@ -684,6 +777,10 @@ class ComputeTrendDeltasTests(unittest.TestCase):
             baseline,
             current_paths=self._paths("skin_tone_radiance_evenness"),
             baseline_paths=self._paths("skin_tone_radiance_evenness"),
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
 
         self.assertEqual(deltas["skin_tone_radiance_evenness"], 0.0)
@@ -769,6 +866,10 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         delta, status = _trend_delta_and_status(
             "texture_smoothness", 14.0, 10.0, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(status, "stable")
         self.assertEqual(delta, 0.0)
@@ -781,6 +882,10 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         delta, status = _trend_delta_and_status(
             "pigment_load", 93.0, 90.0, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(status, "stable")
         self.assertEqual(delta, 0.0)
@@ -791,6 +896,10 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         delta, status = _trend_delta_and_status(
             "wrinkle_load", 10.0, 20.0, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(status, "improved")
         self.assertEqual(delta, 50.0)
@@ -806,6 +915,10 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         delta, status = _trend_delta_and_status(
             "diffuse_flushing_erythema", 1.5, 1.0, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(status, "worsened")
         self.assertEqual(delta, -50.0)
@@ -821,6 +934,10 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         delta, status = _trend_delta_and_status(
             "localized_redness", 15.0, 10.0, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(status, "insufficient_signal")
         self.assertEqual(delta, 0.0)
@@ -835,6 +952,10 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         delta, status = _trend_delta_and_status(
             "localized_redness", 35.0, 10.0, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(status, "worsened")
         self.assertEqual(delta, -250.0)
@@ -845,6 +966,10 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         delta, status = _trend_delta_and_status(
             "rosacea_severity", 14.0, 10.0, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(status, "insufficient_signal")
         self.assertEqual(delta, 0.0)
@@ -862,6 +987,10 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         delta, status = _trend_delta_and_status(
             "rosacea_severity", current, baseline, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(status, "worsened")
         self.assertNotEqual(delta, 0.0)
@@ -873,6 +1002,10 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         delta, status = _trend_delta_and_status(
             "localized_redness", 90.0, 10.0, "primary_roi", "primary_roi", 8.0,
             "blurry", "normal", 1000, 750, 1000, 750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(status, "stable")
         self.assertEqual(delta, 0.0)
@@ -965,6 +1098,10 @@ class FormulaVersionMismatchGateTests(unittest.TestCase):
             "normal", "normal", 1000, 750, 1000, 750,
             current_formula_version=1,
             baseline_formula_version=1,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(status, "improved")
         self.assertEqual(delta, 50.0)
@@ -977,6 +1114,10 @@ class FormulaVersionMismatchGateTests(unittest.TestCase):
             "normal", "normal", 1000, 750, 1000, 750,
             current_formula_version=2,
             baseline_formula_version=1,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(status, "stable")
         self.assertEqual(delta, 0.0)
@@ -989,6 +1130,10 @@ class FormulaVersionMismatchGateTests(unittest.TestCase):
         delta, status = _trend_delta_and_status(
             "wrinkle_load", 10.0, 20.0, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(status, "improved")
         self.assertEqual(delta, 50.0)
@@ -999,6 +1144,10 @@ class FormulaVersionMismatchGateTests(unittest.TestCase):
             1000, 750, 1000, 750,
             current_formula_version=2,
             baseline_formula_version=1,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(reason, "formula_version_mismatch")
 
@@ -1008,6 +1157,10 @@ class FormulaVersionMismatchGateTests(unittest.TestCase):
             1000, 750, 1000, 750,
             current_formula_version=1,
             baseline_formula_version=1,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertIsNone(reason)
 
@@ -1022,6 +1175,10 @@ class FormulaVersionMismatchGateTests(unittest.TestCase):
             1000, 750, 1000, 750,
             current_formula_version=2,
             baseline_formula_version=1,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         self.assertEqual(reason, "capture_quality_mismatch")
 
@@ -1036,6 +1193,10 @@ class FormulaVersionMismatchGateTests(unittest.TestCase):
             current_capture_quality="normal", baseline_capture_quality="normal",
             current_formula_versions={"wrinkle_load": 1},
             baseline_formula_versions={"wrinkle_load": 1},
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         mismatched = _compute_trend_statuses(
             current, baseline,
@@ -1043,6 +1204,10 @@ class FormulaVersionMismatchGateTests(unittest.TestCase):
             current_capture_quality="normal", baseline_capture_quality="normal",
             current_formula_versions={"wrinkle_load": 2},
             baseline_formula_versions={"wrinkle_load": 1},
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         mismatched_deltas = _compute_trend_deltas(
             current, baseline,
@@ -1050,6 +1215,10 @@ class FormulaVersionMismatchGateTests(unittest.TestCase):
             current_capture_quality="normal", baseline_capture_quality="normal",
             current_formula_versions={"wrinkle_load": 2},
             baseline_formula_versions={"wrinkle_load": 1},
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
         mismatched_reasons = _compute_trend_lock_reasons(
             current, baseline,
@@ -1057,12 +1226,266 @@ class FormulaVersionMismatchGateTests(unittest.TestCase):
             current_capture_quality="normal", baseline_capture_quality="normal",
             current_formula_versions={"wrinkle_load": 2},
             baseline_formula_versions={"wrinkle_load": 1},
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
         )
 
         self.assertEqual(matched["wrinkle_load"], "improved")
         self.assertEqual(mismatched["wrinkle_load"], "stable")
         self.assertEqual(mismatched_deltas["wrinkle_load"], 0.0)
         self.assertEqual(mismatched_reasons["wrinkle_load"], "formula_version_mismatch")
+
+
+class AngleAndGuideTypeTrendHonestyTests(unittest.TestCase):
+    """Only compare scans with the same recorded pose template (view angle)
+    AND the same camera guide type -- "Left 45°" is never treated as "Left
+    Profile", and a missing value on either side is never treated as a
+    match. Same honesty-gate style as the existing capture-quality/path/
+    resolution/formula-version gates in _trend_delta_and_status.
+    """
+
+    def test_same_pose_template_and_guide_type_reports_a_real_delta(self) -> None:
+        delta, status = _trend_delta_and_status(
+            "localized_redness",
+            20.0,
+            50.0,
+            "primary_roi",
+            "primary_roi",
+            8.0,
+            "normal",
+            "normal",
+            1000,
+            750,
+            1000,
+            750,
+            current_pose_template="Front",
+            baseline_pose_template="Front",
+            current_guide_type="facial",
+            baseline_guide_type="facial",
+        )
+        self.assertEqual(status, "improved")
+        self.assertEqual(delta, 60.0)
+
+    def test_different_pose_template_forces_stable(self) -> None:
+        # "Left 45°" is a different angle than "Left Profile" -- never
+        # treated as the same view even though both are non-null.
+        delta, status = _trend_delta_and_status(
+            "localized_redness",
+            20.0,
+            50.0,
+            "primary_roi",
+            "primary_roi",
+            8.0,
+            "normal",
+            "normal",
+            1000,
+            750,
+            1000,
+            750,
+            current_pose_template="Left 45°",
+            baseline_pose_template="Left Profile",
+            current_guide_type="facial",
+            baseline_guide_type="facial",
+        )
+        self.assertEqual(status, "stable")
+        self.assertEqual(delta, 0.0)
+
+    def test_different_guide_type_forces_stable(self) -> None:
+        delta, status = _trend_delta_and_status(
+            "localized_redness",
+            20.0,
+            50.0,
+            "primary_roi",
+            "primary_roi",
+            8.0,
+            "normal",
+            "normal",
+            1000,
+            750,
+            1000,
+            750,
+            current_pose_template="Front",
+            baseline_pose_template="Front",
+            current_guide_type="facial",
+            baseline_guide_type="body",
+        )
+        self.assertEqual(status, "stable")
+        self.assertEqual(delta, 0.0)
+
+    def test_missing_pose_template_on_either_side_forces_stable(self) -> None:
+        missing_current = _trend_delta_and_status(
+            "localized_redness",
+            20.0,
+            50.0,
+            "primary_roi",
+            "primary_roi",
+            8.0,
+            "normal",
+            "normal",
+            1000,
+            750,
+            1000,
+            750,
+            current_pose_template=None,
+            baseline_pose_template="Front",
+            current_guide_type="facial",
+            baseline_guide_type="facial",
+        )
+        self.assertEqual(missing_current, (0.0, "stable"))
+
+        missing_both = _trend_delta_and_status(
+            "localized_redness",
+            20.0,
+            50.0,
+            "primary_roi",
+            "primary_roi",
+            8.0,
+            "normal",
+            "normal",
+            1000,
+            750,
+            1000,
+            750,
+            current_pose_template=None,
+            baseline_pose_template=None,
+            current_guide_type=None,
+            baseline_guide_type=None,
+        )
+        self.assertEqual(
+            missing_both,
+            (0.0, "stable"),
+            "both sides missing is still not a match -- unknown never matches unknown",
+        )
+
+    def test_missing_guide_type_on_either_side_forces_stable(self) -> None:
+        delta, status = _trend_delta_and_status(
+            "localized_redness",
+            20.0,
+            50.0,
+            "primary_roi",
+            "primary_roi",
+            8.0,
+            "normal",
+            "normal",
+            1000,
+            750,
+            1000,
+            750,
+            current_pose_template="Front",
+            baseline_pose_template="Front",
+            current_guide_type="facial",
+            baseline_guide_type=None,
+        )
+        self.assertEqual(status, "stable")
+        self.assertEqual(delta, 0.0)
+
+    def test_lock_reason_reports_angle_or_guide_mismatch(self) -> None:
+        reason = _trend_lock_reason(
+            "primary_roi",
+            "primary_roi",
+            "normal",
+            "normal",
+            1000,
+            750,
+            1000,
+            750,
+            current_pose_template="Left 45°",
+            baseline_pose_template="Left Profile",
+            current_guide_type="facial",
+            baseline_guide_type="facial",
+        )
+        self.assertEqual(reason, "angle_or_guide_mismatch")
+
+    def test_lock_reason_is_none_when_angle_and_guide_match(self) -> None:
+        reason = _trend_lock_reason(
+            "primary_roi",
+            "primary_roi",
+            "normal",
+            "normal",
+            1000,
+            750,
+            1000,
+            750,
+            current_pose_template="Front",
+            baseline_pose_template="Front",
+            current_guide_type="facial",
+            baseline_guide_type="facial",
+        )
+        self.assertIsNone(reason)
+
+    def test_capture_quality_mismatch_is_reported_before_angle_mismatch(self) -> None:
+        # Provenance checks run in a fixed order; capture quality is checked
+        # before the angle/guide gate, so it still wins when both are wrong.
+        reason = _trend_lock_reason(
+            "primary_roi",
+            "primary_roi",
+            "blurry",
+            "normal",
+            1000,
+            750,
+            1000,
+            750,
+            current_pose_template="Left 45°",
+            baseline_pose_template="Left Profile",
+            current_guide_type="facial",
+            baseline_guide_type="facial",
+        )
+        self.assertEqual(reason, "capture_quality_mismatch")
+
+    def test_compute_trend_wrappers_gate_on_angle_and_guide_type(self) -> None:
+        current = {"wrinkle_load": 10.0}
+        baseline = {"wrinkle_load": 20.0}
+        paths = {"wrinkle_load": "primary_roi"}
+        common_kwargs = dict(
+            current_paths=paths,
+            baseline_paths=paths,
+            current_capture_quality="normal",
+            baseline_capture_quality="normal",
+        )
+
+        matched_status = _compute_trend_statuses(
+            current,
+            baseline,
+            current_pose_template="Front",
+            baseline_pose_template="Front",
+            current_guide_type="facial",
+            baseline_guide_type="facial",
+            **common_kwargs,
+        )
+        mismatched_status = _compute_trend_statuses(
+            current,
+            baseline,
+            current_pose_template="Front",
+            baseline_pose_template="Left 45°",
+            current_guide_type="facial",
+            baseline_guide_type="facial",
+            **common_kwargs,
+        )
+        mismatched_deltas = _compute_trend_deltas(
+            current,
+            baseline,
+            current_pose_template="Front",
+            baseline_pose_template="Left 45°",
+            current_guide_type="facial",
+            baseline_guide_type="facial",
+            **common_kwargs,
+        )
+        mismatched_reasons = _compute_trend_lock_reasons(
+            current,
+            baseline,
+            current_pose_template="Front",
+            baseline_pose_template="Left 45°",
+            current_guide_type="facial",
+            baseline_guide_type="facial",
+            **common_kwargs,
+        )
+
+        self.assertEqual(matched_status["wrinkle_load"], "improved")
+        self.assertEqual(mismatched_status["wrinkle_load"], "stable")
+        self.assertEqual(mismatched_deltas["wrinkle_load"], 0.0)
+        self.assertEqual(mismatched_reasons["wrinkle_load"], "angle_or_guide_mismatch")
 
 
 if __name__ == "__main__":

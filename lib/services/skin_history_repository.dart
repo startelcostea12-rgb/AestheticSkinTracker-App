@@ -79,6 +79,8 @@ class SkinHistoryRepository {
     String? procedureId,
     String? procedure,
     String? scanType,
+    String? poseTemplate,
+    String? guideType,
     String? focusArea,
     String? customDescription,
     double estimatedSkinAge = 0,
@@ -167,6 +169,12 @@ class SkinHistoryRepository {
       procedureId: procedureId,
       scanType: scanType ?? ScanHistoryEntry.scanTypeAiAnalysis,
       procedure: procedure,
+      poseTemplate: poseTemplate?.trim().isNotEmpty == true
+          ? poseTemplate!.trim()
+          : null,
+      guideType: guideType?.trim().isNotEmpty == true
+          ? guideType!.trim()
+          : null,
       focusArea: focusArea?.trim().isNotEmpty == true
           ? focusArea!.trim()
           : null,

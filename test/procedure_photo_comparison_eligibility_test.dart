@@ -2,20 +2,34 @@ import 'package:aesthetic_skin_tracker/features/procedures/presentation/procedur
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+int _idCounter = 0;
+
+/// poseTemplate/guideType default to matching values ('Front'/'facial' for
+/// face, 'Front'/'body' for body) so tests exercising the pre-existing
+/// capture-quality/extraction-path/capture-mode/scale gates aren't also
+/// tripped by the newer angle/guide gate -- see the dedicated
+/// "angle/guide" group below for that gate's own coverage. A unique id
+/// (rather than one derived from the params) means two scans with
+/// identical params are still distinct entries, never short-circuited by
+/// the gate's same-id skip.
 ScanHistoryEntry _scan({
   String? captureQuality = 'normal',
   String? captureMode,
   Map<String, String>? extractionPaths,
   double? scaleReferencePixels,
   Map<String, double> metrics = const <String, double>{},
+  String? poseTemplate = 'Front',
+  String? guideType = 'facial',
 }) {
   return ScanHistoryEntry(
-    id: '${captureQuality}_${captureMode}_$scaleReferencePixels',
+    id: 'scan_${_idCounter++}',
     timestamp: DateTime(2026, 9, 8),
     estimatedSkinAge: 0,
     metrics: metrics,
     captureQuality: captureQuality,
     captureMode: captureMode,
+    poseTemplate: poseTemplate,
+    guideType: guideType,
     rawPayload: <String, dynamic>{
       if (extractionPaths != null) 'metric_extraction_paths': extractionPaths,
       if (scaleReferencePixels != null)
@@ -135,8 +149,8 @@ void main() {
     test('allows body comparison with matching mode and close scale reference', () {
       final result = procedurePhotoComparisonEligibility(
         isBodyProcedure: true,
-        baseline: _scan(captureMode: 'mirror', scaleReferencePixels: 200),
-        latest: _scan(captureMode: 'mirror', scaleReferencePixels: 230),
+        baseline: _scan(captureMode: 'mirror', scaleReferencePixels: 200, guideType: 'body'),
+        latest: _scan(captureMode: 'mirror', scaleReferencePixels: 230, guideType: 'body'),
       );
 
       expect(result.isComparable, isTrue);
@@ -145,8 +159,8 @@ void main() {
     test('rejects body comparison when capture mode differs', () {
       final result = procedurePhotoComparisonEligibility(
         isBodyProcedure: true,
-        baseline: _scan(captureMode: 'mirror', scaleReferencePixels: 200),
-        latest: _scan(captureMode: 'timer', scaleReferencePixels: 200),
+        baseline: _scan(captureMode: 'mirror', scaleReferencePixels: 200, guideType: 'body'),
+        latest: _scan(captureMode: 'timer', scaleReferencePixels: 200, guideType: 'body'),
       );
 
       expect(result.isComparable, isFalse);
@@ -156,12 +170,135 @@ void main() {
     test('rejects body comparison when scale reference differs by over 20%', () {
       final result = procedurePhotoComparisonEligibility(
         isBodyProcedure: true,
-        baseline: _scan(captureMode: 'mirror', scaleReferencePixels: 200),
-        latest: _scan(captureMode: 'mirror', scaleReferencePixels: 241),
+        baseline: _scan(captureMode: 'mirror', scaleReferencePixels: 200, guideType: 'body'),
+        latest: _scan(captureMode: 'mirror', scaleReferencePixels: 241, guideType: 'body'),
       );
 
       expect(result.isComparable, isFalse);
       expect(result.caveat, contains('framing scale differed'));
     });
+  });
+
+  group('procedurePhotoComparisonEligibility angle/guide gate', () {
+    test('same pose template and guide type -> comparable', () {
+      final result = procedurePhotoComparisonEligibility(
+        isBodyProcedure: false,
+        baseline: _scan(
+          extractionPaths: const {'pigment_load': 'cheek_primary'},
+          poseTemplate: 'Front',
+          guideType: 'facial',
+        ),
+        latest: _scan(
+          extractionPaths: const {'pigment_load': 'cheek_primary'},
+          poseTemplate: 'Front',
+          guideType: 'facial',
+        ),
+      );
+
+      expect(result.isComparable, isTrue);
+    });
+
+    test(
+      'different pose template ("Left 45°" vs "Left Profile") -> not '
+      'comparable, even with everything else matching',
+      () {
+        final result = procedurePhotoComparisonEligibility(
+          isBodyProcedure: false,
+          baseline: _scan(
+            extractionPaths: const {'pigment_load': 'cheek_primary'},
+            poseTemplate: 'Left 45°',
+            guideType: 'facial',
+          ),
+          latest: _scan(
+            extractionPaths: const {'pigment_load': 'cheek_primary'},
+            poseTemplate: 'Left Profile',
+            guideType: 'facial',
+          ),
+        );
+
+        expect(result.isComparable, isFalse);
+        expect(result.caveat, contains('capture angle'));
+      },
+    );
+
+    test('different guide type -> not comparable', () {
+      final result = procedurePhotoComparisonEligibility(
+        isBodyProcedure: false,
+        baseline: _scan(
+          extractionPaths: const {'pigment_load': 'cheek_primary'},
+          poseTemplate: 'Front',
+          guideType: 'facial',
+        ),
+        latest: _scan(
+          extractionPaths: const {'pigment_load': 'cheek_primary'},
+          poseTemplate: 'Front',
+          guideType: 'body',
+        ),
+      );
+
+      expect(result.isComparable, isFalse);
+      expect(result.caveat, contains('capture angle'));
+    });
+
+    test(
+      'missing pose template on either side -> not comparable (unknown is '
+      'never treated as a match)',
+      () {
+        final missingOnBaseline = procedurePhotoComparisonEligibility(
+          isBodyProcedure: false,
+          baseline: _scan(
+            extractionPaths: const {'pigment_load': 'cheek_primary'},
+            poseTemplate: null,
+            guideType: 'facial',
+          ),
+          latest: _scan(
+            extractionPaths: const {'pigment_load': 'cheek_primary'},
+            poseTemplate: 'Front',
+            guideType: 'facial',
+          ),
+        );
+        expect(missingOnBaseline.isComparable, isFalse);
+
+        final missingOnBoth = procedurePhotoComparisonEligibility(
+          isBodyProcedure: false,
+          baseline: _scan(
+            extractionPaths: const {'pigment_load': 'cheek_primary'},
+            poseTemplate: null,
+            guideType: null,
+          ),
+          latest: _scan(
+            extractionPaths: const {'pigment_load': 'cheek_primary'},
+            poseTemplate: null,
+            guideType: null,
+          ),
+        );
+        expect(
+          missingOnBoth.isComparable,
+          isFalse,
+          reason: 'both null is still not a match -- unknown never matches unknown',
+        );
+      },
+    );
+
+    test(
+      'missing guide type on either side -> not comparable',
+      () {
+        final result = procedurePhotoComparisonEligibility(
+          isBodyProcedure: false,
+          baseline: _scan(
+            extractionPaths: const {'pigment_load': 'cheek_primary'},
+            poseTemplate: 'Front',
+            guideType: null,
+          ),
+          latest: _scan(
+            extractionPaths: const {'pigment_load': 'cheek_primary'},
+            poseTemplate: 'Front',
+            guideType: 'facial',
+          ),
+        );
+
+        expect(result.isComparable, isFalse);
+      },
+    );
   });
 }

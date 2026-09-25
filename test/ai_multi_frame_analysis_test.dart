@@ -290,4 +290,28 @@ void main() {
     expect(mismatched['capture_quality'], 'normal');
     expect(mismatched['baseline_capture_quality'], 'low_light');
   });
+
+  test('AI backend fields carry pose template and guide type for both scans', () {
+    final fields = buildAiSkinAnalysisBackendFields(
+      focusArea: 'Full Face',
+      poseTemplate: 'Front',
+      baselinePoseTemplate: 'Front',
+      guideType: 'facial',
+      baselineGuideType: 'facial',
+    );
+
+    expect(fields['pose_template'], 'Front');
+    expect(fields['baseline_pose_template'], 'Front');
+    expect(fields['guide_type'], 'facial');
+    expect(fields['baseline_guide_type'], 'facial');
+  });
+
+  test('AI backend fields omit pose/guide keys entirely when unknown', () {
+    final fields = buildAiSkinAnalysisBackendFields(focusArea: 'Full Face');
+
+    expect(fields.containsKey('pose_template'), isFalse);
+    expect(fields.containsKey('baseline_pose_template'), isFalse);
+    expect(fields.containsKey('guide_type'), isFalse);
+    expect(fields.containsKey('baseline_guide_type'), isFalse);
+  });
 }

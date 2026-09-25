@@ -93,6 +93,10 @@ Map<String, String> buildAiSkinAnalysisBackendFields({
   required String focusArea,
   String? currentCaptureQuality,
   String? baselineCaptureQuality,
+  String? poseTemplate,
+  String? baselinePoseTemplate,
+  String? guideType,
+  String? baselineGuideType,
 }) {
   return {
     if ((procedureType ?? '').trim().isNotEmpty)
@@ -105,6 +109,13 @@ Map<String, String> buildAiSkinAnalysisBackendFields({
       'capture_quality': currentCaptureQuality!.trim(),
     if ((baselineCaptureQuality ?? '').trim().isNotEmpty)
       'baseline_capture_quality': baselineCaptureQuality!.trim(),
+    if ((poseTemplate ?? '').trim().isNotEmpty)
+      'pose_template': poseTemplate!.trim(),
+    if ((baselinePoseTemplate ?? '').trim().isNotEmpty)
+      'baseline_pose_template': baselinePoseTemplate!.trim(),
+    if ((guideType ?? '').trim().isNotEmpty) 'guide_type': guideType!.trim(),
+    if ((baselineGuideType ?? '').trim().isNotEmpty)
+      'baseline_guide_type': baselineGuideType!.trim(),
   };
 }
 
@@ -916,6 +927,22 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   ScanHistoryEntry? _previousFocusAreaScan;
   ScanHistoryEntry? _baselineFocusAreaScan;
   String? _currentCaptureQuality;
+
+  /// The view angle and camera guide type from the CameraScreen capture
+  /// that produced [_imagePath] (see AiSkinAnalysisCaptureResult). Null
+  /// when the photo came from the gallery instead of the live camera --
+  /// the angle/region are then genuinely unknown for that scan, and are
+  /// saved as null rather than guessed.
+  String? _capturedPoseTemplate;
+  String? _capturedGuideType;
+
+  /// Set by [_getPreviousMetrics] when prior scans exist for this
+  /// procedure/focus area but none share this capture's angle AND guide
+  /// type -- so the results UI can say plainly that no matching baseline
+  /// exists, instead of silently falling back to "first scan" copy or
+  /// comparing across angles. Null whenever a real baseline was found, or
+  /// when there were no candidate scans at all for another reason.
+  String? _noComparableBaselineMessage;
   List<ScanHistoryEntry> _priorFocusAreaScans = const [];
   bool _hasPriorFocusAreaScan = false;
   int _localHistoryCountForFocusArea = 1;
@@ -1215,10 +1242,14 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _analysisFrameBytes = captured.croppedFrames;
           _croppedBytes = captured.croppedFrames.first;
           _currentCaptureQuality = captured.captureQuality;
+          _capturedPoseTemplate = captured.poseTemplate;
+          _capturedGuideType = captured.guideType;
         } else {
           _analysisFrameBytes = const [];
           _croppedBytes = null;
           _currentCaptureQuality = null;
+          _capturedPoseTemplate = null;
+          _capturedGuideType = null;
         }
         _explicitBaselineSelection = false;
       });
@@ -1273,6 +1304,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _imagePath = null;
           _croppedBytes = null;
           _analysisFrameBytes = const [];
+          _capturedPoseTemplate = null;
+          _capturedGuideType = null;
         });
         return;
       }
@@ -1284,6 +1317,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         _analysisFrameBytes = <Uint8List>[cropped];
         _imagePath = stored;
         _explicitBaselineSelection = false;
+        // A gallery photo has no known capture angle or camera guide type
+        // -- must not be guessed from the focus-area/procedure selection.
+        _capturedPoseTemplate = null;
+        _capturedGuideType = null;
       });
     } catch (e) {
       if (!mounted) return;
@@ -1485,6 +1522,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         focusArea: _resolvedFocusArea(),
         currentCaptureQuality: _currentCaptureQuality,
         baselineCaptureQuality: _previousFocusAreaScan?.captureQuality,
+        poseTemplate: _capturedPoseTemplate,
+        baselinePoseTemplate: _previousFocusAreaScan?.poseTemplate,
+        guideType: _capturedGuideType,
+        baselineGuideType: _previousFocusAreaScan?.guideType,
       );
 
       final frames = _analysisFrameBytes.isNotEmpty
@@ -1633,6 +1674,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           procedureId: resolvedProcedureId,
           procedure: _selectedProcedureType ?? 'AI Skin Analysis',
           scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+          poseTemplate: _capturedPoseTemplate,
+          guideType: _capturedGuideType,
           focusArea: _resolvedFocusArea(),
           customDescription: _selectedProcedureCustomDescription,
           estimatedSkinAge:
@@ -1653,6 +1696,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 : (await AppPrefs.getSelectedProcedureIdOrNull())?.trim(),
             scanType: ScanHistoryEntry.scanTypeAiAnalysis,
             procedure: _selectedProcedureType ?? 'AI Skin Analysis',
+            poseTemplate: _capturedPoseTemplate,
+            guideType: _capturedGuideType,
             focusArea: _resolvedFocusArea(),
             customDescription: _selectedProcedureCustomDescription,
             estimatedSkinAge:
@@ -5606,6 +5651,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       _priorFocusAreaScans = const [];
       _localHistoryCountForFocusArea = 1;
       _explicitLocalFollowUpFlag = false;
+      _noComparableBaselineMessage = null;
       final focus = _normalizeFocus(_resolvedFocusArea());
       final isFullFaceFocus = focus == 'full face';
       final selectedProcedureId = (_selectedProcedureId ?? '').trim();
@@ -5686,6 +5732,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
       final strictCandidates = <ScanHistoryEntry>[];
       final fallbackFullFaceCandidates = <ScanHistoryEntry>[];
+      // Scans that matched procedure/focus/metrics but were excluded solely
+      // for not sharing this capture's angle+guide -- tracked so the "no
+      // comparable baseline" message can say so plainly instead of the UI
+      // silently treating this like a genuine first-ever scan.
+      var hadAngleOrGuideMismatchOnlyCandidate = false;
       // getAllScans() is newest-first. We keep both edges:
       // - first: most recent prior scan (for trend deltas)
       // - last: earliest same-focus baseline (for before/after left frame)
@@ -5698,6 +5749,17 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         final procedureMatches =
             selectedProcedureId.isEmpty || scanProcedureId == selectedProcedureId;
         final focusMatches = focus.isEmpty || scanFocus == focus;
+        // Additional gate on top of procedureMatches/focusMatches: the
+        // capture angle (poseTemplate) and camera guide type must both be
+        // known and identical on both sides. "Left 45°" is never treated
+        // as "Left Profile", and a null on either side is never a match --
+        // never fall back to comparing across angles.
+        final angleAndGuideMatches = ScanHistoryEntry.scansComparableByAngleAndGuide(
+          poseTemplateA: _capturedPoseTemplate,
+          guideTypeA: _capturedGuideType,
+          poseTemplateB: scan.poseTemplate,
+          guideTypeB: scan.guideType,
+        );
 
         final raw = scan.metrics;
         final hasAny =
@@ -5721,8 +5783,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             hasPhoto &&
             (scanFocus.isEmpty || scanFocus == 'full face');
 
-        final strictMatch = procedureMatches && focusMatches && hasAny;
-        final fallbackMatch = !strictMatch && isFullFaceAiPhotoFallbackCandidate;
+        final strictMatch =
+            procedureMatches && focusMatches && angleAndGuideMatches && hasAny;
+        final fallbackMatch = !strictMatch &&
+            isFullFaceAiPhotoFallbackCandidate &&
+            angleAndGuideMatches;
 
         String exclusionReason = 'included_strict';
         if (strictMatch) {
@@ -5734,6 +5799,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           exclusionReason = 'procedure_mismatch';
         } else if (!focusMatches) {
           exclusionReason = 'focus_mismatch';
+        } else if (!angleAndGuideMatches) {
+          exclusionReason = 'angle_or_guide_mismatch';
+          if (hasAny) hadAngleOrGuideMismatchOnlyCandidate = true;
         } else if (!hasAny) {
           exclusionReason = 'no_supported_metrics';
         } else if (!hasPhoto) {
@@ -5785,7 +5853,19 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         'localHistoryCount=$_localHistoryCountForFocusArea globalCount=${scans.length} focus=$focus',
       );
 
-      if (candidates.isEmpty) return const {};
+      if (candidates.isEmpty) {
+        if (hadAngleOrGuideMismatchOnlyCandidate) {
+          final focusLabel = _resolvedFocusArea().trim().isEmpty
+              ? 'this area'
+              : _resolvedFocusArea().trim();
+          _noComparableBaselineMessage = _capturedPoseTemplate == null
+              ? 'This photo\'s angle is unknown, so it can\'t be compared '
+                  'with earlier scans.'
+              : 'No earlier $_capturedPoseTemplate scan of $focusLabel to '
+                  'compare with.';
+        }
+        return const {};
+      }
 
       _priorFocusAreaScans = List<ScanHistoryEntry>.from(candidates);
 
@@ -6335,6 +6415,19 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             ),
           ],
         ] else ...[
+          if (_noComparableBaselineMessage != null) ...[
+            Text(
+              _noComparableBaselineMessage!,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.78),
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
           _luxeActionButton(
             icon: Icons.verified_rounded,
             label: 'Save as Baseline',
