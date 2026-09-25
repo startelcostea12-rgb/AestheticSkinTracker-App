@@ -6247,12 +6247,15 @@ class _CameraScreenState extends State<CameraScreen>
     final a = _liveLandmarkAssessment;
     final faceCenterX = 0.5 + a.centerOffsetX;
     final faceCenterY = 0.48 + a.centerOffsetY;
+    // Explicit line breaks (rather than relying on wrap alone) so the face
+    // center vs. guide readout always lands on its own line and is never
+    // the part pushed past the maxLines cap below.
     final line =
-        'DEBUG gate=${_debugFramingFailureReason(report)} | '
-        'scale=${_debugScaleBranchDecision()} | '
-        'light=${_lightingGuidance.level.name} | '
         'face=(${faceCenterX.toStringAsFixed(2)}, '
-        '${faceCenterY.toStringAsFixed(2)}) vs guide=(0.50, 0.48)';
+        '${faceCenterY.toStringAsFixed(2)}) vs guide=(0.50, 0.48)\n'
+        'gate=${_debugFramingFailureReason(report)}\n'
+        'scale=${_debugScaleBranchDecision()} | '
+        'light=${_lightingGuidance.level.name}';
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -6263,7 +6266,7 @@ class _CameraScreenState extends State<CameraScreen>
       ),
       child: Text(
         line,
-        maxLines: 1,
+        maxLines: 3,
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(
           color: Colors.limeAccent,
