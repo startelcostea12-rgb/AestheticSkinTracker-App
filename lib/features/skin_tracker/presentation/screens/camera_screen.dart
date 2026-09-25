@@ -200,8 +200,8 @@ bool isBacklit({
 /// pixel space); [visibleLeftNorm]/[visibleTopNorm]/[visibleRightNorm]/
 /// [visibleBottomNorm] must be the visible-preview-space box (never a
 /// raw-pixel box compared against this normalized rect, or vice versa).
-/// 0.75 is a new constant this rule introduces -- it does not replace or
-/// alter any existing threshold value.
+/// 0.75 ([cropMarginFraction]) is a new constant this rule introduces --
+/// it does not replace or alter any existing threshold value.
 bool isTooCloseForCropMargin({
   required double rawFaceWidthPx,
   required double rawFaceHeightPx,
@@ -212,18 +212,101 @@ bool isTooCloseForCropMargin({
   required double visibleRightNorm,
   required double visibleBottomNorm,
 }) {
-  const marginFraction = 0.75;
-  final liveFrameShorterSide = math.min(liveFrameWidthPx, liveFrameHeightPx);
-  if (liveFrameShorterSide > 0) {
-    final largerFaceSide = math.max(rawFaceWidthPx, rawFaceHeightPx);
-    if ((largerFaceSide / liveFrameShorterSide) > marginFraction) {
-      return true;
-    }
-  }
+  final fraction = rawFaceToFrameFraction(
+    rawFaceWidthPx: rawFaceWidthPx,
+    rawFaceHeightPx: rawFaceHeightPx,
+    liveFrameWidthPx: liveFrameWidthPx,
+    liveFrameHeightPx: liveFrameHeightPx,
+  );
+  if (fraction > cropMarginFraction) return true;
   return visibleLeftNorm < 0 ||
       visibleTopNorm < 0 ||
       visibleRightNorm > 1 ||
       visibleBottomNorm > 1;
+}
+
+/// The single source of truth for [isTooCloseForCropMargin]'s 0.75 cutoff
+/// -- shared here so anything that needs to warn BEFORE that point (see
+/// [isNearCropMargin]) derives its own cutoff from this constant instead
+/// of typing a second, independent number that could drift from it.
+const double cropMarginFraction = 0.75;
+
+/// The raw face box's larger side, as a fraction of the live stream
+/// frame's own shorter side -- the exact quantity [isTooCloseForCropMargin]
+/// and [isNearCropMargin] both threshold against. Pulled out so both rules
+/// compute this one number identically. Returns 0.0 when the frame size is
+/// not yet known (shorter side <= 0).
+double rawFaceToFrameFraction({
+  required double rawFaceWidthPx,
+  required double rawFaceHeightPx,
+  required double liveFrameWidthPx,
+  required double liveFrameHeightPx,
+}) {
+  final liveFrameShorterSide = math.min(liveFrameWidthPx, liveFrameHeightPx);
+  if (liveFrameShorterSide <= 0) return 0.0;
+  final largerFaceSide = math.max(rawFaceWidthPx, rawFaceHeightPx);
+  return largerFaceSide / liveFrameShorterSide;
+}
+
+/// Upper (near-margin) yellow warning for the aiSkinAnalysis flow's SCALE
+/// chip: true once the crop-margin fraction (see [rawFaceToFrameFraction])
+/// passes 92% of [cropMarginFraction] -- i.e. the face is approaching, but
+/// has not yet reached, the point where [isTooCloseForCropMargin] fires and
+/// the auto-crop square's margin starts shrinking to zero. 0.92 is applied
+/// to [cropMarginFraction] directly, not written out as its own literal, so
+/// this can never independently drift from the red rule's own cutoff.
+bool isNearCropMargin({
+  required double rawFaceWidthPx,
+  required double rawFaceHeightPx,
+  required double liveFrameWidthPx,
+  required double liveFrameHeightPx,
+}) {
+  final fraction = rawFaceToFrameFraction(
+    rawFaceWidthPx: rawFaceWidthPx,
+    rawFaceHeightPx: rawFaceHeightPx,
+    liveFrameWidthPx: liveFrameWidthPx,
+    liveFrameHeightPx: liveFrameHeightPx,
+  );
+  return fraction > (0.92 * cropMarginFraction);
+}
+
+/// Pure SCALE-chip outcome for the aiSkinAnalysis facial flow's three
+/// crop-margin-driven branches (commit 7adb93a added the first; this
+/// commit splits the old combined fill-ratio yellow band into the other
+/// two). Checked in this exact order, matching
+/// _buildClinicalQualityReport's SCALE section: red (too close -- the
+/// crop's margin has already reached zero), yellow near-margin (the face
+/// is approaching that point), yellow near-floor (the face is a little
+/// far -- [isNearFloor] is the unchanged `fill < floor * 1.12` check),
+/// or green (in range). Neither yellow detail says "center" -- both are
+/// distance/size wording, since this whole flow's rule is about size/
+/// distance, not centering (see 7adb93a's fix for why the old "center"
+/// copy was wrong here). The shared too-far/no-face checks run before
+/// this and are unaffected; this is only reached once those have passed.
+({QualityState state, String detail}) aiSkinAnalysisScaleSignal({
+  required bool isTooCloseForCropMargin,
+  required bool isNearCropMargin,
+  required bool isNearFloor,
+}) {
+  if (isTooCloseForCropMargin) {
+    return (
+      state: QualityState.yellow,
+      detail: 'Move slightly back — face is a bit too close',
+    );
+  }
+  if (isNearCropMargin) {
+    return (
+      state: QualityState.yellow,
+      detail: 'Move back slightly — face is nearing the crop margin',
+    );
+  }
+  if (isNearFloor) {
+    return (
+      state: QualityState.yellow,
+      detail: 'Move slightly closer — face is a little far',
+    );
+  }
+  return (state: QualityState.green, detail: 'Face size in target range');
 }
 
 /// Pure computation of _estimateFaceRoiLumaFromStream's lighting-sampling
@@ -977,6 +1060,28 @@ class _CameraScreenState extends State<CameraScreen>
       visibleTopNorm: visibleTop,
       visibleRightNorm: visibleRight,
       visibleBottomNorm: visibleBottom,
+    );
+  }
+
+  /// Live wrapper around [isNearCropMargin] -- the SCALE chip's upper
+  /// (near-margin) yellow warning for the aiSkinAnalysis flow. Same raw
+  /// geometry/stream-size inputs as [_isTooCloseForCropMarginNow]; returns
+  /// false whenever any needed input is missing rather than guessing.
+  bool _isNearCropMarginNow() {
+    final geometry = _liveLandmarkAssessment.faceReferenceGeometry;
+    final streamWidth = _liveStreamWidth;
+    final streamHeight = _liveStreamHeight;
+    if (geometry == null || streamWidth == null || streamHeight == null) {
+      return false;
+    }
+    final faceWidthNorm = geometry['faceWidthNorm'];
+    final faceHeightNorm = geometry['faceHeightNorm'];
+    if (faceWidthNorm == null || faceHeightNorm == null) return false;
+    return isNearCropMargin(
+      rawFaceWidthPx: faceWidthNorm * streamWidth,
+      rawFaceHeightPx: faceHeightNorm * streamHeight,
+      liveFrameWidthPx: streamWidth.toDouble(),
+      liveFrameHeightPx: streamHeight.toDouble(),
     );
   }
 
@@ -5427,9 +5532,23 @@ class _CameraScreenState extends State<CameraScreen>
             ? 'Move closer — body is a bit too far away'
             : 'Move closer — face is a bit too far away',
       );
-    } else if (_isAiSkinAnalysisFacialFlow
-        ? _isTooCloseForCropMarginNow()
-        : fill > _targetFaceFillCeil) {
+    } else if (_isAiSkinAnalysisFacialFlow) {
+      // aiSkinAnalysis facial flow only: the fill-ratio ceiling (below) is
+      // replaced end-to-end by the crop-margin rule (commit 7adb93a) and
+      // this commit's near-margin/near-floor split -- see
+      // aiSkinAnalysisScaleSignal's doc comment. Every other flow/guide
+      // type falls through to the original fill-based branches unchanged.
+      final outcome = aiSkinAnalysisScaleSignal(
+        isTooCloseForCropMargin: _isTooCloseForCropMarginNow(),
+        isNearCropMargin: _isNearCropMarginNow(),
+        isNearFloor: fill < _targetFaceFillFloor * 1.12,
+      );
+      scale = QualitySignal(
+        label: 'Scale',
+        state: outcome.state,
+        detail: outcome.detail,
+      );
+    } else if (fill > _targetFaceFillCeil) {
       scale = QualitySignal(
         label: 'Scale',
         state: QualityState.yellow,
@@ -6135,10 +6254,20 @@ class _CameraScreenState extends State<CameraScreen>
       visibleBottomNorm: visibleBottom,
     );
 
+    const nearMarginCutoff = 0.92 * cropMarginFraction;
+    final isNearMargin = isNearCropMargin(
+      rawFaceWidthPx: rawFaceWidthPx,
+      rawFaceHeightPx: rawFaceHeightPx,
+      liveFrameWidthPx: streamW.toDouble(),
+      liveFrameHeightPx: streamH.toDouble(),
+    );
+
     lines.addAll([
       'crop-margin: faceLargerSide=${largerFaceSidePx.toStringAsFixed(1)}px '
           'frameShorterSide=${shorterFrameSidePx.toStringAsFixed(1)}px '
-          'fraction=${fraction.toStringAsFixed(3)} (line=0.75)',
+          'fraction=${fraction.toStringAsFixed(3)} (red line=${cropMarginFraction.toStringAsFixed(2)}, '
+          'yellow near-margin line=${nearMarginCutoff.toStringAsFixed(3)}) '
+          'isNearMargin=${isNearMargin ? 'y' : 'n'}',
       'crop-margin: visible box=('
           '${visibleLeft.toStringAsFixed(3)}, ${visibleTop.toStringAsFixed(3)}) - '
           '(${visibleRight.toStringAsFixed(3)}, ${visibleBottom.toStringAsFixed(3)}) '
@@ -6146,6 +6275,35 @@ class _CameraScreenState extends State<CameraScreen>
       'crop-margin verdict: ${verdict ? 'TOO CLOSE' : 'ok'}',
     ]);
     return lines;
+  }
+
+  /// Debug-only: re-derives (read-only, same order/conditions as the real
+  /// SCALE branch in _buildClinicalQualityReport) which branch decided the
+  /// current SCALE chip -- for the aiSkinAnalysis facial flow: too-far,
+  /// red (crop-margin), yellow (near-margin), yellow (near-floor), or
+  /// green; for every other flow, the original too-far/too-close/adjust-
+  /// distance/green branches.
+  String _debugScaleBranchDecision() {
+    final fill = _liveFaceFillRatio;
+    if (!_liveLandmarkAssessment.available || fill <= 0) return 'no-face';
+    if (fill < _targetFaceFillFloor) return 'yellow: too-far (fill < floor)';
+    if (_isAiSkinAnalysisFacialFlow) {
+      final outcome = aiSkinAnalysisScaleSignal(
+        isTooCloseForCropMargin: _isTooCloseForCropMarginNow(),
+        isNearCropMargin: _isNearCropMarginNow(),
+        isNearFloor: fill < _targetFaceFillFloor * 1.12,
+      );
+      if (outcome.state == QualityState.green) return 'green: in range';
+      final tier = _isTooCloseForCropMarginNow()
+          ? 'RED: too-close'
+          : (_isNearCropMarginNow() ? 'yellow: near-margin' : 'yellow: near-floor');
+      return '$tier (${outcome.detail})';
+    }
+    if (fill > _targetFaceFillCeil) return 'yellow: too-close (fill > ceil)';
+    if (fill < _targetFaceFillFloor * 1.12 || fill > _targetFaceFillCeil * 0.92) {
+      return 'yellow: adjust distance (fill-based)';
+    }
+    return 'green: in range';
   }
 
   /// Debug-only (kDebugMode) live telemetry HUD for the capture-framing
@@ -6317,6 +6475,7 @@ class _CameraScreenState extends State<CameraScreen>
               : (_liveFaceFillRatio < _targetFaceFillFloor ? 'TOO FAR' : 'ok')}'
           '${_isAiSkinAnalysisFacialFlow ? ' (fill ceil NOT used for verdict -- see crop-margin rule below)' : ''}',
       ..._buildDebugCropMarginLines(),
+      'scale branch decided: ${_debugScaleBranchDecision()}',
     ];
 
     return Positioned(
