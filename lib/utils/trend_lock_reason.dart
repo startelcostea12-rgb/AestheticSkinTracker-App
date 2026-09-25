@@ -26,6 +26,7 @@ const Set<String> knownTrendLockReasons = {
   'capture_mode_mismatch',
   'scale_mismatch',
   'formula_version_mismatch',
+  'angle_or_guide_mismatch',
   'frame_range_overlap',
   'below_noise_floor',
 };
@@ -58,6 +59,8 @@ String? trendLockReasonShortLabel(String? reason) {
       return 'Standalone entry — framing/distance differed too much from your last scan to compare';
     case 'formula_version_mismatch':
       return 'Standalone entry — this metric\'s scoring was updated since your last scan';
+    case 'angle_or_guide_mismatch':
+      return 'Standalone entry — a different angle or region was captured than your baseline';
     case 'frame_range_overlap':
       return 'Standalone entry — frame-to-frame variability was too high to confirm a real change';
     case 'below_noise_floor':
@@ -84,6 +87,8 @@ String? trendLockReasonDetail(String? reason) {
       return 'Framing or distance differed too much from your baseline capture to compare reliably.';
     case 'formula_version_mismatch':
       return "This metric's scoring formula was updated since your baseline scan, so the two values aren't directly comparable -- comparison resumes once both scans use the current formula.";
+    case 'angle_or_guide_mismatch':
+      return 'This scan was captured from a different angle or region than your baseline, so the two aren\'t directly comparable -- comparison resumes once you capture the same angle again.';
     case 'frame_range_overlap':
       return "This scan's and your baseline's own frame-to-frame readings overlapped too much to confirm a real change — capture noise could explain the difference on its own.";
     case 'below_noise_floor':

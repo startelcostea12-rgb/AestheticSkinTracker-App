@@ -827,6 +827,110 @@ class AppPrefs {
     return true;
   }
 
+  // ── AI Skin Analysis per-key baseline registry ──────────────────────
+  //
+  // Replaces the old device-global "manual baseline metric matrix" cache
+  // (skin_ai_manual_baseline_metric_matrix_v1), which carried no
+  // procedureId/focusArea/poseTemplate/guideType scoping at all -- one
+  // scan's results could silently become "the baseline" for every future
+  // scan regardless of angle or region. Each registry entry instead points
+  // at a real ScanHistoryEntry id, scoped to one exact AiBaselineKey.
+  static const String _aiBaselineRegistryKey = 'skin_ai_baseline_registry_v1';
+  static const String legacyAiManualBaselineMetricMatrixKey =
+      'skin_ai_manual_baseline_metric_matrix_v1';
+
+  static bool _aiBaselineKeyMatchesEntry(
+    Map<String, dynamic> entry,
+    AiBaselineKey key,
+  ) {
+    return entry['procedureId'] == key.procedureId &&
+        entry['focusArea'] == key.focusArea &&
+        entry['poseTemplate'] == key.poseTemplate &&
+        entry['guideType'] == key.guideType;
+  }
+
+  static Future<List<Map<String, dynamic>>> _readAiBaselineRegistry() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_aiBaselineRegistryKey);
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+      return decoded
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<void> _writeAiBaselineRegistry(
+    List<Map<String, dynamic>> entries,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_aiBaselineRegistryKey, jsonEncode(entries));
+  }
+
+  /// The registered baseline scan id for [key], or null if none has been
+  /// set yet. Does NOT validate that the scan still exists or still
+  /// qualifies -- callers resolve and re-validate against live scan
+  /// history (see skin_ai_analysis_screen.dart's baseline resolution).
+  static Future<String?> getAiBaselineScanId(AiBaselineKey key) async {
+    final entries = await _readAiBaselineRegistry();
+    for (final entry in entries) {
+      if (_aiBaselineKeyMatchesEntry(entry, key)) {
+        final id = entry['baselineScanId'] as String?;
+        return (id != null && id.isNotEmpty) ? id : null;
+      }
+    }
+    return null;
+  }
+
+  /// Sets (or replaces) the baseline scan id for [key]. The only mutation
+  /// path for the registry -- both automatic "first real scan becomes the
+  /// baseline" registration and explicit "Save as Baseline"/"Update
+  /// baseline" pinning go through this, always scoped to one exact key.
+  static Future<void> setAiBaselineScanId(AiBaselineKey key, String scanId) async {
+    final entries = await _readAiBaselineRegistry();
+    final idx = entries.indexWhere(
+      (entry) => _aiBaselineKeyMatchesEntry(entry, key),
+    );
+    final record = <String, dynamic>{
+      'procedureId': key.procedureId,
+      'focusArea': key.focusArea,
+      'poseTemplate': key.poseTemplate,
+      'guideType': key.guideType,
+      'baselineScanId': scanId,
+    };
+    if (idx == -1) {
+      entries.add(record);
+    } else {
+      entries[idx] = record;
+    }
+    await _writeAiBaselineRegistry(entries);
+    debugPrint(
+      '[AI_BASELINE_WRITE] key=$key baselineScanId=$scanId',
+    );
+  }
+
+  /// Clears the registered baseline for [key] only (used by "Reset
+  /// Baseline"), leaving every other key's baseline untouched.
+  static Future<void> clearAiBaselineScanId(AiBaselineKey key) async {
+    final entries = await _readAiBaselineRegistry();
+    entries.removeWhere((entry) => _aiBaselineKeyMatchesEntry(entry, key));
+    await _writeAiBaselineRegistry(entries);
+  }
+
+  /// Drops the pre-registry global baseline cache outright -- never
+  /// migrated into the new per-key registry, since it carried no angle/
+  /// region scoping and could describe a comparison that should never have
+  /// been allowed. Safe to call unconditionally on every app start.
+  static Future<void> clearLegacyAiManualBaselineMetricMatrix() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(legacyAiManualBaselineMetricMatrixKey);
+  }
+
   static Future<String> getTrackedProcedure() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(trackedProcedureKey) ?? '';

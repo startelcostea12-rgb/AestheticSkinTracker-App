@@ -1,5 +1,13 @@
 FROM python:3.11-slim
 
+# Set via `docker build --build-arg GIT_COMMIT=$(git rev-parse HEAD) ...` in
+# the deploy pipeline. Baked in as an env var (not read from a .git dir,
+# which isn't copied into the image) so GET /health can report exactly
+# which commit is actually running. Left unset -> /health reports "unknown"
+# rather than failing.
+ARG GIT_COMMIT=unknown
+ENV GIT_COMMIT=$GIT_COMMIT
+
 # OpenCV/MediaPipe need these native libs even in "headless" mode.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \

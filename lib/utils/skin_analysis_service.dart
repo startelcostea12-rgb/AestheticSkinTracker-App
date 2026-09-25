@@ -82,6 +82,32 @@ class SkinAnalysisService {
     return normalized;
   }
 
+  /// Fetches GET /health and returns its `commit` field (the backend's
+  /// deployed git commit, baked in at `docker build --build-arg
+  /// GIT_COMMIT=...` time -- see main.py's health_check and the
+  /// Dockerfile), or null on any failure (offline, non-200, malformed
+  /// body, timeout) -- this is a debug-only diagnostic, never something a
+  /// production flow depends on, so it must never throw.
+  /// [httpClient] is injectable purely for tests, same as
+  /// [analyzeBodySilhouette].
+  static Future<String?> fetchBackendCommit({http.Client? httpClient}) async {
+    try {
+      final getter = httpClient?.get ?? http.get;
+      final response = await getter(
+        BackendConfig.healthUri,
+        headers: BackendConfig.apiKeyHeaders,
+      ).timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) return null;
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map) return null;
+      final commit = decoded['commit']?.toString().trim();
+      return (commit == null || commit.isEmpty) ? null : commit;
+    } catch (e) {
+      debugPrint('[SkinAnalysisService] fetchBackendCommit failed: $e');
+      return null;
+    }
+  }
+
   static Future<dynamic> analyzeImageFromBytes(
     Uint8List bytes, {
     String? filename,

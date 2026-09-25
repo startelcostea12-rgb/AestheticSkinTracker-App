@@ -609,4 +609,77 @@ void main() {
       expect(eligibility.caveat, contains('locked reference'));
     });
   });
+
+  group('AppPrefs AI Skin Analysis baseline registry', () {
+    setUp(() async {
+      SharedPreferences.setMockInitialValues({});
+    });
+
+    const key = (
+      procedureId: 'proc_1',
+      focusArea: 'full face',
+      poseTemplate: 'Front',
+      guideType: 'facial',
+    );
+    const otherKey = (
+      procedureId: 'proc_1',
+      focusArea: 'full face',
+      poseTemplate: 'Left 45°',
+      guideType: 'facial',
+    );
+
+    test('returns null for a key that was never set', () async {
+      expect(await AppPrefs.getAiBaselineScanId(key), isNull);
+    });
+
+    test('set then get round-trips the scan id for that exact key', () async {
+      await AppPrefs.setAiBaselineScanId(key, 'scan_front_1');
+      expect(await AppPrefs.getAiBaselineScanId(key), 'scan_front_1');
+    });
+
+    test('setting one key\'s baseline never affects a different key', () async {
+      await AppPrefs.setAiBaselineScanId(key, 'scan_front_1');
+      await AppPrefs.setAiBaselineScanId(otherKey, 'scan_left45_1');
+
+      expect(await AppPrefs.getAiBaselineScanId(key), 'scan_front_1');
+      expect(await AppPrefs.getAiBaselineScanId(otherKey), 'scan_left45_1');
+    });
+
+    test('setting the same key again replaces its previous baseline', () async {
+      await AppPrefs.setAiBaselineScanId(key, 'scan_front_1');
+      await AppPrefs.setAiBaselineScanId(key, 'scan_front_2');
+      expect(await AppPrefs.getAiBaselineScanId(key), 'scan_front_2');
+    });
+
+    test('clearAiBaselineScanId clears only that key', () async {
+      await AppPrefs.setAiBaselineScanId(key, 'scan_front_1');
+      await AppPrefs.setAiBaselineScanId(otherKey, 'scan_left45_1');
+
+      await AppPrefs.clearAiBaselineScanId(key);
+
+      expect(await AppPrefs.getAiBaselineScanId(key), isNull);
+      expect(await AppPrefs.getAiBaselineScanId(otherKey), 'scan_left45_1');
+    });
+
+    test(
+      'the old device-global cached matrix is ignored: clearing it removes '
+      'the legacy key without touching the new per-key registry',
+      () async {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(
+          AppPrefs.legacyAiManualBaselineMetricMatrixKey,
+          '{"localized_redness": 42.0}',
+        );
+        await AppPrefs.setAiBaselineScanId(key, 'scan_front_1');
+
+        await AppPrefs.clearLegacyAiManualBaselineMetricMatrix();
+
+        expect(
+          prefs.getString(AppPrefs.legacyAiManualBaselineMetricMatrixKey),
+          isNull,
+        );
+        expect(await AppPrefs.getAiBaselineScanId(key), 'scan_front_1');
+      },
+    );
+  });
 }

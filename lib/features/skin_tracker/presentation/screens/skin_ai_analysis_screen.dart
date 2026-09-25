@@ -16,7 +16,7 @@
 // The analysis engine itself is the shared `AcneRosaceaPhotoAnalyzer`,
 // so derivations and scoring stay consistent with the tracker.
 
-import 'dart:convert' show base64Decode, base64Encode, jsonDecode, jsonEncode;
+import 'dart:convert' show base64Decode, base64Encode;
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -26,7 +26,6 @@ import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:aesthetic_skin_tracker/app_theme.dart';
@@ -85,6 +84,131 @@ Map<String, dynamic> _dynamicMap(dynamic value) {
 Set<String> _stringSetFromDynamic(dynamic value) {
   if (value is! List) return const <String>{};
   return value.map((e) => e.toString()).toSet();
+}
+
+/// Canonical clinical metric keys used across AI Skin Analysis provenance
+/// checks (extraction paths, formula versions) -- a saved scan's own
+/// provenance maps never contain a key outside this set.
+const Set<String> aiSkinAnalysisCanonicalMetricKeys = <String>{
+  'localized_redness',
+  'texture_smoothness',
+  'pigment_load',
+  'wrinkle_load',
+  'pore_visibility',
+  'breakout_activity',
+  'sebum_excess_oil_gloss',
+  'diffuse_flushing_erythema',
+  'skin_tone_radiance_evenness',
+  'glabellar_wrinkle_depth',
+  'pore_contraction_index',
+  'structural_firmness_elasticity',
+  'rosacea_severity',
+  'skin_hydration',
+};
+
+Map<String, dynamic>? _asPlainMap(dynamic value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return Map<String, dynamic>.from(value);
+  return null;
+}
+
+/// The per-metric analysis-extraction-path provenance a saved AI Skin
+/// Analysis scan recorded, checking every nested location the persisted
+/// payload may have put it (top-level, under "metrics", and under
+/// "luxePayload"/its own nested "metrics" -- mirrors
+/// _mergePayloadForPersistence's own nesting). Only 'primary_roi'/
+/// 'fallback'/'skipped' are recognized; anything else (including a missing
+/// entry) is left out. Empty when the scan's rawPayload carries no path
+/// provenance at all -- an "unknown analysis method" scan, per
+/// [scanPassesSingleScanBaselineGates].
+Map<String, String> aiScanExtractionPaths(ScanHistoryEntry scan) {
+  final out = <String, String>{};
+  final rawPayload = scan.rawPayload;
+  if (rawPayload == null || rawPayload.isEmpty) return out;
+
+  void mergePathSource(dynamic source) {
+    final map = _asPlainMap(source);
+    if (map == null || map.isEmpty) return;
+    for (final entry in map.entries) {
+      final key = entry.key.toString().trim().toLowerCase();
+      if (!aiSkinAnalysisCanonicalMetricKeys.contains(key)) continue;
+      final raw = entry.value?.toString().trim().toLowerCase() ?? 'unknown';
+      if (raw == 'primary_roi' || raw == 'fallback' || raw == 'skipped') {
+        out[key] = raw;
+      }
+    }
+  }
+
+  mergePathSource(rawPayload['metric_extraction_paths']);
+  final nestedMetrics = _asPlainMap(rawPayload['metrics']);
+  mergePathSource(nestedMetrics?['metric_extraction_paths']);
+  final nestedLuxe = _asPlainMap(rawPayload['luxePayload']);
+  mergePathSource(nestedLuxe?['metric_extraction_paths']);
+  final nestedLuxeMetrics = _asPlainMap(nestedLuxe?['metrics']);
+  mergePathSource(nestedLuxeMetrics?['metric_extraction_paths']);
+
+  return out;
+}
+
+/// Per-metric scoring-formula-version provenance a saved scan recorded
+/// (see main.py's METRIC_FORMULA_VERSION / _metric_formula_version, echoed
+/// back in the response as metric_formula_versions). Empty when the scan
+/// predates this field or carries no usable entries -- a "no known
+/// formula version" scan, per [scanPassesSingleScanBaselineGates].
+Map<String, int> aiScanFormulaVersions(ScanHistoryEntry scan) {
+  final out = <String, int>{};
+  final rawPayload = scan.rawPayload;
+  if (rawPayload == null || rawPayload.isEmpty) return out;
+
+  void mergeVersionSource(dynamic source) {
+    final map = _asPlainMap(source);
+    if (map == null || map.isEmpty) return;
+    for (final entry in map.entries) {
+      final key = entry.key.toString().trim().toLowerCase();
+      if (!aiSkinAnalysisCanonicalMetricKeys.contains(key)) continue;
+      final value = entry.value;
+      final parsed = value is num
+          ? value.toInt()
+          : int.tryParse(value?.toString() ?? '');
+      if (parsed != null) out[key] = parsed;
+    }
+  }
+
+  mergeVersionSource(rawPayload['metric_formula_versions']);
+  final nestedMetrics = _asPlainMap(rawPayload['metrics']);
+  mergeVersionSource(nestedMetrics?['metric_formula_versions']);
+  final nestedLuxe = _asPlainMap(rawPayload['luxePayload']);
+  mergeVersionSource(nestedLuxe?['metric_formula_versions']);
+  final nestedLuxeMetrics = _asPlainMap(nestedLuxe?['metrics']);
+  mergeVersionSource(nestedLuxeMetrics?['metric_formula_versions']);
+
+  return out;
+}
+
+/// The single-scan honesty gates a scan must pass before it can EVER be
+/// selected as an AI Skin Analysis baseline for any key -- checked once,
+/// independent of any specific comparison partner:
+///  - a known, non-null poseTemplate AND guideType (a scan missing either
+///    can never match a real capture's AiBaselineKey anyway -- this states
+///    the same rule directly, for callers checking eligibility up front);
+///  - capture quality recorded as "normal" (any other, or unknown, quality
+///    means this scan's own conditions were degraded);
+///  - a known analysis method (at least one recognized extraction path
+///    recorded);
+///  - a recorded scoring-formula version (at least one metric).
+/// A scan failing any of these is NEVER stored as a baseline, no matter
+/// how it was reached (auto-registration or an explicit pin) -- it's
+/// simply not yet "a real, comparable scan". Pairwise gates (resolution
+/// match, extraction-path MATCH, quality MATCH against a specific other
+/// scan) are separate and enforced by the backend's own trend gates at
+/// comparison time, not here -- see _trend_delta_and_status in main.py.
+bool scanPassesSingleScanBaselineGates(ScanHistoryEntry scan) {
+  if (scan.poseTemplate == null || scan.guideType == null) return false;
+  final quality = (scan.captureQuality ?? '').trim().toLowerCase();
+  if (quality != 'normal') return false;
+  if (aiScanExtractionPaths(scan).isEmpty) return false;
+  if (aiScanFormulaVersions(scan).isEmpty) return false;
+  return true;
 }
 
 Map<String, String> buildAiSkinAnalysisBackendFields({
@@ -825,10 +949,111 @@ Map<String, double> timelineMetricsFromBackend(
   return out;
 }
 
-class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
-  static const String _manualBaselinePrefsKey =
-      'skin_ai_manual_baseline_metric_matrix_v1';
+/// Everything _getPreviousMetrics resolves about the current capture's
+/// baseline, per the per-(procedureId, focusArea, poseTemplate, guideType)
+/// baseline rule -- kept as one bundle so every consumer (backend fields,
+/// the local Luxe metric matrix, "first scan"/"pin ignored" messaging)
+/// reads a single, consistent resolution instead of recomputing it.
+class AiBaselineResolution {
+  const AiBaselineResolution({
+    this.key,
+    this.baselineScan,
+    this.eligibleScansForKey = const <ScanHistoryEntry>[],
+    this.isFirstForKey = false,
+    this.ignoredPinReason,
+  });
 
+  /// The current capture's own key. Null until the first resolution runs.
+  final AiBaselineKey? key;
+
+  /// The resolved baseline entry for this key, or null if none exists yet
+  /// -- this capture will become the baseline once saved, if it itself
+  /// passes [scanPassesSingleScanBaselineGates].
+  final ScanHistoryEntry? baselineScan;
+
+  /// Every scan matching this exact key that individually passes the
+  /// single-scan honesty gates, oldest first -- used for per-metric
+  /// fallback resolution within the same key (see
+  /// _resolvePriorBaselineForMetric). Never includes a scan missing a
+  /// poseTemplate or guideType, or one that fails a single-scan gate.
+  final List<ScanHistoryEntry> eligibleScansForKey;
+
+  /// True when there is no valid baseline (no pin, no eligible earliest
+  /// scan) for this key yet.
+  final bool isFirstForKey;
+
+  /// Non-null when a pin existed for this key but was ignored (not found,
+  /// key mismatch, or failed a single-scan honesty gate) -- the resolved
+  /// [baselineScan] in that case (if any) is the earliest eligible scan
+  /// instead, never a silently-different key.
+  final String? ignoredPinReason;
+}
+
+/// Pure resolution of the AI Skin Analysis baseline for [key], given every
+/// scan matching that key (in any order) and whatever scan id (if any) is
+/// currently pinned for it. Implements the baseline product rule's
+/// precedence exactly:
+///  1. A valid pin -- found in [allScans], its own key equals [key], AND it
+///     passes [scanPassesSingleScanBaselineGates] -- wins.
+///  2. Otherwise, the earliest (oldest timestamp) scan in [keyMatches] that
+///     passes the single-scan honesty gates.
+///  3. Otherwise there is no baseline yet.
+/// An invalid pin (missing, key-mismatched, or disqualified) is reported
+/// via [AiBaselineResolution.ignoredPinReason] and NEVER changes which scan
+/// step 2 picks -- it's simply skipped, never silently swapped for a
+/// different key's scan.
+AiBaselineResolution resolveAiBaseline({
+  required AiBaselineKey key,
+  required List<ScanHistoryEntry> keyMatches,
+  required List<ScanHistoryEntry> allScans,
+  String? pinnedScanId,
+}) {
+  final sorted = List<ScanHistoryEntry>.from(keyMatches)
+    ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+  final eligible = sorted.where(scanPassesSingleScanBaselineGates).toList();
+
+  ScanHistoryEntry? pinnedValid;
+  String? ignoredPinReason;
+  final cleanPinnedId = pinnedScanId?.trim();
+  if (cleanPinnedId != null && cleanPinnedId.isNotEmpty) {
+    ScanHistoryEntry? pinnedScan;
+    for (final scan in allScans) {
+      if (scan.id == cleanPinnedId) {
+        pinnedScan = scan;
+        break;
+      }
+    }
+    if (pinnedScan == null) {
+      ignoredPinReason =
+          'Your pinned baseline scan is no longer available, so the '
+          'earliest matching scan is used instead.';
+    } else if (pinnedScan.aiBaselineKey != key) {
+      ignoredPinReason =
+          'Your pinned baseline no longer matches this angle or region, '
+          'so the earliest matching scan is used instead.';
+    } else if (!scanPassesSingleScanBaselineGates(pinnedScan)) {
+      ignoredPinReason =
+          'Your pinned baseline scan no longer meets the quality checks '
+          'required for comparison, so the earliest matching scan is used '
+          'instead.';
+    } else {
+      pinnedValid = pinnedScan;
+    }
+  }
+
+  final resolvedBaseline =
+      pinnedValid ?? (eligible.isNotEmpty ? eligible.first : null);
+
+  return AiBaselineResolution(
+    key: key,
+    baselineScan: resolvedBaseline,
+    eligibleScansForKey: eligible,
+    isFirstForKey: resolvedBaseline == null,
+    ignoredPinReason: pinnedValid == null ? ignoredPinReason : null,
+  );
+}
+
+class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// Debug-only: shares camera_screen.dart's burst_luminance.log via the
   /// native share sheet, for pulling burst-luminance logging data off a
   /// physical device without Xcode's Devices and Simulators window.
@@ -955,16 +1180,56 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   Map<String, int> _metricContributorCounts = const {};
   int _successfulAnalysisFrameCount = 0;
   int _requestedAnalysisFrameCount = 0;
-  Map<String, double>? _manualBaselineMetricMatrix;
-  bool _awaitingBaselineOnboarding = true;
+  /// The resolved AI Skin Analysis baseline for the current capture's
+  /// (procedureId, focusArea, poseTemplate, guideType) key -- see
+  /// AiBaselineResolution. Replaces the old device-global
+  /// _manualBaselineMetricMatrix cache, which carried no such scoping.
+  AiBaselineResolution _aiBaselineResolution = const AiBaselineResolution();
+
+  /// Set once, right after this scan is saved, when it just became the
+  /// first-ever registered baseline for its key.
+  bool _currentScanBecameNewBaseline = false;
+
+  /// Non-null when a pinned baseline existed for this key but was ignored
+  /// (missing pose/guide, or failed a single-scan honesty gate) -- shown in
+  /// the results so the user knows why their pin didn't take effect.
+  String? _ignoredBaselinePinMessage;
+
+  /// Plain confirmation text once this scan has actually been registered as
+  /// the first baseline for its key (see _registerAiBaselineIfNeeded) --
+  /// null until that registration has actually happened, so this never
+  /// claims "it's now your baseline" for a scan that failed its own
+  /// single-scan honesty gates.
+  String? get _firstBaselineConfirmationMessage {
+    if (!_currentScanBecameNewBaseline) return null;
+    final focusLabel = _resolvedFocusArea().trim().isEmpty
+        ? 'this area'
+        : _resolvedFocusArea().trim();
+    final pose = _capturedPoseTemplate;
+    return pose == null
+        ? 'This scan is now your baseline for future comparisons.'
+        : 'This is your first $pose scan of $focusLabel; it\'s now your '
+            'baseline.';
+  }
+
+  /// Debug-only: the deployed backend's git commit (see GET /health and
+  /// main.py's health_check), shown on the results screen so a developer
+  /// can confirm which server build actually served this analysis. Null
+  /// while loading, unreachable, or in a release build (never fetched).
+  String? _debugBackendCommit;
 
   @override
   void initState() {
     super.initState();
     _loadLatestScan();
     _loadProcedureContext();
-    _loadPersistedManualBaseline();
     _refreshFocusAreaPhaseHint();
+    if (kDebugMode) {
+      remote_analysis.SkinAnalysisService.fetchBackendCommit().then((commit) {
+        if (!mounted) return;
+        setState(() => _debugBackendCommit = commit);
+      });
+    }
   }
 
   Future<void> _refreshFocusAreaPhaseHint() async {
@@ -1015,76 +1280,29 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     }
   }
 
-  Future<void> _loadPersistedManualBaseline() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(_manualBaselinePrefsKey)?.trim();
-      if (raw == null || raw.isEmpty) {
-        if (!mounted) return;
-        setState(() {
-          _manualBaselineMetricMatrix = null;
-          _awaitingBaselineOnboarding = true;
-        });
-        return;
-      }
-
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) {
-        if (!mounted) return;
-        setState(() {
-          _manualBaselineMetricMatrix = null;
-          _awaitingBaselineOnboarding = true;
-        });
-        return;
-      }
-
-      final matrix = <String, double>{};
-      decoded.forEach((key, value) {
-        final parsed = _safeToDouble(value);
-        if (parsed == null || !parsed.isFinite || parsed <= 0.0) return;
-        matrix[key.toString()] = parsed.clamp(0.0, 100.0).toDouble();
-      });
-
-      if (!mounted) return;
-      setState(() {
-        _manualBaselineMetricMatrix = matrix.isEmpty ? null : matrix;
-        _awaitingBaselineOnboarding = matrix.isEmpty;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _manualBaselineMetricMatrix = null;
-        _awaitingBaselineOnboarding = true;
-      });
-    }
-  }
-
   double? _safeToDouble(dynamic value) {
     if (value is num) return value.toDouble();
     if (value is String) return double.tryParse(value);
     return null;
   }
 
-  Future<void> _persistManualBaselineMetricMatrix(
-    Map<String, double> matrix,
-  ) async {
-    if (matrix.isEmpty) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_manualBaselinePrefsKey, jsonEncode(matrix));
-    if (!mounted) return;
-    setState(() {
-      _manualBaselineMetricMatrix = Map<String, double>.from(matrix);
-      _awaitingBaselineOnboarding = false;
-    });
-  }
-
+  /// Clears the registered baseline for the CURRENT capture's key only
+  /// (see AppPrefs.clearAiBaselineScanId) -- every other angle/region/
+  /// procedure keeps its own baseline untouched.
   Future<void> _handleBaselineReset() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_manualBaselinePrefsKey);
+    final selectedProcedureId = (_selectedProcedureId ?? '').trim();
+    final key = ScanHistoryEntry.resolveAiBaselineKey(
+      procedureId: selectedProcedureId.isEmpty ? null : selectedProcedureId,
+      focusArea: _resolvedFocusArea(),
+      poseTemplate: _capturedPoseTemplate,
+      guideType: _capturedGuideType,
+    );
+    await AppPrefs.clearAiBaselineScanId(key);
     if (!mounted) return;
     setState(() {
-      _manualBaselineMetricMatrix = null;
-      _awaitingBaselineOnboarding = true;
+      _aiBaselineResolution = const AiBaselineResolution();
+      _currentScanBecameNewBaseline = false;
+      _ignoredBaselinePinMessage = null;
       _serverTrendDeltas = const {};
       _serverTrendStatus = const {};
       _serverTrendLockReasons = const {};
@@ -1510,8 +1728,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       );
 
         final Map<String, double> previousMetrics = await _getPreviousMetrics();
-        final hadBaselineBeforeScan =
-          _explicitLocalFollowUpFlag || _localHistoryCountForFocusArea >= 2;
 
       // Server-first execution: route this scan through the backend multipart
       // endpoint and parse canonical metrics + trend deltas from the payload.
@@ -1531,9 +1747,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       final frames = _analysisFrameBytes.isNotEmpty
           ? _analysisFrameBytes
           : <Uint8List>[backendBytes];
+      // Both the metric matrix AND its extraction-path provenance now come
+      // from the SAME resolved baseline entry (_previousFocusAreaScan) --
+      // no more device-global manual-matrix branch that could describe a
+      // different scan than the one whose provenance fields were sent.
+      final resolvedBaselineMatrix = _buildLuxeBaselineMetricMatrix();
       final baselineMetricMatrixForTrend =
-          _manualBaselineMetricMatrix ??
-          _baselineMetricMatrixForBackend(previousMetrics);
+          resolvedBaselineMatrix.isEmpty ? null : resolvedBaselineMatrix;
       final aggregate = await analyzeBackendFrames(
         frames,
         uploadFrame: (frame, frameNumber) =>
@@ -1545,9 +1765,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               ),
               fields: backendFields,
               baselineMetricMatrix: baselineMetricMatrixForTrend,
-              baselineExtractionPaths: _manualBaselineMetricMatrix != null
-                  ? null
-                  : _buildLuxeBaselineExtractionPaths(),
+              baselineExtractionPaths: _buildLuxeBaselineExtractionPaths(),
               allowBackend: true,
             ),
       );
@@ -1642,19 +1860,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         ...persistedMetricsNode,
       };
 
-      if (_awaitingBaselineOnboarding || _manualBaselineMetricMatrix == null) {
-        final seed = _extractBackendMetricMatrixSeed(backendResponse);
-        if (seed.isNotEmpty) {
-          await _persistManualBaselineMetricMatrix(seed);
-        }
-      }
-
       // Capture the most recent PREVIOUS scan's metrics BEFORE we
       // persist the current one, so the results card can show trend
       // arrows (improved / worsened) against the prior analysis.
       final timelineMetrics = _withTrendDeltaMetrics(
         timelineMetricsFromBackend(fullMetrics),
-        previousMetrics,
         serverTrendDeltas: serverTrendDeltas,
       );
 
@@ -1662,12 +1872,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       // shared scan store, the Recovery Timeline). Falls back to the
       // rule-engine detections when the TFLite models produced nothing.
       bool savedToHistory = false;
+      ScanHistoryEntry? savedEntry;
       try {
         final resolvedProcedureId =
             (_selectedProcedureId?.trim().isNotEmpty == true)
             ? _selectedProcedureId!.trim()
             : (await AppPrefs.getSelectedProcedureIdOrNull())?.trim();
-        await SkinHistoryRepository.instance.saveScan(
+        savedEntry = await SkinHistoryRepository.instance.saveScan(
           metrics: rawMetricScores,
           imagePath: path,
           timestamp: input.capturedAt,
@@ -1719,9 +1930,19 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             );
           }
           savedToHistory = true;
+          savedEntry = fallbackEntry;
         } catch (_) {
           // Non-fatal — the analysis still surfaces to the user.
         }
+      }
+
+      // Per the baseline product rule: when no valid baseline existed for
+      // this key, the scan that was JUST saved becomes it -- but only if
+      // it itself passes the single-scan honesty gates (a blurry/degraded
+      // first scan does not become a permanent baseline). No-op if a
+      // baseline already existed for this key.
+      if (savedEntry != null) {
+        await _registerAiBaselineIfNeeded(savedEntry);
       }
 
       if (!mounted) return;
@@ -1750,9 +1971,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       });
 
       if (savedToHistory) {
-        if (!hadBaselineBeforeScan) {
-          await _autoPinCurrentScanAsBaseline();
-        }
+        // Baseline registration (see _registerAiBaselineIfNeeded, called
+        // right after saving above) already handles "first real scan
+        // becomes the baseline" per the product rule's precedence -- no
+        // separate auto-pin step needed here.
         final storageWarning = await AppPrefs.consumeScanStorageWarning();
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1777,89 +1999,35 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     }
   }
 
-  double? _trendMetricValueFromMap(Map<String, double> metrics, String key) {
-    switch (key) {
-      case 'localized_redness':
-        return metrics['redness']?.clamp(0, 10).toDouble();
-      case 'texture_smoothness':
-        final texture = metrics['texture'];
-        return texture == null ? null : (10 - texture).clamp(0, 10).toDouble();
-      case 'pigment_load':
-        return metrics['pigment']?.clamp(0, 10).toDouble();
-      case 'wrinkle_load':
-        return metrics['wrinkle']?.clamp(0, 10).toDouble();
-      case 'overall_healing':
-        return metrics['overallHealingScore']?.clamp(0, 10).toDouble();
-      case 'swelling':
-        return metrics['swelling']?.clamp(0, 10).toDouble();
-      case 'smoothness':
-        return metrics['smoothness']?.clamp(0, 10).toDouble();
-      case 'scarring_bruising':
-        return metrics['scarringBruising']?.clamp(0, 10).toDouble();
-    }
-    return metrics[key]?.clamp(0, 10).toDouble();
-  }
-
-  double? _percentDelta(double current, double? previous) {
-    if (previous == null) return null;
-    final denominator = previous.abs() < 0.1 ? 0.1 : previous.abs();
-    return ((current - previous) / denominator) * 100.0;
-  }
-
+  /// Applies the backend's OWN trend_delta_*_pct values onto [current]'s
+  /// metrics for storage. Displayed/persisted trend deltas come ONLY from
+  /// the backend's trend_deltas -- this never recomputes a percentage from
+  /// raw current/previous values client-side, so a client-computed number
+  /// can never disagree with (or silently stand in for) what the backend
+  /// actually verified against the honesty gates.
   Map<String, double> _withTrendDeltaMetrics(
-    Map<String, double> current,
-    Map<String, double> previous, {
+    Map<String, double> current, {
     Map<String, double> serverTrendDeltas = const <String, double>{},
   }) {
     final enriched = <String, double>{...current};
+    if (serverTrendDeltas.isEmpty) return enriched;
 
-    void writeDelta(String storageKey) {
-      final currentValue = _trendMetricValueFromMap(current, storageKey);
-      final previousValue = _trendMetricValueFromMap(previous, storageKey);
-      if (currentValue == null || previousValue == null) return;
-      final delta = _percentDelta(currentValue, previousValue);
-      if (delta == null) return;
-      enriched['trend_delta_${storageKey}_pct'] = delta;
-    }
-
-    if (_isBodyProcedure) {
-      for (final key in const [
-        'overall_healing',
-        'swelling',
-        'smoothness',
-        'scarring_bruising',
-      ]) {
-        writeDelta(key);
-      }
-    } else {
-      for (final key in const [
-        'localized_redness',
-        'texture_smoothness',
-        'pigment_load',
-        'wrinkle_load',
-      ]) {
-        writeDelta(key);
-      }
-    }
-
-    if (serverTrendDeltas.isNotEmpty) {
-      final keyMap = <String, String>{
-        'localized_redness': 'trend_delta_localized_redness_pct',
-        'texture_smoothness': 'trend_delta_texture_smoothness_pct',
-        'pore_visibility': 'trend_delta_pore_visibility_pct',
-        'breakout_activity': 'trend_delta_breakout_activity_pct',
-        'pigment_load': 'trend_delta_pigment_load_pct',
-        'wrinkle_load': 'trend_delta_wrinkle_load_pct',
-        'overall_healing': 'trend_delta_overall_healing_pct',
-        'swelling': 'trend_delta_swelling_pct',
-        'smoothness': 'trend_delta_smoothness_pct',
-        'scarring_bruising': 'trend_delta_scarring_bruising_pct',
-      };
-      for (final entry in keyMap.entries) {
-        final value = serverTrendDeltas[entry.key];
-        if (value == null) continue;
-        enriched[entry.value] = value;
-      }
+    const keyMap = <String, String>{
+      'localized_redness': 'trend_delta_localized_redness_pct',
+      'texture_smoothness': 'trend_delta_texture_smoothness_pct',
+      'pore_visibility': 'trend_delta_pore_visibility_pct',
+      'breakout_activity': 'trend_delta_breakout_activity_pct',
+      'pigment_load': 'trend_delta_pigment_load_pct',
+      'wrinkle_load': 'trend_delta_wrinkle_load_pct',
+      'overall_healing': 'trend_delta_overall_healing_pct',
+      'swelling': 'trend_delta_swelling_pct',
+      'smoothness': 'trend_delta_smoothness_pct',
+      'scarring_bruising': 'trend_delta_scarring_bruising_pct',
+    };
+    for (final entry in keyMap.entries) {
+      final value = serverTrendDeltas[entry.key];
+      if (value == null) continue;
+      enriched[entry.value] = value;
     }
 
     return enriched;
@@ -1922,28 +2090,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   bool _shouldPersistPoreMetric(Map<String, dynamic> payload) {
     if (_hasExplicitNullPoreInPayload(payload)) return false;
     return _hasNumericPoreInPayload(payload);
-  }
-
-  Map<String, double> _extractBackendMetricMatrixSeed(
-    Map<String, dynamic> payload,
-  ) {
-    final metricsNode = _asDynamicMap(payload['metrics']) ?? payload;
-    final metricMatrix =
-        _asDynamicMap(payload['metric_matrix']) ??
-        _asDynamicMap(metricsNode['metric_matrix']) ??
-        const <String, dynamic>{};
-
-    if (metricMatrix.isEmpty) return const {};
-
-    final out = <String, double>{};
-    for (final entry in metricMatrix.entries) {
-      final parsed = _safeToDouble(entry.value);
-      if (parsed == null || parsed.isNaN || parsed.isInfinite) continue;
-      final clamped = parsed.clamp(0.0, 100.0).toDouble();
-      if (clamped <= 0.0) continue;
-      out[entry.key] = clamped;
-    }
-    return out;
   }
 
   Map<String, double> _rawMetricScoresForStorage(
@@ -2231,45 +2377,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       serverTrendStatus: mappedTrendStatus,
       serverTrendLockReasons: mappedTrendLockReasons,
     );
-  }
-
-  Map<String, dynamic>? _baselineMetricMatrixForBackend(
-    Map<String, double> previous,
-  ) {
-    if (previous.isEmpty) return null;
-
-    final out = <String, dynamic>{};
-    final redness = previous['redness'];
-    if (redness != null) {
-      final normalized = (redness * 10).clamp(0.0, 100.0).toDouble();
-      if (normalized > 0.0) out['localized_redness'] = normalized;
-    }
-    final texture = previous['texture'];
-    if (texture != null) {
-      final normalized = ((10 - texture) * 10).clamp(0.0, 100.0).toDouble();
-      if (normalized > 0.0) out['texture_smoothness'] = normalized;
-    }
-    final pore = previous['pore'];
-    if (pore != null) {
-      final normalized = (pore * 10).clamp(0.0, 100.0).toDouble();
-      if (normalized > 0.0) out['pore_visibility'] = normalized;
-    }
-    final acne = previous['acne_severity'];
-    if (acne != null) {
-      final normalized = (acne * 10).clamp(0.0, 100.0).toDouble();
-      if (normalized > 0.0) out['breakout_activity'] = normalized;
-    }
-    final pigment = previous['pigment'];
-    if (pigment != null) {
-      final normalized = (pigment * 10).clamp(0.0, 100.0).toDouble();
-      if (normalized > 0.0) out['pigment_load'] = normalized;
-    }
-    final wrinkle = previous['wrinkle'];
-    if (wrinkle != null) {
-      final normalized = (wrinkle * 10).clamp(0.0, 100.0).toDouble();
-      if (normalized > 0.0) out['wrinkle_load'] = normalized;
-    }
-    return out.isEmpty ? null : out;
   }
 
   Map<String, double> _bodyRecoveryScoresFor(Map<String, double> scores) {
@@ -5644,6 +5751,51 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   String _normalizeFocus(String? value) =>
       (value ?? '').trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 
+  /// Registers [savedEntry] as the baseline for its own key IF no valid
+  /// baseline existed for that key yet (see
+  /// [AiBaselineResolution.isFirstForKey]) AND it itself passes the
+  /// single-scan honesty gates -- a scan that fails those (e.g. degraded
+  /// capture quality) is never stored as a baseline, even as the first
+  /// attempt for a key. Never overwrites an EXISTING baseline; that only
+  /// happens through explicit pinning ("Save as Baseline"/"Update
+  /// baseline") or a reset.
+  Future<void> _registerAiBaselineIfNeeded(ScanHistoryEntry savedEntry) async {
+    if (!_aiBaselineResolution.isFirstForKey) return;
+    if (!scanPassesSingleScanBaselineGates(savedEntry)) return;
+    final key = _aiBaselineResolution.key ?? savedEntry.aiBaselineKey;
+    await AppPrefs.setAiBaselineScanId(key, savedEntry.id);
+    if (!mounted) return;
+    setState(() {
+      _currentScanBecameNewBaseline = true;
+    });
+  }
+
+  /// Resolves this capture's baseline per the product rule: the first
+  /// real, comparable scan for each (procedureId, focusArea, poseTemplate,
+  /// guideType) key is that key's baseline.
+  ///
+  /// Precedence:
+  ///  1. A valid pin for this exact key wins (AppPrefs.getAiBaselineScanId)
+  ///     -- "valid" meaning the pinned scan still matches the key AND still
+  ///     passes the single-scan honesty gates. An invalid pin is ignored
+  ///     (see [_ignoredBaselinePinMessage]), never silently swapped for a
+  ///     different key.
+  ///  2. Otherwise, the earliest scan matching the key that passes the
+  ///     single-scan honesty gates (capture quality, known analysis
+  ///     method, a recorded formula version). A scan failing those is
+  ///     never itself a baseline candidate.
+  ///  3. If neither exists, there is no baseline yet -- this capture will
+  ///     become one once saved, if it qualifies (see
+  ///     [_registerAiBaselineIfNeeded]).
+  ///
+  /// Pairwise gates (resolution, extraction-path match, capture-quality
+  /// match, formula-version match) are checked only at comparison time, by
+  /// the backend's existing trend gates -- this never re-picks a different
+  /// baseline because the resolved one fails a pairwise check against the
+  /// current scan; that shows as "not comparable" via trend_lock_reason
+  /// instead.
+  ///
+  /// Must be called BEFORE the current scan is persisted.
   Future<Map<String, double>> _getPreviousMetrics() async {
     try {
       _previousFocusAreaScan = null;
@@ -5652,185 +5804,22 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       _localHistoryCountForFocusArea = 1;
       _explicitLocalFollowUpFlag = false;
       _noComparableBaselineMessage = null;
-      final focus = _normalizeFocus(_resolvedFocusArea());
-      final isFullFaceFocus = focus == 'full face';
+      _ignoredBaselinePinMessage = null;
+      _currentScanBecameNewBaseline = false;
+
       final selectedProcedureId = (_selectedProcedureId ?? '').trim();
+      final key = ScanHistoryEntry.resolveAiBaselineKey(
+        procedureId: selectedProcedureId.isEmpty ? null : selectedProcedureId,
+        focusArea: _resolvedFocusArea(),
+        poseTemplate: _capturedPoseTemplate,
+        guideType: _capturedGuideType,
+      );
+
       final scans = await SkinHistoryRepository.instance.getAllScans();
-      String? pinnedBaselineScanId;
-      String? pinnedLatestScanId;
-      if (selectedProcedureId.isNotEmpty) {
-        final comparison = await AppPrefs.getProcedurePhotoComparison(
-          selectedProcedureId,
-        );
-        final rawBaselineId = comparison['baselineScanId']?.trim();
-        if (rawBaselineId != null && rawBaselineId.isNotEmpty) {
-          pinnedBaselineScanId = rawBaselineId;
-        }
-        final rawLatestId = comparison['latestScanId']?.trim();
-        if (rawLatestId != null && rawLatestId.isNotEmpty) {
-          pinnedLatestScanId = rawLatestId;
-        }
-      }
-      const clinicalMetricKeys = <String>{
-        'localized_redness',
-        'texture_smoothness',
-        'pore_visibility',
-        'wrinkle_load',
-        'pigment_load',
-        'breakout_activity',
-        'diffuse_flushing_erythema',
-        'sebum_excess_oil_gloss',
-        'skin_tone_radiance_evenness',
-        'glabellar_wrinkle_depth',
-        'under_eye_texture_density',
-        'under_eye_dark_circle_density',
-        'rosacea_severity',
-        'structural_firmness_elasticity',
-        'pore_contraction_index',
-      };
-      int clinicalKeyCountFor(ScanHistoryEntry scan) {
-        bool validPositive(dynamic value) =>
-            value is num && value.isFinite && value > 0;
-        final keys = <String>{};
-
-        for (final entry in scan.metrics.entries) {
-          if (clinicalMetricKeys.contains(entry.key) && validPositive(entry.value)) {
-            keys.add(entry.key);
-          }
-        }
-
-        Map<String, dynamic> asDynamicMap(dynamic value) {
-          if (value is Map<String, dynamic>) return value;
-          if (value is Map) return Map<String, dynamic>.from(value);
-          return const <String, dynamic>{};
-        }
-
-        final payload = scan.rawPayload ?? const <String, dynamic>{};
-        final metricMatrix = asDynamicMap(payload['metric_matrix']);
-        for (final entry in metricMatrix.entries) {
-          if (clinicalMetricKeys.contains(entry.key) && validPositive(entry.value)) {
-            keys.add(entry.key);
-          }
-        }
-
-        final metricsNode = asDynamicMap(payload['metrics']);
-        for (final entry in metricsNode.entries) {
-          if (clinicalMetricKeys.contains(entry.key) && validPositive(entry.value)) {
-            keys.add(entry.key);
-          }
-        }
-
-        final nestedMatrix = asDynamicMap(metricsNode['metric_matrix']);
-        for (final entry in nestedMatrix.entries) {
-          if (clinicalMetricKeys.contains(entry.key) && validPositive(entry.value)) {
-            keys.add(entry.key);
-          }
-        }
-
-        return keys.length;
-      }
-
-      final strictCandidates = <ScanHistoryEntry>[];
-      final fallbackFullFaceCandidates = <ScanHistoryEntry>[];
-      // Scans that matched procedure/focus/metrics but were excluded solely
-      // for not sharing this capture's angle+guide -- tracked so the "no
-      // comparable baseline" message can say so plainly instead of the UI
-      // silently treating this like a genuine first-ever scan.
-      var hadAngleOrGuideMismatchOnlyCandidate = false;
-      // getAllScans() is newest-first. We keep both edges:
-      // - first: most recent prior scan (for trend deltas)
-      // - last: earliest same-focus baseline (for before/after left frame)
-      for (final scan in scans) {
-        final scanProcedureId = (scan.procedureId ?? '').trim();
-        final scanFocus = _normalizeFocus(scan.focusArea);
-        final hasPhoto = (scan.imagePath ?? '').trim().isNotEmpty;
-        final clinicalKeyCount = clinicalKeyCountFor(scan);
-
-        final procedureMatches =
-            selectedProcedureId.isEmpty || scanProcedureId == selectedProcedureId;
-        final focusMatches = focus.isEmpty || scanFocus == focus;
-        // Additional gate on top of procedureMatches/focusMatches: the
-        // capture angle (poseTemplate) and camera guide type must both be
-        // known and identical on both sides. "Left 45°" is never treated
-        // as "Left Profile", and a null on either side is never a match --
-        // never fall back to comparing across angles.
-        final angleAndGuideMatches = ScanHistoryEntry.scansComparableByAngleAndGuide(
-          poseTemplateA: _capturedPoseTemplate,
-          guideTypeA: _capturedGuideType,
-          poseTemplateB: scan.poseTemplate,
-          guideTypeB: scan.guideType,
-        );
-
-        final raw = scan.metrics;
-        final hasAny =
-            SkinHistoryRepository.allMetricKeys.any(
-              (k) => raw.containsKey(k),
-            ) ||
-            clinicalKeyCount > 0 ||
-            const [
-              'fatRetention',
-              'swelling',
-              'firmness',
-              'smoothness',
-              'scarringBruising',
-              'hyperpigmentation',
-              'overallHealingScore',
-            ].any((k) => raw.containsKey(k));
-
-        final isFullFaceAiPhotoFallbackCandidate =
-            isFullFaceFocus &&
-            scan.isAiAnalysisScan &&
-            hasPhoto &&
-            (scanFocus.isEmpty || scanFocus == 'full face');
-
-        final strictMatch =
-            procedureMatches && focusMatches && angleAndGuideMatches && hasAny;
-        final fallbackMatch = !strictMatch &&
-            isFullFaceAiPhotoFallbackCandidate &&
-            angleAndGuideMatches;
-
-        String exclusionReason = 'included_strict';
-        if (strictMatch) {
-          strictCandidates.add(scan);
-        } else if (fallbackMatch) {
-          exclusionReason = 'included_full_face_photo_fallback';
-          fallbackFullFaceCandidates.add(scan);
-        } else if (!procedureMatches) {
-          exclusionReason = 'procedure_mismatch';
-        } else if (!focusMatches) {
-          exclusionReason = 'focus_mismatch';
-        } else if (!angleAndGuideMatches) {
-          exclusionReason = 'angle_or_guide_mismatch';
-          if (hasAny) hadAngleOrGuideMismatchOnlyCandidate = true;
-        } else if (!hasAny) {
-          exclusionReason = 'no_supported_metrics';
-        } else if (!hasPhoto) {
-          exclusionReason = 'no_photo';
-        } else {
-          exclusionReason = 'filtered_out';
-        }
-
-        debugPrint(
-          'BASELINE CANDIDATE SCAN: id=${scan.id} '
-          'focusArea=${scan.focusArea ?? 'none'} '
-          'imagePathNull=${hasPhoto ? 'false' : 'true'} '
-          'clinicalKeyCount=$clinicalKeyCount '
-          'reason=$exclusionReason',
-        );
-      }
-
-      final seenIds = <String>{};
-      final candidates = <ScanHistoryEntry>[];
-      for (final scan in strictCandidates) {
-        if (seenIds.add(scan.id)) {
-          candidates.add(scan);
-        }
-      }
-      for (final scan in fallbackFullFaceCandidates) {
-        if (seenIds.add(scan.id)) {
-          candidates.add(scan);
-        }
-      }
+      // getAllScans() is newest-first; sort oldest-first so "earliest" is
+      // simply ".first".
+      final keyMatches = scans.where((scan) => scan.aiBaselineKey == key).toList()
+        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
       bool readFollowUpFlagFromPayload(ScanHistoryEntry scan) {
         final payload = scan.rawPayload ?? const <String, dynamic>{};
@@ -5845,56 +5834,48 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         return normalized == 'true' || normalized == '1' || normalized == 'yes';
       }
 
-      _localHistoryCountForFocusArea = candidates.length + 1;
-      _explicitLocalFollowUpFlag = candidates.any(readFollowUpFlagFromPayload);
+      _localHistoryCountForFocusArea = keyMatches.length + 1;
+      _explicitLocalFollowUpFlag = keyMatches.any(readFollowUpFlagFromPayload);
+
+      final pinnedId = await AppPrefs.getAiBaselineScanId(key);
+      final resolution = resolveAiBaseline(
+        key: key,
+        keyMatches: keyMatches,
+        allScans: scans,
+        pinnedScanId: pinnedId,
+      );
+      _aiBaselineResolution = resolution;
+      _priorFocusAreaScans = resolution.eligibleScansForKey;
+      _ignoredBaselinePinMessage = resolution.ignoredPinReason;
 
       debugPrint(
-        'BASELINE CANDIDATES: procedureId=${selectedProcedureId.isEmpty ? 'none' : selectedProcedureId} '
-        'localHistoryCount=$_localHistoryCountForFocusArea globalCount=${scans.length} focus=$focus',
+        'AI BASELINE: key=$key keyMatches=${keyMatches.length} '
+        'eligible=${resolution.eligibleScansForKey.length} '
+        'resolved=${resolution.baselineScan?.id ?? 'none'} '
+        'ignoredPin=${resolution.ignoredPinReason != null}',
       );
 
-      if (candidates.isEmpty) {
-        if (hadAngleOrGuideMismatchOnlyCandidate) {
-          final focusLabel = _resolvedFocusArea().trim().isEmpty
-              ? 'this area'
-              : _resolvedFocusArea().trim();
-          _noComparableBaselineMessage = _capturedPoseTemplate == null
-              ? 'This photo\'s angle is unknown, so it can\'t be compared '
-                  'with earlier scans.'
-              : 'No earlier $_capturedPoseTemplate scan of $focusLabel to '
-                  'compare with.';
-        }
+      final resolvedBaseline = resolution.baselineScan;
+      if (resolvedBaseline == null) {
+        // Only the "angle unknown" case is set here -- whether this scan
+        // actually BECOMES the baseline isn't known until after it's saved
+        // and passes its own single-scan gates (see
+        // _registerAiBaselineIfNeeded / _currentScanBecameNewBaseline),
+        // which is what the results UI actually shows as confirmation.
+        _noComparableBaselineMessage = _capturedPoseTemplate == null
+            ? 'This photo\'s angle is unknown, so it can\'t be compared '
+                'with earlier scans.'
+            : null;
         return const {};
       }
 
-      _priorFocusAreaScans = List<ScanHistoryEntry>.from(candidates);
-
-      ScanHistoryEntry? pinnedLatest;
-      if (pinnedLatestScanId != null) {
-        for (final scan in candidates) {
-          if (scan.id == pinnedLatestScanId) {
-            pinnedLatest = scan;
-            break;
-          }
-        }
-      }
-      _previousFocusAreaScan = pinnedLatest ?? candidates.first;
-
-      ScanHistoryEntry? pinnedBaseline;
-      if (pinnedBaselineScanId != null) {
-        for (final scan in candidates) {
-          if (scan.id == pinnedBaselineScanId) {
-            pinnedBaseline = scan;
-            break;
-          }
-        }
-      }
-      _baselineFocusAreaScan = pinnedBaseline ?? candidates.last;
+      _previousFocusAreaScan = resolvedBaseline;
+      _baselineFocusAreaScan = resolvedBaseline;
 
       // Scans persisted by this service store 0–1 values; legacy /
       // fallback scans may already be 0–10. Normalise either way.
       double norm(double v) => (v <= 1.0 ? v * 10 : v).clamp(0, 10).toDouble();
-      final raw = _baselineFocusAreaScan!.metrics;
+      final raw = resolvedBaseline.metrics;
       return {for (final entry in raw.entries) entry.key: norm(entry.value)};
     } catch (_) {
       // Non-fatal — simply show no trend indicators.
@@ -5905,224 +5886,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     _localHistoryCountForFocusArea = 1;
     _explicitLocalFollowUpFlag = false;
     return const {};
-  }
-
-  List<
-    ({
-      String key,
-      String label,
-      double current,
-      double previous,
-      bool lowerIsBetter,
-      Color color,
-    })
-  >
-  _trendDeltaSeries() {
-    final result = _result;
-    if (result == null || _previousMetrics.isEmpty) return const [];
-    final current = timelineMetricsFromBackend(_fullMetrics);
-    final specs = _isBodyProcedure
-        ? <({String key, String label, bool lowerIsBetter, Color color})>[
-            (
-              key: 'overall_healing',
-              label: 'Overall Healing',
-              lowerIsBetter: false,
-              color: MyApp.clinicalTeal,
-            ),
-            (
-              key: 'swelling',
-              label: 'Swelling',
-              lowerIsBetter: true,
-              color: const Color(0xFFC76A55),
-            ),
-            (
-              key: 'smoothness',
-              label: 'Texture Smoothness',
-              lowerIsBetter: false,
-              color: const Color(0xFF4FAE8B),
-            ),
-            (
-              key: 'scarring_bruising',
-              label: 'Scarring / Bruising',
-              lowerIsBetter: true,
-              color: const Color(0xFFB89A6E),
-            ),
-          ]
-        : <({String key, String label, bool lowerIsBetter, Color color})>[
-            (
-              key: 'texture_smoothness',
-              label: 'Texture Smoothness',
-              lowerIsBetter: false,
-              color: const Color(0xFF4FAE8B),
-            ),
-            (
-              key: 'localized_redness',
-              label: 'Localized Redness',
-              lowerIsBetter: true,
-              color: const Color(0xFFC76A55),
-            ),
-            (
-              key: 'pigment_load',
-              label: 'Pigment Load',
-              lowerIsBetter: true,
-              color: const Color(0xFFB89A6E),
-            ),
-            (
-              key: 'wrinkle_load',
-              label: 'Wrinkle Load',
-              lowerIsBetter: true,
-              color: const Color(0xFFD08A4A),
-            ),
-          ];
-
-    final rows =
-        <
-          ({
-            String key,
-            String label,
-            double current,
-            double previous,
-            bool lowerIsBetter,
-            Color color,
-          })
-        >[];
-    for (final spec in specs) {
-      final currentValue = _trendMetricValueFromMap(current, spec.key);
-      final previousValue = _trendMetricValueFromMap(
-        _previousMetrics,
-        spec.key,
-      );
-      if (currentValue == null || previousValue == null) continue;
-      rows.add((
-        key: spec.key,
-        label: spec.label,
-        current: currentValue,
-        previous: previousValue,
-        lowerIsBetter: spec.lowerIsBetter,
-        color: spec.color,
-      ));
-    }
-    return rows;
-  }
-
-  Widget _trendDeltaSummaryCard() {
-    final series = _trendDeltaSeries();
-    if (series.isEmpty) return const SizedBox.shrink();
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: _cardDecoration(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                Icons.compare_arrows_rounded,
-                size: 16,
-                color: MyApp.clinicalTeal,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Trend Deltas vs Baseline',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w900,
-                  color: MyApp.clinicalNavy,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'These percentage shifts compare today\'s calibrated scan against your most recent same-area baseline, reducing noise from framing and lighting differences.',
-            style: TextStyle(
-              fontSize: 11.5,
-              height: 1.45,
-              color: MyApp.textBrown.withValues(alpha: 0.84),
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 14),
-          for (int i = 0; i < series.length; i++) ...[
-            if (i > 0) const SizedBox(height: 10),
-            _trendDeltaRow(series[i]),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _trendDeltaRow(
-    ({
-      String key,
-      String label,
-      double current,
-      double previous,
-      bool lowerIsBetter,
-      Color color,
-    })
-    item,
-  ) {
-    final deltaPct = _percentDelta(item.current, item.previous) ?? 0.0;
-    final stable = deltaPct.abs() < 3.0;
-    final improved = item.lowerIsBetter ? deltaPct < 0 : deltaPct > 0;
-    final tone = stable
-        ? MyApp.clinicalSlate
-        : improved
-        ? AppColors.mutedSage
-        : AppColors.softTerracotta;
-    final prefix = deltaPct > 0 ? '+' : '';
-    final direction = stable
-        ? 'Stable'
-        : improved
-        ? 'Improved'
-        : 'Needs attention';
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: tone.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: tone.withValues(alpha: 0.22), width: 0.7),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  item.label,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
-                    color: MyApp.clinicalNavy,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  '$direction against baseline',
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w700,
-                    color: MyApp.clinicalSlate,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Text(
-            '$prefix${deltaPct.toStringAsFixed(1)}%',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w900,
-              color: tone,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   /// Backend-only, non-diagnostic hero card. Built exclusively from
@@ -6274,9 +6037,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                     ),
                   ],
                 ),
-                if (_awaitingBaselineOnboarding) ...[
+                if (_firstBaselineConfirmationMessage != null) ...[
                   Text(
-                    'Baseline onboarding mode: your next scan will become the benchmark.',
+                    _firstBaselineConfirmationMessage!,
                     style: TextStyle(
                       color: AppColors.champagneGold.withValues(alpha: 0.9),
                       fontSize: 10.5,
@@ -6284,6 +6047,37 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                     ),
                   ),
                   const SizedBox(height: 8),
+                ] else if (_ignoredBaselinePinMessage != null) ...[
+                  Text(
+                    _ignoredBaselinePinMessage!,
+                    style: TextStyle(
+                      color: AppColors.champagneGold.withValues(alpha: 0.9),
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ] else if (_noComparableBaselineMessage != null) ...[
+                  Text(
+                    _noComparableBaselineMessage!,
+                    style: TextStyle(
+                      color: AppColors.champagneGold.withValues(alpha: 0.9),
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                if (kDebugMode) ...[
+                  Text(
+                    'Backend commit: ${_debugBackendCommit ?? 'unknown'}',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.45),
+                      fontSize: 9.5,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                  const SizedBox(height: 6),
                 ],
                 const SizedBox(height: 10),
                 Row(
@@ -6525,6 +6319,15 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     return null;
   }
 
+  /// Pins the current scan as the baseline for ITS OWN key (procedureId,
+  /// focusArea, poseTemplate, guideType) -- following the same precedence
+  /// as automatic registration: a pin is only ever accepted for a scan
+  /// that has a known angle and region and passes the single-scan honesty
+  /// gates (see scanPassesSingleScanBaselineGates). Never falls back to a
+  /// synthetic "ai_focus_..." procedure bucket the way the old
+  /// procedureId-only pinning did -- the new registry key already allows a
+  /// null procedureId (matching only other null procedureIds), so there's
+  /// nothing to work around.
   Future<bool> _onSaveAsBaselinePressed({
     bool navigateHomeOnSuccess = false,
     bool quietSuccessSnackBar = false,
@@ -6541,41 +6344,28 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       return false;
     }
 
-    bool ok = await AppPrefs.setBaselineScanId(currentScanId);
-
-    // Fallback: if the scan was saved without a procedure id, attach it to
-    // the active/selected procedure and retry baseline pinning.
-    if (!ok) {
-      String selectedProcedureId =
-          (_selectedProcedureId ?? '').trim().isNotEmpty
-          ? (_selectedProcedureId ?? '').trim()
-          : (await AppPrefs.getSelectedProcedureIdOrNull())?.trim() ?? '';
-
-      // When launched outside a tracked procedure flow, scans can be saved
-      // without a procedure id. Create a stable AI focus bucket so baseline
-      // pinning still works for this focus area.
-      if (selectedProcedureId.isEmpty) {
-        final focus = _normalizeFocus(_resolvedFocusArea()).replaceAll(' ', '_');
-        selectedProcedureId = 'ai_focus_${focus.isEmpty ? 'full_face' : focus}';
-      }
-
-      if (selectedProcedureId.isNotEmpty) {
-        final patched = await AppPrefs.patchScanProcedureId(
-          currentScanId,
-          selectedProcedureId,
-        );
-        if (patched) {
-          ok = await AppPrefs.setBaselineScanId(currentScanId);
-        }
+    final scans = await AppPrefs.getScanEntries();
+    ScanHistoryEntry? target;
+    for (final scan in scans) {
+      if (scan.id == currentScanId) {
+        target = scan;
+        break;
       }
     }
 
-    if (!ok) {
-      final scans = await AppPrefs.getScanEntries();
-      final current = scans.where((s) => s.id == currentScanId).toList();
-      if (current.isNotEmpty && current.first.isBaseline) {
-        ok = true;
-      }
+    bool ok = false;
+    String? failureReason;
+    if (target == null) {
+      failureReason = 'Current scan could not be found.';
+    } else if (!scanPassesSingleScanBaselineGates(target)) {
+      failureReason = (target.poseTemplate == null || target.guideType == null)
+          ? "This scan doesn't have a recorded angle or region, so it "
+              "can't be a baseline."
+          : "This scan doesn't meet the quality checks required to be a "
+              "baseline.";
+    } else {
+      await AppPrefs.setAiBaselineScanId(target.aiBaselineKey, target.id);
+      ok = true;
     }
 
     if (!mounted) return false;
@@ -6592,7 +6382,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           content: Text(
             ok
                 ? 'Baseline updated successfully.'
-                : 'Unable to set baseline for this scan.',
+                : (failureReason ?? 'Unable to set baseline for this scan.'),
             style: const TextStyle(fontWeight: FontWeight.w800),
           ),
         ),
@@ -6600,44 +6390,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     }
 
     return ok;
-  }
-
-  Future<void> _autoPinCurrentScanAsBaseline() async {
-    final currentScanId = await _resolveCurrentScanIdForActions();
-    if (currentScanId == null || currentScanId.isEmpty) return;
-
-    bool ok = await AppPrefs.setBaselineScanId(currentScanId);
-
-    if (!ok) {
-      String selectedProcedureId =
-          (_selectedProcedureId ?? '').trim().isNotEmpty
-          ? (_selectedProcedureId ?? '').trim()
-          : (await AppPrefs.getSelectedProcedureIdOrNull())?.trim() ?? '';
-
-      if (selectedProcedureId.isEmpty) {
-        final focus = _normalizeFocus(_resolvedFocusArea()).replaceAll(' ', '_');
-        selectedProcedureId = 'ai_focus_${focus.isEmpty ? 'full_face' : focus}';
-      }
-
-      if (selectedProcedureId.isNotEmpty) {
-        final patched = await AppPrefs.patchScanProcedureId(
-          currentScanId,
-          selectedProcedureId,
-        );
-        if (patched) {
-          ok = await AppPrefs.setBaselineScanId(currentScanId);
-        }
-      }
-    }
-
-    if (!mounted || !ok) return;
-    final scans = await AppPrefs.getScanEntries();
-    final pinned = scans.where((s) => s.id == currentScanId).toList()
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    if (!mounted) return;
-    setState(() {
-      _baselineFocusAreaScan = pinned.isNotEmpty ? pinned.first : _baselineFocusAreaScan;
-    });
   }
 
   Future<void> _confirmUpdateBaselinePressed() async {

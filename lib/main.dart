@@ -102,6 +102,14 @@ Future<void> main() async {
         }
       }
 
+      // Drop the pre-registry, device-global AI Skin Analysis baseline
+      // cache -- it carried no procedureId/focusArea/poseTemplate/
+      // guideType scoping, so a scan from one angle could silently become
+      // "the baseline" compared against every future scan regardless of
+      // angle or region. Never migrated into the new per-key registry
+      // (see AppPrefs.setAiBaselineScanId) -- just dropped.
+      unawaited(AppPrefs.clearLegacyAiManualBaselineMetricMatrix());
+
       final crashlyticsEnabled = await _initializeCrashlytics();
 
       FlutterError.onError = (FlutterErrorDetails details) {

@@ -7174,7 +7174,12 @@ async def analyze_body_silhouette_endpoint(request: Request):
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok"}
+    # GIT_COMMIT is baked into the image as an env var at `docker build
+    # --build-arg GIT_COMMIT=...` time (see Dockerfile) -- there is no .git
+    # directory in the running container to read it from at request time.
+    # Missing/unset -> "unknown", never a failed health check.
+    commit = os.environ.get("GIT_COMMIT", "").strip() or "unknown"
+    return {"status": "ok", "commit": commit}
 
 
 @app.post("/api/analyze-skin")

@@ -47,6 +47,17 @@ class SkinMetrics {
   }
 }
 
+/// Canonical baseline-scoping key for the AI Skin Analysis flow -- see
+/// [ScanHistoryEntry.resolveAiBaselineKey]. A plain record so equality/
+/// hashing are structural for free, and so it's trivially JSON-round-
+/// trippable field-by-field wherever it needs to be persisted.
+typedef AiBaselineKey = ({
+  String? procedureId,
+  String? focusArea,
+  String? poseTemplate,
+  String? guideType,
+});
+
 class ScanHistoryEntry {
   static const String scanTypeProcedure = 'procedure';
   static const String scanTypeSkincare = 'skincare';
@@ -108,6 +119,57 @@ class ScanHistoryEntry {
     if (guideTypeA != guideTypeB) return false;
     return true;
   }
+
+  /// Canonical baseline-scoping key for the AI Skin Analysis flow: a scan
+  /// can only ever serve as the baseline for other scans sharing the exact
+  /// same (procedureId, focusArea, poseTemplate, guideType). Records have
+  /// structural equality in Dart, so two keys built from equivalent inputs
+  /// compare `==` without a custom class.
+  ///
+  /// Nulls are significant, not wildcards: a null procedureId matches only
+  /// another null procedureId, and a null focusArea matches only another
+  /// null focusArea (see [resolveAiBaselineKey]'s doc comment) -- there is
+  /// no "unscoped" fallback that would let a scan from a different
+  /// procedure or focus area silently qualify.
+  static AiBaselineKey resolveAiBaselineKey({
+    required String? procedureId,
+    required String? focusArea,
+    required String? poseTemplate,
+    required String? guideType,
+  }) {
+    String? trimmedOrNull(String? value) {
+      final trimmed = value?.trim();
+      return (trimmed == null || trimmed.isEmpty) ? null : trimmed;
+    }
+
+    String? normalizedFocusOrNull(String? value) {
+      final normalized = value
+          ?.trim()
+          .toLowerCase()
+          .replaceAll(RegExp(r'\s+'), ' ');
+      return (normalized == null || normalized.isEmpty) ? null : normalized;
+    }
+
+    return (
+      procedureId: trimmedOrNull(procedureId),
+      focusArea: normalizedFocusOrNull(focusArea),
+      poseTemplate: trimmedOrNull(poseTemplate),
+      guideType: trimmedOrNull(guideType),
+    );
+  }
+
+  /// This scan's own [AiBaselineKey], for matching it against a capture's
+  /// resolved key. A scan with a null [poseTemplate] or [guideType] gets a
+  /// key with that field null, which [resolveAiBaselineKey] guarantees can
+  /// never equal a real (non-null) capture's key -- so such a scan can
+  /// never be selected as anyone's baseline, exactly the "missing angle or
+  /// region disqualifies it" rule.
+  AiBaselineKey get aiBaselineKey => resolveAiBaselineKey(
+    procedureId: procedureId,
+    focusArea: focusArea,
+    poseTemplate: poseTemplate,
+    guideType: guideType,
+  );
 
   final String id;
   final DateTime timestamp;
