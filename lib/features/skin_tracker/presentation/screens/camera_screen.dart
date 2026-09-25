@@ -1556,6 +1556,22 @@ class _CameraScreenState extends State<CameraScreen>
         .startImageStream((image) async {
           if (!mounted || _capturing) return;
 
+          // Force the flag true on every frame actually processed here,
+          // not just once at stream-start above. A capture's stop/restart
+          // (see _captureFromLiveCamera / _captureAiSkinAnalysisFrames) can
+          // race an in-flight frame from the OLD stream against the new
+          // stream's start -- if that stale callback's catchError fires
+          // after the restart already set this true, it clobbers it back
+          // to false even though the new stream is genuinely delivering
+          // frames. Re-asserting it here is self-healing: the very next
+          // real frame corrects it, so the status card (which reads this
+          // flag) can never disagree with the LIGHTING chip for more than
+          // one frame interval while frames are actually arriving.
+          if (!_lightingStreamActive) {
+            _lightingStreamActive = true;
+            if (mounted) setState(() {});
+          }
+
           // Real input to the aiSkinAnalysis "too close" rule (see
           // isTooCloseForCropMargin) -- updated every frame, not throttled
           // like lighting/sharpness below, since it's cheap and the SCALE
@@ -7695,12 +7711,15 @@ resolveReadyCameraStatusBarContent({
     );
   }
   // Neither the live stream nor web-simulated mode: the frame stream hasn't
-  // started yet (or errored out), so lighting genuinely can't be measured.
+  // started yet (or errored out), so lighting genuinely can't be measured --
+  // this is a "no reading available yet" state, not a lighting verdict, so
+  // it must not claim a lighting problem (e.g. "Needs Light") that isn't
+  // actually known.
   return (
-    badgeLabel: 'Needs Light',
-    badgeColor: AppColors.softTerracotta,
-    primaryStatus: 'Move to softer front light for the most reliable results.',
-    secondaryStatus: 'Tip: face a window or soft front light to improve consistency.',
+    badgeLabel: 'Calibrating',
+    badgeColor: MyApp.textBrown,
+    primaryStatus: 'Checking lighting…',
+    secondaryStatus: null,
   );
 }
 
