@@ -3963,6 +3963,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 isFollowUp: isFollowUpPhase,
                 gateReason: gateReason,
                 baselineNotSavedReason: _baselineNotSavedReason,
+                requireBackendVerdict: true,
               ),
               const SizedBox(height: 18),
               const ClinicalSectionHeader(
@@ -5183,6 +5184,19 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final trendDeltas = isFollowUp
       ? <String, dynamic>{..._serverTrendDeltas}
       : <String, dynamic>{};
+    // trend_status/trend_lock_reasons must travel alongside trend_deltas --
+    // LuxeReportLayout's _assessMetricHonesty only trusts the backend trend
+    // for a metric when trend_deltas AND trend_status are both present.
+    // Omitting these two (as this map previously did) silently forced every
+    // card on the LIVE results screen into its own local recompute (flat 8%
+    // / 2.0pt bands, no per-metric noise floor) even when the backend had
+    // already computed an honest, gated verdict.
+    final trendStatusForPayload = isFollowUp
+      ? <String, dynamic>{..._serverTrendStatus}
+      : <String, dynamic>{};
+    final trendLockReasonsForPayload = isFollowUp
+      ? <String, dynamic>{..._serverTrendLockReasons}
+      : <String, dynamic>{};
 
     if (isFollowUp && trendDeltas.isEmpty && _previousMetrics.isNotEmpty) {
       // Legacy fallback deltas had no extraction-path provenance. Keep these
@@ -5211,6 +5225,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       'baseline_metric_extraction_paths': baselineExtractionPaths,
       'baseline': baselineMetricMatrix,
       'trend_deltas': trendDeltas,
+      'trend_status': trendStatusForPayload,
+      'trend_lock_reasons': trendLockReasonsForPayload,
       'metrics': cleanedMetricMatrix,
       'local_history_count': _localHistoryCountForFocusArea,
       'is_follow_up': isFollowUp,

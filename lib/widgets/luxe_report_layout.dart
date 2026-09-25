@@ -1086,6 +1086,12 @@ enum _HonestyStatus {
   worsened,
   stable,
   insufficientSignal,
+  // Backend sent no trend_status at all for this metric, and the caller
+  // (the live results screen) has opted out of the legacy local-recompute
+  // fallback via _assessMetricHonesty's requireBackendVerdict. Distinct from
+  // insufficientSignal: that means "the backend judged this", this means
+  // "the backend never weighed in".
+  noVerdict,
 }
 
 class _HonestyAssessment {
@@ -1116,6 +1122,8 @@ class _HonestyAssessment {
         return 'Stable - change within tracking noise';
       case _HonestyStatus.insufficientSignal:
         return 'Insufficient signal';
+      case _HonestyStatus.noVerdict:
+        return 'No verdict for this metric';
     }
   }
 
@@ -1151,6 +1159,13 @@ _HonestyAssessment _assessMetricHonesty({
   bool usesBackendTrend = false,
   String? backendTrendLockReason,
   bool emitLog = true,
+  // See LuxeReportLayout.requireBackendVerdict. When true, a metric with a
+  // real baseline and a comparable current value but no usable backend
+  // trend_status (resolvedFromBackend below is null) returns noVerdict
+  // instead of falling into the legacy recompute further down. Never
+  // touches the !hasComparableCurrentValue / !hasRealBaseline branches --
+  // those are structural facts, not a recompute, and stay honest either way.
+  bool requireBackendVerdict = false,
 }) {
   bool isLowConfidenceValue(Object? value) {
     if (value == null) return false;
@@ -1255,6 +1270,9 @@ _HonestyAssessment _assessMetricHonesty({
   } else if (!hasRealBaseline) {
     status = _HonestyStatus.stable;
     reason = 'Starting point';
+  } else if (requireBackendVerdict) {
+    status = _HonestyStatus.noVerdict;
+    reason = 'No backend verdict supplied';
   } else if (pathUnknown) {
     status = _HonestyStatus.stable;
     reason = 'tracking only (unknown extraction path)';
@@ -1297,7 +1315,11 @@ _HonestyAssessment _assessMetricHonesty({
   return _HonestyAssessment(
     status: status,
     reason: reason,
-    deltaPct: status == _HonestyStatus.insufficientSignal ? null : deltaPct,
+    deltaPct:
+        (status == _HonestyStatus.insufficientSignal ||
+                status == _HonestyStatus.noVerdict)
+            ? null
+            : deltaPct,
     hasRealBaseline: hasRealBaseline && !lowConfidenceZeroCurrent,
     lockReason: lockReason,
   );
@@ -1332,6 +1354,64 @@ _HonestyStatus _fromTrendDirection(TrendDirection direction) {
   }
 }
 
+/// Short, live-results-only phrase for a trend_lock_reason, used to build
+/// "Not comparable: <phrase>" (see LuxeReportLayout.requireBackendVerdict).
+/// Deliberately separate from trend_lock_reason.dart's own
+/// trendLockReasonHeadline/trendLockReasonShortLabel -- those are shared by
+/// other screens (Track Procedure's body silhouette trend, bridge_card.dart)
+/// with their own established wording, which this must not change.
+String _shortLockReasonPhrase(String reason) {
+  switch (reason) {
+    case 'capture_quality_mismatch':
+      return 'capture conditions differed from your last scan';
+    case 'path_mismatch':
+      return 'a different analysis method was used than your last scan';
+    case 'resolution_mismatch':
+      return 'photo resolution differed too much to compare';
+    case 'capture_mode_mismatch':
+      return 'capture setup differed from your last scan';
+    case 'scale_mismatch':
+      return 'framing or distance differed too much to compare';
+    case 'formula_version_mismatch':
+      return "this metric's scoring was updated since your last scan";
+    case 'angle_or_guide_mismatch':
+      return 'a different angle or region was captured than your baseline';
+    case 'frame_range_overlap':
+      return 'frame-to-frame variability was too high to confirm a change';
+    case 'below_noise_floor':
+      return "the change is smaller than this metric's measurement noise";
+    default:
+      return reason;
+  }
+}
+
+/// The ONLY place that decides a metric's headline text on the live AI Skin
+/// Analysis results screen (LuxeReportLayout.requireBackendVerdict == true).
+/// Never used by any other caller of _assessMetricHonesty, so it cannot
+/// change Track Procedure's, progress report's, or history's existing
+/// wording (including the "Standalone entry" lock headline those screens
+/// already show and already have passing tests for).
+String _liveHonestyLabel(_HonestyAssessment assessment, {required bool isBodyMetric}) {
+  if (assessment.status == _HonestyStatus.insufficientSignal && isBodyMetric) {
+    return 'Body tracking';
+  }
+  switch (assessment.status) {
+    case _HonestyStatus.noVerdict:
+      return 'No verdict for this metric';
+    case _HonestyStatus.insufficientSignal:
+      return "Not enough signal: change is smaller than this metric's "
+          'measurement noise';
+    case _HonestyStatus.stable:
+      final lockReason = assessment.lockReason;
+      return lockReason == null
+          ? assessment.label
+          : 'Not comparable: ${_shortLockReasonPhrase(lockReason)}';
+    case _HonestyStatus.improved:
+    case _HonestyStatus.worsened:
+      return assessment.label;
+  }
+}
+
 class LuxeReportLayout extends StatefulWidget {
   const LuxeReportLayout({
     super.key,
@@ -1344,6 +1424,7 @@ class LuxeReportLayout extends StatefulWidget {
     this.isFollowUp,
     this.gateReason,
     this.baselineNotSavedReason,
+    this.requireBackendVerdict = false,
   });
 
   final Map<String, dynamic> rawPayload;
@@ -1354,6 +1435,23 @@ class LuxeReportLayout extends StatefulWidget {
   final int? localHistoryCount;
   final bool? isFollowUp;
   final String? gateReason;
+
+  /// When true, every metric card and the clinical progress summary show
+  /// ONLY the backend's own trend_status/trend_lock_reason verdict for a
+  /// comparison -- never the legacy local recompute in _assessMetricHonesty
+  /// (flat 8% / 2.0pt bands with no per-metric noise floor). A metric the
+  /// backend marked "insufficient_signal" shows a not-enough-signal label,
+  /// one it locked to "stable" via a mismatch gate shows "Not comparable:
+  /// <reason>" instead of a plain "Stable", and one the backend sent no
+  /// trend_status for at all shows "No verdict for this metric" -- in every
+  /// one of these cases there is no arrow and no percent, though the raw
+  /// current/baseline values still show. Defaults to false so every other
+  /// caller (Track Procedure's local-vision payload, which never has a
+  /// trend_status; progress report and history, which replay whatever an
+  /// older archived scan happened to store) keeps its existing behavior,
+  /// including the legacy recompute fallback, unchanged. Only the live AI
+  /// Skin Analysis results screen sets this to true.
+  final bool requireBackendVerdict;
 
   /// Non-null when the caller determined this scan was ELIGIBLE to become
   /// the baseline (no earlier one existed) but did NOT actually become one
@@ -1616,9 +1714,14 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         backendTrendStatus: metric.backendTrendStatus,
         usesBackendTrend: metric.usesBackendTrend,
         backendTrendLockReason: metric.backendTrendLockReason,
+        requireBackendVerdict: widget.requireBackendVerdict,
         emitLog: false,
       );
       final metricName = metric.name;
+      if (assessment.status == _HonestyStatus.noVerdict) {
+        statements.add('$metricName: No verdict for this metric.');
+        continue;
+      }
       if (assessment.status == _HonestyStatus.insufficientSignal) {
         final isBodyMetric = LuxeMetricParser._isBodyMetricKey(metric.key);
         statements.add(
@@ -1926,6 +2029,7 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
                         showProgressComparison: showProgressComparison,
                         selected: _selectedMetricKey == metric.key,
                         onTap: () => _handleMetricTap(metric),
+                        requireBackendVerdict: widget.requireBackendVerdict,
                       ),
                     ),
                 ],
@@ -1979,12 +2083,14 @@ class _MetricCard extends StatelessWidget {
     required this.showProgressComparison,
     required this.selected,
     required this.onTap,
+    this.requireBackendVerdict = false,
   });
 
   final LuxeMetric metric;
   final bool showProgressComparison;
   final bool selected;
   final VoidCallback onTap;
+  final bool requireBackendVerdict;
 
   _MetricRowData _buildMetricRowData() {
     final hasComparisonContext = showProgressComparison || metric.baselineScore > 0.0;
@@ -2019,6 +2125,7 @@ class _MetricCard extends StatelessWidget {
       backendTrendStatus: metric.backendTrendStatus,
       usesBackendTrend: metric.usesBackendTrend,
       backendTrendLockReason: metric.backendTrendLockReason,
+      requireBackendVerdict: requireBackendVerdict,
     );
     final isBodyMetric = LuxeMetricParser._isBodyMetricKey(metric.key);
     final directionalStatus =
@@ -2064,9 +2171,11 @@ class _MetricCard extends StatelessWidget {
       trendDelta = null;
     }
 
-    final honestyLabel = assessment.status == _HonestyStatus.insufficientSignal && isBodyMetric
-        ? 'Body tracking'
-        : assessment.stableLockHeadline ?? assessment.label;
+    final honestyLabel = requireBackendVerdict
+        ? _liveHonestyLabel(assessment, isBodyMetric: isBodyMetric)
+        : (assessment.status == _HonestyStatus.insufficientSignal && isBodyMetric
+              ? 'Body tracking'
+              : assessment.stableLockHeadline ?? assessment.label);
     final finalSubtext = assessment.status == _HonestyStatus.insufficientSignal && isBodyMetric
         ? bodyEarlyAccessMessage
         : subtext;
@@ -2281,6 +2390,7 @@ class _MetricCard extends StatelessWidget {
       case _HonestyStatus.stable:
         return Icons.trending_flat_rounded;
       case _HonestyStatus.insufficientSignal:
+      case _HonestyStatus.noVerdict:
         return Icons.help_outline_rounded;
     }
   }
@@ -2297,6 +2407,7 @@ class _MetricCard extends StatelessWidget {
         // the brand accent (critical rule: status colors never = accent).
         return AppColors.kMetricImprovedColor;
       case _HonestyStatus.insufficientSignal:
+      case _HonestyStatus.noVerdict:
         return const Color(0xFF8E7F6D);
     }
   }
