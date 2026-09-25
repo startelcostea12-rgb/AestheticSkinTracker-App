@@ -43,6 +43,72 @@ import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screen
 // instance state.
 // ─────────────────────────────────────────────────────────────────────────
 
+/// Tracks a single in-flight async "transition" (e.g. a native
+/// startImageStream/stopImageStream call) so callers can serialize against
+/// it: anyone about to start an operation that would conflict with it
+/// awaits it first via [awaitPending]. Extracted as a small, controller-
+/// agnostic class (plain [Future]s, no [CameraController]) so the
+/// serialization behavior itself is unit-testable without a camera.
+///
+/// This is the fix for CameraException(-11803, "Cannot Record") on iOS: a
+/// capture's stream restart (see `_startLightingStream`) calls
+/// `controller.startImageStream(...)` without previously awaiting it, so a
+/// second capture beginning right after could call
+/// `stopImageStream()`/`takePicture()` while iOS was still mid-way through
+/// starting the stream back up. Every capture entry point and every
+/// restart now goes through the same gate.
+class AsyncTransitionGate {
+  Future<void>? _pending;
+
+  /// The transition currently in flight, if any. Exposed for tests/debug
+  /// only -- callers should use [awaitPending] rather than reading this
+  /// directly.
+  Future<void>? get pending => _pending;
+
+  /// Registers [operation] as the new pending transition and returns it
+  /// unchanged, so a caller can start tracking and immediately await the
+  /// same future in one expression if it wants to. Once [operation]
+  /// completes, it clears itself from [pending] -- but only if nothing
+  /// newer has been tracked in the meantime, so an overlapping track()
+  /// never lets an older completion clobber a newer pending transition.
+  Future<void> track(Future<void> operation) {
+    _pending = operation;
+    operation.whenComplete(() {
+      if (identical(_pending, operation)) {
+        _pending = null;
+      }
+    });
+    return operation;
+  }
+
+  /// Awaits whatever transition is currently pending, if any. A no-op
+  /// (completes immediately) when nothing is pending.
+  Future<void> awaitPending() async {
+    final current = _pending;
+    if (current != null) {
+      await current;
+    }
+  }
+}
+
+/// True when a [CameraException]'s code/description indicates the platform
+/// rejected takePicture()/stopImageStream() because a native capture-
+/// session transition (e.g. the image stream starting back up) was still
+/// in flight -- iOS reports this as error -11803, description "Cannot
+/// Record". Callers retry once after a short delay rather than failing
+/// the whole capture immediately. Pure string matching, no CameraController
+/// needed, so this classification is unit-testable on its own.
+bool isRecordingSessionConflictError({
+  required String code,
+  String? description,
+}) {
+  final normalizedCode = code.toLowerCase();
+  final normalizedDescription = (description ?? '').toLowerCase();
+  return normalizedCode.contains('11803') ||
+      normalizedDescription.contains('11803') ||
+      normalizedDescription.contains('cannot record');
+}
+
 /// Resolves the camera guide type for a [CameraScreen] instance.
 ///
 /// The AI Skin Analysis flow (`skin_ai_analysis_screen.dart`'s
@@ -723,6 +789,16 @@ class _CameraScreenState extends State<CameraScreen>
   bool _cameraReady = false;
   bool _cameraInitFailed = false;
   bool _lightingStreamActive = false;
+
+  /// Tracks the in-flight native startImageStream() call from the most
+  /// recent _startLightingStream, if any hasn't finished yet. iOS
+  /// AVFoundation can throw CameraException(-11803, "Cannot Record") if a
+  /// new capture calls stopImageStream()/takePicture() while the PREVIOUS
+  /// capture's stream restart is still being set up natively -- both
+  /// capture methods await this (see [AsyncTransitionGate.awaitPending])
+  /// before touching the capture session, so a restart always fully
+  /// settles before the next capture begins.
+  final _streamTransitionGate = AsyncTransitionGate();
   late final AnimationController _shimmerController;
   late final AnimationController _successController;
   late final Animation<double> _successAnim;
@@ -1567,7 +1643,7 @@ class _CameraScreenState extends State<CameraScreen>
     if (mounted) {
       setState(() {});
     }
-    controller
+    final streamStartFuture = controller
         .startImageStream((image) async {
           if (!mounted || _capturing) return;
 
@@ -1704,6 +1780,10 @@ class _CameraScreenState extends State<CameraScreen>
             setState(() {});
           }
         });
+    // Track the native start call so a capture beginning right after this
+    // (e.g. the user tapping the shutter again quickly) can await it before
+    // calling stopImageStream()/takePicture() -- see _streamTransitionGate.
+    _streamTransitionGate.track(streamStartFuture);
   }
 
   _LightingGuidance _lightingFromCameraImage(
@@ -4726,6 +4806,35 @@ class _CameraScreenState extends State<CameraScreen>
     return 'normal';
   }
 
+  /// Takes a single picture, retrying once after a short delay if the
+  /// platform throws CameraException -11803 "Cannot Record" -- seen on iOS
+  /// when takePicture races the tail end of a stream stop/restart from a
+  /// capture moments earlier. Callers already await
+  /// [_streamTransitionGate] before reaching this, so the race this
+  /// retries is a genuine platform-timing edge case, not the primary fix.
+  /// Any other exception, or a second failure, propagates as before.
+  Future<XFile> _takePictureWithRetry(
+    CameraController controller, {
+    required String logTag,
+  }) async {
+    try {
+      return await controller.takePicture();
+    } on CameraException catch (e) {
+      final isRecordingConflict = isRecordingSessionConflictError(
+        code: e.code,
+        description: e.description,
+      );
+      if (!isRecordingConflict) rethrow;
+      if (kDebugMode) {
+        debugPrint(
+          '[$logTag] takePicture failed with $e -- retrying once after a short delay',
+        );
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      return await controller.takePicture();
+    }
+  }
+
   Future<XFile?> _captureFromLiveCamera() async {
     final controller = _cameraController;
     if (controller == null || !controller.value.isInitialized) {
@@ -4743,6 +4852,10 @@ class _CameraScreenState extends State<CameraScreen>
       return _picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
     }
     if (controller.value.isTakingPicture) return null;
+    // Don't touch the capture session until any pending stream stop/restart
+    // from a previous capture has fully settled natively -- see
+    // _streamTransitionGate's doc comment.
+    await _streamTransitionGate.awaitPending();
 
     final burstFiles = <XFile>[];
 
@@ -4761,7 +4874,10 @@ class _CameraScreenState extends State<CameraScreen>
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
       for (var i = 0; i < 3; i++) {
-        final file = await controller.takePicture();
+        final file = await _takePictureWithRetry(
+          controller,
+          logTag: 'liveCamera',
+        );
         burstFiles.add(file);
         if (i < 2) {
           await Future<void>.delayed(const Duration(milliseconds: 110));
@@ -4821,6 +4937,7 @@ class _CameraScreenState extends State<CameraScreen>
         debugPrint('Camera exposure reset unsupported: $e');
       }
       _startLightingStream(controller);
+      await _streamTransitionGate.awaitPending();
     }
   }
 
@@ -4836,7 +4953,14 @@ class _CameraScreenState extends State<CameraScreen>
     }
     if (controller.value.isTakingPicture) return;
 
+    // Set _capturing before awaiting anything below, including the pending-
+    // transition wait -- the shutter is gated on _capturing, so this is what
+    // actually keeps it disabled while a previous capture's stream restart
+    // is still settling natively (see _streamTransitionGate).
     if (mounted) setState(() => _capturing = true);
+    // Don't touch the capture session until any pending stream stop/restart
+    // from a previous capture has fully settled natively.
+    await _streamTransitionGate.awaitPending();
     final capturedFiles = <XFile>[];
     try {
       if (_lightingStreamActive && !kIsWeb) {
@@ -4852,7 +4976,9 @@ class _CameraScreenState extends State<CameraScreen>
 
       await Future<void>.delayed(const Duration(milliseconds: 200));
       for (var index = 0; index < 3; index++) {
-        capturedFiles.add(await controller.takePicture());
+        capturedFiles.add(
+          await _takePictureWithRetry(controller, logTag: 'aiSkinAnalysis'),
+        );
         if (index < 2) {
           await Future<void>.delayed(const Duration(milliseconds: 110));
         }
@@ -5029,6 +5155,12 @@ class _CameraScreenState extends State<CameraScreen>
         debugPrint('AI burst exposure reset unsupported: $e');
       }
       _startLightingStream(controller);
+      // Keep the shutter disabled (_capturing stays true) until the restart
+      // this just kicked off has actually finished natively -- otherwise a
+      // quick second tap can call stopImageStream()/takePicture() while iOS
+      // is still mid-way through starting the stream back up, which is
+      // exactly the race that throws CameraException -11803 "Cannot Record".
+      await _streamTransitionGate.awaitPending();
       if (mounted) setState(() => _capturing = false);
     }
   }
@@ -6596,6 +6728,15 @@ class _CameraScreenState extends State<CameraScreen>
       'backlight verdict: '
           '${isBacklit(faceRoiLuma: _liveFaceRoiLuma, wholeFrameMean: _liveMeanBrightness, wholeFrameEdgeDelta: _liveBacklightDelta, backlightDeltaCeil: _backlightDeltaCeil) ? 'BACKLIT' : 'ok'} '
           '(rule: ${_liveFaceRoiLuma > 0 ? 'face-relative' : 'whole-frame edgeDelta'})',
+      // "Light is uneven" rule (_isLightDirectionUneven) -- NOT face-ROI
+      // aware, unlike isLightingTooDark/isBacklit above: horizontalDelta is
+      // the whole raw frame's left-half-mean minus right-half-mean (see
+      // _summarizeCameraImage), split purely by pixel x-coordinate, with no
+      // face box involved at all.
+      'uneven-light: horizontalDelta(L-R, whole-frame)=${_liveLightHorizontalDelta.toStringAsFixed(1)} '
+          '(threshold=±${_lightDirectionImbalanceThreshold.toStringAsFixed(1)}) '
+          '${_isLightDirectionUneven ? 'UNEVEN' : 'ok'} '
+          '(rule: whole-frame only, no face ROI)',
       // SCALE chip's "too close"/"too far" rule -- fill is the same
       // converted faceFillRatio shown in the face-fill line above.
       'scale: fill=${_liveFaceFillRatio.toStringAsFixed(3)} '
