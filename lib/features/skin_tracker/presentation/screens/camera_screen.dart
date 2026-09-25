@@ -176,6 +176,56 @@ bool isBacklit({
   return wholeFrameEdgeDelta > backlightDeltaCeil;
 }
 
+/// Replaces the fill-ratio-based "too close" ceiling for the aiSkinAnalysis
+/// flow only (see [resolveCameraGuideType]'s doc comment for why this
+/// flow's guide type is always facial, and commit 9f3e1b3 for why the
+/// converted faceFillRatio the old ceiling compared against is no longer
+/// the same quantity it was calibrated on -- the same face now reads
+/// ~1.5x larger after that coordinate-space fix). True when EITHER:
+///
+///  1. the raw face box's larger side exceeds 75% of the live stream
+///     frame's shorter side. This is exactly the point where
+///     [faceCenteredInitialCropSquare]'s auto-crop square (side = larger
+///     side / 0.75) starts clamping to the still's own shorter side, so
+///     the margin the crop leaves around the face shrinks to zero. It is
+///     NOT where the face gets cut off -- that only happens once the
+///     larger side exceeds the frame's shorter side itself (fraction >
+///     1.0), a strictly later point than this rule's 0.75 cutoff.
+///  2. any part of the face box -- compared in visible-preview space, the
+///     same space the framing checks and guide box use -- lies outside
+///     the visible preview rect [0,1]x[0,1].
+///
+/// [rawFaceWidthPx]/[rawFaceHeightPx]/[liveFrameWidthPx]/
+/// [liveFrameHeightPx] must all come from the SAME live stream frame (raw
+/// pixel space); [visibleLeftNorm]/[visibleTopNorm]/[visibleRightNorm]/
+/// [visibleBottomNorm] must be the visible-preview-space box (never a
+/// raw-pixel box compared against this normalized rect, or vice versa).
+/// 0.75 is a new constant this rule introduces -- it does not replace or
+/// alter any existing threshold value.
+bool isTooCloseForCropMargin({
+  required double rawFaceWidthPx,
+  required double rawFaceHeightPx,
+  required double liveFrameWidthPx,
+  required double liveFrameHeightPx,
+  required double visibleLeftNorm,
+  required double visibleTopNorm,
+  required double visibleRightNorm,
+  required double visibleBottomNorm,
+}) {
+  const marginFraction = 0.75;
+  final liveFrameShorterSide = math.min(liveFrameWidthPx, liveFrameHeightPx);
+  if (liveFrameShorterSide > 0) {
+    final largerFaceSide = math.max(rawFaceWidthPx, rawFaceHeightPx);
+    if ((largerFaceSide / liveFrameShorterSide) > marginFraction) {
+      return true;
+    }
+  }
+  return visibleLeftNorm < 0 ||
+      visibleTopNorm < 0 ||
+      visibleRightNorm > 1 ||
+      visibleBottomNorm > 1;
+}
+
 /// Pure computation of _estimateFaceRoiLumaFromStream's lighting-sampling
 /// ROI rectangle, in RAW CameraImage pixel space -- pulled out purely so
 /// the ROI's placement (not the byte-sampling loop, which needs a real
@@ -672,6 +722,22 @@ class _CameraScreenState extends State<CameraScreen>
   int? _debugPlaneBytesPerRow;
   int? _debugPlaneWidthTimesBpp;
 
+  // Live CameraImage stream frame's own pixel dimensions -- NOT debug-only:
+  // this is a real input to the aiSkinAnalysis flow's "too close" rule (see
+  // isTooCloseForCropMargin), updated on every stream frame alongside the
+  // other lighting/sharpness signals. Null until the first stream frame
+  // arrives.
+  int? _liveStreamWidth;
+  int? _liveStreamHeight;
+
+  // Most recently captured AI Skin Analysis still's decoded pixel
+  // dimensions -- debug-only, purely so _buildDebugFramingOverlay can show
+  // it next to _liveStreamWidth/Height and flag a field-of-view mismatch.
+  // Never used by the "too close" rule itself, which only ever reads the
+  // live stream frame. Null before the first capture this session.
+  int? _debugLastCapturedStillWidth;
+  int? _debugLastCapturedStillHeight;
+
   /// Result of the pre-scan makeup disclosure dialog. `null` until the user
   /// answers. Once the user has chosen, the scan flow proceeds and this flag
   /// is propagated onto every [ScanHistoryEntry] saved from this session.
@@ -866,6 +932,52 @@ class _CameraScreenState extends State<CameraScreen>
 
   bool get _isBodyGuide {
     return _guideType == ProcedureCameraGuideType.body;
+  }
+
+  /// Same condition as [resolveCameraGuideType]'s aiSkinAnalysis override
+  /// -- true exactly when the SCALE chip's "too close" rule must use
+  /// [isTooCloseForCropMargin] instead of the fill-ratio ceiling every
+  /// other flow/guide type keeps.
+  bool get _isAiSkinAnalysisFacialFlow =>
+      widget.isSkincareScan &&
+      widget.capturePurpose == CameraCapturePurpose.aiSkinAnalysis;
+
+  /// Live wrapper around [isTooCloseForCropMargin] -- reads the raw and
+  /// visible-preview-space face geometry plus the live stream's own pixel
+  /// size from instance state. Returns false (not too close) whenever any
+  /// needed input is missing (no face detected yet, or no stream frame
+  /// has arrived yet) rather than guessing.
+  bool _isTooCloseForCropMarginNow() {
+    final geometry = _liveLandmarkAssessment.faceReferenceGeometry;
+    final streamWidth = _liveStreamWidth;
+    final streamHeight = _liveStreamHeight;
+    if (geometry == null || streamWidth == null || streamHeight == null) {
+      return false;
+    }
+    final faceWidthNorm = geometry['faceWidthNorm'];
+    final faceHeightNorm = geometry['faceHeightNorm'];
+    final visibleLeft = geometry['visibleLeftNorm'];
+    final visibleTop = geometry['visibleTopNorm'];
+    final visibleRight = geometry['visibleRightNorm'];
+    final visibleBottom = geometry['visibleBottomNorm'];
+    if (faceWidthNorm == null ||
+        faceHeightNorm == null ||
+        visibleLeft == null ||
+        visibleTop == null ||
+        visibleRight == null ||
+        visibleBottom == null) {
+      return false;
+    }
+    return isTooCloseForCropMargin(
+      rawFaceWidthPx: faceWidthNorm * streamWidth,
+      rawFaceHeightPx: faceHeightNorm * streamHeight,
+      liveFrameWidthPx: streamWidth.toDouble(),
+      liveFrameHeightPx: streamHeight.toDouble(),
+      visibleLeftNorm: visibleLeft,
+      visibleTopNorm: visibleTop,
+      visibleRightNorm: visibleRight,
+      visibleBottomNorm: visibleBottom,
+    );
   }
 
   List<String> get _overlayAngles {
@@ -1331,6 +1443,13 @@ class _CameraScreenState extends State<CameraScreen>
     controller
         .startImageStream((image) async {
           if (!mounted || _capturing) return;
+
+          // Real input to the aiSkinAnalysis "too close" rule (see
+          // isTooCloseForCropMargin) -- updated every frame, not throttled
+          // like lighting/sharpness below, since it's cheap and the SCALE
+          // chip must never compare against a stale frame size.
+          _liveStreamWidth = image.width;
+          _liveStreamHeight = image.height;
 
           _sharpnessFrameCounter = (_sharpnessFrameCounter + 1) % 3;
           final shouldRefreshSharpness = _sharpnessFrameCounter == 0;
@@ -4629,6 +4748,10 @@ class _CameraScreenState extends State<CameraScreen>
       try {
         final decodedFirst = img.decodeImage(firstBytes);
         if (decodedFirst != null) {
+          if (kDebugMode) {
+            _debugLastCapturedStillWidth = decodedFirst.width;
+            _debugLastCapturedStillHeight = decodedFirst.height;
+          }
           final faceBox = await detectPrimaryFaceBoxOnDecodedImage(
             decodedFirst,
           );
@@ -5304,7 +5427,9 @@ class _CameraScreenState extends State<CameraScreen>
             ? 'Move closer — body is a bit too far away'
             : 'Move closer — face is a bit too far away',
       );
-    } else if (fill > _targetFaceFillCeil) {
+    } else if (_isAiSkinAnalysisFacialFlow
+        ? _isTooCloseForCropMarginNow()
+        : fill > _targetFaceFillCeil) {
       scale = QualitySignal(
         label: 'Scale',
         state: QualityState.yellow,
@@ -5940,6 +6065,89 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
+  /// Debug-only lines for the aiSkinAnalysis "too close" crop-margin rule
+  /// (see [isTooCloseForCropMargin]) -- only meaningful for that flow, but
+  /// harmless (shows "n/a"/nulls) to build for any other guide type too.
+  /// Read-only: re-derives the exact same inputs [_isTooCloseForCropMarginNow]
+  /// uses, purely for display.
+  List<String> _buildDebugCropMarginLines() {
+    String fmtInt(int? v) => v?.toString() ?? '—';
+    final geometry = _liveLandmarkAssessment.faceReferenceGeometry;
+    final streamW = _liveStreamWidth;
+    final streamH = _liveStreamHeight;
+    final faceWidthNorm = geometry?['faceWidthNorm'];
+    final faceHeightNorm = geometry?['faceHeightNorm'];
+    final visibleLeft = geometry?['visibleLeftNorm'];
+    final visibleTop = geometry?['visibleTopNorm'];
+    final visibleRight = geometry?['visibleRightNorm'];
+    final visibleBottom = geometry?['visibleBottomNorm'];
+
+    final hasAllInputs =
+        streamW != null &&
+        streamH != null &&
+        faceWidthNorm != null &&
+        faceHeightNorm != null &&
+        visibleLeft != null &&
+        visibleTop != null &&
+        visibleRight != null &&
+        visibleBottom != null;
+
+    final stillW = _debugLastCapturedStillWidth;
+    final stillH = _debugLastCapturedStillHeight;
+    final sizesDiffer =
+        streamW != null &&
+        streamH != null &&
+        stillW != null &&
+        stillH != null &&
+        (streamW != stillW || streamH != stillH);
+
+    final lines = <String>[
+      'crop-margin rule (aiSkinAnalysis "too close"): '
+          'active=${_isAiSkinAnalysisFacialFlow ? 'y' : 'n'}',
+      'stream size: ${fmtInt(streamW)}x${fmtInt(streamH)}  '
+          'last still size: '
+          '${stillW == null || stillH == null ? 'none yet' : '${stillW}x$stillH'}'
+          '${sizesDiffer ? '  ⚠ sizes differ -- check field of view, do not assume a shifted threshold' : ''}',
+    ];
+
+    if (!hasAllInputs) {
+      lines.add('crop-margin rule: n/a (no face sample or no stream frame yet)');
+      return lines;
+    }
+
+    final rawFaceWidthPx = faceWidthNorm * streamW;
+    final rawFaceHeightPx = faceHeightNorm * streamH;
+    final largerFaceSidePx = math.max(rawFaceWidthPx, rawFaceHeightPx);
+    final shorterFrameSidePx = math.min(streamW, streamH).toDouble();
+    final fraction = shorterFrameSidePx > 0
+        ? largerFaceSidePx / shorterFrameSidePx
+        : 0.0;
+    final insideVisible =
+        visibleLeft >= 0 && visibleTop >= 0 && visibleRight <= 1 && visibleBottom <= 1;
+    final verdict = isTooCloseForCropMargin(
+      rawFaceWidthPx: rawFaceWidthPx,
+      rawFaceHeightPx: rawFaceHeightPx,
+      liveFrameWidthPx: streamW.toDouble(),
+      liveFrameHeightPx: streamH.toDouble(),
+      visibleLeftNorm: visibleLeft,
+      visibleTopNorm: visibleTop,
+      visibleRightNorm: visibleRight,
+      visibleBottomNorm: visibleBottom,
+    );
+
+    lines.addAll([
+      'crop-margin: faceLargerSide=${largerFaceSidePx.toStringAsFixed(1)}px '
+          'frameShorterSide=${shorterFrameSidePx.toStringAsFixed(1)}px '
+          'fraction=${fraction.toStringAsFixed(3)} (line=0.75)',
+      'crop-margin: visible box=('
+          '${visibleLeft.toStringAsFixed(3)}, ${visibleTop.toStringAsFixed(3)}) - '
+          '(${visibleRight.toStringAsFixed(3)}, ${visibleBottom.toStringAsFixed(3)}) '
+          'insideVisibleRect=${insideVisible ? 'y' : 'n'}',
+      'crop-margin verdict: ${verdict ? 'TOO CLOSE' : 'ok'}',
+    ]);
+    return lines;
+  }
+
   /// Debug-only (kDebugMode) live telemetry HUD for the capture-framing
   /// gate — added purely for observability while investigating
   /// _isCaptureFramingReady's behavior. Does not read from, call, or
@@ -6106,7 +6314,9 @@ class _CameraScreenState extends State<CameraScreen>
           'ceil=${_targetFaceFillCeil.toStringAsFixed(3)}) '
           '${_liveFaceFillRatio > _targetFaceFillCeil
               ? 'TOO CLOSE'
-              : (_liveFaceFillRatio < _targetFaceFillFloor ? 'TOO FAR' : 'ok')}',
+              : (_liveFaceFillRatio < _targetFaceFillFloor ? 'TOO FAR' : 'ok')}'
+          '${_isAiSkinAnalysisFacialFlow ? ' (fill ceil NOT used for verdict -- see crop-margin rule below)' : ''}',
+      ..._buildDebugCropMarginLines(),
     ];
 
     return Positioned(

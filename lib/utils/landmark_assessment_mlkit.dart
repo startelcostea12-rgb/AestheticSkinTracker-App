@@ -616,6 +616,17 @@ Future<LandmarkAssessment> _assessFace(
     primary = 'Pose is aligned. Hold still and match the ghost overlay.';
   }
 
+  // The face box's own edges in visible-preview-space, [0,1]-normalized,
+  // deliberately UNCLAMPED -- a value outside [0,1] means that edge is
+  // genuinely off-screen (the face extends past the visible preview),
+  // which is exactly what the aiSkinAnalysis "too close" rule in
+  // camera_screen.dart needs to detect. centerOffsetX/Y above are
+  // guide-relative and clamped, so they can't be used for this.
+  final visibleLeftNorm = converted.centerX - (converted.widthNorm / 2);
+  final visibleTopNorm = converted.centerY - (converted.heightNorm / 2);
+  final visibleRightNorm = converted.centerX + (converted.widthNorm / 2);
+  final visibleBottomNorm = converted.centerY + (converted.heightNorm / 2);
+
   return LandmarkAssessment(
     available: true,
     primaryInstruction: primary,
@@ -650,6 +661,10 @@ Future<LandmarkAssessment> _assessFace(
       // centerOffsetX/Y or faceFillRatio above.
       'rawFaceCenterXNorm': faceCenterX,
       'rawFaceCenterYNorm': faceCenterY,
+      'visibleLeftNorm': visibleLeftNorm,
+      'visibleTopNorm': visibleTopNorm,
+      'visibleRightNorm': visibleRightNorm,
+      'visibleBottomNorm': visibleBottomNorm,
     },
   );
 }
