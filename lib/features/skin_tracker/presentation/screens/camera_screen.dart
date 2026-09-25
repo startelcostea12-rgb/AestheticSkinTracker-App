@@ -821,6 +821,13 @@ class _CameraScreenState extends State<CameraScreen>
   int? _debugLastCapturedStillWidth;
   int? _debugLastCapturedStillHeight;
 
+  /// Whether the full [_buildDebugFramingOverlay] panel is expanded. Starts
+  /// collapsed so the debug HUD doesn't cover the live preview/guide by
+  /// default; toggled by the on-screen "DEBUG" pill. Session-only (plain
+  /// in-memory field, no persistence) and never read by any gating/threshold
+  /// logic -- purely which debug view is shown.
+  bool _debugOverlayExpanded = false;
+
   /// Result of the pre-scan makeup disclosure dialog. `null` until the user
   /// answers. Once the user has chosen, the scan flow proceeds and this flag
   /// is propagated onto every [ScanHistoryEntry] saved from this session.
@@ -5936,6 +5943,12 @@ class _CameraScreenState extends State<CameraScreen>
                     ),
                   ),
 
+                  if (kDebugMode && !_debugOverlayExpanded)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: _buildDebugCollapsedSummaryLine(report),
+                    ),
+
                   const SizedBox(height: 14),
 
                   // ── Primary live instruction (always mounted) ───────────
@@ -6178,8 +6191,86 @@ class _CameraScreenState extends State<CameraScreen>
           ),
           _buildSuccessOverlay(),
           _buildLivePoseOverlay(),
-          if (kDebugMode) _buildDebugFramingOverlay(report),
+          if (kDebugMode && _debugOverlayExpanded)
+            _buildDebugFramingOverlay(report),
+          if (kDebugMode) _buildDebugTogglePill(),
         ],
+      ),
+    );
+  }
+
+  /// Small always-on-top corner toggle for [_buildDebugFramingOverlay] --
+  /// starts collapsed (see [_debugOverlayExpanded]) so the full HUD doesn't
+  /// cover the live preview/guide oval by default. Positioned top-right,
+  /// well clear of the centered guide, and deliberately NOT wrapped in
+  /// IgnorePointer so it stays tappable. kDebugMode-only; no effect on any
+  /// check, threshold, or production UI.
+  Widget _buildDebugTogglePill() {
+    return Positioned(
+      top: 8,
+      right: 8,
+      child: SafeArea(
+        bottom: false,
+        child: GestureDetector(
+          onTap: () => setState(() {
+            _debugOverlayExpanded = !_debugOverlayExpanded;
+          }),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.78),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.limeAccent, width: 1),
+            ),
+            child: Text(
+              _debugOverlayExpanded ? 'DEBUG ▲' : 'DEBUG ▼',
+              style: const TextStyle(
+                color: Colors.limeAccent,
+                fontFamily: 'monospace',
+                fontSize: 10.5,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Collapsed-state one-line debug summary, shown in the normal scroll
+  /// flow just below the live preview (never as an overlay on top of it) --
+  /// gate state, which SCALE branch decided, the lighting verdict, and the
+  /// converted face center vs. the guide center (0.50, 0.48). Same
+  /// underlying values/functions as the full [_buildDebugFramingOverlay]
+  /// panel, just condensed; purely observational.
+  Widget _buildDebugCollapsedSummaryLine(ClinicalQualityReport report) {
+    final a = _liveLandmarkAssessment;
+    final faceCenterX = 0.5 + a.centerOffsetX;
+    final faceCenterY = 0.48 + a.centerOffsetY;
+    final line =
+        'DEBUG gate=${_debugFramingFailureReason(report)} | '
+        'scale=${_debugScaleBranchDecision()} | '
+        'light=${_lightingGuidance.level.name} | '
+        'face=(${faceCenterX.toStringAsFixed(2)}, '
+        '${faceCenterY.toStringAsFixed(2)}) vs guide=(0.50, 0.48)';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.limeAccent, width: 1),
+      ),
+      child: Text(
+        line,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: Colors.limeAccent,
+          fontFamily: 'monospace',
+          fontSize: 10.5,
+          height: 1.35,
+        ),
       ),
     );
   }
