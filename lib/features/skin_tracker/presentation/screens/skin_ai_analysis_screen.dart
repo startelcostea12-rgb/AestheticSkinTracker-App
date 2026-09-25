@@ -16,7 +16,7 @@
 // The analysis engine itself is the shared `AcneRosaceaPhotoAnalyzer`,
 // so derivations and scoring stay consistent with the tracker.
 
-import 'dart:convert' show base64Decode, base64Encode;
+import 'dart:convert' show base64Decode, base64Encode, utf8;
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -44,6 +44,7 @@ import 'package:aesthetic_skin_tracker/utils/procedure_intelligence.dart' as pro
 import 'package:aesthetic_skin_tracker/utils/procedure_metric_set.dart';
 import 'package:aesthetic_skin_tracker/utils/trend_label_resolver.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_product_recommendation_engine.dart';
+import 'package:aesthetic_skin_tracker/utils/ai_scan_data_csv_exporter.dart';
 import 'package:aesthetic_skin_tracker/widgets/clinical_section_header.dart';
 import 'package:aesthetic_skin_tracker/widgets/image_crop_dialog.dart';
 import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
@@ -1116,6 +1117,61 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         ).showSnackBar(SnackBar(content: Text('Failed to export burst log: $e')));
       }
     }
+  }
+
+  Future<void> _exportScanData(BuildContext buttonContext) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final renderObject = buttonContext.findRenderObject();
+    final box = renderObject is RenderBox ? renderObject : null;
+    final origin =
+        (box != null &&
+            box.hasSize &&
+            box.size.width > 0 &&
+            box.size.height > 0)
+        ? (box.localToGlobal(Offset.zero) & box.size)
+        : const Rect.fromLTWH(0, 0, 1, 1);
+    try {
+      final scans = AiScanDataCsvExporter.exportableScans(
+        await AppPrefs.getScanEntriesWithoutNormalization(),
+      );
+      if (scans.isEmpty) {
+        if (mounted) {
+          messenger.showSnackBar(
+            const SnackBar(content: Text('No saved AI scan data to export.')),
+          );
+        }
+        return;
+      }
+
+      final fileName =
+          'ai_skin_analysis_scans_${DateTime.now().toIso8601String().replaceAll(':', '-')}.csv';
+      final csv = AiScanDataCsvExporter.format(scans);
+      final file = kIsWeb
+          ? XFile.fromData(
+              Uint8List.fromList(utf8.encode(csv)),
+              mimeType: 'text/csv',
+              name: fileName,
+            )
+          : await _writeScanDataCsv(fileName, csv);
+      await Share.shareXFiles(
+        [file],
+        text: 'AI Skin Analysis scan data',
+        sharePositionOrigin: origin,
+      );
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Failed to export scan data: $e')),
+        );
+      }
+    }
+  }
+
+  Future<XFile> _writeScanDataCsv(String fileName, String csv) async {
+    final directory = await getTemporaryDirectory();
+    final file = File('${directory.path}${Platform.pathSeparator}$fileName');
+    await file.writeAsString(csv, flush: true);
+    return XFile(file.path, mimeType: 'text/csv', name: fileName);
   }
 
   _Stage _stage = _Stage.capture;
@@ -2559,6 +2615,14 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 onPressed: () => _exportBurstLuminanceLog(buttonContext),
                 icon: const Icon(Icons.bug_report_outlined, size: 16),
                 label: const Text('Export Burst Log'),
+              ),
+            ),
+          if (kDebugMode)
+            Builder(
+              builder: (buttonContext) => TextButton.icon(
+                onPressed: () => _exportScanData(buttonContext),
+                icon: const Icon(Icons.table_view_outlined, size: 16),
+                label: const Text('Export Scan Data'),
               ),
             ),
           if (_stage == _Stage.results)

@@ -947,6 +947,27 @@ class AppPrefs {
   }
 
   // ── Scans ──
+  static Future<List<ScanHistoryEntry>>
+  getScanEntriesWithoutNormalization() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final raw = prefs.getString(scanHistoryKey);
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+      return decoded
+          .whereType<Map>()
+          .map(
+            (entry) =>
+                ScanHistoryEntry.fromJson(Map<String, dynamic>.from(entry)),
+          )
+          .toList(growable: false);
+    } catch (_) {
+      return [];
+    }
+  }
+
   static Future<List<ScanHistoryEntry>> getScanEntries() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload(); // ← Added for consistency
