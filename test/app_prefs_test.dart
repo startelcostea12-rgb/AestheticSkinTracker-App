@@ -651,6 +651,21 @@ void main() {
       expect(await AppPrefs.getAiBaselineScanId(key), 'scan_front_2');
     });
 
+    test('getAllAiBaselineScanIds returns every key\'s current baseline', () async {
+      expect(await AppPrefs.getAllAiBaselineScanIds(), isEmpty);
+
+      await AppPrefs.setAiBaselineScanId(key, 'scan_front_1');
+      await AppPrefs.setAiBaselineScanId(otherKey, 'scan_left45_1');
+      await AppPrefs.setAiBaselineScanId(key, 'scan_front_2');
+      expect(
+        await AppPrefs.getAllAiBaselineScanIds(),
+        {'scan_front_2', 'scan_left45_1'},
+      );
+
+      await AppPrefs.clearAiBaselineScanId(otherKey);
+      expect(await AppPrefs.getAllAiBaselineScanIds(), {'scan_front_2'});
+    });
+
     test('clearAiBaselineScanId clears only that key', () async {
       await AppPrefs.setAiBaselineScanId(key, 'scan_front_1');
       await AppPrefs.setAiBaselineScanId(otherKey, 'scan_left45_1');

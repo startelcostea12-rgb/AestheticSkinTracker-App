@@ -914,6 +914,19 @@ class AppPrefs {
     );
   }
 
+  /// Every scan id currently registered as some key's AI baseline. Read-only
+  /// -- used by the scan-data export to mark is_baseline from the registry
+  /// rather than the procedure-tracker isBaseline flag.
+  static Future<Set<String>> getAllAiBaselineScanIds() async {
+    final entries = await _readAiBaselineRegistry();
+    return {
+      for (final entry in entries)
+        if (entry['baselineScanId'] is String &&
+            (entry['baselineScanId'] as String).isNotEmpty)
+          entry['baselineScanId'] as String,
+    };
+  }
+
   /// Clears the registered baseline for [key] only (used by "Reset
   /// Baseline"), leaving every other key's baseline untouched.
   static Future<void> clearAiBaselineScanId(AiBaselineKey key) async {

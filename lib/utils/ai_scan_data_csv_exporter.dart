@@ -1,4 +1,5 @@
 import '../models/scan_history.dart';
+import 'ai_comparison_baseline.dart';
 
 const List<String> aiScanDataCanonicalMetricKeys = <String>[
   'localized_redness',
@@ -31,12 +32,36 @@ class AiScanDataCsvExporter {
     'backend_commit',
     'is_baseline',
     'comparison_baseline_scan_id',
+    'comparison_baseline_source',
     'image_width',
     'image_height',
     'image_quality.lighting_mean_l',
     'image_quality.lighting_std_l',
     'image_quality.chroma_cast',
     'image_quality.lighting_balance_score',
+    ...colorDiagnosticColumns,
+  ];
+
+  /// Signed color / redness-branch logging fields main.py adds to
+  /// image_quality. Always present as columns; empty on scans saved before
+  /// the backend emitted them. The post-clip white-balance adjustments get
+  /// their own columns rather than reusing white_balance_profile's.
+  static const List<String> colorDiagnosticColumns = <String>[
+    'image_quality.color_lab_units',
+    'image_quality.whole_image_mean_a_before_wb',
+    'image_quality.whole_image_mean_b_before_wb',
+    'image_quality.whole_image_mean_a_after_wb',
+    'image_quality.whole_image_mean_b_after_wb',
+    'image_quality.wb_a_adjustment_post_clip',
+    'image_quality.wb_b_adjustment_post_clip',
+    'image_quality.redness_branch',
+    'image_quality.redness_cheek_side',
+    'image_quality.redness_cheek_roi_pixels',
+    'image_quality.redness_cheek_mean_a_after_wb',
+    'image_quality.redness_cheek_mean_b_after_wb',
+    'image_quality.redness_cheek_p95_a_after_wb',
+    'image_quality.redness_cheek_p95_a_before_wb',
+    'image_quality.redness_baseline_cheek_p95_a',
   ];
 
   static const List<String> _metricFields = <String>[
@@ -59,7 +84,13 @@ class AiScanDataCsvExporter {
       )
       .toList(growable: false);
 
-  static String format(Iterable<ScanHistoryEntry> scans) {
+  /// [registryBaselineScanIds] is every scan id currently registered in the
+  /// per-key AI baseline registry (AppPrefs.getAllAiBaselineScanIds);
+  /// is_baseline is membership in it, never the procedure isBaseline flag.
+  static String format(
+    Iterable<ScanHistoryEntry> scans, {
+    required Set<String> registryBaselineScanIds,
+  }) {
     final entries = exportableScans(scans);
     final flattenedQuality = <ScanHistoryEntry, Map<String, dynamic>>{
       for (final entry in entries)
@@ -84,7 +115,12 @@ class AiScanDataCsvExporter {
     final rows = <List<String>>[
       columns,
       for (final entry in entries)
-        _rowFor(entry, columns, flattenedQuality[entry]!),
+        _rowFor(
+          entry,
+          columns,
+          flattenedQuality[entry]!,
+          registryBaselineScanIds,
+        ),
     ];
     return rows.map((row) => row.map(_csvCell).join(',')).join('\r\n');
   }
@@ -93,6 +129,7 @@ class AiScanDataCsvExporter {
     ScanHistoryEntry scan,
     List<String> columns,
     Map<String, dynamic> flattenedQuality,
+    Set<String> registryBaselineScanIds,
   ) {
     final payload = scan.rawPayload!;
     final values = <String, dynamic>{
@@ -110,15 +147,10 @@ class AiScanDataCsvExporter {
         'gitCommit',
         'commit',
       ]),
-      'is_baseline': scan.isBaseline,
-      'comparison_baseline_scan_id':
-          scan.parentBaselineId ??
-          _storedValue(payload, const [
-            'comparison_baseline_scan_id',
-            'comparisonBaselineScanId',
-            'baseline_scan_id',
-            'baselineScanId',
-          ]),
+      'is_baseline': registryBaselineScanIds.contains(scan.id),
+      // Only the id recorded at comparison time; empty on older scans.
+      'comparison_baseline_scan_id': payload[aiComparisonBaselineScanIdKey],
+      'comparison_baseline_source': payload[aiComparisonBaselineSourceKey],
       'image_width':
           scan.sourceImageWidth ??
           _storedValue(payload, const ['source_image_width']),

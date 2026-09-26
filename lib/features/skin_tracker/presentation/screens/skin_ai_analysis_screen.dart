@@ -33,6 +33,7 @@ import 'package:aesthetic_skin_tracker/models/acne_rosacea_log.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/services/skin_history_repository.dart';
 import 'package:aesthetic_skin_tracker/utils/acne_rosacea_photo_analysis.dart';
+import 'package:aesthetic_skin_tracker/utils/ai_comparison_baseline.dart';
 import 'package:aesthetic_skin_tracker/utils/ai/skin_analysis_model.dart';
 import 'package:aesthetic_skin_tracker/utils/ai/skin_analysis_runner.dart';
 import 'package:aesthetic_skin_tracker/utils/ai/skin_detections.dart';
@@ -1145,7 +1146,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
       final fileName =
           'ai_skin_analysis_scans_${DateTime.now().toIso8601String().replaceAll(':', '-')}.csv';
-      final csv = AiScanDataCsvExporter.format(scans);
+      final csv = AiScanDataCsvExporter.format(
+        scans,
+        registryBaselineScanIds: await AppPrefs.getAllAiBaselineScanIds(),
+      );
       final file = kIsWeb
           ? XFile.fromData(
               Uint8List.fromList(utf8.encode(csv)),
@@ -1265,6 +1269,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// AiBaselineResolution. Replaces the old device-global
   /// _manualBaselineMetricMatrix cache, which carried no such scoping.
   AiBaselineResolution _aiBaselineResolution = const AiBaselineResolution();
+
+  /// The per-key AI baseline registry's id for the current capture's key,
+  /// as read during baseline resolution (null when none was registered).
+  String? _aiBaselineRegistryScanId;
 
   /// Set once, right after this scan is saved, when it just became the
   /// first-ever registered baseline for its key.
@@ -1939,6 +1947,15 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       final persistencePayload = _mergePayloadForPersistence(
         backendResponse: backendResponse,
         luxePayload: luxePayload,
+      );
+      // The baseline whose metrics/paths were actually sent with this
+      // scan's frames -- none when no baseline matrix was sent.
+      recordAiComparisonBaseline(
+        persistencePayload,
+        baselineScanId: baselineMetricMatrixForTrend == null
+            ? null
+            : _previousFocusAreaScan?.id,
+        registryScanId: _aiBaselineRegistryScanId,
       );
       final Map<String, double> rawMetricScores =
           _rawMetricScoresForStorage(persistencePayload);
@@ -5932,6 +5949,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       _ignoredBaselinePinMessage = null;
       _currentScanBecameNewBaseline = false;
       _baselineNotSavedReason = null;
+      _aiBaselineRegistryScanId = null;
 
       final selectedProcedureId = (_selectedProcedureId ?? '').trim();
       final key = ScanHistoryEntry.resolveAiBaselineKey(
@@ -5964,6 +5982,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       _explicitLocalFollowUpFlag = keyMatches.any(readFollowUpFlagFromPayload);
 
       final pinnedId = await AppPrefs.getAiBaselineScanId(key);
+      _aiBaselineRegistryScanId = pinnedId;
       final resolution = resolveAiBaseline(
         key: key,
         keyMatches: keyMatches,

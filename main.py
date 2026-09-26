@@ -1045,8 +1045,29 @@ def _stabilize_trend_deltas_for_near_identical_scan(
     return stabilized
 
 
+def _signed_lab_value(value: float | None) -> float | None:
+    """OpenCV 8-bit LAB stores a*/b* offset by +128; report them signed
+    (neutral = 0, positive a* = red, positive b* = yellow)."""
+    if value is None or not math.isfinite(float(value)):
+        return None
+    return round(float(value) - 128.0, 3)
+
+
 def assess_and_normalize_image(image_bytes: bytes) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Run image quality assessment and lighting normalization before extraction."""
+    normalized_bgr, quality_profile, _ = _assess_and_normalize_image_with_pre_white_balance(
+        image_bytes
+    )
+    return normalized_bgr, quality_profile
+
+
+def _assess_and_normalize_image_with_pre_white_balance(
+    image_bytes: bytes,
+) -> Tuple[np.ndarray, Dict[str, Any], np.ndarray]:
+    """Same as assess_and_normalize_image, plus a diagnostic-only copy of the
+    image with the identical luminance normalization but no white balance.
+    The third value never feeds a metric; it only lets analyze_skin_patch
+    log the redness cheek's p95 a* as it was before white balance."""
     image_bgr = _decode_image_bytes(image_bytes)
     if image_bgr is None or image_bgr.size == 0:
         raise ValueError("Decoded image is empty for IQA preprocessing.")
@@ -1056,6 +1077,9 @@ def assess_and_normalize_image(image_bytes: bytes) -> Tuple[np.ndarray, Dict[str
     blur_threshold = float(os.getenv("IQA_BLUR_THRESHOLD", "80.0"))
     image_blurry = blur_score < blur_threshold
 
+    pre_wb_lab = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2LAB)
+    pre_wb_l, pre_wb_a, pre_wb_b = cv2.split(pre_wb_lab)
+
     white_balanced_bgr, white_balance_profile = _apply_capture_white_balance_correction(image_bgr)
     lab = cv2.cvtColor(white_balanced_bgr, cv2.COLOR_BGR2LAB)
     l_channel, a_channel, b_channel = cv2.split(lab)
@@ -1064,6 +1088,11 @@ def assess_and_normalize_image(image_bytes: bytes) -> Tuple[np.ndarray, Dict[str
     l_equalized = clahe.apply(l_channel)
     normalized_bgr = cv2.cvtColor(
         cv2.merge((l_equalized, a_channel, b_channel)),
+        cv2.COLOR_LAB2BGR,
+    )
+    pre_wb_clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8))
+    pre_white_balance_bgr = cv2.cvtColor(
+        cv2.merge((pre_wb_clahe.apply(pre_wb_l), pre_wb_a, pre_wb_b)),
         cv2.COLOR_LAB2BGR,
     )
 
@@ -1098,6 +1127,11 @@ def assess_and_normalize_image(image_bytes: bytes) -> Tuple[np.ndarray, Dict[str
     if chroma_cast > 20.0:
         warnings.append("Strong color cast detected. Use neutral white lighting.")
 
+    # Diagnostic-only: the a*/b* shift _apply_capture_white_balance_correction
+    # subtracted (after its +/-8 clip), 0.0 when it skipped correction.
+    wb_a_post_clip = float(white_balance_profile.get("a_adjustment", 0.0) or 0.0)
+    wb_b_post_clip = float(white_balance_profile.get("b_adjustment", 0.0) or 0.0)
+
     return normalized_bgr, {
         "blur_score": round(blur_score, 2),
         "blur_threshold": round(blur_threshold, 2),
@@ -1109,7 +1143,14 @@ def assess_and_normalize_image(image_bytes: bytes) -> Tuple[np.ndarray, Dict[str
         "lighting_balance_score": round(lighting_balance_score, 3),
         "white_balance_profile": white_balance_profile,
         "preprocess_warnings": warnings,
-    }
+        "color_lab_units": "signed_a_b_neutral_0",
+        "whole_image_mean_a_before_wb": _signed_lab_value(float(np.mean(pre_wb_a))),
+        "whole_image_mean_b_before_wb": _signed_lab_value(float(np.mean(pre_wb_b))),
+        "whole_image_mean_a_after_wb": _signed_lab_value(float(np.mean(a_channel))),
+        "whole_image_mean_b_after_wb": _signed_lab_value(float(np.mean(b_channel))),
+        "wb_a_adjustment_post_clip": round(wb_a_post_clip, 3),
+        "wb_b_adjustment_post_clip": round(wb_b_post_clip, 3),
+    }, pre_white_balance_bgr
 
 
 def _build_confidence_profile(
@@ -2325,9 +2366,13 @@ def _compute_zone_based_metrics(
     *,
     baseline_matrix: Dict[str, Any] | None = None,
     roi_cache: _RequestRoiCache | None = None,
+    redness_diagnostics: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     # PRODUCER AUDIT (see CANONICAL_METRIC_ORDER registry below): this helper
     # returns only the three zone metrics consumed by analyze_skin_patch.
+    # [redness_diagnostics], when given, is filled with read-only logging of
+    # which localized_redness branch ran and the exact cheek pixels it used;
+    # nothing in it feeds back into any score.
     h, w = face_bgr.shape[:2]
     if h == 0 or w == 0:
         return {
@@ -2372,15 +2417,27 @@ def _compute_zone_based_metrics(
         )
         redness_signal = p95_a - baseline_a_p95
         redness_reference_source = "personal_p95"
+        if redness_diagnostics is not None:
+            redness_diagnostics.update(
+                branch="baseline_p95_anchor",
+                cheek_side="both",
+                mask=u_zone_pixels,
+                p95_a_after_wb=p95_a,
+                baseline_p95_a=baseline_a_p95,
+            )
     else:
         side_spreads: list[float] = []
-        for cheek_mask in (left_cheek, right_cheek):
+        side_names: list[str] = []
+        side_masks: list[np.ndarray] = []
+        side_p95s: list[float] = []
+        for side_name, cheek_mask in (("left", left_cheek), ("right", right_cheek)):
             side_pixels = cv2.bitwise_and(cheek_mask, skin_mask) > 0
             if not np.any(side_pixels):
                 continue
             side_values = a_blur[side_pixels]
+            side_p95 = float(np.percentile(side_values, 95))
             side_spreads.append(
-                float(np.percentile(side_values, 95))
+                side_p95
                 - float(
                     np.percentile(
                         side_values,
@@ -2388,13 +2445,39 @@ def _compute_zone_based_metrics(
                     )
                 )
             )
+            side_names.append(side_name)
+            side_masks.append(side_pixels)
+            side_p95s.append(side_p95)
         redness_signal = max(side_spreads, default=0.0)
+        if redness_diagnostics is not None:
+            redness_diagnostics["branch"] = "within_cheek_spread"
+            redness_diagnostics["baseline_p95_a"] = None
+            if side_spreads:
+                # max() keeps the first maximum, so ties resolve to the same
+                # cheek (left before right) the formula's value came from.
+                winner = side_spreads.index(redness_signal)
+                redness_diagnostics.update(
+                    cheek_side=side_names[winner],
+                    mask=side_masks[winner],
+                    p95_a_after_wb=side_p95s[winner],
+                )
         _redness_result = compute_localized_redness_and_rosacea(
             redness_signal,
             0.0,
             diffuse_density,
         )
         redness_reference_source = "self_cheek_p10"
+    if redness_diagnostics is not None:
+        diag_mask = redness_diagnostics.get("mask")
+        diag_pixels = int(np.count_nonzero(diag_mask)) if diag_mask is not None else 0
+        redness_diagnostics["cheek_roi_pixels"] = diag_pixels
+        if diag_pixels > 0:
+            redness_diagnostics["mean_a_after_wb"] = float(
+                np.mean(lab[:, :, 1].astype(np.float32)[diag_mask])
+            )
+            redness_diagnostics["mean_b_after_wb"] = float(
+                np.mean(lab[:, :, 2].astype(np.float32)[diag_mask])
+            )
     localized_redness = _redness_result["localized_redness"]
     diffuse_flushing_erythema = _redness_result["diffuse_flushing_erythema"]
     rosacea_before = _redness_result["rosacea_before"]
@@ -5367,6 +5450,64 @@ def _compute_zone_analysis(
     return output
 
 
+def _pre_white_balance_cheek_p95_a(
+    pre_white_balance_bgr: np.ndarray | None,
+    points: np.ndarray,
+    cheek_mask: np.ndarray | None,
+) -> float | None:
+    """Diagnostic-only. Replays analyze_skin_patch's align/crop and
+    normalize_lighting_and_shadows, plus the zone redness formula's a* blur,
+    on the image as it was before white balance, then reads p95 a* on the
+    SAME boolean cheek mask the formula used. Never feeds a score."""
+    if pre_white_balance_bgr is None or cheek_mask is None or not np.any(cheek_mask):
+        return None
+    try:
+        aligned, _ = _align_and_crop_face(pre_white_balance_bgr, points)
+        pre_norm = normalize_lighting_and_shadows(aligned)
+        if pre_norm.shape[:2] != cheek_mask.shape[:2]:
+            return None
+        a_blur = cv2.GaussianBlur(
+            cv2.cvtColor(pre_norm, cv2.COLOR_BGR2LAB)[:, :, 1].astype(np.float32),
+            (0, 0),
+            sigmaX=2.0,
+        )
+        return float(np.percentile(a_blur[cheek_mask], 95))
+    except Exception as exc:
+        logger.info("Pre-white-balance cheek p95 diagnostic skipped: %s", exc)
+        return None
+
+
+def _redness_color_diagnostics(
+    redness_diagnostics: Dict[str, Any],
+    *,
+    branch: str,
+    p95_a_before_wb: float | None,
+) -> Dict[str, Any]:
+    """image_quality fields describing which localized_redness branch ran and
+    the cheek a*/b* it saw, all signed (neutral = 0)."""
+    zone_branch_used = branch in {"within_cheek_spread", "baseline_p95_anchor"}
+
+    def zone_value(key: str) -> float | None:
+        if not zone_branch_used:
+            return None
+        return _signed_lab_value(safe_float(redness_diagnostics.get(key)))
+
+    return {
+        "redness_branch": branch,
+        "redness_cheek_side": redness_diagnostics.get("cheek_side") if zone_branch_used else None,
+        "redness_cheek_roi_pixels": (
+            int(redness_diagnostics.get("cheek_roi_pixels", 0)) if zone_branch_used else None
+        ),
+        "redness_cheek_mean_a_after_wb": zone_value("mean_a_after_wb"),
+        "redness_cheek_mean_b_after_wb": zone_value("mean_b_after_wb"),
+        "redness_cheek_p95_a_after_wb": zone_value("p95_a_after_wb"),
+        "redness_cheek_p95_a_before_wb": (
+            _signed_lab_value(p95_a_before_wb) if zone_branch_used else None
+        ),
+        "redness_baseline_cheek_p95_a": zone_value("baseline_p95_a"),
+    }
+
+
 def analyze_skin_patch(
     bgr_image: np.ndarray,
     baseline_matrix: Dict[str, float] | None = None,
@@ -5384,8 +5525,13 @@ def analyze_skin_patch(
     baseline_pose_template: str | None = None,
     guide_type: str | None = None,
     baseline_guide_type: str | None = None,
+    pre_white_balance_bgr: np.ndarray | None = None,
 ) -> Dict[str, Any]:
-    """Core math analytics processor combined with 0-100 linear calibration scoring."""
+    """Core math analytics processor combined with 0-100 linear calibration scoring.
+
+    [pre_white_balance_bgr] is diagnostic-only (see
+    _assess_and_normalize_image_with_pre_white_balance): it is only read to
+    log the redness cheek's p95 a* before white balance, never scored."""
     ensure_pipeline_ready()
     if not hasattr(math, "exp"):
         raise RuntimeError("Python math.exp is unavailable for metric calibration.")
@@ -5471,6 +5617,7 @@ def analyze_skin_patch(
                 "n/a" if baseline_ssim_global is None else f"{baseline_ssim_global:.4f}",
             )
 
+    redness_diagnostics: Dict[str, Any] = {}
     try:
         zone_metrics = _compute_zone_based_metrics(
             norm,
@@ -5479,6 +5626,7 @@ def analyze_skin_patch(
             norm_points,
             baseline_matrix=baseline_matrix,
             roi_cache=request_roi_cache,
+            redness_diagnostics=redness_diagnostics,
         )
     except Exception as exc:
         logger.warning(
@@ -5495,6 +5643,7 @@ def analyze_skin_patch(
             "under_eye_texture_density": None,
             "under_eye_dark_circle_density": None,
         }
+        redness_diagnostics = {}
 
     lab = cv2.cvtColor(norm, cv2.COLOR_BGR2LAB)
     gray = cv2.cvtColor(norm, cv2.COLOR_BGR2GRAY)
@@ -6714,6 +6863,26 @@ def analyze_skin_patch(
         }
     )
 
+    # Logging only: which producer set canonical localized_redness above.
+    if zone_redness is not None and math.isfinite(zone_redness):
+        redness_branch = str(redness_diagnostics.get("branch") or "unknown_zone_branch")
+    elif redness_force_write:
+        redness_branch = "redness_fallback_emit"
+    else:
+        redness_branch = "unavailable"
+    image_quality_payload = {
+        **(quality_profile or {}),
+        **_redness_color_diagnostics(
+            redness_diagnostics,
+            branch=redness_branch,
+            p95_a_before_wb=_pre_white_balance_cheek_p95_a(
+                pre_white_balance_bgr,
+                points,
+                redness_diagnostics.get("mask"),
+            ),
+        ),
+    }
+
     response_payload = {
         "calibrated_redness_score": normalized_top_level_metrics[
             "calibrated_redness_score"
@@ -6742,7 +6911,7 @@ def analyze_skin_patch(
         "baseline_source_image_height": baseline_source_image_height,
         "confidence_score": confidence_score,
         "confidence_hints": confidence_hints if confidence_score < 0.65 else [],
-        "image_quality": quality_profile or {},
+        "image_quality": image_quality_payload,
         "fingerprint": fingerprint,
         "calibration": calibration,
         "metric_matrix": metric_matrix,
@@ -7253,7 +7422,11 @@ async def analyze_skin(request: Request):
             except Exception as exc:
                 logger.info("Baseline image decode skipped for SSIM guard: %s", exc)
 
-        normalized_image, quality_profile = assess_and_normalize_image(image_data)
+        (
+            normalized_image,
+            quality_profile,
+            pre_white_balance_image,
+        ) = _assess_and_normalize_image_with_pre_white_balance(image_data)
         logger.info("/api/analyze-skin request matrix accepted for inference.")
         validate_camera_hardware_qa(normalized_image)
         result = analyze_skin_patch(
@@ -7273,6 +7446,7 @@ async def analyze_skin(request: Request):
             baseline_pose_template=str(baseline_pose_template) if baseline_pose_template else None,
             guide_type=str(guide_type) if guide_type else None,
             baseline_guide_type=str(baseline_guide_type) if baseline_guide_type else None,
+            pre_white_balance_bgr=pre_white_balance_image,
         )
         debug = result.get("model_debug", {})
         logger.info(
@@ -7387,7 +7561,11 @@ async def analyze_skin_single(
             raise HTTPException(status_code=400, detail="Empty file attachment package received.")
 
         try:
-            img_bgr, quality_profile = assess_and_normalize_image(contents)
+            (
+                img_bgr,
+                quality_profile,
+                pre_white_balance_image,
+            ) = _assess_and_normalize_image_with_pre_white_balance(contents)
         except Exception as exc:
             raise HTTPException(status_code=400, detail="Corrupted image encoding matrix parameters.") from exc
 
@@ -7421,6 +7599,7 @@ async def analyze_skin_single(
             baseline_pose_template=baseline_pose_template,
             guide_type=guide_type,
             baseline_guide_type=baseline_guide_type,
+            pre_white_balance_bgr=pre_white_balance_image,
         )
         debug = results.get("model_debug", {})
         logger.info(
