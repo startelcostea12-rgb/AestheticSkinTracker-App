@@ -31,8 +31,8 @@ dependencies:
   json_annotation: 4.9.0
   record: ^6.1.0
 
-  purchases_flutter: ^9.16.1
-  purchases_ui_flutter: ^9.16.1
+  purchases_flutter: ^10.13.1
+  purchases_ui_flutter: ^10.13.1
 
   cupertino_icons: ^1.0.8
   fl_chart: ^1.2.0
