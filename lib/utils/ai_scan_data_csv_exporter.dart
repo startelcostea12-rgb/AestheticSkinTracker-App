@@ -59,7 +59,9 @@ class AiScanDataCsvExporter {
     'image_quality.redness_cheek_roi_pixels',
     'image_quality.redness_cheek_mean_a_after_wb',
     'image_quality.redness_cheek_mean_b_after_wb',
+    'image_quality.redness_cheek_p10_a_after_wb',
     'image_quality.redness_cheek_p95_a_after_wb',
+    'image_quality.redness_cheek_p10_a_before_wb',
     'image_quality.redness_cheek_p95_a_before_wb',
     'image_quality.redness_baseline_cheek_p95_a',
   ];
@@ -72,6 +74,19 @@ class AiScanDataCsvExporter {
     'trend_lock_reason',
     'extraction_path',
     'formula_version',
+  ];
+
+  static const List<String> perFrameFields = <String>[
+    'cheek_side',
+    'mask_pixel_count',
+    'cheek_p95_a_after_wb',
+    'cheek_p10_a_after_wb',
+    'cheek_p10_a_before_wb',
+    'localized_redness',
+    'iso',
+    'exposure_bias',
+    'shutter_seconds',
+    'brightness_value',
   ];
 
   static List<ScanHistoryEntry> exportableScans(
@@ -106,9 +121,14 @@ class AiScanDataCsvExporter {
       for (final metric in aiScanDataCanonicalMetricKeys)
         for (final field in _metricFields) '${metric}_$field',
     ];
+    final perFrameColumns = <String>[
+      for (var frame = 1; frame <= 3; frame++)
+        for (final field in perFrameFields) 'frame${frame}_$field',
+    ];
     final columns = <String>[
       ..._baseColumns,
       ...metricColumns,
+      ...perFrameColumns,
       ...qualityColumns.where((column) => !_baseColumns.contains(column)),
     ];
 
@@ -170,6 +190,9 @@ class AiScanDataCsvExporter {
     final lockReasons = _payloadMap(payload, 'trend_lock_reasons');
     final extractionPaths = _payloadMap(payload, 'metric_extraction_paths');
     final formulaVersions = _payloadMap(payload, 'metric_formula_versions');
+    final frameDiagnostics = payload['per_frame_diagnostics'] is List
+        ? payload['per_frame_diagnostics'] as List
+        : const <dynamic>[];
 
     for (final metric in aiScanDataCanonicalMetricKeys) {
       final range = _asMap(ranges[metric]);
@@ -180,6 +203,15 @@ class AiScanDataCsvExporter {
       values['${metric}_trend_lock_reason'] = lockReasons[metric];
       values['${metric}_extraction_path'] = extractionPaths[metric];
       values['${metric}_formula_version'] = formulaVersions[metric];
+    }
+
+    for (var index = 0; index < 3; index++) {
+      final frame = index < frameDiagnostics.length
+          ? _asMap(frameDiagnostics[index])
+          : const <String, dynamic>{};
+      for (final field in perFrameFields) {
+        values['frame${index + 1}_$field'] = frame[field];
+      }
     }
 
     return columns.map((column) => _csvCell(values[column])).toList();

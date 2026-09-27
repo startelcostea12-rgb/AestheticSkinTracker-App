@@ -2472,6 +2472,12 @@ def _compute_zone_based_metrics(
         diag_pixels = int(np.count_nonzero(diag_mask)) if diag_mask is not None else 0
         redness_diagnostics["cheek_roi_pixels"] = diag_pixels
         if diag_pixels > 0:
+            redness_diagnostics["p10_a_after_wb"] = float(
+                np.percentile(
+                    a_blur[diag_mask],
+                    LOCALIZED_REDNESS_SELF_BASELINE_PERCENTILE,
+                )
+            )
             redness_diagnostics["mean_a_after_wb"] = float(
                 np.mean(lab[:, :, 1].astype(np.float32)[diag_mask])
             )
@@ -5450,37 +5456,42 @@ def _compute_zone_analysis(
     return output
 
 
-def _pre_white_balance_cheek_p95_a(
+def _pre_white_balance_cheek_percentiles_a(
     pre_white_balance_bgr: np.ndarray | None,
     points: np.ndarray,
     cheek_mask: np.ndarray | None,
-) -> float | None:
+) -> tuple[float | None, float | None]:
     """Diagnostic-only. Replays analyze_skin_patch's align/crop and
     normalize_lighting_and_shadows, plus the zone redness formula's a* blur,
-    on the image as it was before white balance, then reads p95 a* on the
+    on the image as it was before white balance, then reads p10/p95 a* on the
     SAME boolean cheek mask the formula used. Never feeds a score."""
     if pre_white_balance_bgr is None or cheek_mask is None or not np.any(cheek_mask):
-        return None
+        return None, None
     try:
         aligned, _ = _align_and_crop_face(pre_white_balance_bgr, points)
         pre_norm = normalize_lighting_and_shadows(aligned)
         if pre_norm.shape[:2] != cheek_mask.shape[:2]:
-            return None
+            return None, None
         a_blur = cv2.GaussianBlur(
             cv2.cvtColor(pre_norm, cv2.COLOR_BGR2LAB)[:, :, 1].astype(np.float32),
             (0, 0),
             sigmaX=2.0,
         )
-        return float(np.percentile(a_blur[cheek_mask], 95))
+        values = a_blur[cheek_mask]
+        return (
+            float(np.percentile(values, LOCALIZED_REDNESS_SELF_BASELINE_PERCENTILE)),
+            float(np.percentile(values, 95)),
+        )
     except Exception as exc:
-        logger.info("Pre-white-balance cheek p95 diagnostic skipped: %s", exc)
-        return None
+        logger.info("Pre-white-balance cheek percentile diagnostic skipped: %s", exc)
+        return None, None
 
 
 def _redness_color_diagnostics(
     redness_diagnostics: Dict[str, Any],
     *,
     branch: str,
+    p10_a_before_wb: float | None,
     p95_a_before_wb: float | None,
 ) -> Dict[str, Any]:
     """image_quality fields describing which localized_redness branch ran and
@@ -5500,7 +5511,11 @@ def _redness_color_diagnostics(
         ),
         "redness_cheek_mean_a_after_wb": zone_value("mean_a_after_wb"),
         "redness_cheek_mean_b_after_wb": zone_value("mean_b_after_wb"),
+        "redness_cheek_p10_a_after_wb": zone_value("p10_a_after_wb"),
         "redness_cheek_p95_a_after_wb": zone_value("p95_a_after_wb"),
+        "redness_cheek_p10_a_before_wb": (
+            _signed_lab_value(p10_a_before_wb) if zone_branch_used else None
+        ),
         "redness_cheek_p95_a_before_wb": (
             _signed_lab_value(p95_a_before_wb) if zone_branch_used else None
         ),
@@ -5531,7 +5546,7 @@ def analyze_skin_patch(
 
     [pre_white_balance_bgr] is diagnostic-only (see
     _assess_and_normalize_image_with_pre_white_balance): it is only read to
-    log the redness cheek's p95 a* before white balance, never scored."""
+    log the redness cheek's p10/p95 a* before white balance, never scored."""
     ensure_pipeline_ready()
     if not hasattr(math, "exp"):
         raise RuntimeError("Python math.exp is unavailable for metric calibration.")
@@ -6870,16 +6885,18 @@ def analyze_skin_patch(
         redness_branch = "redness_fallback_emit"
     else:
         redness_branch = "unavailable"
+    p10_a_before_wb, p95_a_before_wb = _pre_white_balance_cheek_percentiles_a(
+        pre_white_balance_bgr,
+        points,
+        redness_diagnostics.get("mask"),
+    )
     image_quality_payload = {
         **(quality_profile or {}),
         **_redness_color_diagnostics(
             redness_diagnostics,
             branch=redness_branch,
-            p95_a_before_wb=_pre_white_balance_cheek_p95_a(
-                pre_white_balance_bgr,
-                points,
-                redness_diagnostics.get("mask"),
-            ),
+            p10_a_before_wb=p10_a_before_wb,
+            p95_a_before_wb=p95_a_before_wb,
         ),
     }
 

@@ -32,7 +32,9 @@ NEW_IMAGE_QUALITY_KEYS = {
     "redness_cheek_roi_pixels",
     "redness_cheek_mean_a_after_wb",
     "redness_cheek_mean_b_after_wb",
+    "redness_cheek_p10_a_after_wb",
     "redness_cheek_p95_a_after_wb",
+    "redness_cheek_p10_a_before_wb",
     "redness_cheek_p95_a_before_wb",
     "redness_baseline_cheek_p95_a",
 }
@@ -161,6 +163,9 @@ def test_within_cheek_spread_branch_reports_the_winning_cheek():
     assert diagnostics["p95_a_after_wb"] == pytest.approx(
         float(np.percentile(a_blur[right_mask], 95))
     )
+    assert diagnostics["p10_a_after_wb"] == pytest.approx(
+        float(np.percentile(a_blur[right_mask], 10))
+    )
     assert diagnostics["cheek_roi_pixels"] == int(np.count_nonzero(right_mask))
     assert diagnostics["mean_a_after_wb"] == pytest.approx(
         float(np.mean(lab[:, :, 1][right_mask]))
@@ -198,9 +203,15 @@ def test_baseline_p95_anchor_branch_reports_both_cheeks_and_baseline():
     assert diagnostics["p95_a_after_wb"] == pytest.approx(
         float(np.percentile(a_blur[union], 95))
     )
+    assert diagnostics["p10_a_after_wb"] == pytest.approx(
+        float(np.percentile(a_blur[union], 10))
+    )
 
     fields = main._redness_color_diagnostics(
-        diagnostics, branch="baseline_p95_anchor", p95_a_before_wb=None
+        diagnostics,
+        branch="baseline_p95_anchor",
+        p10_a_before_wb=None,
+        p95_a_before_wb=None,
     )
     assert fields["redness_baseline_cheek_p95_a"] == 22.0
     assert fields["redness_cheek_side"] == "both"
@@ -210,6 +221,7 @@ def test_non_zone_branch_reports_its_name_and_null_cheek_fields():
     fields = main._redness_color_diagnostics(
         {"branch": "within_cheek_spread", "cheek_side": "left", "p95_a_after_wb": 150.0},
         branch="redness_fallback_emit",
+        p10_a_before_wb=140.0,
         p95_a_before_wb=151.0,
     )
     assert fields["redness_branch"] == "redness_fallback_emit"
@@ -238,7 +250,11 @@ def test_full_pipeline_emits_fields_without_changing_any_score():
     assert iq_with["redness_branch"] in {"within_cheek_spread", "baseline_p95_anchor"}
     assert iq_with["redness_cheek_side"] in {"left", "right"}
     assert iq_with["redness_cheek_p95_a_after_wb"] is not None
+    assert iq_with["redness_cheek_p10_a_after_wb"] is not None
     assert iq_with["redness_cheek_p95_a_before_wb"] is not None
-    # Without the pre-white-balance image only the "before" p95 is unknown.
+    assert iq_with["redness_cheek_p10_a_before_wb"] is not None
+    # Without the pre-white-balance image only the "before" percentiles are unknown.
+    assert iq_without["redness_cheek_p10_a_before_wb"] is None
     assert iq_without["redness_cheek_p95_a_before_wb"] is None
+    assert iq_without["redness_cheek_p10_a_after_wb"] == iq_with["redness_cheek_p10_a_after_wb"]
     assert iq_without["redness_cheek_p95_a_after_wb"] == iq_with["redness_cheek_p95_a_after_wb"]

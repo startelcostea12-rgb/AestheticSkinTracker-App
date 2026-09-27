@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
+import 'package:aesthetic_skin_tracker/models/ai_scan_frame_exposure.dart';
+import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -224,11 +226,32 @@ void main() {
         Uint8List.fromList([2]),
         Uint8List.fromList([3]),
       ],
+      frameExposureMetadata: const [
+        AiScanFrameExposure(
+          iso: 100,
+          exposureBias: -0.3,
+          shutterSeconds: 1 / 120,
+          brightnessValue: 4.5,
+        ),
+        AiScanFrameExposure(iso: 125),
+        AiScanFrameExposure(
+          iso: 160,
+          exposureBias: 0.0,
+          shutterSeconds: 1 / 60,
+        ),
+      ],
       uploadFrame: (frame, frameNumber) async {
         requestedFrameNumbers.add(frameNumber);
         if (frameNumber == 2) throw Exception('no face detected');
         return {
           'status': 'success',
+          'image_quality': {
+            'redness_cheek_side': frameNumber == 1 ? 'left' : 'right',
+            'redness_cheek_roi_pixels': frameNumber == 1 ? 2100 : 2300,
+            'redness_cheek_p95_a_after_wb': frameNumber == 1 ? 31.5 : 33.5,
+            'redness_cheek_p10_a_after_wb': frameNumber == 1 ? 20.5 : 21.5,
+            'redness_cheek_p10_a_before_wb': frameNumber == 1 ? 19.5 : 20.5,
+          },
           'metric_matrix': {
             'localized_redness': frameNumber == 1 ? 20.0 : 40.0,
             if (frameNumber == 1) 'pigment_load': 12.0,
@@ -248,6 +271,36 @@ void main() {
       'localized_redness': 2,
       'pigment_load': 1,
     });
+    final diagnostics =
+        aggregate.response[aiScanPerFrameDiagnosticsKey] as List<dynamic>;
+    expect(diagnostics, hasLength(3));
+    expect(diagnostics[0], containsPair('cheek_side', 'left'));
+    expect(diagnostics[0], containsPair('localized_redness', 20.0));
+    expect(diagnostics[0], containsPair('cheek_p10_a_after_wb', 20.5));
+    expect(diagnostics[0], containsPair('shutter_seconds', 1 / 120));
+    expect(diagnostics[1], containsPair('cheek_side', isNull));
+    expect(diagnostics[1], containsPair('localized_redness', isNull));
+    expect(diagnostics[1], containsPair('iso', 125));
+    expect(diagnostics[1], containsPair('brightness_value', isNull));
+    expect(diagnostics[2], containsPair('cheek_side', 'right'));
+    expect(diagnostics[2], containsPair('localized_redness', 40.0));
+    expect(diagnostics[2], containsPair('brightness_value', isNull));
+
+    final saved = ScanHistoryEntry.fromJson(
+      ScanHistoryEntry(
+        id: 'three-frame-scan',
+        timestamp: DateTime.parse('2026-09-26T06:13:00Z'),
+        scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+        estimatedSkinAge: 0,
+        metrics: const <String, double>{},
+        rawPayload: aggregate.response,
+      ).toJson(),
+    );
+    final storedDiagnostics =
+        saved.rawPayload![aiScanPerFrameDiagnosticsKey] as List<dynamic>;
+    expect(storedDiagnostics, hasLength(3));
+    expect(storedDiagnostics[1], containsPair('localized_redness', isNull));
+    expect(storedDiagnostics[1], containsPair('brightness_value', isNull));
   });
 
   test('AI multi-frame mode is opt-in and Track Procedure remains single-path', () {

@@ -12,6 +12,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:aesthetic_skin_tracker/app_theme.dart';
+import 'package:aesthetic_skin_tracker/models/ai_scan_frame_exposure.dart';
 import 'package:aesthetic_skin_tracker/models/skin_profile.dart';
 import 'package:aesthetic_skin_tracker/models/procedure.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
@@ -760,11 +761,13 @@ class AiSkinAnalysisCaptureResult {
     required this.captureQuality,
     required this.poseTemplate,
     required this.guideType,
+    this.frameExposureMetadata = const <AiScanFrameExposure>[],
   });
 
   final String primaryImagePath;
   final List<Uint8List> croppedFrames;
   final String captureQuality;
+  final List<AiScanFrameExposure> frameExposureMetadata;
 
   /// The view angle chip selected during this capture (see
   /// _selectedPoseTemplate/_poseTemplates) -- e.g. "Front", "Left 45°",
@@ -3273,7 +3276,12 @@ class _CameraScreenState extends State<CameraScreen>
   /// bytes didn't decode) -- reusing this function's own existing decode
   /// rather than adding a second one, purely so the burst log can record
   /// still_w/still_h alongside the EXIF fields.
-  ({String fields, int? stillWidth, int? stillHeight})
+  ({
+    String fields,
+    int? stillWidth,
+    int? stillHeight,
+    AiScanFrameExposure exposure,
+  })
   _burstFrameExifAndStillSize(Uint8List bytes) {
     img.Image? decoded;
     try {
@@ -3318,6 +3326,18 @@ class _CameraScreenState extends State<CameraScreen>
           'exposure_bias=$exposureBias brightness_value=$brightnessValue',
       stillWidth: decoded?.width,
       stillHeight: decoded?.height,
+      exposure: AiScanFrameExposure(
+        iso: int.tryParse(iso ?? ''),
+        exposureBias:
+            double.tryParse(exposureBias ?? '') ??
+            exifRationalAsDouble(exposureBias),
+        shutterSeconds:
+            double.tryParse(exposureTime ?? '') ??
+            exifRationalAsDouble(exposureTime),
+        brightnessValue:
+            double.tryParse(brightnessValue ?? '') ??
+            exifRationalAsDouble(brightnessValue),
+      ),
     );
   }
 
@@ -4992,6 +5012,7 @@ class _CameraScreenState extends State<CameraScreen>
       // "aiSkinAnalysis" must tag every line here.
       final burstLuminances = <double?>[];
       final burstExifFields = <String>[];
+      final burstExposureMetadata = <AiScanFrameExposure>[];
       final burstStillWidths = <int?>[];
       final burstStillHeights = <int?>[];
       for (final file in capturedFiles) {
@@ -4999,6 +5020,7 @@ class _CameraScreenState extends State<CameraScreen>
         burstLuminances.add(meanLuminanceFromImageBytes(bytes));
         final exifAndSize = _burstFrameExifAndStillSize(bytes);
         burstExifFields.add(exifAndSize.fields);
+        burstExposureMetadata.add(exifAndSize.exposure);
         burstStillWidths.add(exifAndSize.stillWidth);
         burstStillHeights.add(exifAndSize.stillHeight);
       }
@@ -5140,6 +5162,9 @@ class _CameraScreenState extends State<CameraScreen>
           captureQuality: captureQuality,
           poseTemplate: _selectedPoseTemplate,
           guideType: _guideType.name,
+          frameExposureMetadata: List<AiScanFrameExposure>.unmodifiable(
+            burstExposureMetadata,
+          ),
         ),
       );
     } catch (e) {

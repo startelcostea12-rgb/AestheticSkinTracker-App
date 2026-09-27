@@ -30,6 +30,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'package:aesthetic_skin_tracker/app_theme.dart';
 import 'package:aesthetic_skin_tracker/models/acne_rosacea_log.dart';
+import 'package:aesthetic_skin_tracker/models/ai_scan_frame_exposure.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/services/skin_history_repository.dart';
 import 'package:aesthetic_skin_tracker/utils/acne_rosacea_photo_analysis.dart';
@@ -655,14 +656,54 @@ String _describeUploadFailure(Object error) {
       'exception=${error.runtimeType}: $message';
 }
 
+const String aiScanPerFrameDiagnosticsKey = 'per_frame_diagnostics';
+
+List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
+  required List<Map<String, dynamic>?> frameResponses,
+  required List<AiScanFrameExposure> frameExposureMetadata,
+  required int frameCount,
+}) {
+  return List<Map<String, dynamic>>.generate(frameCount, (index) {
+    final response = index < frameResponses.length
+        ? frameResponses[index]
+        : null;
+    final metricsNode = _dynamicMap(response?['metrics']);
+    final imageQuality = _dynamicMap(response?['image_quality']).isNotEmpty
+        ? _dynamicMap(response?['image_quality'])
+        : _dynamicMap(metricsNode['image_quality']);
+    final metricMatrix = _dynamicMap(response?['metric_matrix']).isNotEmpty
+        ? _dynamicMap(response?['metric_matrix'])
+        : _dynamicMap(metricsNode['metric_matrix']);
+    final exposure = index < frameExposureMetadata.length
+        ? frameExposureMetadata[index]
+        : const AiScanFrameExposure();
+    return <String, dynamic>{
+      'frame_number': index + 1,
+      'cheek_side': imageQuality['redness_cheek_side'],
+      'mask_pixel_count': imageQuality['redness_cheek_roi_pixels'],
+      'cheek_p95_a_after_wb': imageQuality['redness_cheek_p95_a_after_wb'],
+      'cheek_p10_a_after_wb': imageQuality['redness_cheek_p10_a_after_wb'],
+      'cheek_p10_a_before_wb': imageQuality['redness_cheek_p10_a_before_wb'],
+      'localized_redness': metricMatrix['localized_redness'],
+      ...exposure.toJson(),
+    };
+  }, growable: false);
+}
+
 Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
   List<Uint8List> frames, {
   required Future<Map<String, dynamic>> Function(
     Uint8List frame,
     int frameNumber,
   ) uploadFrame,
+  List<AiScanFrameExposure> frameExposureMetadata =
+      const <AiScanFrameExposure>[],
 }) async {
   final responses = <Map<String, dynamic>>[];
+  final responsesByFrame = List<Map<String, dynamic>?>.filled(
+    frames.length,
+    null,
+  );
   // Debug-only: one human-readable reason per frame that didn't contribute
   // a usable metric, appended to averageBackendAnalysisFrames' StateError
   // below so the on-screen red error banner shows why, instead of only a
@@ -675,6 +716,7 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
     try {
       final response = await uploadFrame(frames[index], frameNumber);
       responses.add(response);
+      responsesByFrame[index] = response;
       if (kDebugMode) {
         final metricsNode = _dynamicMap(response['metrics']);
         final matrix = _dynamicMap(response['metric_matrix']).isNotEmpty
@@ -699,10 +741,17 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
     }
   }
   try {
-    return averageBackendAnalysisFrames(
+    final aggregate = averageBackendAnalysisFrames(
       responses,
       requestedFrames: frames.length,
     );
+    aggregate.response[aiScanPerFrameDiagnosticsKey] =
+        buildAiScanPerFrameDiagnostics(
+          frameResponses: responsesByFrame,
+          frameExposureMetadata: frameExposureMetadata,
+          frameCount: frames.length,
+        );
+    return aggregate;
   } on StateError catch (e) {
     if (kDebugMode && failureReasons.isNotEmpty) {
       throw StateError('${e.message}\n${failureReasons.join('\n')}');
@@ -1188,6 +1237,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// read from its stored path instead.
   Uint8List? _croppedBytes;
   List<Uint8List> _analysisFrameBytes = const [];
+  List<AiScanFrameExposure> _analysisFrameExposureMetadata = const [];
 
   /// The user must explicitly accept the pre-analysis disclaimer before the
   /// "Run AI Analysis" button unlocks. This is a hard gate, not a checkbox
@@ -1554,12 +1604,14 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         _imagePath = capturedImagePath;
         if (captured is AiSkinAnalysisCaptureResult) {
           _analysisFrameBytes = captured.croppedFrames;
+          _analysisFrameExposureMetadata = captured.frameExposureMetadata;
           _croppedBytes = captured.croppedFrames.first;
           _currentCaptureQuality = captured.captureQuality;
           _capturedPoseTemplate = captured.poseTemplate;
           _capturedGuideType = captured.guideType;
         } else {
           _analysisFrameBytes = const [];
+          _analysisFrameExposureMetadata = const [];
           _croppedBytes = null;
           _currentCaptureQuality = null;
           _capturedPoseTemplate = null;
@@ -1618,6 +1670,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _imagePath = null;
           _croppedBytes = null;
           _analysisFrameBytes = const [];
+          _analysisFrameExposureMetadata = const [];
           _capturedPoseTemplate = null;
           _capturedGuideType = null;
         });
@@ -1629,6 +1682,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       setState(() {
         _croppedBytes = cropped;
         _analysisFrameBytes = <Uint8List>[cropped];
+        _analysisFrameExposureMetadata = const [];
         _imagePath = stored;
         _explicitBaselineSelection = false;
         // A gallery photo has no known capture angle or camera guide type
@@ -1852,6 +1906,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           resolvedBaselineMatrix.isEmpty ? null : resolvedBaselineMatrix;
       final aggregate = await analyzeBackendFrames(
         frames,
+        frameExposureMetadata: _analysisFrameExposureMetadata,
         uploadFrame: (frame, frameNumber) =>
             remote_analysis.SkinAnalysisService.uploadSingleImageFile(
               image: XFile.fromData(
@@ -2564,6 +2619,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       _imagePath = null;
       _croppedBytes = null;
       _analysisFrameBytes = const [];
+      _analysisFrameExposureMetadata = const [];
       _result = null;
       _analysisError = null;
       _fullMetrics = const {};
@@ -2995,6 +3051,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                     _imagePath = null;
                     _croppedBytes = null;
                     _analysisFrameBytes = const [];
+                    _analysisFrameExposureMetadata = const [];
                   }),
                   style: TextButton.styleFrom(
                     foregroundColor: MyApp.clinicalSlate,

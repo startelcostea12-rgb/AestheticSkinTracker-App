@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
+import 'package:aesthetic_skin_tracker/models/ai_scan_frame_exposure.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 
@@ -16,6 +17,13 @@ Uint8List _solidColorJpeg(int r, int g, int b, {int size = 8}) {
 }
 
 void main() {
+  test('EXIF rationals become decimal values and missing values stay null', () {
+    expect(exifRationalAsDouble('1/120'), closeTo(1 / 120, 1e-12));
+    expect(exifRationalAsDouble('-1/3'), closeTo(-1 / 3, 1e-12));
+    expect(exifRationalAsDouble(null), isNull);
+    expect(exifRationalAsDouble('1/0'), isNull);
+  });
+
   group('meanLuminanceFromImageBytes', () {
     test('computes the expected mean luminance for a solid-color frame', () {
       final bytes = _solidColorJpeg(128, 128, 128);

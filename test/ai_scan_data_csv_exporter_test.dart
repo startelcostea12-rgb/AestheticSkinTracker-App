@@ -109,7 +109,9 @@ void main() {
             'redness_cheek_roi_pixels': 2833,
             'redness_cheek_mean_a_after_wb': 26.9,
             'redness_cheek_mean_b_after_wb': 8.18,
+            'redness_cheek_p10_a_after_wb': 22.4,
             'redness_cheek_p95_a_after_wb': 37.65,
+            'redness_cheek_p10_a_before_wb': 20.9,
             'redness_cheek_p95_a_before_wb': 34.15,
             'redness_baseline_cheek_p95_a': null,
           },
@@ -139,7 +141,9 @@ void main() {
       expect(row['image_quality.redness_cheek_roi_pixels'], '2833');
       expect(row['image_quality.redness_cheek_mean_a_after_wb'], '26.9');
       expect(row['image_quality.redness_cheek_mean_b_after_wb'], '8.18');
+      expect(row['image_quality.redness_cheek_p10_a_after_wb'], '22.4');
       expect(row['image_quality.redness_cheek_p95_a_after_wb'], '37.65');
+      expect(row['image_quality.redness_cheek_p10_a_before_wb'], '20.9');
       expect(row['image_quality.redness_cheek_p95_a_before_wb'], '34.15');
       expect(row['image_quality.redness_baseline_cheek_p95_a'], isEmpty);
       // Post-clip adjustments are new columns; the existing
@@ -148,6 +152,62 @@ void main() {
       expect(row['image_quality.wb_b_adjustment_post_clip'], '0.7');
       expect(row['image_quality.white_balance_profile.a_adjustment'], '-3.5');
       expect(row['image_quality.white_balance_profile.b_adjustment'], '0.7');
+    });
+
+    test('exports three frame-local response and EXIF column groups', () {
+      final scan = _aiScan(
+        'scan-frames',
+        rawPayload: const <String, dynamic>{
+          'metric_matrix': <String, dynamic>{'localized_redness': 30.0},
+          'per_frame_diagnostics': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'frame_number': 1,
+              'cheek_side': 'left',
+              'mask_pixel_count': 2100,
+              'cheek_p95_a_after_wb': 31.5,
+              'cheek_p10_a_after_wb': 20.5,
+              'cheek_p10_a_before_wb': 19.5,
+              'localized_redness': 20.0,
+              'iso': 100,
+              'exposure_bias': -0.3,
+              'shutter_seconds': 0.008333333333333333,
+              'brightness_value': 4.5,
+            },
+            <String, dynamic>{
+              'frame_number': 2,
+              'cheek_side': null,
+              'mask_pixel_count': null,
+              'cheek_p95_a_after_wb': null,
+              'cheek_p10_a_after_wb': null,
+              'cheek_p10_a_before_wb': null,
+              'localized_redness': null,
+              'iso': 125,
+              'exposure_bias': null,
+              'shutter_seconds': null,
+              'brightness_value': null,
+            },
+          ],
+        },
+      );
+
+      final csv = AiScanDataCsvExporter.format(
+        [scan],
+        registryBaselineScanIds: const {},
+      );
+      final header = csv.split('\r\n').first.split(',');
+      final row = _parse(csv).single;
+
+      for (var frame = 1; frame <= 3; frame++) {
+        for (final field in AiScanDataCsvExporter.perFrameFields) {
+          expect(header, contains('frame${frame}_$field'));
+        }
+      }
+      expect(row['frame1_cheek_side'], 'left');
+      expect(row['frame1_cheek_p10_a_after_wb'], '20.5');
+      expect(row['frame1_shutter_seconds'], '0.008333333333333333');
+      expect(row['frame2_localized_redness'], isEmpty);
+      expect(row['frame2_brightness_value'], isEmpty);
+      expect(row['frame3_iso'], isEmpty);
     });
 
     test('old scans leave only the new color columns and comparison id empty', () {
