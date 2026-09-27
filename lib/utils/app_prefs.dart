@@ -48,6 +48,10 @@ class AppPrefs {
   static const String peptideStackNameKey = 'peptide_stack_name';
   static const String scanHistoryStorageWarningKey =
       'scan_history_storage_warning';
+  static const String scanHistoryUnreadableBackupPrefix =
+      'scan_history_unreadable_backup';
+  static const String aiBaselineRegistryUnreadableBackupPrefix =
+      'skin_ai_baseline_registry_unreadable_backup';
   static const String verboseDiagnosticsKey = 'verbose_diagnostics_enabled';
   static const String notificationsEnabledKey = 'notifications_enabled';
   static const String aiCoachConsentKey = 'ai_coach_consent_granted';
@@ -853,16 +857,72 @@ class AppPrefs {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_aiBaselineRegistryKey);
     if (raw == null || raw.isEmpty) return [];
+    dynamic decoded;
     try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! List) return [];
-      return decoded
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
-    } catch (_) {
+      decoded = jsonDecode(raw);
+    } catch (error) {
+      await _backupUnreadableStoredString(
+        prefs,
+        aiBaselineRegistryUnreadableBackupPrefix,
+        raw,
+      );
+      if (kDebugMode) {
+        debugPrint('[AI_BASELINE_READ] backed up undecodable registry: $error');
+      }
       return [];
     }
+    if (decoded is! List) {
+      await _backupUnreadableStoredString(
+        prefs,
+        aiBaselineRegistryUnreadableBackupPrefix,
+        raw,
+      );
+      if (kDebugMode) {
+        debugPrint('[AI_BASELINE_READ] backed up non-list registry');
+      }
+      return [];
+    }
+
+    final entries = <Map<String, dynamic>>[];
+    var skippedEntry = false;
+    for (var index = 0; index < decoded.length; index++) {
+      try {
+        final rawEntry = decoded[index];
+        if (rawEntry is! Map) {
+          throw const FormatException('registry entry is not an object');
+        }
+        final entry = Map<String, dynamic>.from(rawEntry);
+        final baselineScanId = entry['baselineScanId'];
+        if (baselineScanId is! String || baselineScanId.isEmpty) {
+          throw const FormatException('baselineScanId is missing or invalid');
+        }
+        for (final key in const [
+          'procedureId',
+          'focusArea',
+          'poseTemplate',
+          'guideType',
+        ]) {
+          final value = entry[key];
+          if (value != null && value is! String) {
+            throw FormatException('$key is not a string or null');
+          }
+        }
+        entries.add(entry);
+      } catch (error) {
+        skippedEntry = true;
+        if (kDebugMode) {
+          debugPrint('[AI_BASELINE_READ] skipped entry $index: $error');
+        }
+      }
+    }
+    if (skippedEntry) {
+      await _backupUnreadableStoredString(
+        prefs,
+        aiBaselineRegistryUnreadableBackupPrefix,
+        raw,
+      );
+    }
+    return entries;
   }
 
   static Future<void> _writeAiBaselineRegistry(
@@ -959,6 +1019,84 @@ class AppPrefs {
     }
   }
 
+  static Future<void> _backupUnreadableStoredString(
+    SharedPreferences prefs,
+    String prefix,
+    String raw,
+  ) async {
+    final key = '${prefix}_${DateTime.now().toUtc().microsecondsSinceEpoch}';
+    final saved = await prefs.setString(key, raw);
+    if (!saved) {
+      throw StateError('Could not preserve unreadable data under $key');
+    }
+  }
+
+  static Future<
+    ({List<ScanHistoryEntry> entries, bool skippedEntry, bool decodedList})
+  >
+  _decodeScanEntries(SharedPreferences prefs, String raw) async {
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(raw);
+    } catch (error) {
+      await _backupUnreadableStoredString(
+        prefs,
+        scanHistoryUnreadableBackupPrefix,
+        raw,
+      );
+      if (kDebugMode) {
+        debugPrint('[SCAN_HISTORY_READ] backed up undecodable JSON: $error');
+      }
+      return (
+        entries: <ScanHistoryEntry>[],
+        skippedEntry: true,
+        decodedList: false,
+      );
+    }
+    if (decoded is! List) {
+      await _backupUnreadableStoredString(
+        prefs,
+        scanHistoryUnreadableBackupPrefix,
+        raw,
+      );
+      if (kDebugMode) {
+        debugPrint('[SCAN_HISTORY_READ] backed up non-list JSON');
+      }
+      return (
+        entries: <ScanHistoryEntry>[],
+        skippedEntry: true,
+        decodedList: false,
+      );
+    }
+
+    final entries = <ScanHistoryEntry>[];
+    var skippedEntry = false;
+    for (var index = 0; index < decoded.length; index++) {
+      try {
+        final rawEntry = decoded[index];
+        if (rawEntry is! Map) {
+          throw const FormatException('scan entry is not an object');
+        }
+        entries.add(
+          ScanHistoryEntry.fromJson(Map<String, dynamic>.from(rawEntry)),
+        );
+      } catch (error) {
+        skippedEntry = true;
+        if (kDebugMode) {
+          debugPrint('[SCAN_HISTORY_READ] skipped entry $index: $error');
+        }
+      }
+    }
+    if (skippedEntry) {
+      await _backupUnreadableStoredString(
+        prefs,
+        scanHistoryUnreadableBackupPrefix,
+        raw,
+      );
+    }
+    return (entries: entries, skippedEntry: skippedEntry, decodedList: true);
+  }
+
   // ── Scans ──
   static Future<List<ScanHistoryEntry>>
   getScanEntriesWithoutNormalization() async {
@@ -966,19 +1104,8 @@ class AppPrefs {
     await prefs.reload();
     final raw = prefs.getString(scanHistoryKey);
     if (raw == null || raw.isEmpty) return [];
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! List) return [];
-      return decoded
-          .whereType<Map>()
-          .map(
-            (entry) =>
-                ScanHistoryEntry.fromJson(Map<String, dynamic>.from(entry)),
-          )
-          .toList(growable: false);
-    } catch (_) {
-      return [];
-    }
+    final decoded = await _decodeScanEntries(prefs, raw);
+    return decoded.entries;
   }
 
   static Future<List<ScanHistoryEntry>> getScanEntries() async {
@@ -986,20 +1113,14 @@ class AppPrefs {
     await prefs.reload(); // ← Added for consistency
     final raw = prefs.getString(scanHistoryKey);
     if (raw == null || raw.isEmpty) return [];
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! List) return [];
-      final history = decoded
-          .map((e) => ScanHistoryEntry.fromJson(e as Map<String, dynamic>))
-          .toList();
-      final normalized = _normalizeScanHistory(history);
-      if (!_scanListsEquivalent(history, normalized)) {
-        await _saveScanEntries(normalized);
-      }
-      return normalized;
-    } catch (_) {
-      return [];
+    final decoded = await _decodeScanEntries(prefs, raw);
+    final history = decoded.entries;
+    final normalized = _normalizeScanHistory(history);
+    if (decoded.decodedList &&
+        (decoded.skippedEntry || !_scanListsEquivalent(history, normalized))) {
+      await _saveScanEntries(normalized);
     }
+    return normalized;
   }
 
   static Future<List<ScanHistoryEntry>> addScanEntry(

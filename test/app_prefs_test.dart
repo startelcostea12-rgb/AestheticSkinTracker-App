@@ -18,6 +18,114 @@ void main() {
       expect(prefs.getString(AppPrefs.userNameKey), 'Alice');
     });
 
+    test(
+      'malformed scan entry is skipped while valid entries survive save',
+      () async {
+        final valid = ScanHistoryEntry(
+          id: 'valid-before-corruption',
+          timestamp: DateTime.parse('2026-09-27T13:17:00Z'),
+          scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+          estimatedSkinAge: 0,
+          metrics: const {'localized_redness': 15.5},
+        ).toJson();
+        final malformed = <String, dynamic>{
+          'id': 42,
+          'timestamp': 'not-a-date',
+          'metrics': <String, dynamic>{},
+        };
+        final original = jsonEncode([valid, malformed]);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(AppPrefs.scanHistoryKey, original);
+
+        final loaded = await AppPrefs.getScanEntries();
+        expect(loaded.map((entry) => entry.id), ['valid-before-corruption']);
+
+        await AppPrefs.addScanEntry(
+          ScanHistoryEntry(
+            id: 'new-after-corruption',
+            timestamp: DateTime.parse('2026-09-27T17:44:00Z'),
+            scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+            estimatedSkinAge: 0,
+            metrics: const {'localized_redness': 10.5},
+          ),
+        );
+
+        final afterSave = await AppPrefs.getScanEntries();
+        expect(afterSave.map((entry) => entry.id).toSet(), {
+          'valid-before-corruption',
+          'new-after-corruption',
+        });
+        final backupKeys = prefs
+            .getKeys()
+            .where(
+              (key) =>
+                  key.startsWith(AppPrefs.scanHistoryUnreadableBackupPrefix),
+            )
+            .toList();
+        expect(backupKeys, hasLength(1));
+        expect(prefs.getString(backupKeys.single), original);
+      },
+    );
+
+    test('undecodable scan JSON is backed up before replacement', () async {
+      const original = '{not valid scan history json';
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(AppPrefs.scanHistoryKey, original);
+
+      expect(await AppPrefs.getScanEntries(), isEmpty);
+      expect(prefs.getString(AppPrefs.scanHistoryKey), original);
+
+      await AppPrefs.addScanEntry(
+        ScanHistoryEntry(
+          id: 'new-after-undecodable-json',
+          timestamp: DateTime.parse('2026-09-27T18:00:00Z'),
+          scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+          estimatedSkinAge: 0,
+          metrics: const {'localized_redness': 12.0},
+        ),
+      );
+
+      final backupValues = prefs
+          .getKeys()
+          .where(
+            (key) => key.startsWith(AppPrefs.scanHistoryUnreadableBackupPrefix),
+          )
+          .map(prefs.getString)
+          .toList();
+      expect(backupValues, contains(original));
+      expect(
+        (await AppPrefs.getScanEntries()).single.id,
+        'new-after-undecodable-json',
+      );
+    });
+
+    test('non-normalizing scan reader skips only malformed entries', () async {
+      final valid = ScanHistoryEntry(
+        id: 'raw-reader-valid',
+        timestamp: DateTime.parse('2026-09-27T12:00:00Z'),
+        scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+        estimatedSkinAge: 0,
+        metrics: const {'localized_redness': 9.0},
+      ).toJson();
+      final original = jsonEncode([
+        valid,
+        <String, dynamic>{'id': false, 'timestamp': 7},
+      ]);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(AppPrefs.scanHistoryKey, original);
+
+      final loaded = await AppPrefs.getScanEntriesWithoutNormalization();
+
+      expect(loaded.map((entry) => entry.id), ['raw-reader-valid']);
+      expect(prefs.getString(AppPrefs.scanHistoryKey), original);
+      expect(
+        prefs.getKeys().where(
+          (key) => key.startsWith(AppPrefs.scanHistoryUnreadableBackupPrefix),
+        ),
+        hasLength(1),
+      );
+    });
+
     test('isOnboardingComplete true after save, false after clear', () async {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(AppPrefs.onboardingCompleteKey, true);
@@ -631,6 +739,44 @@ void main() {
     test('returns null for a key that was never set', () async {
       expect(await AppPrefs.getAiBaselineScanId(key), isNull);
     });
+
+    test(
+      'malformed registry entry is backed up and valid entries survive',
+      () async {
+        final original = jsonEncode([
+          <String, dynamic>{
+            'procedureId': otherKey.procedureId,
+            'focusArea': otherKey.focusArea,
+            'poseTemplate': otherKey.poseTemplate,
+            'guideType': otherKey.guideType,
+            'baselineScanId': 'scan_left45_existing',
+          },
+          <String, dynamic>{'baselineScanId': 42},
+        ]);
+        SharedPreferences.setMockInitialValues({
+          'skin_ai_baseline_registry_v1': original,
+        });
+
+        await AppPrefs.setAiBaselineScanId(key, 'scan_front_new');
+
+        final prefs = await SharedPreferences.getInstance();
+        final backupKeys = prefs
+            .getKeys()
+            .where(
+              (storedKey) => storedKey.startsWith(
+                AppPrefs.aiBaselineRegistryUnreadableBackupPrefix,
+              ),
+            )
+            .toList();
+        expect(backupKeys, hasLength(1));
+        expect(prefs.getString(backupKeys.single), original);
+        expect(await AppPrefs.getAiBaselineScanId(key), 'scan_front_new');
+        expect(
+          await AppPrefs.getAiBaselineScanId(otherKey),
+          'scan_left45_existing',
+        );
+      },
+    );
 
     test('set then get round-trips the scan id for that exact key', () async {
       await AppPrefs.setAiBaselineScanId(key, 'scan_front_1');
