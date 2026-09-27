@@ -322,6 +322,23 @@ class TrendLockReasonTests(unittest.TestCase):
         )
         self.assertEqual(reason, "path_mismatch")
 
+    def test_missing_path_reason(self) -> None:
+        reason = _trend_lock_reason(
+            "unknown",
+            "cheek_primary",
+            "normal",
+            "normal",
+            1000,
+            750,
+            1000,
+            750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
+        )
+        self.assertEqual(reason, "path_mismatch")
+
     def test_resolution_mismatch_reason(self) -> None:
         delta, status = _trend_delta_and_status(
             "localized_redness",

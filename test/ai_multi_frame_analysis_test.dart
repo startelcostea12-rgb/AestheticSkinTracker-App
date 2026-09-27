@@ -8,6 +8,151 @@ import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  Map<String, dynamic> rednessPayload({
+    required String cheekSide,
+    required double p10,
+    required double p95,
+    required List<double> frameP95,
+  }) => <String, dynamic>{
+    'image_quality': <String, dynamic>{
+      'redness_cheek_side': cheekSide,
+      'redness_cheek_p10_a_after_wb': p10,
+      'redness_cheek_p95_a_after_wb': p95,
+    },
+    aiScanPerFrameDiagnosticsKey: <Map<String, dynamic>>[
+      for (var index = 0; index < frameP95.length; index++)
+        <String, dynamic>{
+          'frame_number': index + 1,
+          'cheek_p95_a_after_wb': frameP95[index],
+        },
+    ],
+  };
+
+  group('redness capture mismatch trend lock', () {
+    test('does not create a lock when no redness trend verdict exists', () {
+      final result = downgradeRednessTrendForCaptureMismatch(
+        trendStatus: const {},
+        trendDeltas: const {},
+        trendLockReasons: const {},
+        baselinePayload: const {},
+        currentPayload: rednessPayload(
+          cheekSide: 'left',
+          frameP95: const [12.0, 12.5, 12.2],
+          p10: 4.5,
+          p95: 12.0,
+        ),
+      );
+
+      expect(result.rednessLockReasons, isEmpty);
+      expect(result.trendStatus, isEmpty);
+      expect(result.trendDeltas, isEmpty);
+    });
+
+    test('today\'s cheek and cast mismatches lock with no percent', () {
+      final result = downgradeRednessTrendForCaptureMismatch(
+        trendStatus: const {'localized_redness': 'improved'},
+        trendDeltas: const {'localized_redness': 84.0},
+        trendLockReasons: const {'localized_redness': 'path_mismatch'},
+        baselinePayload: rednessPayload(
+          cheekSide: 'right',
+          frameP95: const [13.382, 13.202, 11.368],
+          p10: 2.52,
+          p95: 13.382,
+        ),
+        currentPayload: rednessPayload(
+          cheekSide: 'left',
+          frameP95: const [20.89, 20.391, 20.70],
+          p10: 10.396,
+          p95: 20.89,
+        ),
+      );
+
+      expect(
+        result.rednessLockReasons,
+        containsAll(<String>[
+          'path_mismatch',
+          'cheek_mismatch',
+          'cast_mismatch',
+        ]),
+      );
+      expect(result.trendStatus.containsKey('localized_redness'), isFalse);
+      expect(result.trendDeltas.containsKey('localized_redness'), isFalse);
+      expect(result.trendLockReasons['localized_redness'], 'cheek_mismatch');
+    });
+
+    test('same cheek and deltas inside the larger p95 range may trend', () {
+      expect(preservedAiExtractionPath('cheek_primary'), 'cheek_primary');
+      final result = downgradeRednessTrendForCaptureMismatch(
+        trendStatus: const {'localized_redness': 'improved'},
+        trendDeltas: const {'localized_redness': 12.0},
+        trendLockReasons: const {},
+        baselinePayload: rednessPayload(
+          cheekSide: 'left',
+          frameP95: const [10.0, 12.0, 11.0],
+          p10: 4.0,
+          p95: 11.0,
+        ),
+        currentPayload: rednessPayload(
+          cheekSide: 'left',
+          frameP95: const [11.0, 13.0, 12.0],
+          p10: 5.0,
+          p95: 12.0,
+        ),
+      );
+
+      expect(result.rednessLockReasons, isEmpty);
+      expect(result.trendStatus['localized_redness'], 'improved');
+      expect(result.trendDeltas['localized_redness'], 12.0);
+      expect(result.trendLockReasons, isEmpty);
+    });
+
+    test('path mismatch alone leaves redness status and delta empty', () {
+      final payload = rednessPayload(
+        cheekSide: 'left',
+        frameP95: const [10.0, 12.0, 11.0],
+        p10: 4.0,
+        p95: 11.0,
+      );
+      final result = downgradeRednessTrendForCaptureMismatch(
+        trendStatus: const {'localized_redness': 'stable'},
+        trendDeltas: const {'localized_redness': 0.0},
+        trendLockReasons: const {'localized_redness': 'path_mismatch'},
+        baselinePayload: payload,
+        currentPayload: payload,
+      );
+
+      expect(result.rednessLockReasons, {'path_mismatch'});
+      expect(result.trendStatus.containsKey('localized_redness'), isFalse);
+      expect(result.trendDeltas.containsKey('localized_redness'), isFalse);
+      expect(result.trendLockReasons['localized_redness'], 'path_mismatch');
+    });
+
+    test('fewer than two frame p95 values locks as cast mismatch', () {
+      final result = downgradeRednessTrendForCaptureMismatch(
+        trendStatus: const {'localized_redness': 'worsened'},
+        trendDeltas: const {'localized_redness': -15.0},
+        trendLockReasons: const {},
+        baselinePayload: rednessPayload(
+          cheekSide: 'left',
+          frameP95: const [11.0],
+          p10: 4.0,
+          p95: 11.0,
+        ),
+        currentPayload: rednessPayload(
+          cheekSide: 'left',
+          frameP95: const [12.0, 12.5, 12.2],
+          p10: 4.5,
+          p95: 12.0,
+        ),
+      );
+
+      expect(result.rednessLockReasons, {'cast_mismatch'});
+      expect(result.trendStatus.containsKey('localized_redness'), isFalse);
+      expect(result.trendDeltas.containsKey('localized_redness'), isFalse);
+      expect(result.trendLockReasons['localized_redness'], 'cast_mismatch');
+    });
+  });
+
   test('averages each metric over only frames with a finite value', () {
     final aggregate = averageBackendAnalysisFrames(
       [

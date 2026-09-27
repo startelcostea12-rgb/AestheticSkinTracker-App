@@ -115,13 +115,17 @@ Map<String, dynamic>? _asPlainMap(dynamic value) {
   return null;
 }
 
+String? preservedAiExtractionPath(dynamic value) {
+  final path = value?.toString().trim();
+  return path == null || path.isEmpty ? null : path;
+}
+
 /// The per-metric analysis-extraction-path provenance a saved AI Skin
 /// Analysis scan recorded, checking every nested location the persisted
 /// payload may have put it (top-level, under "metrics", and under
 /// "luxePayload"/its own nested "metrics" -- mirrors
-/// _mergePayloadForPersistence's own nesting). Only 'primary_roi'/
-/// 'fallback'/'skipped' are recognized; anything else (including a missing
-/// entry) is left out. Empty when the scan's rawPayload carries no path
+/// _mergePayloadForPersistence's own nesting). Every non-empty backend path
+/// is preserved verbatim. Empty when the scan's rawPayload carries no path
 /// provenance at all -- an "unknown analysis method" scan, per
 /// [scanPassesSingleScanBaselineGates].
 Map<String, String> aiScanExtractionPaths(ScanHistoryEntry scan) {
@@ -135,10 +139,8 @@ Map<String, String> aiScanExtractionPaths(ScanHistoryEntry scan) {
     for (final entry in map.entries) {
       final key = entry.key.toString().trim().toLowerCase();
       if (!aiSkinAnalysisCanonicalMetricKeys.contains(key)) continue;
-      final raw = entry.value?.toString().trim().toLowerCase() ?? 'unknown';
-      if (raw == 'primary_roi' || raw == 'fallback' || raw == 'skipped') {
-        out[key] = raw;
-      }
+      final path = preservedAiExtractionPath(entry.value);
+      if (path != null) out[key] = path;
     }
   }
 
@@ -657,6 +659,7 @@ String _describeUploadFailure(Object error) {
 }
 
 const String aiScanPerFrameDiagnosticsKey = 'per_frame_diagnostics';
+const String rednessTrendLockReasonsKey = 'redness_trend_lock_reasons';
 
 List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
   required List<Map<String, dynamic>?> frameResponses,
@@ -688,6 +691,115 @@ List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
       ...exposure.toJson(),
     };
   }, growable: false);
+}
+
+({
+  Map<String, String> trendStatus,
+  Map<String, double> trendDeltas,
+  Map<String, String> trendLockReasons,
+  Set<String> rednessLockReasons,
+})
+downgradeRednessTrendForCaptureMismatch({
+  required Map<String, String> trendStatus,
+  required Map<String, double> trendDeltas,
+  required Map<String, String> trendLockReasons,
+  required Map<String, dynamic> currentPayload,
+  required Map<String, dynamic> baselinePayload,
+}) {
+  final existingRednessLockReason = trendLockReasons['localized_redness'];
+  if (!trendStatus.containsKey('localized_redness') &&
+      existingRednessLockReason != 'path_mismatch') {
+    return (
+      trendStatus: Map<String, String>.from(trendStatus),
+      trendDeltas: Map<String, double>.from(trendDeltas),
+      trendLockReasons: Map<String, String>.from(trendLockReasons),
+      rednessLockReasons: const <String>{},
+    );
+  }
+
+  Map<String, dynamic> imageQuality(Map<String, dynamic> payload) {
+    final direct = _dynamicMap(payload['image_quality']);
+    if (direct.isNotEmpty) return direct;
+    return _dynamicMap(_dynamicMap(payload['metrics'])['image_quality']);
+  }
+
+  List<double> frameP95Values(Map<String, dynamic> payload) {
+    final raw = payload[aiScanPerFrameDiagnosticsKey];
+    if (raw is! List) return const <double>[];
+    return raw
+        .map((frame) => _parseFiniteDouble(_dynamicMap(frame)['cheek_p95_a_after_wb']))
+        .whereType<double>()
+        .toList(growable: false);
+  }
+
+  final currentQuality = imageQuality(currentPayload);
+  final baselineQuality = imageQuality(baselinePayload);
+  final currentSide = currentQuality['redness_cheek_side']?.toString().trim();
+  final baselineSide = baselineQuality['redness_cheek_side']?.toString().trim();
+  final reasons = <String>{};
+  if (existingRednessLockReason == 'path_mismatch') {
+    reasons.add('path_mismatch');
+  }
+  if (currentSide != null &&
+      currentSide.isNotEmpty &&
+      baselineSide != null &&
+      baselineSide.isNotEmpty &&
+      currentSide != baselineSide) {
+    reasons.add('cheek_mismatch');
+  }
+
+  final currentFrameP95 = frameP95Values(currentPayload);
+  final baselineFrameP95 = frameP95Values(baselinePayload);
+  if (currentFrameP95.length < 2 || baselineFrameP95.length < 2) {
+    reasons.add('cast_mismatch');
+  } else {
+    double range(List<double> values) =>
+        values.reduce(math.max) - values.reduce(math.min);
+    final allowedDelta = math.max(
+      range(currentFrameP95),
+      range(baselineFrameP95),
+    );
+    final currentP10 = _parseFiniteDouble(
+      currentQuality['redness_cheek_p10_a_after_wb'],
+    );
+    final baselineP10 = _parseFiniteDouble(
+      baselineQuality['redness_cheek_p10_a_after_wb'],
+    );
+    final currentP95 = _parseFiniteDouble(
+      currentQuality['redness_cheek_p95_a_after_wb'],
+    );
+    final baselineP95 = _parseFiniteDouble(
+      baselineQuality['redness_cheek_p95_a_after_wb'],
+    );
+    if ((currentP10 != null &&
+            baselineP10 != null &&
+            (currentP10 - baselineP10).abs() > allowedDelta) ||
+        (currentP95 != null &&
+            baselineP95 != null &&
+            (currentP95 - baselineP95).abs() > allowedDelta)) {
+      reasons.add('cast_mismatch');
+    }
+  }
+
+  final updatedStatus = Map<String, String>.from(trendStatus);
+  final updatedDeltas = Map<String, double>.from(trendDeltas);
+  final updatedLockReasons = Map<String, String>.from(trendLockReasons);
+  if (reasons.isNotEmpty) {
+    updatedStatus.remove('localized_redness');
+    updatedDeltas.remove('localized_redness');
+    updatedLockReasons['localized_redness'] = reasons.contains('cheek_mismatch')
+        ? 'cheek_mismatch'
+        : reasons.contains('cast_mismatch')
+        ? 'cast_mismatch'
+        : 'path_mismatch';
+  }
+
+  return (
+    trendStatus: updatedStatus,
+    trendDeltas: updatedDeltas,
+    trendLockReasons: updatedLockReasons,
+    rednessLockReasons: Set<String>.unmodifiable(reasons),
+  );
 }
 
 Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
@@ -1971,12 +2083,20 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           backendResponse['trend_noise_floor_excluded_multiplier'],
         ),
       );
-      final Map<String, double> serverTrendDeltas =
-          noiseFloorAdjustedTrend.trendDeltas;
-      final Map<String, String> serverTrendStatus =
-          noiseFloorAdjustedTrend.trendStatus;
-      final Map<String, String> serverTrendLockReasons =
-          noiseFloorAdjustedTrend.trendLockReasons;
+        final rednessAdjustedTrend = downgradeRednessTrendForCaptureMismatch(
+        trendStatus: noiseFloorAdjustedTrend.trendStatus,
+        trendDeltas: noiseFloorAdjustedTrend.trendDeltas,
+        trendLockReasons: noiseFloorAdjustedTrend.trendLockReasons,
+        currentPayload: backendResponse,
+        baselinePayload:
+          _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
+        );
+        final Map<String, double> serverTrendDeltas =
+          rednessAdjustedTrend.trendDeltas;
+        final Map<String, String> serverTrendStatus =
+          rednessAdjustedTrend.trendStatus;
+        final Map<String, String> serverTrendLockReasons =
+          rednessAdjustedTrend.trendLockReasons;
       // Write the (possibly downgraded) trend fields back into
       // backendResponse -- both locations _mergePayloadForPersistence reads
       // from -- so what gets persisted to ScanHistoryEntry.rawPayload
@@ -1985,6 +2105,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       backendResponse['trend_status'] = serverTrendStatus;
       backendResponse['trend_deltas'] = serverTrendDeltas;
       backendResponse['trend_lock_reasons'] = serverTrendLockReasons;
+        backendResponse[rednessTrendLockReasonsKey] =
+          rednessAdjustedTrend.rednessLockReasons.toList(growable: false);
       final backendResponseMetricsNode = _asDynamicMap(
         backendResponse['metrics'],
       );
@@ -2390,12 +2512,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       for (final entry in map.entries) {
         final key = entry.key.toString().trim().toLowerCase();
         if (!canonicalKeys.contains(key)) continue;
-        final raw = entry.value?.toString().trim().toLowerCase() ?? 'unknown';
-        if (raw == 'primary_roi' || raw == 'fallback' || raw == 'skipped') {
-          out[key] = raw;
-        } else {
-          out[key] = 'unknown';
-        }
+        out[key] = preservedAiExtractionPath(entry.value) ?? 'unknown';
       }
       return out;
     }
@@ -5267,12 +5384,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       for (final entry in map.entries) {
         final key = entry.key.toString().trim().toLowerCase();
         if (!canonicalKeys.contains(key)) continue;
-        final raw = entry.value?.toString().trim().toLowerCase() ?? 'unknown';
-        if (raw == 'primary_roi' || raw == 'fallback' || raw == 'skipped') {
-          out[key] = raw;
-        } else {
-          out[key] = 'unknown';
-        }
+        out[key] = preservedAiExtractionPath(entry.value) ?? 'unknown';
       }
     }
 

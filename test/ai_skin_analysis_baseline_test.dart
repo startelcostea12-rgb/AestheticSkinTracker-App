@@ -208,7 +208,22 @@ void main() {
       expect(aiScanFormulaVersions(entry), isEmpty);
     });
 
-    test('an unrecognized extraction-path value is dropped, not kept', () {
+    test('every non-empty extraction-path value is preserved', () {
+      const paths = <String>[
+        'cheek_primary',
+        'cheek_primary_no_skin_mask',
+        'full_face_fallback',
+        'cheek_expand_no_skin',
+        'large_roi_fallback',
+        'approximate_face_bbox',
+        'laplacian_fallback',
+        'full_face_yolo',
+        'tzone_landmark_fallback',
+        'tzone_face_fallback',
+      ];
+      for (final path in paths) {
+        expect(preservedAiExtractionPath(path), path);
+      }
       final entry = ScanHistoryEntry(
         id: 'scan_bad_path',
         timestamp: DateTime(2026, 1, 1),
@@ -221,7 +236,12 @@ void main() {
           'metric_extraction_paths': {'localized_redness': 'made_up_method'},
         },
       );
-      expect(aiScanExtractionPaths(entry), isEmpty);
+      expect(
+        aiScanExtractionPaths(entry),
+        const {'localized_redness': 'made_up_method'},
+      );
+      expect(preservedAiExtractionPath(' cheek_primary '), 'cheek_primary');
+      expect(preservedAiExtractionPath(''), isNull);
     });
   });
 

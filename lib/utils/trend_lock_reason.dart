@@ -29,6 +29,8 @@ const Set<String> knownTrendLockReasons = {
   'angle_or_guide_mismatch',
   'frame_range_overlap',
   'below_noise_floor',
+  'cheek_mismatch',
+  'cast_mismatch',
 };
 
 /// Very short (headline/badge-safe) replacement for a bare "Stable" label
@@ -65,6 +67,10 @@ String? trendLockReasonShortLabel(String? reason) {
       return 'Standalone entry — frame-to-frame variability was too high to confirm a real change';
     case 'below_noise_floor':
       return 'Standalone entry — the change is smaller than this metric\'s known measurement noise';
+    case 'cheek_mismatch':
+      return 'Standalone entry — a different cheek drove the redness score';
+    case 'cast_mismatch':
+      return 'Standalone entry — color shift exceeded this scan pair\'s frame variation';
     default:
       return null;
   }
@@ -93,6 +99,10 @@ String? trendLockReasonDetail(String? reason) {
       return "This scan's and your baseline's own frame-to-frame readings overlapped too much to confirm a real change — capture noise could explain the difference on its own.";
     case 'below_noise_floor':
       return "This metric's measured change is smaller than its known scan-to-scan measurement noise, so it can't be confirmed as a real change yet.";
+    case 'cheek_mismatch':
+      return 'A different cheek drove the redness score than in your baseline, so the change is not directly comparable.';
+    case 'cast_mismatch':
+      return 'The cheek color shift exceeded the larger frame-to-frame p95 range in this scan pair, so the change is not directly comparable.';
     default:
       return null;
   }

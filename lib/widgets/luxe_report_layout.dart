@@ -1380,6 +1380,10 @@ String _shortLockReasonPhrase(String reason) {
       return 'frame-to-frame variability was too high to confirm a change';
     case 'below_noise_floor':
       return "the change is smaller than this metric's measurement noise";
+    case 'cheek_mismatch':
+      return 'a different cheek drove the redness score';
+    case 'cast_mismatch':
+      return 'the cheek color shift exceeded frame-to-frame variation';
     default:
       return reason;
   }

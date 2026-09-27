@@ -101,6 +101,19 @@ void main() {
       },
     );
 
+    for (final reason in const ['cheek_mismatch', 'cast_mismatch']) {
+      test('maps stable + $reason to a standalone-entry lock', () {
+        final resolved = resolveTrendLabel(
+          trendStatus: 'stable',
+          trendLockReason: reason,
+        );
+        expect(resolved!.lockReason, reason);
+        expect(resolved.lockHeadline, 'Standalone entry');
+        expect(resolved.lockShortLabel, isNotNull);
+        expect(resolved.lockDetail, isNotNull);
+      });
+    }
+
     test('maps "insufficient_signal" to no usable delta', () {
       final resolved = resolveTrendLabel(
         trendStatus: 'insufficient_signal',
