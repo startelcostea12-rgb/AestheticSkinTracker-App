@@ -21,6 +21,7 @@ class LuxeMetric {
     this.currentConfidence,
     this.hasDetectedCurrentValue = false,
     this.hasComparableCurrentValue = true,
+    this.hasBaselineValue = false,
     this.currentExtractionPath = 'unknown',
     this.baselineExtractionPath = 'unknown',
     this.backendTrendDeltaPct,
@@ -43,6 +44,7 @@ class LuxeMetric {
   final Object? currentConfidence;
   final bool hasDetectedCurrentValue;
   final bool hasComparableCurrentValue;
+  final bool hasBaselineValue;
   final String currentExtractionPath;
   final String baselineExtractionPath;
   final double? backendTrendDeltaPct;
@@ -138,7 +140,7 @@ class LuxeMetricParser {
   static const double _displayDeltaPointsBaselineThreshold = 10.0;
 
   static bool shouldDisplayPointDelta(double baseline) {
-    return baseline > 0.0 && baseline < _displayDeltaPointsBaselineThreshold;
+    return baseline >= 0.0 && baseline < _displayDeltaPointsBaselineThreshold;
   }
 
   static String formatDisplayDelta({
@@ -548,11 +550,16 @@ class LuxeMetricParser {
 
     final out = <LuxeMetric>[];
     for (final spec in supportedSpecs) {
-      final currentRaw = extractValue(activeMetricMatrix, <String>[spec.deltaKey]);
+      final extractedCurrent = _extractValueWithKey(
+        activeMetricMatrix,
+        <String>[spec.deltaKey],
+      );
+      final currentRaw = extractedCurrent.value;
       const currentSourceName = 'payload.metric_matrix';
       final currentScale = metricMatrixScale;
       final currentSourceMapKey = 'metric_matrix.${spec.deltaKey}';
-      final hasComparableCurrentValue = currentRaw > 0.0;
+        final hasComparableCurrentValue =
+          extractedCurrent.sourceMapKey != 'not_found' && currentRaw >= 0.0;
       final currentExtractionPath = _normalizeExtractionPath(
         extractionPaths[spec.deltaKey],
       );
@@ -567,7 +574,7 @@ class LuxeMetricParser {
         raw: currentRaw,
         multiplier: currentScale,
       );
-      final hasDetectedCurrentValue = currentRaw > 0.0;
+      final hasDetectedCurrentValue = hasComparableCurrentValue;
 
         final lowerIsBetter =
           spec.higherIsWorse ?? _isDefectMetric(spec.deltaKey);
@@ -623,7 +630,7 @@ class LuxeMetricParser {
           'LUXE TREND SOURCE [${spec.deltaKey}]: using payload.trend_deltas + payload.trend_status status=$backendTrendStatus deltaPct=${improvementPercent.toStringAsFixed(4)}',
         );
       } else {
-        if (hasComparisonBaseline && resolvedCurrent > 0.0) {
+        if (hasComparisonBaseline && baseline != 0.0) {
           improvementPercent = ((resolvedCurrent - baseline) / baseline) * 100.0;
         } else {
           improvementPercent = 0.0;
@@ -638,7 +645,7 @@ class LuxeMetricParser {
         'TRACE BASELINE [${spec.deltaKey}] hasBaseline=$hasBaseline initialBaselineInput=$initialBaseline comparisonBaseline=$hasComparisonBaseline',
       );
 
-      if (!resolvedCurrent.isFinite || resolvedCurrent <= 0.0) {
+      if (!resolvedCurrent.isFinite || resolvedCurrent < 0.0) {
         continue;
       }
 
@@ -670,6 +677,7 @@ class LuxeMetricParser {
           currentConfidence: currentConfidenceValue,
           hasDetectedCurrentValue: hasDetectedCurrentValue,
           hasComparableCurrentValue: hasComparableCurrentValue,
+          hasBaselineValue: hasComparisonBaseline,
           currentExtractionPath: currentExtractionPath,
           baselineExtractionPath: baselineExtractionPath,
           backendTrendDeltaPct: usesBackendTrend ? backendTrendDelta : null,
@@ -785,6 +793,7 @@ class LuxeMetricParser {
 
   static bool _isUsableBaselineValue(double? value) {
     if (value == null || !value.isFinite) return false;
+    if (value == 0.0) return true;
     return value > _baselineUsableFloor && value < _baselineUsableCeiling;
   }
 
@@ -1153,6 +1162,7 @@ _HonestyAssessment _assessMetricHonesty({
   required double baseline,
   required bool higherIsWorse,
   bool hasComparableCurrentValue = true,
+  bool? hasBaselineValue,
   Object? currentConfidence,
   String currentExtractionPath = 'unknown',
   String baselineExtractionPath = 'unknown',
@@ -1179,7 +1189,7 @@ _HonestyAssessment _assessMetricHonesty({
     return text == 'low';
   }
 
-  final hasRealBaseline = baseline > 0.0;
+  final hasRealBaseline = hasBaselineValue ?? baseline > 0.0;
   final normalizedBackendTrendStatus = backendTrendStatus
       ?.trim()
       .toLowerCase();
@@ -1238,7 +1248,7 @@ _HonestyAssessment _assessMetricHonesty({
       : (higherIsBetterMap.contains(normalizedMetricKey)
             ? false
             : higherIsWorse);
-  final deltaPct = hasRealBaseline
+  final deltaPct = hasRealBaseline && baseline != 0.0
       ? ((current - baseline) / baseline) * 100.0
       : null;
   const honestyStableBandPct = 8.0;
@@ -1715,6 +1725,7 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         baseline: metric.baselineScore,
         higherIsWorse: metric.lowerIsBetter,
         hasComparableCurrentValue: metric.hasComparableCurrentValue,
+        hasBaselineValue: metric.hasBaselineValue,
         currentConfidence: metric.currentConfidence,
         currentExtractionPath: metric.currentExtractionPath,
         baselineExtractionPath: metric.baselineExtractionPath,
@@ -2101,7 +2112,8 @@ class _MetricCard extends StatelessWidget {
   final bool requireBackendVerdict;
 
   _MetricRowData _buildMetricRowData() {
-    final hasComparisonContext = showProgressComparison || metric.baselineScore > 0.0;
+    final hasComparisonContext =
+      showProgressComparison || metric.hasBaselineValue;
     if (!hasComparisonContext) {
       return _MetricRowData(
         baselineValue: 0.0,
@@ -2127,6 +2139,7 @@ class _MetricCard extends StatelessWidget {
       baseline: baselineValue,
       higherIsWorse: metric.lowerIsBetter,
       hasComparableCurrentValue: metric.hasComparableCurrentValue,
+      hasBaselineValue: metric.hasBaselineValue,
       currentConfidence: metric.currentConfidence,
       currentExtractionPath: metric.currentExtractionPath,
       baselineExtractionPath: metric.baselineExtractionPath,
@@ -2173,12 +2186,6 @@ class _MetricCard extends StatelessWidget {
         : 'Tracks visible appearance in key zones';
     const bodyEarlyAccessMessage =
         'Body tracking is still building your baseline — trends will appear as more scans accumulate. Check back after a few more sessions.';
-
-    if (currentValue <= 0.0) {
-      badgePercent = null;
-      badgeValueText = null;
-      trendDelta = null;
-    }
 
     final honestyLabel = requireBackendVerdict
         ? _liveHonestyLabel(assessment, isBodyMetric: isBodyMetric)
@@ -2301,7 +2308,7 @@ class _MetricCard extends StatelessWidget {
               if (row.badgePercent != null &&
                   row.badgeValueText != null &&
                   row.currentValue > 0.0 &&
-                  row.baselineValue > 0.0 &&
+                  row.hasRealBaseline &&
                   row.badgePercent!.abs() > 0.0)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),

@@ -2567,8 +2567,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         if (lower.endsWith('_detected')) return;
         final parsed = _safeToDouble(v);
         if (parsed == null || parsed.isNaN || parsed.isInfinite) return;
+        if (parsed < 0.0) return;
         final clamped = parsed.clamp(0.0, 100.0).toDouble();
-        if (clamped <= 0.0) return;
         rawScores[key] = clamped;
       });
     }
@@ -2606,8 +2606,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
         final parsed = _safeToDouble(entry.value);
         if (parsed == null || parsed.isNaN || parsed.isInfinite) continue;
+        if (parsed < 0.0) continue;
         final clamped = parsed.clamp(0.0, 100.0).toDouble();
-        if (clamped <= 0.0) continue;
         out[key] = clamped;
       }
       return out;
@@ -5130,11 +5130,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
   bool _isUsableBaselineCandidate(double? value) {
     if (value == null || !value.isFinite) return false;
+    if (value == 0.0) return true;
     return value > _baselineUsableFloor && value < _baselineUsableCeiling;
   }
 
   String? _baselineRejectReason(double? value) {
     if (value == null || !value.isFinite) return 'non_finite';
+    if (value == 0.0) return null;
     if (value <= _baselineUsableFloor) return 'floor';
     if (value >= _baselineUsableCeiling) return 'ceiling';
     return null;
@@ -5429,7 +5431,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         final numeric = value is num
             ? value.toDouble()
             : double.tryParse(value.toString());
-        if (numeric == null || !numeric.isFinite || numeric <= 0.0) continue;
+        if (numeric == null || !numeric.isFinite || numeric < 0.0) continue;
         final rawKey = entry.key.toString().trim().toLowerCase();
         // Baseline must come from canonical backend-style keys only.
         if (!canonicalKeys.contains(rawKey)) continue;
@@ -5591,8 +5593,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     for (final entry in backendMetricMatrix.entries) {
       final parsed = _safeToDouble(entry.value);
       if (parsed == null || parsed.isNaN || parsed.isInfinite) continue;
+      if (parsed < 0.0) continue;
       final clamped = parsed.clamp(0.0, 100.0).toDouble();
-      if (clamped <= 0.0) continue;
       cleanedMetricMatrix[entry.key] = clamped;
     }
 

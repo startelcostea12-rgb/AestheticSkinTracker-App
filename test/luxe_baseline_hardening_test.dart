@@ -29,7 +29,7 @@ void main() {
       expect(redness.improvementPercent, 0.0);
     });
 
-    test('accepts mid-range alias baseline for pigment after rejecting extremes', () {
+    test('keeps explicit zero pigment baseline instead of later aliases', () {
       final payload = <String, dynamic>{
         'is_follow_up': true,
         'local_history_count': 2,
@@ -46,7 +46,8 @@ void main() {
       final metrics = LuxeMetricParser.parseTimelinePayload(payload);
       final pigment = metrics.firstWhere((m) => m.key == 'pigment_load');
 
-      expect(pigment.baselineScore, closeTo(31.5, 0.0001));
+      expect(pigment.baselineScore, 0.0);
+      expect(pigment.hasBaselineValue, isTrue);
     });
 
     test('captures current metric confidence from payload', () {

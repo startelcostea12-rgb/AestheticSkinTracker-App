@@ -95,6 +95,37 @@ void main() {
       expect(row['breakout_activity_extraction_path'], 'full_face_yolo');
     });
 
+    test('exports lighting lock reason for every refused metric', () {
+      final scan = _aiScan(
+        'scan-light-lock',
+        rawPayload: const <String, dynamic>{
+          'metric_matrix': <String, dynamic>{
+            'pigment_load': 7.0,
+            'rosacea_severity': 1.4,
+            'wrinkle_load': 45.4,
+          },
+          'trend_status': <String, dynamic>{
+            'pigment_load': 'stable',
+            'rosacea_severity': 'stable',
+            'wrinkle_load': 'stable',
+          },
+          'trend_lock_reasons': <String, dynamic>{
+            'pigment_load': 'lighting_mismatch',
+            'rosacea_severity': 'lighting_mismatch',
+            'wrinkle_load': 'lighting_mismatch',
+          },
+        },
+      );
+
+      final row = _parse(
+        AiScanDataCsvExporter.format([scan], registryBaselineScanIds: const {}),
+      ).single;
+
+      expect(row['pigment_load_trend_lock_reason'], 'lighting_mismatch');
+      expect(row['rosacea_severity_trend_lock_reason'], 'lighting_mismatch');
+      expect(row['wrinkle_load_trend_lock_reason'], 'lighting_mismatch');
+    });
+
     test('AI scan with no backend rawPayload is skipped', () {
       final scan = ScanHistoryEntry(
         id: 'scan-without-payload',

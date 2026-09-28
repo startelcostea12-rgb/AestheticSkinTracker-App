@@ -3,7 +3,7 @@ import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 
 void main() {
   group('LuxeMetricParser baseline alias fallback', () {
-    test('uses first non-zero alias for texture, pigment, and wrinkle', () {
+    test('explicit canonical zero wins over non-zero legacy aliases', () {
       final payload = <String, dynamic>{
         'is_follow_up': true,
         'local_history_count': 25,
@@ -38,13 +38,13 @@ void main() {
       final metrics = LuxeMetricParser.parseTimelinePayload(payload);
       final byKey = {for (final m in metrics) m.key: m};
 
-      expect(byKey['localized_redness']?.baselineScore, closeTo(22.5, 0.001));
-      expect(byKey['texture_smoothness']?.baselineScore, closeTo(49.0, 0.001));
-      expect(byKey['pigment_load']?.baselineScore, closeTo(34.4, 0.001));
-      expect(byKey['wrinkle_load']?.baselineScore, closeTo(27.6, 0.001));
+      expect(byKey['localized_redness']?.baselineScore, 0.0);
+      expect(byKey['texture_smoothness']?.baselineScore, 0.0);
+      expect(byKey['pigment_load']?.baselineScore, 0.0);
+      expect(byKey['wrinkle_load']?.baselineScore, 0.0);
     });
 
-    test('skips zero alias and uses next non-zero alias', () {
+    test('keeps explicit canonical zero instead of using a legacy alias', () {
       final payload = <String, dynamic>{
         'is_follow_up': true,
         'local_history_count': 25,
@@ -62,7 +62,8 @@ void main() {
       final metrics = LuxeMetricParser.parseTimelinePayload(payload);
       final texture = metrics.firstWhere((m) => m.key == 'texture_smoothness');
 
-      expect(texture.baselineScore, closeTo(47.3, 0.001));
+      expect(texture.baselineScore, 0.0);
+      expect(texture.hasBaselineValue, isTrue);
     });
   });
 }

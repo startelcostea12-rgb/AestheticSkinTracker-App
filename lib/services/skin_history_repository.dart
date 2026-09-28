@@ -95,8 +95,8 @@ class SkinHistoryRepository {
       return <String, dynamic>{};
     }
 
-    bool isFinitePositive(dynamic value) =>
-        value is num && value.isFinite && value > 0;
+    bool isFiniteMeasuredValue(dynamic value) =>
+      value is num && value.isFinite && value >= 0;
 
     void absorbClinicalMetrics(
       Map<String, double> target,
@@ -105,7 +105,8 @@ class SkinHistoryRepository {
       for (final entry in source.entries) {
         final key = entry.key;
         final value = entry.value;
-        if (!_clinicalMetricKeys.contains(key) || !isFinitePositive(value)) {
+        if (!_clinicalMetricKeys.contains(key) ||
+          !isFiniteMeasuredValue(value)) {
           continue;
         }
         target[key] = (value as num).toDouble();
@@ -115,14 +116,14 @@ class SkinHistoryRepository {
     double? extractBackendMetricMatrixPore(Map<String, dynamic> data) {
       final metricMatrix = asMap(data['metric_matrix']);
       final direct = metricMatrix['pore_visibility'];
-      if (direct is num && direct.isFinite && direct > 0) {
+      if (direct is num && direct.isFinite && direct >= 0) {
         return direct.toDouble();
       }
 
       final metricsNode = asMap(data['metrics']);
       final nestedMatrix = asMap(metricsNode['metric_matrix']);
       final nested = nestedMatrix['pore_visibility'];
-      if (nested is num && nested.isFinite && nested > 0) {
+      if (nested is num && nested.isFinite && nested >= 0) {
         return nested.toDouble();
       }
 
