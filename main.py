@@ -3327,8 +3327,6 @@ def _compute_canonical_patch_metrics(
         points,
         full_face_skin_mask,
     )
-    pore_fallback_used = False
-    pore_fallback_pixels = 0
     raw_components["pores_roi_pixels"] = float(pore_roi_pixels)
     raw_components["pore_pose_pitch"] = round(float(pose_pitch), 4)
     raw_components["pore_pose_yaw"] = round(float(pose_yaw), 4)
@@ -3396,33 +3394,9 @@ def _compute_canonical_patch_metrics(
             pose_yaw,
         )
 
-    # Fallback pore rescore when dedicated ROI is sparse but full-face skin ROI is usable.
-    if (
-        not pore_visibility_detected
-        and face_landmarks_present
-        and full_face_pixels >= 3000
-        and pore_roi_pixels < 3000
-    ):
-        pore_fallback_mask = full_face_skin_mask > 0
-        pore_fallback_values = lap_abs[pore_fallback_mask]
-        pore_fallback_pixels = int(np.count_nonzero(pore_fallback_mask))
-        if pore_fallback_values.size > 0 and pore_fallback_pixels > 0:
-            pore_fallback_used = True
-            pore_spread = float(np.std(pore_fallback_values))
-            pore_confidence = _pore_signal_conf(pore_fallback_pixels, pore_spread)
-            if pore_confidence != "low":
-                pore_signal = float(np.percentile(pore_fallback_values, 90))
-                pores = 100.0 / (1.0 + math.exp(-(pore_signal - 7.5) / 1.9))
-                matrix["pore_visibility"] = round(float(np.clip(pores, 0.0, 100.0)), 1)
-                pore_visibility_detected = True
-                confidence["pore_visibility"] = _max_conf(
-                    confidence.get("pore_visibility", "low"),
-                    pore_confidence,
-                )
-
     raw_components["primary_pore_roi_pixels"] = float(pore_roi_pixels)
-    raw_components["fallback_pore_roi_pixels"] = float(pore_fallback_pixels if pore_fallback_used else 0)
-    raw_components["pore_fallback_used"] = 1.0 if pore_fallback_used else 0.0
+    raw_components["fallback_pore_roi_pixels"] = 0.0
+    raw_components["pore_fallback_used"] = 0.0
 
     wrinkle_pixels = int(cv2.countNonZero(wrinkle_mask))
     raw_components["wrinkle_roi_pixels"] = float(wrinkle_pixels)
@@ -3770,7 +3744,7 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     "sebum_excess_oil_gloss": 2,
     "diffuse_flushing_erythema": 2,
     "rosacea_severity": 2,
-    "pore_visibility": 2,
+    "pore_visibility": 3,
     # v2: fixed avg_width quantization (boundingRect integer px -> minAreaRect
     # continuous size) and the 26-32%-of-photos zero-out (82nd-percentile
     # threshold + (3,5) opening kernel erasing thin-but-real furrow

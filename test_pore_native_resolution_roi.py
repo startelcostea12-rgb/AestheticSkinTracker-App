@@ -16,8 +16,10 @@ This test locks in that the DoG analysis crop:
 from __future__ import annotations
 
 from pathlib import Path
+from unittest import mock
 
 import cv2
+import numpy as np
 
 import main
 
@@ -131,3 +133,35 @@ def test_pore_visibility_reaches_high_confidence_on_real_clear_face_photo():
 
     assert metric_confidence.get("pore_visibility") == "high"
     assert metric_matrix.get("pore_visibility") is not None
+
+
+def test_pore_visibility_is_omitted_below_5000_pixels_without_fallback():
+    image = np.full((120, 120, 3), 128, dtype=np.uint8)
+    skin = np.full((120, 120), 255, dtype=np.uint8)
+    points = np.zeros((468, 2), dtype=np.float32)
+    regions = {
+        "forehead": skin.copy(),
+        "left_cheek": skin.copy(),
+        "right_cheek": skin.copy(),
+    }
+    pore_crop = np.full((71, 71), 128, dtype=np.float32)
+    pore_mask = np.full((71, 71), 255, dtype=np.uint8)
+
+    with mock.patch.object(
+        main,
+        "_extract_native_resolution_pore_roi",
+        return_value=(pore_crop, pore_mask, 4999),
+    ):
+        matrix, _confidence, raw = main._compute_canonical_patch_metrics(
+            image,
+            skin,
+            regions,
+            points,
+            yolo_kept=0,
+            yolo_max_conf=0.0,
+        )
+
+    assert "pore_visibility" not in matrix
+    assert raw["primary_pore_roi_pixels"] == 4999
+    assert raw["fallback_pore_roi_pixels"] == 0
+    assert raw["pore_fallback_used"] == 0
