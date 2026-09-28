@@ -1901,12 +1901,8 @@ class AppPrefs {
       for (final entry in input.entries) {
         final key = entry.key.toString().trim().toLowerCase();
         if (!canonicalKeys.contains(key)) continue;
-        final raw = entry.value?.toString().trim().toLowerCase() ?? 'unknown';
-        if (raw == 'primary_roi' || raw == 'fallback' || raw == 'skipped') {
-          normalized[key] = raw;
-        } else {
-          normalized[key] = 'unknown';
-        }
+        final raw = entry.value?.toString().trim().toLowerCase();
+        normalized[key] = raw == null || raw.isEmpty ? 'unknown' : raw;
       }
       return normalized;
     }

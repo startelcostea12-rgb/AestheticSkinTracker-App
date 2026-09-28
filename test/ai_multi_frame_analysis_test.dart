@@ -274,18 +274,36 @@ void main() {
         [
           {
             'metric_matrix': {'texture_smoothness': 28.7},
+            'metric_extraction_paths': {
+              'texture_smoothness': 'primary_roi',
+            },
+            'baseline_metric_extraction_paths': {
+              'texture_smoothness': 'primary_roi',
+            },
             'trend_status': {'texture_smoothness': 'improved'},
             'trend_deltas': {'texture_smoothness': 100.0},
             'trend_lock_reasons': <String, dynamic>{},
           },
           {
             'metric_matrix': {'texture_smoothness': 39.5},
+            'metric_extraction_paths': {
+              'texture_smoothness': 'laplacian_fallback',
+            },
+            'baseline_metric_extraction_paths': {
+              'texture_smoothness': 'primary_roi',
+            },
             'trend_status': {'texture_smoothness': 'stable'},
             'trend_deltas': {'texture_smoothness': 5.0},
             'trend_lock_reasons': <String, dynamic>{},
           },
           {
             'metric_matrix': {'texture_smoothness': 50.2},
+            'metric_extraction_paths': {
+              'texture_smoothness': 'large_roi_fallback',
+            },
+            'baseline_metric_extraction_paths': {
+              'texture_smoothness': 'primary_roi',
+            },
             'trend_status': {'texture_smoothness': 'improved'},
             'trend_deltas': {'texture_smoothness': 158.0},
             'trend_lock_reasons': <String, dynamic>{},
@@ -300,10 +318,19 @@ void main() {
       expect(aggregate.response['trend_deltas'], {
         'texture_smoothness': 5.0,
       });
+      expect(aggregate.response['metric_extraction_paths'], {
+        'texture_smoothness': 'laplacian_fallback',
+      });
+      expect(aggregate.response['baseline_metric_extraction_paths'], {
+        'texture_smoothness': 'primary_roi',
+      });
       final nestedMetrics =
           aggregate.response['metrics'] as Map<String, dynamic>;
       expect(nestedMetrics['trend_status'], {'texture_smoothness': 'stable'});
       expect(nestedMetrics['trend_deltas'], {'texture_smoothness': 5.0});
+      expect(nestedMetrics['metric_extraction_paths'], {
+        'texture_smoothness': 'laplacian_fallback',
+      });
     },
   );
 

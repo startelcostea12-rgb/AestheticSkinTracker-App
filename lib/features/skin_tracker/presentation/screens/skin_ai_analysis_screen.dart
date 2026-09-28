@@ -382,6 +382,8 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
   final resolvedTrendStatus = <String, dynamic>{};
   final resolvedTrendDeltas = <String, dynamic>{};
   final resolvedTrendLockReasons = <String, dynamic>{};
+  final resolvedExtractionPaths = <String, dynamic>{};
+  final resolvedBaselineExtractionPaths = <String, dynamic>{};
   for (final key in averagedMatrix.keys) {
     final values = samples[key];
     final indices = sampleFrameIndices[key];
@@ -410,6 +412,20 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
       'trend_lock_reasons',
     )[key];
     if (lockReason != null) resolvedTrendLockReasons[key] = lockReason;
+    final extractionPath = _perFrameTrendNode(
+      nearestResponse,
+      nearestMetricsNode,
+      'metric_extraction_paths',
+    )[key];
+    if (extractionPath != null) resolvedExtractionPaths[key] = extractionPath;
+    final baselineExtractionPath = _perFrameTrendNode(
+      nearestResponse,
+      nearestMetricsNode,
+      'baseline_metric_extraction_paths',
+    )[key];
+    if (baselineExtractionPath != null) {
+      resolvedBaselineExtractionPaths[key] = baselineExtractionPath;
+    }
   }
 
   final first = successfulResponses.first;
@@ -420,6 +436,9 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
   response['trend_status'] = resolvedTrendStatus;
   response['trend_deltas'] = resolvedTrendDeltas;
   response['trend_lock_reasons'] = resolvedTrendLockReasons;
+  response['metric_extraction_paths'] = resolvedExtractionPaths;
+  response['baseline_metric_extraction_paths'] =
+      resolvedBaselineExtractionPaths;
   response.addAll(averagedMatrix);
   metricsNode
     ..addAll(averagedMatrix)
@@ -427,7 +446,9 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     ..['metric_confidence'] = correctedConfidence
     ..['trend_status'] = resolvedTrendStatus
     ..['trend_deltas'] = resolvedTrendDeltas
-    ..['trend_lock_reasons'] = resolvedTrendLockReasons;
+    ..['trend_lock_reasons'] = resolvedTrendLockReasons
+    ..['metric_extraction_paths'] = resolvedExtractionPaths
+    ..['baseline_metric_extraction_paths'] = resolvedBaselineExtractionPaths;
   response['metrics'] = metricsNode;
   response['multi_frame_analysis'] = <String, dynamic>{
     'requested_frames': requestedFrames,

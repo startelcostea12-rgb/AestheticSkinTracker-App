@@ -18,6 +18,45 @@ void main() {
       expect(prefs.getString(AppPrefs.userNameKey), 'Alice');
     });
 
+    test('preserves real backend extraction paths during scan migration', () async {
+      await AppPrefs.addScanEntry(
+        ScanHistoryEntry(
+          id: 'real-extraction-paths',
+          timestamp: DateTime.parse('2026-09-27T20:00:00Z'),
+          scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+          estimatedSkinAge: 0,
+          metrics: const {'localized_redness': 25.0},
+          rawPayload: const {
+            'metric_matrix': {'localized_redness': 25.0},
+            'metric_extraction_paths': {
+              'localized_redness': 'cheek_primary',
+              'texture_smoothness': 'laplacian_fallback',
+              'pigment_load': 'full_face_fallback',
+              'breakout_activity': 'full_face_yolo',
+            },
+          },
+        ),
+      );
+
+      final payload = (await AppPrefs.getScanEntries()).single.rawPayload!;
+      expect(payload['metric_extraction_paths'], containsPair(
+        'localized_redness',
+        'cheek_primary',
+      ));
+      expect(payload['metric_extraction_paths'], containsPair(
+        'texture_smoothness',
+        'laplacian_fallback',
+      ));
+      expect(payload['metric_extraction_paths'], containsPair(
+        'pigment_load',
+        'full_face_fallback',
+      ));
+      expect(payload['metric_extraction_paths'], containsPair(
+        'breakout_activity',
+        'full_face_yolo',
+      ));
+    });
+
     test(
       'malformed scan entry is skipped while valid entries survive save',
       () async {

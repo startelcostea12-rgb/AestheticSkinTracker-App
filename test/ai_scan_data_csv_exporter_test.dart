@@ -66,6 +66,35 @@ void main() {
       expect(row['rosacea_severity_value'], '3.0');
     });
 
+    test('exports real extraction paths verbatim', () {
+      final scan = _aiScan(
+        'scan-paths',
+        rawPayload: const <String, dynamic>{
+          'metric_matrix': <String, dynamic>{
+            'localized_redness': 20.0,
+            'texture_smoothness': 30.0,
+            'pigment_load': 40.0,
+            'breakout_activity': 10.0,
+          },
+          'metric_extraction_paths': <String, dynamic>{
+            'localized_redness': 'cheek_primary',
+            'texture_smoothness': 'laplacian_fallback',
+            'pigment_load': 'full_face_fallback',
+            'breakout_activity': 'full_face_yolo',
+          },
+        },
+      );
+
+      final row = _parse(
+        AiScanDataCsvExporter.format([scan], registryBaselineScanIds: const {}),
+      ).single;
+
+      expect(row['localized_redness_extraction_path'], 'cheek_primary');
+      expect(row['texture_smoothness_extraction_path'], 'laplacian_fallback');
+      expect(row['pigment_load_extraction_path'], 'full_face_fallback');
+      expect(row['breakout_activity_extraction_path'], 'full_face_yolo');
+    });
+
     test('AI scan with no backend rawPayload is skipped', () {
       final scan = ScanHistoryEntry(
         id: 'scan-without-payload',
