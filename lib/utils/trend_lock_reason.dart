@@ -31,6 +31,7 @@ const Set<String> knownTrendLockReasons = {
   'below_noise_floor',
   'cheek_mismatch',
   'cast_mismatch',
+  'lighting_mismatch',
 };
 
 /// Very short (headline/badge-safe) replacement for a bare "Stable" label
@@ -71,6 +72,8 @@ String? trendLockReasonShortLabel(String? reason) {
       return 'Standalone entry — a different cheek drove the redness score';
     case 'cast_mismatch':
       return 'Standalone entry — color shift exceeded this scan pair\'s frame variation';
+    case 'lighting_mismatch':
+      return 'Standalone entry — capture brightness differed too much from your baseline';
     default:
       return null;
   }
@@ -103,6 +106,8 @@ String? trendLockReasonDetail(String? reason) {
       return 'A different cheek drove the redness score than in your baseline, so the change is not directly comparable.';
     case 'cast_mismatch':
       return 'The cheek color shift exceeded the larger frame-to-frame p95 range in this scan pair, so the change is not directly comparable.';
+    case 'lighting_mismatch':
+      return 'The scan brightness differed too much from your baseline, or exposure metadata was unavailable, so the values are not directly comparable.';
     default:
       return null;
   }

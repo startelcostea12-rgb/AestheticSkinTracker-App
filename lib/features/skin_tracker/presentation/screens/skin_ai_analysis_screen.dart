@@ -684,6 +684,80 @@ String _describeUploadFailure(Object error) {
 const String aiScanPerFrameDiagnosticsKey = 'per_frame_diagnostics';
 const String rednessTrendLockReasonsKey = 'redness_trend_lock_reasons';
 const String cheekSideConventionSubjectAnatomical = 'subject_anatomical';
+const double provisionalBrightnessValueMismatchLimit = 1.0;
+
+({double? iso, double? brightnessValue}) _representativeScanExposure(
+  Map<String, dynamic> payload,
+) {
+  final rawFrames = payload[aiScanPerFrameDiagnosticsKey];
+  if (rawFrames is! List) return (iso: null, brightnessValue: null);
+
+  final isoValues = <double>[];
+  final brightnessValues = <double>[];
+  for (final rawFrame in rawFrames) {
+    final frame = _dynamicMap(rawFrame);
+    final iso = _parseFiniteDouble(frame['iso']);
+    final brightness = _parseFiniteDouble(frame['brightness_value']);
+    if (iso != null) isoValues.add(iso);
+    if (brightness != null) brightnessValues.add(brightness);
+  }
+
+  double? median(List<double> values) {
+    if (values.isEmpty) return null;
+    final sorted = List<double>.from(values)..sort();
+    final middle = sorted.length ~/ 2;
+    if (sorted.length.isOdd) return sorted[middle];
+    return (sorted[middle - 1] + sorted[middle]) / 2.0;
+  }
+
+  return (iso: median(isoValues), brightnessValue: median(brightnessValues));
+}
+
+({
+  Map<String, String> trendStatus,
+  Map<String, double> trendDeltas,
+  Map<String, String> trendLockReasons,
+})
+lockTrendsForLightingMismatch({
+  required Map<String, String> trendStatus,
+  required Map<String, double> trendDeltas,
+  required Map<String, String> trendLockReasons,
+  required Map<String, dynamic> currentPayload,
+  required Map<String, dynamic> baselinePayload,
+}) {
+  final current = _representativeScanExposure(currentPayload);
+  final baseline = _representativeScanExposure(baselinePayload);
+  final missingExposure =
+      current.iso == null ||
+      current.brightnessValue == null ||
+      baseline.iso == null ||
+      baseline.brightnessValue == null;
+  final brightnessMismatch =
+      !missingExposure &&
+      (current.brightnessValue! - baseline.brightnessValue!).abs() >
+          provisionalBrightnessValueMismatchLimit;
+  if (!missingExposure && !brightnessMismatch) {
+    return (
+      trendStatus: Map<String, String>.from(trendStatus),
+      trendDeltas: Map<String, double>.from(trendDeltas),
+      trendLockReasons: Map<String, String>.from(trendLockReasons),
+    );
+  }
+
+  final updatedStatus = Map<String, String>.from(trendStatus);
+  final updatedDeltas = Map<String, double>.from(trendDeltas);
+  final updatedLockReasons = Map<String, String>.from(trendLockReasons);
+  for (final metricKey in trendStatus.keys) {
+    updatedStatus[metricKey] = 'stable';
+    updatedDeltas[metricKey] = 0.0;
+    updatedLockReasons[metricKey] = 'lighting_mismatch';
+  }
+  return (
+    trendStatus: updatedStatus,
+    trendDeltas: updatedDeltas,
+    trendLockReasons: updatedLockReasons,
+  );
+}
 
 List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
   required List<Map<String, dynamic>?> frameResponses,
@@ -2187,12 +2261,20 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         baselinePayload:
           _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
         );
+        final lightingAdjustedTrend = lockTrendsForLightingMismatch(
+          trendStatus: rednessAdjustedTrend.trendStatus,
+          trendDeltas: rednessAdjustedTrend.trendDeltas,
+          trendLockReasons: rednessAdjustedTrend.trendLockReasons,
+          currentPayload: backendResponse,
+          baselinePayload:
+            _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
+        );
         final Map<String, double> serverTrendDeltas =
-          rednessAdjustedTrend.trendDeltas;
+          lightingAdjustedTrend.trendDeltas;
         final Map<String, String> serverTrendStatus =
-          rednessAdjustedTrend.trendStatus;
+          lightingAdjustedTrend.trendStatus;
         final Map<String, String> serverTrendLockReasons =
-          rednessAdjustedTrend.trendLockReasons;
+          lightingAdjustedTrend.trendLockReasons;
       // Write the (possibly downgraded) trend fields back into
       // backendResponse -- both locations _mergePayloadForPersistence reads
       // from -- so what gets persisted to ScanHistoryEntry.rawPayload

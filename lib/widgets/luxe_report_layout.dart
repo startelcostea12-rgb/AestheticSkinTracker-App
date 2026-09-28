@@ -1386,6 +1386,8 @@ String _shortLockReasonPhrase(String reason) {
       return 'a different cheek drove the redness score';
     case 'cast_mismatch':
       return 'the cheek color shift exceeded frame-to-frame variation';
+    case 'lighting_mismatch':
+      return 'capture brightness differed too much from your baseline';
     default:
       return reason;
   }
