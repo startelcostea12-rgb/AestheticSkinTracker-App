@@ -1,7 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
 
-import 'package:aesthetic_skin_tracker/theme/app_colors.dart';
 import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 
 void main() {
@@ -197,7 +196,7 @@ void main() {
     );
 
     testWidgets(
-      'rosacea severity increase is worsened with red badge styling',
+      'rosacea severity is recorded without trend verdict styling',
       (tester) async {
         final payload = <String, dynamic>{
           'is_follow_up': true,
@@ -228,11 +227,9 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.text('Worsened'), findsWidgets);
-        expect(find.byIcon(Icons.trending_down_rounded), findsWidgets);
-
-        final worsenedLabel = tester.widget<Text>(find.text('Worsened').first);
-        expect(worsenedLabel.style?.color, AppColors.kMetricWorsenedColor);
+        expect(find.text('Recorded'), findsOneWidget);
+        expect(find.text('Worsened'), findsNothing);
+        expect(find.byIcon(Icons.trending_down_rounded), findsNothing);
       },
     );
 

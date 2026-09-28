@@ -9,6 +9,18 @@ import '../utils/trend_label_resolver.dart';
 import '../utils/trend_lock_reason.dart';
 import 'before_after_split_slider.dart';
 
+const Set<String> metricsWithHiddenTrendVerdicts = <String>{
+  'wrinkle_load',
+  'rosacea_severity',
+  'diffuse_flushing_erythema',
+  'pore_contraction_index',
+  'under_eye_dark_circle_density',
+  'under_eye_texture_density',
+};
+
+bool shouldShowTrendVerdict(String metricKey) =>
+    !metricsWithHiddenTrendVerdicts.contains(metricKey);
+
 class LuxeMetric {
   const LuxeMetric({
     required this.key,
@@ -22,6 +34,7 @@ class LuxeMetric {
     this.hasDetectedCurrentValue = false,
     this.hasComparableCurrentValue = true,
     this.hasBaselineValue = false,
+    this.showTrendVerdict = true,
     this.currentExtractionPath = 'unknown',
     this.baselineExtractionPath = 'unknown',
     this.backendTrendDeltaPct,
@@ -45,6 +58,7 @@ class LuxeMetric {
   final bool hasDetectedCurrentValue;
   final bool hasComparableCurrentValue;
   final bool hasBaselineValue;
+  final bool showTrendVerdict;
   final String currentExtractionPath;
   final String baselineExtractionPath;
   final double? backendTrendDeltaPct;
@@ -159,15 +173,15 @@ class LuxeMetricParser {
       return '$sign${points.toStringAsFixed(1)} pts';
     }
 
-    final capped = deltaPct.clamp(
-      -_displayDeltaCapPercent,
+    final capped = deltaPct.abs().clamp(
+      0.0,
       _displayDeltaCapPercent,
     ).toDouble();
     if (includeSign) {
-      final sign = capped > 0 ? '+' : '';
+      final sign = deltaPct > 0 ? '+' : '';
       return '$sign${capped.toStringAsFixed(1)}%';
     }
-    return '${capped.abs().toStringAsFixed(1)}%';
+    return '${capped.toStringAsFixed(1)}%';
   }
 
   static double displayDeltaMagnitude({
@@ -236,6 +250,10 @@ class LuxeMetricParser {
     'wrinkle_load',
     'pigment_load',
     'rosacea_severity',
+    'diffuse_flushing_erythema',
+    'pore_contraction_index',
+    'under_eye_dark_circle_density',
+    'under_eye_texture_density',
     'skin_tone_radiance_evenness',
     'structural_firmness_elasticity',
   };
@@ -579,12 +597,14 @@ class LuxeMetricParser {
         final lowerIsBetter =
           spec.higherIsWorse ?? _isDefectMetric(spec.deltaKey);
       final baselineCandidates = _baselineCandidateKeys(spec.deltaKey);
+      final showTrendVerdict = shouldShowTrendVerdict(spec.deltaKey);
       final baseline = _findUsableBaselineValue(
         baselineMetricMatrix,
         baselineCandidates,
       );
       final hasBaseline = baseline != null && baseline.isFinite;
-      final hasComparisonBaseline = hasBaseline && _isUsableBaselineValue(baseline);
+      final hasComparisonBaseline =
+          hasBaseline && _isUsableBaselineValue(baseline);
 
       final currentConfidenceValue = _resolveMetricConfidenceValue(
         metricKey: spec.deltaKey,
@@ -678,6 +698,7 @@ class LuxeMetricParser {
           hasDetectedCurrentValue: hasDetectedCurrentValue,
           hasComparableCurrentValue: hasComparableCurrentValue,
           hasBaselineValue: hasComparisonBaseline,
+          showTrendVerdict: showTrendVerdict,
           currentExtractionPath: currentExtractionPath,
           baselineExtractionPath: baselineExtractionPath,
           backendTrendDeltaPct: usesBackendTrend ? backendTrendDelta : null,
@@ -1731,6 +1752,7 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
 
     final statements = <String>[];
     for (final metric in metrics) {
+      if (!metric.showTrendVerdict) continue;
       final assessment = _assessMetricHonesty(
         metricKey: metric.key,
         current: metric.currentScore,
@@ -2139,6 +2161,26 @@ class _MetricCard extends StatelessWidget {
         honestyLabel: 'Starting point',
         trendLocked: false,
         hasRealBaseline: false,
+        hasComparableCurrentValue: metric.hasComparableCurrentValue,
+      );
+    }
+
+    if (!metric.showTrendVerdict) {
+      final hasBaseline = metric.hasBaselineValue;
+      return _MetricRowData(
+        baselineValue: metric.baselineScore,
+        currentValue: metric.currentScore,
+        trendDelta: null,
+        badgePercent: null,
+        badgeValueText: null,
+        subtext: hasBaseline
+            ? 'Recorded for reference; trend verdict not shown.'
+            : 'Starting point for future progress tracking',
+        initialBaseline: !hasBaseline,
+        honestyStatus: _HonestyStatus.noVerdict,
+        honestyLabel: hasBaseline ? 'Recorded' : 'Starting point',
+        trendLocked: false,
+        hasRealBaseline: hasBaseline,
         hasComparableCurrentValue: metric.hasComparableCurrentValue,
       );
     }

@@ -40,13 +40,13 @@ void main() {
     return <String, dynamic>{
       'is_follow_up': true,
       'local_history_count': 2,
-      'metric_matrix': <String, dynamic>{'rosacea_severity': current},
-      'baseline_metric_matrix': <String, dynamic>{'rosacea_severity': baseline},
+      'metric_matrix': <String, dynamic>{'pigment_load': current},
+      'baseline_metric_matrix': <String, dynamic>{'pigment_load': baseline},
       'metric_extraction_paths': <String, dynamic>{
-        'rosacea_severity': 'primary_roi',
+        'pigment_load': 'primary_roi',
       },
       'baseline_metric_extraction_paths': <String, dynamic>{
-        'rosacea_severity': 'primary_roi',
+        'pigment_load': 'primary_roi',
       },
       if (trendDeltas != null) 'trend_deltas': trendDeltas,
       if (trendStatus != null) 'trend_status': trendStatus,
@@ -60,8 +60,8 @@ void main() {
       final payload = basePayload(
         baseline: 22.3,
         current: 27.9,
-        trendDeltas: {'rosacea_severity': 0.0},
-        trendStatus: {'rosacea_severity': 'stable'},
+        trendDeltas: {'pigment_load': 0.0},
+        trendStatus: {'pigment_load': 'stable'},
       );
 
       await tester.pumpWidget(harness(payload));
@@ -79,8 +79,8 @@ void main() {
       final payload = basePayload(
         baseline: 22.3,
         current: 27.9,
-        trendDeltas: {'rosacea_severity': 0.0},
-        trendStatus: {'rosacea_severity': 'insufficient_signal'},
+        trendDeltas: {'pigment_load': 0.0},
+        trendStatus: {'pigment_load': 'insufficient_signal'},
       );
 
       await tester.pumpWidget(harness(payload));
@@ -121,9 +121,9 @@ void main() {
       final payload = basePayload(
         baseline: 22.3,
         current: 27.9,
-        trendDeltas: {'rosacea_severity': 0.0},
-        trendStatus: {'rosacea_severity': 'stable'},
-        trendLockReasons: {'rosacea_severity': 'angle_or_guide_mismatch'},
+        trendDeltas: {'pigment_load': 0.0},
+        trendStatus: {'pigment_load': 'stable'},
+        trendLockReasons: {'pigment_load': 'angle_or_guide_mismatch'},
       );
 
       await tester.pumpWidget(harness(payload));
@@ -146,7 +146,7 @@ void main() {
       final payload = basePayload(
         baseline: 22.3,
         current: 27.9,
-        trendLockReasons: {'rosacea_severity': 'lighting_mismatch'},
+        trendLockReasons: {'pigment_load': 'lighting_mismatch'},
       );
 
       await tester.pumpWidget(harness(payload));
@@ -165,8 +165,8 @@ void main() {
       final payload = basePayload(
         baseline: 22.3,
         current: 27.9,
-        trendDeltas: {'rosacea_severity': 25.1},
-        trendStatus: {'rosacea_severity': 'worsened'},
+        trendDeltas: {'pigment_load': 25.1},
+        trendStatus: {'pigment_load': 'worsened'},
       );
 
       await tester.pumpWidget(harness(payload));
@@ -196,7 +196,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('No verdict for this metric'), findsNothing);
-      // rosacea_severity is higher-is-worse; 22.3 -> 27.9 is a >8% increase
+      // pigment_load is higher-is-worse; 22.3 -> 27.9 is a >8% increase
       // with matching extraction paths, so the legacy recompute calls it
       // Worsened -- exactly the pre-existing (if imprecise) behavior for any
       // caller that hasn't opted into requireBackendVerdict.
