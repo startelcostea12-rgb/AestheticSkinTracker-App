@@ -164,6 +164,7 @@ void main() {
             'redness_branch': 'within_cheek_spread',
             'redness_cheek_side': 'right',
             'cheek_side_convention': 'subject_anatomical',
+            'redness_both_cheeks_in_dead_zone': true,
             'redness_cheek_roi_pixels': 2833,
             'redness_cheek_mean_a_after_wb': 26.9,
             'redness_cheek_mean_b_after_wb': 8.18,
@@ -200,6 +201,10 @@ void main() {
         row['image_quality.cheek_side_convention'],
         'subject_anatomical',
       );
+      expect(
+        row['image_quality.redness_both_cheeks_in_dead_zone'],
+        'true',
+      );
       expect(row['image_quality.redness_cheek_roi_pixels'], '2833');
       expect(row['image_quality.redness_cheek_mean_a_after_wb'], '26.9');
       expect(row['image_quality.redness_cheek_mean_b_after_wb'], '8.18');
@@ -226,6 +231,7 @@ void main() {
               'frame_number': 1,
               'cheek_side': 'left',
               'cheek_side_convention': 'subject_anatomical',
+              'redness_both_cheeks_in_dead_zone': true,
               'mask_pixel_count': 2100,
               'cheek_p95_a_after_wb': 31.5,
               'cheek_p10_a_after_wb': 20.5,
@@ -281,6 +287,7 @@ void main() {
       }
       expect(row['frame1_cheek_side'], 'left');
       expect(row['frame1_cheek_side_convention'], 'subject_anatomical');
+      expect(row['frame1_redness_both_cheeks_in_dead_zone'], 'true');
       expect(row['frame1_cheek_p10_a_after_wb'], '20.5');
       expect(row['frame1_shutter_seconds'], '0.008333333333333333');
       expect(row['frame1_flash_fired'], 'false');

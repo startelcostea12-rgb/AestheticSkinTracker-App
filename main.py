@@ -2365,6 +2365,36 @@ def _compute_zone_based_metrics(
             100.0,
         )
     )
+    side_spreads: list[float] = []
+    side_names: list[str] = []
+    side_masks: list[np.ndarray] = []
+    side_p95s: list[float] = []
+    for side_name, cheek_mask in (("left", left_cheek), ("right", right_cheek)):
+        side_pixels = cv2.bitwise_and(cheek_mask, skin_mask) > 0
+        if not np.any(side_pixels):
+            continue
+        side_values = a_blur[side_pixels]
+        side_p95 = float(np.percentile(side_values, 95))
+        side_spreads.append(
+            side_p95
+            - float(
+                np.percentile(
+                    side_values,
+                    LOCALIZED_REDNESS_SELF_BASELINE_PERCENTILE,
+                )
+            )
+        )
+        side_names.append(_subject_anatomical_cheek_side(side_name))
+        side_masks.append(side_pixels)
+        side_p95s.append(side_p95)
+    if redness_diagnostics is not None:
+        redness_diagnostics["both_cheeks_in_dead_zone"] = (
+            len(side_spreads) == 2
+            and all(
+                spread <= LOCALIZED_REDNESS_DEAD_ZONE_A_UNITS
+                for spread in side_spreads
+            )
+        )
     personal_lab_baseline = _coalesce_personal_lab_baseline(baseline_matrix or {})
     baseline_a_p95 = safe_float(personal_lab_baseline.get("a_p95"))
     if baseline_a_p95 is not None:
@@ -2388,28 +2418,6 @@ def _compute_zone_based_metrics(
                 baseline_p95_a=baseline_a_p95,
             )
     else:
-        side_spreads: list[float] = []
-        side_names: list[str] = []
-        side_masks: list[np.ndarray] = []
-        side_p95s: list[float] = []
-        for side_name, cheek_mask in (("left", left_cheek), ("right", right_cheek)):
-            side_pixels = cv2.bitwise_and(cheek_mask, skin_mask) > 0
-            if not np.any(side_pixels):
-                continue
-            side_values = a_blur[side_pixels]
-            side_p95 = float(np.percentile(side_values, 95))
-            side_spreads.append(
-                side_p95
-                - float(
-                    np.percentile(
-                        side_values,
-                        LOCALIZED_REDNESS_SELF_BASELINE_PERCENTILE,
-                    )
-                )
-            )
-            side_names.append(_subject_anatomical_cheek_side(side_name))
-            side_masks.append(side_pixels)
-            side_p95s.append(side_p95)
         redness_signal = max(side_spreads, default=0.0)
         if redness_diagnostics is not None:
             redness_diagnostics["branch"] = "within_cheek_spread"
@@ -5481,6 +5489,11 @@ def _redness_color_diagnostics(
     return {
         "redness_branch": branch,
         "redness_cheek_side": redness_diagnostics.get("cheek_side") if zone_branch_used else None,
+        "redness_both_cheeks_in_dead_zone": (
+            bool(redness_diagnostics.get("both_cheeks_in_dead_zone"))
+            if zone_branch_used
+            else None
+        ),
         "redness_cheek_roi_pixels": (
             int(redness_diagnostics.get("cheek_roi_pixels", 0)) if zone_branch_used else None
         ),

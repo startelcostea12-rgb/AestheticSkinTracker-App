@@ -57,6 +57,7 @@ class AiScanDataCsvExporter {
     'image_quality.redness_branch',
     'image_quality.redness_cheek_side',
     'image_quality.cheek_side_convention',
+    'image_quality.redness_both_cheeks_in_dead_zone',
     'image_quality.redness_cheek_roi_pixels',
     'image_quality.redness_cheek_mean_a_after_wb',
     'image_quality.redness_cheek_mean_b_after_wb',
@@ -80,6 +81,7 @@ class AiScanDataCsvExporter {
   static const List<String> perFrameFields = <String>[
     'cheek_side',
     'cheek_side_convention',
+    'redness_both_cheeks_in_dead_zone',
     'mask_pixel_count',
     'cheek_p95_a_after_wb',
     'cheek_p10_a_after_wb',

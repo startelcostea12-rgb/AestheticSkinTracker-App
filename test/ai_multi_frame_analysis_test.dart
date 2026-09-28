@@ -14,11 +14,14 @@ void main() {
     required double p95,
     required List<double> frameP95,
     String? cheekSideConvention = cheekSideConventionSubjectAnatomical,
+    bool? bothCheeksInDeadZone,
   }) => <String, dynamic>{
     'image_quality': <String, dynamic>{
       'redness_cheek_side': cheekSide,
       if (cheekSideConvention != null)
         'cheek_side_convention': cheekSideConvention,
+      if (bothCheeksInDeadZone != null)
+        'redness_both_cheeks_in_dead_zone': bothCheeksInDeadZone,
       'redness_cheek_p10_a_after_wb': p10,
       'redness_cheek_p95_a_after_wb': p95,
     },
@@ -155,6 +158,79 @@ void main() {
 
       expect(result.rednessLockReasons, contains('cheek_mismatch'));
       expect(result.trendStatus.containsKey('localized_redness'), isFalse);
+    });
+
+    test('side-independent redness skips cheek mismatch', () {
+      final result = downgradeRednessTrendForCaptureMismatch(
+        trendStatus: const {'localized_redness': 'stable'},
+        trendDeltas: const {'localized_redness': 0.0},
+        trendLockReasons: const {},
+        baselinePayload: rednessPayload(
+          cheekSide: 'right',
+          bothCheeksInDeadZone: true,
+          frameP95: const [10.0, 10.2, 10.1],
+          p10: 4.0,
+          p95: 10.1,
+        ),
+        currentPayload: rednessPayload(
+          cheekSide: 'left',
+          bothCheeksInDeadZone: true,
+          frameP95: const [10.0, 10.2, 10.1],
+          p10: 4.0,
+          p95: 10.1,
+        ),
+      );
+
+      expect(result.rednessLockReasons, isEmpty);
+      expect(result.trendLockReasons, isEmpty);
+    });
+
+    test('missing side-independent flag keeps cheek mismatch', () {
+      final result = downgradeRednessTrendForCaptureMismatch(
+        trendStatus: const {'localized_redness': 'stable'},
+        trendDeltas: const {'localized_redness': 0.0},
+        trendLockReasons: const {},
+        baselinePayload: rednessPayload(
+          cheekSide: 'right',
+          frameP95: const [10.0, 10.2, 10.1],
+          p10: 4.0,
+          p95: 10.1,
+        ),
+        currentPayload: rednessPayload(
+          cheekSide: 'left',
+          frameP95: const [10.0, 10.2, 10.1],
+          p10: 4.0,
+          p95: 10.1,
+        ),
+      );
+
+      expect(result.rednessLockReasons, contains('cheek_mismatch'));
+      expect(result.trendLockReasons['localized_redness'], 'cheek_mismatch');
+    });
+
+    test('different cheeks with real redness still lock', () {
+      final result = downgradeRednessTrendForCaptureMismatch(
+        trendStatus: const {'localized_redness': 'worsened'},
+        trendDeltas: const {'localized_redness': -20.0},
+        trendLockReasons: const {},
+        baselinePayload: rednessPayload(
+          cheekSide: 'right',
+          bothCheeksInDeadZone: false,
+          frameP95: const [18.0, 18.2, 18.1],
+          p10: 6.0,
+          p95: 18.1,
+        ),
+        currentPayload: rednessPayload(
+          cheekSide: 'left',
+          bothCheeksInDeadZone: false,
+          frameP95: const [18.0, 18.2, 18.1],
+          p10: 6.0,
+          p95: 18.1,
+        ),
+      );
+
+      expect(result.rednessLockReasons, contains('cheek_mismatch'));
+      expect(result.trendLockReasons['localized_redness'], 'cheek_mismatch');
     });
 
     test('path mismatch alone leaves redness status and delta empty', () {
@@ -472,6 +548,7 @@ void main() {
           'image_quality': {
             'redness_cheek_side': frameNumber == 1 ? 'left' : 'right',
             'cheek_side_convention': cheekSideConventionSubjectAnatomical,
+            'redness_both_cheeks_in_dead_zone': false,
             'redness_cheek_roi_pixels': frameNumber == 1 ? 2100 : 2300,
             'redness_cheek_p95_a_after_wb': frameNumber == 1 ? 31.5 : 33.5,
             'redness_cheek_p10_a_after_wb': frameNumber == 1 ? 20.5 : 21.5,
@@ -519,6 +596,10 @@ void main() {
         'cheek_side_convention',
         cheekSideConventionSubjectAnatomical,
       ),
+    );
+    expect(
+      diagnostics[0],
+      containsPair('redness_both_cheeks_in_dead_zone', isFalse),
     );
     expect(diagnostics[0], containsPair('localized_redness', 20.0));
     expect(diagnostics[0], containsPair('cheek_p10_a_after_wb', 20.5));

@@ -806,6 +806,8 @@ List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
       'frame_number': index + 1,
       'cheek_side': imageQuality['redness_cheek_side'],
       'cheek_side_convention': imageQuality['cheek_side_convention'],
+        'redness_both_cheeks_in_dead_zone':
+          imageQuality['redness_both_cheeks_in_dead_zone'],
       'mask_pixel_count': imageQuality['redness_cheek_roi_pixels'],
       'cheek_p95_a_after_wb': imageQuality['redness_cheek_p95_a_after_wb'],
       'cheek_p10_a_after_wb': imageQuality['redness_cheek_p10_a_after_wb'],
@@ -891,11 +893,15 @@ downgradeRednessTrendForCaptureMismatch({
         'right' => 'left',
         _ => storedBaselineSide,
       };
+  final sideIndependent =
+      currentQuality['redness_both_cheeks_in_dead_zone'] == true ||
+      baselineQuality['redness_both_cheeks_in_dead_zone'] == true;
   final reasons = <String>{};
   if (existingRednessLockReason == 'path_mismatch') {
     reasons.add('path_mismatch');
   }
-  if (currentSide != null &&
+  if (!sideIndependent &&
+      currentSide != null &&
       currentSide.isNotEmpty &&
       baselineSide != null &&
       baselineSide.isNotEmpty &&

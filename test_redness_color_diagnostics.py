@@ -30,6 +30,7 @@ NEW_IMAGE_QUALITY_KEYS = {
     "wb_b_adjustment_post_clip",
     "redness_branch",
     "redness_cheek_side",
+    "redness_both_cheeks_in_dead_zone",
     "redness_cheek_roi_pixels",
     "redness_cheek_mean_a_after_wb",
     "redness_cheek_mean_b_after_wb",
@@ -170,6 +171,7 @@ def test_within_cheek_spread_branch_reports_the_winning_cheek():
 
     assert diagnostics["branch"] == "within_cheek_spread"
     assert diagnostics["cheek_side"] == "left"
+    assert diagnostics["both_cheeks_in_dead_zone"] is False
     assert diagnostics["baseline_p95_a"] is None
     lab = cv2.cvtColor(face, cv2.COLOR_BGR2LAB)
     a_blur = cv2.GaussianBlur(lab[:, :, 1].astype(np.float32), (0, 0), sigmaX=2.0)
@@ -188,6 +190,25 @@ def test_within_cheek_spread_branch_reports_the_winning_cheek():
     assert diagnostics["mean_b_after_wb"] == pytest.approx(
         float(np.mean(lab[:, :, 2][right_mask]))
     )
+
+
+def test_both_cheeks_inside_dead_zone_is_logged_without_changing_score():
+    face, skin, regions = _zone_fixture()
+    lab = cv2.cvtColor(face, cv2.COLOR_BGR2LAB)
+    lab[:, :, 1] = 140
+    uniform_face = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    diagnostics: dict = {}
+
+    result = main._compute_zone_based_metrics(
+        uniform_face,
+        skin,
+        regions,
+        np.zeros((0, 2), dtype=np.float32),
+        redness_diagnostics=diagnostics,
+    )
+
+    assert result["localized_redness"] == 0.0
+    assert diagnostics["both_cheeks_in_dead_zone"] is True
 
 
 def test_rosacea_diffuse_density_uses_u_zone_denominator():
@@ -302,6 +323,7 @@ def test_full_pipeline_emits_fields_without_changing_any_score():
 
     assert iq_with["redness_branch"] in {"within_cheek_spread", "baseline_p95_anchor"}
     assert iq_with["redness_cheek_side"] in {"left", "right"}
+    assert isinstance(iq_with["redness_both_cheeks_in_dead_zone"], bool)
     assert iq_with["redness_cheek_p95_a_after_wb"] is not None
     assert iq_with["redness_cheek_p10_a_after_wb"] is not None
     assert iq_with["redness_cheek_p95_a_before_wb"] is not None
