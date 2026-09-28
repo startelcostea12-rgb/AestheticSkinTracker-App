@@ -2709,7 +2709,8 @@ def _compute_structural_opencv_metrics(
         regions.get("right_cheek", np.zeros((h, w), dtype=np.uint8)),
     )
     pore_roi = cv2.bitwise_and(cv2.bitwise_or(cheek_mask, nose_mask), skin_mask)
-    pore_area = max(int(cv2.countNonZero(pore_roi)), 1)
+    pore_area = int(cv2.countNonZero(pore_roi))
+    pore_contraction_index: float | None
     if pore_area > 0:
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(gray)
@@ -2743,7 +2744,7 @@ def _compute_structural_opencv_metrics(
         else:
             pore_contraction_index = 0.0
     else:
-        pore_contraction_index = 0.0
+        pore_contraction_index = None
 
     # 3) Structural firmness / elasticity (benefit)
     upper_ids = [6, 168, 197]
@@ -2764,11 +2765,15 @@ def _compute_structural_opencv_metrics(
     else:
         structural_firmness = 0.0
 
-    return {
+    result = {
         "glabellar_wrinkle_depth": round(float(np.clip(glabellar_wrinkle_depth, 0.0, 100.0)), 1),
-        "pore_contraction_index": round(float(np.clip(pore_contraction_index, 0.0, 100.0)), 1),
         "structural_firmness_elasticity": round(float(np.clip(structural_firmness, 0.0, 100.0)), 1),
     }
+    if pore_contraction_index is not None:
+        result["pore_contraction_index"] = round(
+            float(np.clip(pore_contraction_index, 0.0, 100.0)), 1
+        )
+    return result
 
 
 def filter_safe_skin_routine(user_metrics: Dict[str, Any], product_pool: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
@@ -3752,6 +3757,7 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     "diffuse_flushing_erythema": 2,
     "rosacea_severity": 2,
     "pore_visibility": 3,
+    "pore_contraction_index": 2,
     # v2: fixed avg_width quantization (boundingRect integer px -> minAreaRect
     # continuous size) and the 26-32%-of-photos zero-out (82nd-percentile
     # threshold + (3,5) opening kernel erasing thin-but-real furrow
@@ -5733,6 +5739,20 @@ def analyze_skin_patch(
     full_face_pixels = int(
         raw_components.get("full_face_skin_pixels", cv2.countNonZero(mask))
     )
+    structural_pore_roi = cv2.bitwise_and(
+        cv2.bitwise_or(
+            cv2.bitwise_or(
+                regions.get("left_cheek", np.zeros(norm.shape[:2], dtype=np.uint8)),
+                regions.get("right_cheek", np.zeros(norm.shape[:2], dtype=np.uint8)),
+            ),
+            _nose_region_mask(norm.shape[:2], norm_points, mask),
+        ),
+        mask,
+    )
+    pore_contraction_roi_pixels = int(cv2.countNonZero(structural_pore_roi))
+    raw_components["pore_contraction_roi_pixels"] = float(
+        pore_contraction_roi_pixels
+    )
 
     supplemental_confidence = {
         "sebum_excess_oil_gloss": _conf_from_pixels_and_value(
@@ -5785,7 +5805,7 @@ def analyze_skin_patch(
         ),
         "pore_contraction_index": _conf_from_pixels_and_value(
             structural_metrics.get("pore_contraction_index"),
-            full_face_pixels,
+            pore_contraction_roi_pixels,
             high_pixels=7000,
             medium_pixels=3000,
         ),

@@ -1100,6 +1100,7 @@ class MetricFormulaVersionRegistryTests(unittest.TestCase):
                 "diffuse_flushing_erythema": 2,
                 "rosacea_severity": 2,
                 "pore_visibility": 3,
+                "pore_contraction_index": 2,
                 "glabellar_wrinkle_depth": 2,
             },
         )
@@ -1158,6 +1159,28 @@ class MetricFormulaVersionRegistryTests(unittest.TestCase):
                 750,
                 current_formula_version=3,
                 baseline_formula_version=2,
+                current_pose_template="Front",
+                baseline_pose_template="Front",
+                current_guide_type="facial",
+                baseline_guide_type="facial",
+            ),
+            "formula_version_mismatch",
+        )
+
+    def test_pore_contraction_omission_refuses_version_one_baseline(self) -> None:
+        self.assertEqual(_metric_formula_version("pore_contraction_index"), 2)
+        self.assertEqual(
+            _trend_lock_reason(
+                "primary_roi",
+                "primary_roi",
+                "normal",
+                "normal",
+                1000,
+                750,
+                1000,
+                750,
+                current_formula_version=2,
+                baseline_formula_version=1,
                 current_pose_template="Front",
                 baseline_pose_template="Front",
                 current_guide_type="facial",

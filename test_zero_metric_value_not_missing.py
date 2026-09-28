@@ -40,6 +40,8 @@ import math
 import re
 from pathlib import Path
 
+import numpy as np
+
 import main
 
 MAIN_PY = Path(__file__).resolve().parent / "main.py"
@@ -186,6 +188,21 @@ class TestFailurePlaceholdersAreMissingNotZero:
         fallback_block = source[match.end() : match.end() + 400]
         assert '"glabellar_wrinkle_depth": None' in fallback_block
         assert '"glabellar_wrinkle_depth": 0.0' not in fallback_block
+
+
+def test_empty_pore_roi_omits_pore_contraction_index():
+    image = np.full((120, 120, 3), 128, dtype=np.uint8)
+    empty = np.zeros((120, 120), dtype=np.uint8)
+    points = np.zeros((468, 2), dtype=np.float32)
+
+    result = main._compute_structural_opencv_metrics(
+        image,
+        empty,
+        {"left_cheek": empty, "right_cheek": empty},
+        points,
+    )
+
+    assert "pore_contraction_index" not in result
 
 
 class TestConfidenceHelperDoesNotDowngradeGenuineZero:
