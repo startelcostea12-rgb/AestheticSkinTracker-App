@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
 import 'package:aesthetic_skin_tracker/models/ai_scan_frame_exposure.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
 
 /// Builds a solid-color JPEG, standing in for one burst-capture frame.
@@ -22,6 +23,51 @@ void main() {
     expect(exifRationalAsDouble('-1/3'), closeTo(-1 / 3, 1e-12));
     expect(exifRationalAsDouble(null), isNull);
     expect(exifRationalAsDouble('1/0'), isNull);
+  });
+
+  test('EXIF Flash bit reports fired, not-fired, and missing distinctly', () {
+    expect(exifFlashFiredFromValue('0'), isFalse);
+    expect(exifFlashFiredFromValue('1'), isTrue);
+    expect(exifFlashFiredFromValue('5'), isTrue);
+    expect(exifFlashFiredFromValue('16'), isFalse);
+    expect(exifFlashFiredFromValue(null), isNull);
+  });
+
+  test('AI frame capture sets flash off before every shutter operation', () async {
+    final events = <String>[];
+    for (var frame = 0; frame < 3; frame++) {
+      await captureAiScanFrameWithFlashOff<void>(
+        setFlashMode: (mode) async => events.add('flash:${mode.name}'),
+        capture: () async => events.add('capture:$frame'),
+      );
+    }
+
+    expect(events, [
+      'flash:off',
+      'capture:0',
+      'flash:off',
+      'capture:1',
+      'flash:off',
+      'capture:2',
+    ]);
+  });
+
+  test('non-AI initialization helper does not alter flash mode', () async {
+    final modes = <FlashMode>[];
+    await forceAiScanFlashOff(
+      isAiScan: false,
+      setFlashMode: (mode) async => modes.add(mode),
+    );
+    expect(modes, isEmpty);
+  });
+
+  test('AI initialization helper requests flash off', () async {
+    final modes = <FlashMode>[];
+    await forceAiScanFlashOff(
+      isAiScan: true,
+      setFlashMode: (mode) async => modes.add(mode),
+    );
+    expect(modes, [FlashMode.off]);
   });
 
   group('meanLuminanceFromImageBytes', () {

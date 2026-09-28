@@ -89,6 +89,7 @@ class AiScanDataCsvExporter {
     'exposure_bias',
     'shutter_seconds',
     'brightness_value',
+    'flash_fired',
     'face_skin_pixels',
     'pore_roi_pixels',
     'u_zone_pixels',

@@ -207,6 +207,7 @@ void main() {
               'exposure_bias': -0.3,
               'shutter_seconds': 0.008333333333333333,
               'brightness_value': 4.5,
+              'flash_fired': false,
               'face_skin_pixels': 18000,
               'pore_roi_pixels': 6200,
               'u_zone_pixels': 9500,
@@ -254,6 +255,7 @@ void main() {
       expect(row['frame1_cheek_side_convention'], 'subject_anatomical');
       expect(row['frame1_cheek_p10_a_after_wb'], '20.5');
       expect(row['frame1_shutter_seconds'], '0.008333333333333333');
+      expect(row['frame1_flash_fired'], 'false');
       expect(row['frame1_face_skin_pixels'], '18000');
       expect(row['frame1_pore_roi_pixels'], '6200');
       expect(row['frame1_u_zone_pixels'], '9500');

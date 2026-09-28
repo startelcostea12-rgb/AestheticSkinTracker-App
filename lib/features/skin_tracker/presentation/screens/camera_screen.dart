@@ -110,6 +110,22 @@ bool isRecordingSessionConflictError({
       normalizedDescription.contains('cannot record');
 }
 
+Future<void> forceAiScanFlashOff({
+  required bool isAiScan,
+  required Future<void> Function(FlashMode mode) setFlashMode,
+}) async {
+  if (!isAiScan) return;
+  await setFlashMode(FlashMode.off);
+}
+
+Future<T> captureAiScanFrameWithFlashOff<T>({
+  required Future<void> Function(FlashMode mode) setFlashMode,
+  required Future<T> Function() capture,
+}) async {
+  await forceAiScanFlashOff(isAiScan: true, setFlashMode: setFlashMode);
+  return capture();
+}
+
 /// Resolves the camera guide type for a [CameraScreen] instance.
 ///
 /// The AI Skin Analysis flow (`skin_ai_analysis_screen.dart`'s
@@ -1594,6 +1610,10 @@ class _CameraScreenState extends State<CameraScreen>
       }
 
       await _setCameraAutoModes(controller);
+      await forceAiScanFlashOff(
+        isAiScan: widget.capturePurpose == CameraCapturePurpose.aiSkinAnalysis,
+        setFlashMode: controller.setFlashMode,
+      );
 
       setState(() {
         _cameraController = controller;
@@ -3315,15 +3335,18 @@ class _CameraScreenState extends State<CameraScreen>
 
     // 0x829A ExposureTime, 0x8827 ISOSpeedRatings/PhotographicSensitivity
     // (same tag; readers label it differently, logged once here as iso=),
-    // 0x9204 ExposureBiasValue, 0x9203 BrightnessValue.
+    // 0x9204 ExposureBiasValue, 0x9203 BrightnessValue, 0x9209 Flash.
     final exposureTime = readTag(0x829A);
     final iso = readTag(0x8827);
     final exposureBias = readTag(0x9204);
     final brightnessValue = readTag(0x9203);
+    final flash = readTag(0x9209);
+    final flashFired = exifFlashFiredFromValue(flash);
     return (
       fields:
           'exposure_time=$exposureTime iso=$iso '
-          'exposure_bias=$exposureBias brightness_value=$brightnessValue',
+          'exposure_bias=$exposureBias brightness_value=$brightnessValue '
+          'flash=$flash flash_fired=$flashFired',
       stillWidth: decoded?.width,
       stillHeight: decoded?.height,
       exposure: AiScanFrameExposure(
@@ -3337,6 +3360,7 @@ class _CameraScreenState extends State<CameraScreen>
         brightnessValue:
             double.tryParse(brightnessValue ?? '') ??
             exifRationalAsDouble(brightnessValue),
+        flashFired: flashFired,
       ),
     );
   }
@@ -4997,7 +5021,13 @@ class _CameraScreenState extends State<CameraScreen>
       await Future<void>.delayed(const Duration(milliseconds: 200));
       for (var index = 0; index < 3; index++) {
         capturedFiles.add(
-          await _takePictureWithRetry(controller, logTag: 'aiSkinAnalysis'),
+          await captureAiScanFrameWithFlashOff<XFile>(
+            setFlashMode: controller.setFlashMode,
+            capture: () => _takePictureWithRetry(
+              controller,
+              logTag: 'aiSkinAnalysis',
+            ),
+          ),
         );
         if (index < 2) {
           await Future<void>.delayed(const Duration(milliseconds: 110));

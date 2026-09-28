@@ -455,6 +455,7 @@ void main() {
           exposureBias: -0.3,
           shutterSeconds: 1 / 120,
           brightnessValue: 4.5,
+          flashFired: false,
         ),
         AiScanFrameExposure(iso: 125),
         AiScanFrameExposure(
@@ -522,6 +523,7 @@ void main() {
     expect(diagnostics[0], containsPair('localized_redness', 20.0));
     expect(diagnostics[0], containsPair('cheek_p10_a_after_wb', 20.5));
     expect(diagnostics[0], containsPair('shutter_seconds', 1 / 120));
+    expect(diagnostics[0], containsPair('flash_fired', isFalse));
     expect(diagnostics[0], containsPair('face_skin_pixels', 18000));
     expect(
       diagnostics[0],

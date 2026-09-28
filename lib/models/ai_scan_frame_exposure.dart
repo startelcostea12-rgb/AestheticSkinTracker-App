@@ -10,23 +10,32 @@ double? exifRationalAsDouble(String? value) {
   return numerator / denominator;
 }
 
+bool? exifFlashFiredFromValue(String? value) {
+  final encoded = int.tryParse(value ?? '');
+  if (encoded == null) return null;
+  return (encoded & 0x1) == 0x1;
+}
+
 class AiScanFrameExposure {
   const AiScanFrameExposure({
     this.iso,
     this.exposureBias,
     this.shutterSeconds,
     this.brightnessValue,
+    this.flashFired,
   });
 
   final int? iso;
   final double? exposureBias;
   final double? shutterSeconds;
   final double? brightnessValue;
+  final bool? flashFired;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'iso': iso,
     'exposure_bias': exposureBias,
     'shutter_seconds': shutterSeconds,
     'brightness_value': brightnessValue,
+    'flash_fired': flashFired,
   };
 }
