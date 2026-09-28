@@ -113,6 +113,7 @@ class SkinAnalysisService {
     String? filename,
     Map<String, dynamic>? baselineMetricMatrix,
     Map<String, String>? baselineExtractionPaths,
+    Map<String, int>? baselineFormulaVersions,
     bool allowBackend = false,
   }) async {
     _ensureBackendAllowed(allowBackend);
@@ -134,6 +135,8 @@ class SkinAnalysisService {
             'baselineMetricMatrix': baselineMetricMatrix,
           if (baselineExtractionPaths != null && baselineExtractionPaths.isNotEmpty)
             'baselineExtractionPaths': baselineExtractionPaths,
+          if (baselineFormulaVersions != null && baselineFormulaVersions.isNotEmpty)
+            'baselineFormulaVersions': baselineFormulaVersions,
         }),
       ).timeout(_requestTimeout);
 
@@ -259,7 +262,9 @@ class SkinAnalysisService {
     Map<String, String> fields = const {},
     Map<String, dynamic>? baselineMetricMatrix,
     Map<String, String>? baselineExtractionPaths,
+    Map<String, int>? baselineFormulaVersions,
     bool allowBackend = false,
+    http.Client? httpClient,
   }) async {
     _ensureBackendAllowed(allowBackend);
     if (image == null) {
@@ -294,6 +299,13 @@ class SkinAnalysisService {
         baselineExtractionPaths,
       );
     }
+    if (baselineFormulaVersions != null &&
+        baselineFormulaVersions.isNotEmpty &&
+        !_hasNonEmptyField(mergedFields, 'baseline_formula_versions')) {
+      mergedFields['baseline_formula_versions'] = jsonEncode(
+        baselineFormulaVersions,
+      );
+    }
 
     final request = http.MultipartRequest('POST', targetUri)
       ..fields.addAll(mergedFields)
@@ -308,7 +320,8 @@ class SkinAnalysisService {
     );
 
     try {
-      final streamed = await request.send().timeout(_requestTimeout);
+        final streamed = await (httpClient?.send(request) ?? request.send())
+          .timeout(_requestTimeout);
       final response = await http.Response.fromStream(streamed);
 
       debugPrint('[SkinAnalysisService] Multipart status: ${response.statusCode}');

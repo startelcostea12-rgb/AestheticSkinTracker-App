@@ -5,6 +5,8 @@ import 'package:aesthetic_skin_tracker/utils/skin_analysis_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Covers the fix for backend requests silently missing the X-API-Key
 /// header: BackendConfig never read AI_BACKEND_API_KEY at all, so every
@@ -20,6 +22,10 @@ import 'package:http/testing.dart';
 /// this is the only way to exercise both the present-key and absent-key
 /// cases directly.
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
   group('apiKeyHeadersFor (pure logic shared by every backend call site)', () {
     test('a non-empty key produces a present X-API-Key header', () {
       final headers = apiKeyHeadersFor('super-secret-key');
@@ -98,4 +104,25 @@ void main() {
       );
     },
   );
+
+  test('multipart request sends only stored baseline formula versions', () async {
+    http.Request? captured;
+    final mockClient = MockClient((request) async {
+      captured = request;
+      return http.Response('{"status":"success"}', 200);
+    });
+
+    await SkinAnalysisService.uploadSingleImageFile(
+      image: XFile.fromData(Uint8List.fromList([1, 2, 3]), name: 'scan.jpg'),
+      uri: Uri.parse('https://example.test/api/skin/analyze-single'),
+      baselineFormulaVersions: const {'glabellar_wrinkle_depth': 2},
+      allowBackend: true,
+      httpClient: mockClient,
+    );
+
+    expect(captured, isNotNull);
+    expect(captured!.body, contains('name="baseline_formula_versions"'));
+    expect(captured!.body, contains('{"glabellar_wrinkle_depth":2}'));
+    expect(captured!.body, isNot(contains('texture_smoothness')));
+  });
 }

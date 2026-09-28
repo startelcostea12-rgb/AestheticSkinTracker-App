@@ -3910,6 +3910,43 @@ def _normalize_metric_formula_versions(raw: Any, metric_keys: list[str]) -> Dict
     return normalized
 
 
+def _normalize_baseline_metric_formula_versions(
+    raw: Any,
+    metric_keys: list[str],
+) -> Dict[str, int]:
+    """Parse only baseline versions that were explicitly sent and valid."""
+    normalized: Dict[str, int] = {}
+    if raw is None:
+        return normalized
+
+    payload = raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return normalized
+        try:
+            payload = json.loads(text)
+        except (TypeError, ValueError):
+            return normalized
+
+    if not isinstance(payload, dict):
+        return normalized
+
+    for key, value in payload.items():
+        canonical_map = _coalesce_metric_aliases({str(key): 1.0})
+        if not canonical_map:
+            continue
+        canonical_key = next(iter(canonical_map.keys()))
+        if canonical_key not in metric_keys:
+            continue
+        try:
+            normalized[canonical_key] = int(value)
+        except (TypeError, ValueError):
+            continue
+
+    return normalized
+
+
 def _normalize_capture_quality(value: Any) -> str:
     if value is None:
         return "unknown"
@@ -4076,7 +4113,7 @@ def _trend_delta_and_status(
     baseline_source_width: int | None = None,
     baseline_source_height: int | None = None,
     current_formula_version: int = 1,
-    baseline_formula_version: int = 1,
+    baseline_formula_version: int | None = 1,
     current_pose_template: str | None = None,
     baseline_pose_template: str | None = None,
     current_guide_type: str | None = None,
@@ -4134,8 +4171,10 @@ def _trend_delta_and_status(
     # makes its baseline and current values incomparable even though
     # capture quality/path/resolution all match -- a stored score from the
     # old formula doesn't mean the same thing as one from the new formula.
-    # Missing tags (scans saved before this field existed) default to 1.
-    if current_formula_version != baseline_formula_version:
+    if (
+        baseline_formula_version is None
+        or current_formula_version != baseline_formula_version
+    ):
         return 0.0, "stable"
 
     denominator = abs(baseline)
@@ -4184,7 +4223,7 @@ def _trend_lock_reason(
     baseline_source_width: int | None = None,
     baseline_source_height: int | None = None,
     current_formula_version: int = 1,
-    baseline_formula_version: int = 1,
+    baseline_formula_version: int | None = 1,
     current_pose_template: str | None = None,
     baseline_pose_template: str | None = None,
     current_guide_type: str | None = None,
@@ -4237,7 +4276,10 @@ def _trend_lock_reason(
     ):
         return "angle_or_guide_mismatch"
 
-    if current_formula_version != baseline_formula_version:
+    if (
+        baseline_formula_version is None
+        or current_formula_version != baseline_formula_version
+    ):
         return "formula_version_mismatch"
 
     return None
@@ -4575,7 +4617,7 @@ def _compute_trend_deltas(
         current_formula_versions,
         CANONICAL_METRIC_ORDER,
     )
-    baseline_versions_norm = _normalize_metric_formula_versions(
+    baseline_versions_norm = _normalize_baseline_metric_formula_versions(
         baseline_formula_versions,
         CANONICAL_METRIC_ORDER,
     )
@@ -4615,7 +4657,7 @@ def _compute_trend_deltas(
             baseline_source_width,
             baseline_source_height,
             current_versions_norm.get(key, 1),
-            baseline_versions_norm.get(key, 1),
+            baseline_versions_norm.get(key),
             current_pose_template,
             baseline_pose_template,
             current_guide_type,
@@ -4660,7 +4702,7 @@ def _compute_trend_statuses(
         current_formula_versions,
         CANONICAL_METRIC_ORDER,
     )
-    baseline_versions_norm = _normalize_metric_formula_versions(
+    baseline_versions_norm = _normalize_baseline_metric_formula_versions(
         baseline_formula_versions,
         CANONICAL_METRIC_ORDER,
     )
@@ -4698,7 +4740,7 @@ def _compute_trend_statuses(
             baseline_source_width,
             baseline_source_height,
             current_versions_norm.get(key, 1),
-            baseline_versions_norm.get(key, 1),
+            baseline_versions_norm.get(key),
             current_pose_template,
             baseline_pose_template,
             current_guide_type,
@@ -4747,7 +4789,7 @@ def _compute_trend_lock_reasons(
         current_formula_versions,
         CANONICAL_METRIC_ORDER,
     )
-    baseline_versions_norm = _normalize_metric_formula_versions(
+    baseline_versions_norm = _normalize_baseline_metric_formula_versions(
         baseline_formula_versions,
         CANONICAL_METRIC_ORDER,
     )
@@ -4781,7 +4823,7 @@ def _compute_trend_lock_reasons(
             baseline_source_width,
             baseline_source_height,
             current_versions_norm.get(key, 1),
-            baseline_versions_norm.get(key, 1),
+            baseline_versions_norm.get(key),
             current_pose_template,
             baseline_pose_template,
             current_guide_type,
@@ -6483,7 +6525,7 @@ def analyze_skin_patch(
     metric_formula_versions = {
         key: _metric_formula_version(key) for key in canonical_metric_order
     }
-    normalized_baseline_formula_versions = _normalize_metric_formula_versions(
+    normalized_baseline_formula_versions = _normalize_baseline_metric_formula_versions(
         baseline_formula_versions,
         canonical_metric_order,
     )
@@ -7375,7 +7417,7 @@ async def analyze_skin(request: Request):
             body.get("baselineExtractionPaths") or body.get("baseline_extraction_paths"),
             CANONICAL_METRIC_ORDER,
         )
-        baseline_formula_versions = _normalize_metric_formula_versions(
+        baseline_formula_versions = _normalize_baseline_metric_formula_versions(
             body.get("baselineFormulaVersions") or body.get("baseline_formula_versions"),
             CANONICAL_METRIC_ORDER,
         )
@@ -7548,7 +7590,7 @@ async def analyze_skin_single(
             baseline_extraction_paths,
             CANONICAL_METRIC_ORDER,
         )
-        parsed_baseline_formula_versions = _normalize_metric_formula_versions(
+        parsed_baseline_formula_versions = _normalize_baseline_metric_formula_versions(
             baseline_formula_versions,
             CANONICAL_METRIC_ORDER,
         )

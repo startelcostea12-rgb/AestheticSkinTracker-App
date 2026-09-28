@@ -208,6 +208,22 @@ void main() {
       expect(aiScanFormulaVersions(entry), isEmpty);
     });
 
+    test('reads stored glabellar v2 without filling missing metrics', () {
+      final entry = ScanHistoryEntry(
+        id: 'glabellar-v2-baseline',
+        timestamp: DateTime(2026, 1, 1),
+        estimatedSkinAge: 0,
+        metrics: const {'glabellar_wrinkle_depth': 12.0},
+        rawPayload: const {
+          'metric_formula_versions': {'glabellar_wrinkle_depth': 2},
+        },
+      );
+
+      expect(aiScanFormulaVersions(entry), {
+        'glabellar_wrinkle_depth': 2,
+      });
+    });
+
     test('every non-empty extraction-path value is preserved', () {
       const paths = <String>[
         'cheek_primary',

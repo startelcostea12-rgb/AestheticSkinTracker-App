@@ -18,6 +18,7 @@ from main import (
     _compute_trend_lock_reasons,
     _compute_trend_statuses,
     _metric_formula_version,
+    _normalize_baseline_metric_formula_versions,
     _normalize_capture_quality,
     _normalize_metric_formula_versions,
     _trend_delta_and_status,
@@ -121,6 +122,8 @@ class SourceResolutionTrendHonestyTests(unittest.TestCase):
             current_source_height=750,
             baseline_source_width=1000,
             baseline_source_height=750,
+            current_formula_versions={"localized_redness": 2},
+            baseline_formula_versions={"localized_redness": 2},
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -137,6 +140,8 @@ class SourceResolutionTrendHonestyTests(unittest.TestCase):
             current_source_height=750,
             baseline_source_width=1000,
             baseline_source_height=750,
+            current_formula_versions={"localized_redness": 2},
+            baseline_formula_versions={"localized_redness": 2},
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -424,6 +429,14 @@ class TrendLockReasonTests(unittest.TestCase):
             baseline_paths={"localized_redness": "fallback", "texture_smoothness": "primary_roi"},
             current_capture_quality="normal",
             baseline_capture_quality="normal",
+            current_formula_versions={
+                "localized_redness": 2,
+                "texture_smoothness": 2,
+            },
+            baseline_formula_versions={
+                "localized_redness": 2,
+                "texture_smoothness": 2,
+            },
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -436,6 +449,14 @@ class TrendLockReasonTests(unittest.TestCase):
             baseline_paths={"localized_redness": "fallback", "texture_smoothness": "primary_roi"},
             current_capture_quality="normal",
             baseline_capture_quality="normal",
+            current_formula_versions={
+                "localized_redness": 2,
+                "texture_smoothness": 2,
+            },
+            baseline_formula_versions={
+                "localized_redness": 2,
+                "texture_smoothness": 2,
+            },
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -595,6 +616,10 @@ class ComputeTrendDeltasTests(unittest.TestCase):
     def _paths(*keys: str) -> dict[str, str]:
         return {key: "primary_roi" for key in keys}
 
+    @staticmethod
+    def _versions(*keys: str) -> dict[str, int]:
+        return {key: _metric_formula_version(key) for key in keys}
+
     def test_texture_smoothness_increase_is_positive_improvement(self) -> None:
         current = {"texture_smoothness": 72.0}
         baseline = {"texture_smoothness": 60.0}
@@ -604,6 +629,8 @@ class ComputeTrendDeltasTests(unittest.TestCase):
             baseline,
             current_paths=self._paths("texture_smoothness"),
             baseline_paths=self._paths("texture_smoothness"),
+            current_formula_versions=self._versions("texture_smoothness"),
+            baseline_formula_versions=self._versions("texture_smoothness"),
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -644,6 +671,8 @@ class ComputeTrendDeltasTests(unittest.TestCase):
             baseline,
             current_paths=self._paths(*keys),
             baseline_paths=self._paths(*keys),
+            current_formula_versions=self._versions(*keys),
+            baseline_formula_versions=self._versions(*keys),
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -665,6 +694,8 @@ class ComputeTrendDeltasTests(unittest.TestCase):
             baseline,
             current_paths=self._paths("diffuse_flushing_erythema"),
             baseline_paths=self._paths("diffuse_flushing_erythema"),
+            current_formula_versions=self._versions("diffuse_flushing_erythema"),
+            baseline_formula_versions=self._versions("diffuse_flushing_erythema"),
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -682,6 +713,8 @@ class ComputeTrendDeltasTests(unittest.TestCase):
             baseline,
             current_paths=self._paths("skin_tone_radiance_evenness"),
             baseline_paths=self._paths("skin_tone_radiance_evenness"),
+            current_formula_versions=self._versions("skin_tone_radiance_evenness"),
+            baseline_formula_versions=self._versions("skin_tone_radiance_evenness"),
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -699,6 +732,8 @@ class ComputeTrendDeltasTests(unittest.TestCase):
             baseline,
             current_paths=self._paths("structural_firmness_elasticity"),
             baseline_paths=self._paths("structural_firmness_elasticity"),
+            current_formula_versions=self._versions("structural_firmness_elasticity"),
+            baseline_formula_versions=self._versions("structural_firmness_elasticity"),
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -1080,6 +1115,50 @@ class NormalizeMetricFormulaVersionsTests(unittest.TestCase):
             result,
             {"texture_smoothness": 1, "glabellar_wrinkle_depth": 4},
         )
+
+    def test_baseline_normalizer_keeps_missing_versions_missing(self) -> None:
+        self.assertEqual(
+            _normalize_baseline_metric_formula_versions(
+                {"glabellar_wrinkle_depth": 2},
+                ["texture_smoothness", "glabellar_wrinkle_depth"],
+            ),
+            {"glabellar_wrinkle_depth": 2},
+        )
+
+
+class BaselineFormulaVersionComparisonTests(unittest.TestCase):
+    @staticmethod
+    def _reason(baseline_versions: dict[str, int] | None) -> str | None:
+        return _compute_trend_lock_reasons(
+            {"glabellar_wrinkle_depth": 10.0},
+            {"glabellar_wrinkle_depth": 20.0},
+            current_paths={"glabellar_wrinkle_depth": "primary_roi"},
+            baseline_paths={"glabellar_wrinkle_depth": "primary_roi"},
+            current_capture_quality="normal",
+            baseline_capture_quality="normal",
+            current_formula_versions={"glabellar_wrinkle_depth": 2},
+            baseline_formula_versions=baseline_versions,
+            current_pose_template="Front",
+            baseline_pose_template="Front",
+            current_guide_type="facial",
+            baseline_guide_type="facial",
+        )["glabellar_wrinkle_depth"]
+
+    def test_baseline_v2_current_v2_has_no_formula_lock(self) -> None:
+        self.assertIsNone(self._reason({"glabellar_wrinkle_depth": 2}))
+
+    def test_baseline_v1_current_v2_has_formula_lock(self) -> None:
+        self.assertEqual(
+            self._reason({"glabellar_wrinkle_depth": 1}),
+            "formula_version_mismatch",
+        )
+
+    def test_missing_baseline_version_has_formula_lock(self) -> None:
+        self.assertEqual(self._reason(None), "formula_version_mismatch")
+
+    def test_stored_glabellar_v2_compares_with_current_v2(self) -> None:
+        stored_baseline_versions = {"glabellar_wrinkle_depth": 2}
+        self.assertIsNone(self._reason(stored_baseline_versions))
 
 
 class MetricFormulaVersionRegistryTests(unittest.TestCase):
@@ -1549,6 +1628,8 @@ class AngleAndGuideTypeTrendHonestyTests(unittest.TestCase):
             baseline_paths=paths,
             current_capture_quality="normal",
             baseline_capture_quality="normal",
+            current_formula_versions={"wrinkle_load": 2},
+            baseline_formula_versions={"wrinkle_load": 2},
         )
 
         matched_status = _compute_trend_statuses(

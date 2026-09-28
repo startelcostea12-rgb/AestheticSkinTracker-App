@@ -2059,6 +2059,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       final resolvedBaselineMatrix = _buildLuxeBaselineMetricMatrix();
       final baselineMetricMatrixForTrend =
           resolvedBaselineMatrix.isEmpty ? null : resolvedBaselineMatrix;
+        final storedBaselineFormulaVersions = _previousFocusAreaScan == null
+          ? const <String, int>{}
+          : aiScanFormulaVersions(_previousFocusAreaScan!);
       final aggregate = await analyzeBackendFrames(
         frames,
         frameExposureMetadata: _analysisFrameExposureMetadata,
@@ -2072,6 +2075,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               fields: backendFields,
               baselineMetricMatrix: baselineMetricMatrixForTrend,
               baselineExtractionPaths: _buildLuxeBaselineExtractionPaths(),
+                baselineFormulaVersions: storedBaselineFormulaVersions.isEmpty
+                  ? null
+                  : storedBaselineFormulaVersions,
               allowBackend: true,
             ),
       );
