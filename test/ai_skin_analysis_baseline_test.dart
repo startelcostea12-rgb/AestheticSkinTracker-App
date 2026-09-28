@@ -327,8 +327,7 @@ void main() {
     });
 
     test(
-      'an invalid pin (scan no longer exists) is ignored with a message, '
-      'falling back to the earliest eligible scan',
+      'a missing pinned baseline is unavailable without silent fallback',
       () {
         final oldest = scan(timestamp: DateTime(2026, 1, 1));
         final key = oldest.aiBaselineKey;
@@ -338,7 +337,9 @@ void main() {
           allScans: [oldest],
           pinnedScanId: 'scan_does_not_exist',
         );
-        expect(resolution.baselineScan?.id, oldest.id);
+        expect(resolution.baselineScan, isNull);
+        expect(resolution.baselineUnavailable, isTrue);
+        expect(resolution.isFirstForKey, isFalse);
         expect(resolution.ignoredPinReason, isNotNull);
       },
     );
@@ -359,7 +360,8 @@ void main() {
           allScans: [oldest, badPin],
           pinnedScanId: badPin.id,
         );
-        expect(resolution.baselineScan?.id, oldest.id);
+        expect(resolution.baselineScan, isNull);
+        expect(resolution.baselineUnavailable, isTrue);
         expect(resolution.ignoredPinReason, isNotNull);
       },
     );
@@ -380,7 +382,8 @@ void main() {
           allScans: [oldest, otherKeyScan],
           pinnedScanId: otherKeyScan.id,
         );
-        expect(resolution.baselineScan?.id, oldest.id);
+        expect(resolution.baselineScan, isNull);
+        expect(resolution.baselineUnavailable, isTrue);
         expect(resolution.ignoredPinReason, isNotNull);
       },
     );
@@ -401,6 +404,57 @@ void main() {
         expect(resolution.eligibleScansForKey, isEmpty);
       },
     );
+
+    test('reset excludes pre-reset scans and waits for the next eligible scan', () {
+      final oldBaseline = scan(timestamp: DateTime(2026, 1, 1));
+      final resetAt = DateTime.utc(2026, 1, 5);
+      final resolution = resolveAiBaseline(
+        key: oldBaseline.aiBaselineKey,
+        keyMatches: [oldBaseline],
+        allScans: [oldBaseline],
+        registryEntryExists: true,
+        resetAt: resetAt,
+      );
+
+      expect(resolution.baselineScan, isNull);
+      expect(resolution.isFirstForKey, isTrue);
+      expect(resolution.eligibleScansForKey, isEmpty);
+    });
+
+    test('first eligible scan after reset becomes the baseline pin candidate', () {
+      final oldBaseline = scan(timestamp: DateTime(2026, 1, 1));
+      final newBaseline = scan(timestamp: DateTime(2026, 1, 6));
+      final resetAt = DateTime.utc(2026, 1, 5);
+      final resolution = resolveAiBaseline(
+        key: oldBaseline.aiBaselineKey,
+        keyMatches: [oldBaseline, newBaseline],
+        allScans: [oldBaseline, newBaseline],
+        registryEntryExists: true,
+        resetAt: resetAt,
+      );
+
+      expect(resolution.baselineScan?.id, newBaseline.id);
+      expect(resolution.shouldPinResolvedBaseline, isTrue);
+      expect(resolution.eligibleScansForKey.map((scan) => scan.id), [
+        newBaseline.id,
+      ]);
+    });
+
+    test('scan after reset compares to the newly pinned baseline', () {
+      final oldBaseline = scan(timestamp: DateTime(2026, 1, 1));
+      final newBaseline = scan(timestamp: DateTime(2026, 1, 6));
+      final following = scan(timestamp: DateTime(2026, 1, 7));
+      final resolution = resolveAiBaseline(
+        key: oldBaseline.aiBaselineKey,
+        keyMatches: [oldBaseline, newBaseline, following],
+        allScans: [oldBaseline, newBaseline, following],
+        pinnedScanId: newBaseline.id,
+        registryEntryExists: true,
+      );
+
+      expect(resolution.baselineScan?.id, newBaseline.id);
+      expect(resolution.shouldPinResolvedBaseline, isFalse);
+    });
 
     test(
       'a Left 45° scan never uses a Front baseline -- the caller only ever '

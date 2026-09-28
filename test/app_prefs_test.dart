@@ -861,6 +861,51 @@ void main() {
       expect(await AppPrefs.getAiBaselineScanId(otherKey), 'scan_left45_1');
     });
 
+    test('reset marker persists until a new baseline replaces it', () async {
+      final resetAt = DateTime.utc(2026, 9, 28, 12);
+      await AppPrefs.setAiBaselineScanId(key, 'scan_front_1');
+
+      await AppPrefs.clearAiBaselineScanId(key, resetAt: resetAt);
+
+      final resetState = await AppPrefs.getAiBaselineRegistryState(key);
+      expect(resetState.hasEntry, isTrue);
+      expect(resetState.baselineScanId, isNull);
+      expect(resetState.resetAt, resetAt);
+      expect(resetState.isResetPending, isTrue);
+
+      await AppPrefs.setAiBaselineScanId(key, 'scan_front_2');
+      final pinnedState = await AppPrefs.getAiBaselineRegistryState(key);
+      expect(pinnedState.baselineScanId, 'scan_front_2');
+      expect(pinnedState.resetAt, isNull);
+      expect(pinnedState.isResetPending, isFalse);
+    });
+
+    test('pinned baseline survives scan and image retention limits', () async {
+      final scans = <Map<String, dynamic>>[];
+      for (var index = 0; index < 55; index++) {
+        scans.add(
+          ScanHistoryEntry(
+            id: index == 0 ? 'pinned-oldest' : 'scan-$index',
+            timestamp: DateTime.utc(2026, 1, 1).add(Duration(days: index)),
+            imagePath: 'data:image/jpeg;base64,image-$index',
+            estimatedSkinAge: 0,
+            metrics: const {'localized_redness': 20.0},
+          ).toJson(),
+        );
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(AppPrefs.scanHistoryKey, jsonEncode(scans));
+      await AppPrefs.setAiBaselineScanId(key, 'pinned-oldest');
+
+      final retained = await AppPrefs.getScanEntries();
+
+      expect(retained, hasLength(AppPrefs.maxStoredScans));
+      final pinned = retained.singleWhere(
+        (scan) => scan.id == 'pinned-oldest',
+      );
+      expect(pinned.imagePath, 'data:image/jpeg;base64,image-0');
+    });
+
     test(
       'the old device-global cached matrix is ignored: clearing it removes '
       'the legacy key without touching the new per-key registry',

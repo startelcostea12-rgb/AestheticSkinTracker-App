@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -12,6 +13,20 @@ import '../models/scan_history.dart';
 import '../models/skin_profile.dart';
 import '../models/procedure_log.dart';
 import 'app_logger.dart';
+
+class AiBaselineRegistryState {
+  const AiBaselineRegistryState({
+    required this.hasEntry,
+    this.baselineScanId,
+    this.resetAt,
+  });
+
+  final bool hasEntry;
+  final String? baselineScanId;
+  final DateTime? resetAt;
+
+  bool get isResetPending => hasEntry && baselineScanId == null && resetAt != null;
+}
 
 class AppPrefs {
   // ── Keys ──
@@ -893,8 +908,19 @@ class AppPrefs {
         }
         final entry = Map<String, dynamic>.from(rawEntry);
         final baselineScanId = entry['baselineScanId'];
-        if (baselineScanId is! String || baselineScanId.isEmpty) {
-          throw const FormatException('baselineScanId is missing or invalid');
+        final resetAtRaw = entry['resetAt'];
+        if (baselineScanId != null && baselineScanId is! String) {
+          throw const FormatException('baselineScanId is not a string');
+        }
+        final hasBaselineScanId =
+            baselineScanId is String && baselineScanId.isNotEmpty;
+        final resetAt = resetAtRaw is String
+            ? DateTime.tryParse(resetAtRaw)?.toUtc()
+            : null;
+        if (!hasBaselineScanId && resetAt == null) {
+          throw const FormatException(
+            'registry entry must contain a baselineScanId or resetAt',
+          );
         }
         for (final key in const [
           'procedureId',
@@ -937,14 +963,27 @@ class AppPrefs {
   /// qualifies -- callers resolve and re-validate against live scan
   /// history (see skin_ai_analysis_screen.dart's baseline resolution).
   static Future<String?> getAiBaselineScanId(AiBaselineKey key) async {
+    return (await getAiBaselineRegistryState(key)).baselineScanId;
+  }
+
+  static Future<AiBaselineRegistryState> getAiBaselineRegistryState(
+    AiBaselineKey key,
+  ) async {
     final entries = await _readAiBaselineRegistry();
     for (final entry in entries) {
       if (_aiBaselineKeyMatchesEntry(entry, key)) {
         final id = entry['baselineScanId'] as String?;
-        return (id != null && id.isNotEmpty) ? id : null;
+        final resetAt = entry['resetAt'] is String
+            ? DateTime.tryParse(entry['resetAt'] as String)?.toUtc()
+            : null;
+        return AiBaselineRegistryState(
+          hasEntry: true,
+          baselineScanId: id != null && id.isNotEmpty ? id : null,
+          resetAt: resetAt,
+        );
       }
     }
-    return null;
+    return const AiBaselineRegistryState(hasEntry: false);
   }
 
   /// Sets (or replaces) the baseline scan id for [key]. The only mutation
@@ -987,11 +1026,28 @@ class AppPrefs {
     };
   }
 
-  /// Clears the registered baseline for [key] only (used by "Reset
-  /// Baseline"), leaving every other key's baseline untouched.
-  static Future<void> clearAiBaselineScanId(AiBaselineKey key) async {
+  /// Replaces this key's pin with a reset marker. Historical scans captured
+  /// before the marker cannot become this key's baseline again.
+  static Future<void> clearAiBaselineScanId(
+    AiBaselineKey key, {
+    DateTime? resetAt,
+  }) async {
     final entries = await _readAiBaselineRegistry();
-    entries.removeWhere((entry) => _aiBaselineKeyMatchesEntry(entry, key));
+    final idx = entries.indexWhere(
+      (entry) => _aiBaselineKeyMatchesEntry(entry, key),
+    );
+    final marker = <String, dynamic>{
+      'procedureId': key.procedureId,
+      'focusArea': key.focusArea,
+      'poseTemplate': key.poseTemplate,
+      'guideType': key.guideType,
+      'resetAt': (resetAt ?? DateTime.now()).toUtc().toIso8601String(),
+    };
+    if (idx == -1) {
+      entries.add(marker);
+    } else {
+      entries[idx] = marker;
+    }
     await _writeAiBaselineRegistry(entries);
   }
 
@@ -1115,7 +1171,10 @@ class AppPrefs {
     if (raw == null || raw.isEmpty) return [];
     final decoded = await _decodeScanEntries(prefs, raw);
     final history = decoded.entries;
-    final normalized = _normalizeScanHistory(history);
+    final normalized = _normalizeScanHistory(
+      history,
+      pinnedBaselineScanIds: await getAllAiBaselineScanIds(),
+    );
     if (decoded.decodedList &&
         (decoded.skippedEntry || !_scanListsEquivalent(history, normalized))) {
       await _saveScanEntries(normalized);
@@ -1182,7 +1241,10 @@ class AppPrefs {
     }
 
     history.add(entryToPersist);
-    final normalized = _normalizeScanHistory(history);
+    final normalized = _normalizeScanHistory(
+      history,
+      pinnedBaselineScanIds: await getAllAiBaselineScanIds(),
+    );
     await _saveScanEntries(normalized);
     final normalizedPersistedEntry = normalized.firstWhere(
       (scan) => scan.id == entryToPersist.id,
@@ -1756,12 +1818,14 @@ class AppPrefs {
   }
 
   static List<ScanHistoryEntry> _normalizeScanHistory(
-    List<ScanHistoryEntry> history,
-  ) {
+    List<ScanHistoryEntry> history, {
+    Set<String> pinnedBaselineScanIds = const <String>{},
+  }) {
     return _normalizeScanHistoryForStorage(
       history,
       maxScans: maxStoredScans,
       keepImageCount: maxStoredScanImages,
+      pinnedBaselineScanIds: pinnedBaselineScanIds,
     );
   }
 
@@ -1769,11 +1833,25 @@ class AppPrefs {
     List<ScanHistoryEntry> history, {
     required int maxScans,
     required int keepImageCount,
+    Set<String> pinnedBaselineScanIds = const <String>{},
   }) {
     final sorted = List<ScanHistoryEntry>.from(history)
       ..sort(_compareScansByTimestampDescThenId);
-    final retained = sorted.take(maxScans).toList();
-    final keepImageIds = retained.take(keepImageCount).map((e) => e.id).toSet();
+    final pinned = sorted
+        .where((scan) => pinnedBaselineScanIds.contains(scan.id))
+        .toList();
+    final unpinned = sorted
+        .where((scan) => !pinnedBaselineScanIds.contains(scan.id))
+        .toList();
+    final unpinnedLimit = math.max(0, maxScans - pinned.length);
+    final retained = <ScanHistoryEntry>[
+      ...pinned,
+      ...unpinned.take(unpinnedLimit),
+    ]..sort(_compareScansByTimestampDescThenId);
+    final keepImageIds = <String>{
+      ...retained.take(keepImageCount).map((entry) => entry.id),
+      ...pinned.map((entry) => entry.id),
+    };
 
     final procedureScansById = <String, List<ScanHistoryEntry>>{};
     for (final entry in retained) {
@@ -2008,11 +2086,13 @@ class AppPrefs {
 
   static Future<void> _saveScanEntries(List<ScanHistoryEntry> entries) async {
     final prefs = await SharedPreferences.getInstance();
+    final pinnedBaselineScanIds = await getAllAiBaselineScanIds();
 
     var entriesToSave = _normalizeScanHistoryForStorage(
       entries,
       maxScans: maxStoredScans,
       keepImageCount: maxStoredScanImages,
+      pinnedBaselineScanIds: pinnedBaselineScanIds,
     );
     var encoded = jsonEncode(entriesToSave.map((e) => e.toJson()).toList());
     final trimmedScans = entries.length - entriesToSave.length;
@@ -2037,6 +2117,7 @@ class AppPrefs {
         entries,
         maxScans: minStoredScansOnQuotaRetry,
         keepImageCount: 0,
+        pinnedBaselineScanIds: pinnedBaselineScanIds,
       );
       encoded = jsonEncode(entriesToSave.map((e) => e.toJson()).toList());
       await prefs.setString(

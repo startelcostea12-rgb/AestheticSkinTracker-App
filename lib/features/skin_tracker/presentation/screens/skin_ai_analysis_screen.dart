@@ -1205,6 +1205,8 @@ class AiBaselineResolution {
     this.eligibleScansForKey = const <ScanHistoryEntry>[],
     this.isFirstForKey = false,
     this.ignoredPinReason,
+    this.baselineUnavailable = false,
+    this.shouldPinResolvedBaseline = false,
   });
 
   /// The current capture's own key. Null until the first resolution runs.
@@ -1215,46 +1217,43 @@ class AiBaselineResolution {
   /// passes [scanPassesSingleScanBaselineGates].
   final ScanHistoryEntry? baselineScan;
 
-  /// Every scan matching this exact key that individually passes the
-  /// single-scan honesty gates, oldest first -- used for per-metric
-  /// fallback resolution within the same key (see
-  /// _resolvePriorBaselineForMetric). Never includes a scan missing a
-  /// poseTemplate or guideType, or one that fails a single-scan gate.
+  /// The one fixed baseline scan available to per-metric readers, or empty
+  /// while no baseline is available. Never contains alternative scans.
   final List<ScanHistoryEntry> eligibleScansForKey;
 
   /// True when there is no valid baseline (no pin, no eligible earliest
   /// scan) for this key yet.
   final bool isFirstForKey;
 
-  /// Non-null when a pin existed for this key but was ignored (not found,
-  /// key mismatch, or failed a single-scan honesty gate) -- the resolved
-  /// [baselineScan] in that case (if any) is the earliest eligible scan
-  /// instead, never a silently-different key.
+  /// Non-null when a fixed pin is unavailable, key-mismatched, or no longer
+  /// eligible. No alternative history scan is substituted in that case.
   final String? ignoredPinReason;
+
+  final bool baselineUnavailable;
+
+  final bool shouldPinResolvedBaseline;
 }
 
 /// Pure resolution of the AI Skin Analysis baseline for [key], given every
 /// scan matching that key (in any order) and whatever scan id (if any) is
 /// currently pinned for it. Implements the baseline product rule's
-/// precedence exactly:
-///  1. A valid pin -- found in [allScans], its own key equals [key], AND it
-///     passes [scanPassesSingleScanBaselineGates] -- wins.
-///  2. Otherwise, the earliest (oldest timestamp) scan in [keyMatches] that
-///     passes the single-scan honesty gates.
-///  3. Otherwise there is no baseline yet.
-/// An invalid pin (missing, key-mismatched, or disqualified) is reported
-/// via [AiBaselineResolution.ignoredPinReason] and NEVER changes which scan
-/// step 2 picks -- it's simply skipped, never silently swapped for a
-/// different key's scan.
+/// precedence exactly: a valid fixed pin wins; a reset marker permits only
+/// post-reset scans; a broken pin blocks comparison; earliest-history fallback
+/// is reserved for legacy keys with no registry entry at all.
 AiBaselineResolution resolveAiBaseline({
   required AiBaselineKey key,
   required List<ScanHistoryEntry> keyMatches,
   required List<ScanHistoryEntry> allScans,
   String? pinnedScanId,
+  bool registryEntryExists = false,
+  DateTime? resetAt,
 }) {
   final sorted = List<ScanHistoryEntry>.from(keyMatches)
     ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-  final eligible = sorted.where(scanPassesSingleScanBaselineGates).toList();
+  final eligible = sorted.where((scan) {
+    if (!scanPassesSingleScanBaselineGates(scan)) return false;
+    return resetAt == null || !scan.timestamp.toUtc().isBefore(resetAt.toUtc());
+  }).toList();
 
   ScanHistoryEntry? pinnedValid;
   String? ignoredPinReason;
@@ -1269,31 +1268,61 @@ AiBaselineResolution resolveAiBaseline({
     }
     if (pinnedScan == null) {
       ignoredPinReason =
-          'Your pinned baseline scan is no longer available, so the '
-          'earliest matching scan is used instead.';
+          'Your baseline scan is unavailable. Reset or update the baseline '
+          'before comparing new scans.';
     } else if (pinnedScan.aiBaselineKey != key) {
       ignoredPinReason =
-          'Your pinned baseline no longer matches this angle or region, '
-          'so the earliest matching scan is used instead.';
+          'Your baseline no longer matches this angle or region. Reset or '
+          'update the baseline before comparing new scans.';
     } else if (!scanPassesSingleScanBaselineGates(pinnedScan)) {
       ignoredPinReason =
-          'Your pinned baseline scan no longer meets the quality checks '
-          'required for comparison, so the earliest matching scan is used '
-          'instead.';
+          'Your baseline scan no longer meets the quality checks required '
+          'for comparison. Reset or update the baseline.';
     } else {
       pinnedValid = pinnedScan;
     }
   }
 
-  final resolvedBaseline =
-      pinnedValid ?? (eligible.isNotEmpty ? eligible.first : null);
+  if (cleanPinnedId != null && cleanPinnedId.isNotEmpty) {
+    return AiBaselineResolution(
+      key: key,
+      baselineScan: pinnedValid,
+      eligibleScansForKey: pinnedValid == null ? const [] : [pinnedValid],
+      isFirstForKey: false,
+      ignoredPinReason: pinnedValid == null ? ignoredPinReason : null,
+      baselineUnavailable: pinnedValid == null,
+    );
+  }
+
+  if (resetAt != null) {
+    final resetBaseline = eligible.isNotEmpty ? eligible.first : null;
+    return AiBaselineResolution(
+      key: key,
+      baselineScan: resetBaseline,
+      eligibleScansForKey: resetBaseline == null ? const [] : [resetBaseline],
+      isFirstForKey: resetBaseline == null,
+      shouldPinResolvedBaseline: resetBaseline != null,
+    );
+  }
+
+  if (registryEntryExists) {
+    return AiBaselineResolution(
+      key: key,
+      isFirstForKey: false,
+      ignoredPinReason:
+          'Your baseline registry entry is unavailable. Reset or update the '
+          'baseline before comparing new scans.',
+      baselineUnavailable: true,
+    );
+  }
+
+  final resolvedBaseline = eligible.isNotEmpty ? eligible.first : null;
 
   return AiBaselineResolution(
     key: key,
     baselineScan: resolvedBaseline,
-    eligibleScansForKey: eligible,
+    eligibleScansForKey: resolvedBaseline == null ? const [] : [resolvedBaseline],
     isFirstForKey: resolvedBaseline == null,
-    ignoredPinReason: pinnedValid == null ? ignoredPinReason : null,
   );
 }
 
@@ -1600,17 +1629,21 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     return null;
   }
 
-  /// Clears the registered baseline for the CURRENT capture's key only
-  /// (see AppPrefs.clearAiBaselineScanId) -- every other angle/region/
-  /// procedure keeps its own baseline untouched.
-  Future<void> _handleBaselineReset() async {
+  AiBaselineKey _currentAiBaselineKey() {
     final selectedProcedureId = (_selectedProcedureId ?? '').trim();
-    final key = ScanHistoryEntry.resolveAiBaselineKey(
+    return ScanHistoryEntry.resolveAiBaselineKey(
       procedureId: selectedProcedureId.isEmpty ? null : selectedProcedureId,
       focusArea: _resolvedFocusArea(),
       poseTemplate: _capturedPoseTemplate,
       guideType: _capturedGuideType,
     );
+  }
+
+  /// Clears the registered baseline for the CURRENT capture's key only
+  /// (see AppPrefs.clearAiBaselineScanId) -- every other angle/region/
+  /// procedure keeps its own baseline untouched.
+  Future<void> _handleBaselineReset() async {
+    final key = _currentAiBaselineKey();
     await AppPrefs.clearAiBaselineScanId(key);
     if (!mounted) return;
     setState(() {
@@ -6144,19 +6177,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// real, comparable scan for each (procedureId, focusArea, poseTemplate,
   /// guideType) key is that key's baseline.
   ///
-  /// Precedence:
-  ///  1. A valid pin for this exact key wins (AppPrefs.getAiBaselineScanId)
-  ///     -- "valid" meaning the pinned scan still matches the key AND still
-  ///     passes the single-scan honesty gates. An invalid pin is ignored
-  ///     (see [_ignoredBaselinePinMessage]), never silently swapped for a
-  ///     different key.
-  ///  2. Otherwise, the earliest scan matching the key that passes the
-  ///     single-scan honesty gates (capture quality, known analysis
-  ///     method, a recorded formula version). A scan failing those is
-  ///     never itself a baseline candidate.
-  ///  3. If neither exists, there is no baseline yet -- this capture will
-  ///     become one once saved, if it qualifies (see
-  ///     [_registerAiBaselineIfNeeded]).
+  /// A valid pin stays fixed. A reset marker excludes pre-reset history until
+  /// the first eligible post-reset scan replaces it. A broken pin blocks
+  /// comparison. Only legacy keys with no registry state may choose their
+  /// earliest eligible historical scan.
   ///
   /// Pairwise gates (resolution, extraction-path match, capture-quality
   /// match, formula-version match) are checked only at comparison time, by
@@ -6179,13 +6203,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       _baselineNotSavedReason = null;
       _aiBaselineRegistryScanId = null;
 
-      final selectedProcedureId = (_selectedProcedureId ?? '').trim();
-      final key = ScanHistoryEntry.resolveAiBaselineKey(
-        procedureId: selectedProcedureId.isEmpty ? null : selectedProcedureId,
-        focusArea: _resolvedFocusArea(),
-        poseTemplate: _capturedPoseTemplate,
-        guideType: _capturedGuideType,
-      );
+      final key = _currentAiBaselineKey();
 
       final scans = await SkinHistoryRepository.instance.getAllScans();
       // getAllScans() is newest-first; sort oldest-first so "earliest" is
@@ -6209,14 +6227,22 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       _localHistoryCountForFocusArea = keyMatches.length + 1;
       _explicitLocalFollowUpFlag = keyMatches.any(readFollowUpFlagFromPayload);
 
-      final pinnedId = await AppPrefs.getAiBaselineScanId(key);
+      final registryState = await AppPrefs.getAiBaselineRegistryState(key);
+      final pinnedId = registryState.baselineScanId;
       _aiBaselineRegistryScanId = pinnedId;
       final resolution = resolveAiBaseline(
         key: key,
         keyMatches: keyMatches,
         allScans: scans,
         pinnedScanId: pinnedId,
+        registryEntryExists: registryState.hasEntry,
+        resetAt: registryState.resetAt,
       );
+      if (resolution.shouldPinResolvedBaseline &&
+          resolution.baselineScan != null) {
+        await AppPrefs.setAiBaselineScanId(key, resolution.baselineScan!.id);
+        _aiBaselineRegistryScanId = resolution.baselineScan!.id;
+      }
       _aiBaselineResolution = resolution;
       _priorFocusAreaScans = resolution.eligibleScansForKey;
       _ignoredBaselinePinMessage = resolution.ignoredPinReason;
