@@ -822,12 +822,11 @@ class ComputeTrendDeltasTests(unittest.TestCase):
 
     def test_request_roi_cache_reuses_masks_within_single_analysis(self) -> None:
         cache = main._RequestRoiCache()
-        image = np.zeros((120, 120, 3), dtype=np.uint8)
         points = np.zeros((468, 2), dtype=np.float32)
         skin_mask = np.ones((120, 120), dtype=np.uint8) * 255
 
-        first = cache.get_pore_mask((120, 120), points, image, skin_mask)
-        second = cache.get_pore_mask((120, 120), points, image, skin_mask)
+        first = cache.get_face_skin_mask((120, 120), points, skin_mask)
+        second = cache.get_face_skin_mask((120, 120), points, skin_mask)
         self.assertIs(first, second)
 
         forehead_mask = np.zeros((120, 120), dtype=np.uint8)
@@ -1090,15 +1089,60 @@ class MetricFormulaVersionRegistryTests(unittest.TestCase):
         # 26-32%-of-photos zero-out -- see METRIC_FORMULA_VERSION's comment
         # in main.py). Every other metric's formula is unchanged, so this
         # registry must not silently grow beyond that one deliberate bump.
-        self.assertEqual(METRIC_FORMULA_VERSION, {"glabellar_wrinkle_depth": 2})
+        self.assertEqual(
+            METRIC_FORMULA_VERSION,
+            {
+                "localized_redness": 2,
+                "texture_smoothness": 2,
+                "pigment_load": 2,
+                "wrinkle_load": 2,
+                "sebum_excess_oil_gloss": 2,
+                "diffuse_flushing_erythema": 2,
+                "rosacea_severity": 2,
+                "pore_visibility": 2,
+                "glabellar_wrinkle_depth": 2,
+            },
+        )
 
     def test_every_metric_defaults_to_version_1(self) -> None:
-        self.assertEqual(_metric_formula_version("texture_smoothness"), 1)
-        self.assertEqual(_metric_formula_version("wrinkle_load"), 1)
+        self.assertEqual(_metric_formula_version("texture_smoothness"), 2)
+        self.assertEqual(_metric_formula_version("wrinkle_load"), 2)
         self.assertEqual(_metric_formula_version("anything_unknown"), 1)
 
     def test_glabellar_wrinkle_depth_is_pinned_to_version_2(self) -> None:
         self.assertEqual(_metric_formula_version("glabellar_wrinkle_depth"), 2)
+
+    def test_face_skin_mask_changes_refuse_version_one_baselines(self) -> None:
+        for metric_key in {
+            "localized_redness",
+            "texture_smoothness",
+            "pigment_load",
+            "wrinkle_load",
+            "sebum_excess_oil_gloss",
+            "diffuse_flushing_erythema",
+            "rosacea_severity",
+            "pore_visibility",
+        }:
+            with self.subTest(metric_key=metric_key):
+                self.assertEqual(
+                    _trend_lock_reason(
+                        "primary_roi",
+                        "primary_roi",
+                        "normal",
+                        "normal",
+                        1000,
+                        750,
+                        1000,
+                        750,
+                        current_formula_version=_metric_formula_version(metric_key),
+                        baseline_formula_version=1,
+                        current_pose_template="Front",
+                        baseline_pose_template="Front",
+                        current_guide_type="facial",
+                        baseline_guide_type="facial",
+                    ),
+                    "formula_version_mismatch",
+                )
 
 
 class FormulaVersionMismatchGateTests(unittest.TestCase):

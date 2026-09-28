@@ -1874,28 +1874,26 @@ class _RequestRoiCache:
     """
 
     def __init__(self) -> None:
-        self._pore_cache: Dict[tuple[object, ...], tuple[np.ndarray, np.ndarray]] = {}
+        self._face_skin_cache: Dict[tuple[object, ...], tuple[np.ndarray, np.ndarray]] = {}
         self._tzone_cache: Dict[tuple[object, ...], tuple[np.ndarray, Dict[str, Any]]] = {}
 
-    def get_pore_mask(
+    def get_face_skin_mask(
         self,
         shape: Tuple[int, int],
         points: np.ndarray,
-        face_bgr: np.ndarray,
         skin_mask: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         key = (
             tuple(shape),
             id(points),
-            id(face_bgr),
             id(skin_mask),
         )
-        cached = self._pore_cache.get(key)
+        cached = self._face_skin_cache.get(key)
         if cached is not None:
             return cached
 
-        result = _build_pore_roi_masks(shape, points, face_bgr, skin_mask)
-        self._pore_cache[key] = result
+        result = _build_face_skin_mask(shape, points, skin_mask)
+        self._face_skin_cache[key] = result
         return result
 
     def get_tzone_mask(
@@ -1922,14 +1920,11 @@ class _RequestRoiCache:
         return result
 
 
-def _build_pore_roi_masks(
+def _build_face_skin_mask(
     shape: Tuple[int, int],
     points: np.ndarray,
-    face_bgr: np.ndarray,
     skin_mask: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    # ROI lock: full face skin (forehead, nose, cheeks, chin) from face oval.
-    # Excludes non-face/background by constraining to face contour + skin signals.
     h, w = shape
     face_oval_ids = [
         10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
@@ -1963,7 +1958,24 @@ def _build_pore_roi_masks(
         inner_face_mask,
         cv2.bitwise_not(exclusion),
     )
-    skin_locked_mask = cv2.bitwise_and(face_skin_candidate, skin_mask)
+    face_skin_mask = cv2.bitwise_and(
+        face_skin_candidate,
+        _as_binary_mask(skin_mask, (h, w)),
+    )
+    return geom_mask, face_skin_mask
+
+
+def _build_pore_roi_masks(
+    shape: Tuple[int, int],
+    points: np.ndarray,
+    face_skin_mask: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    h, w = shape
+    geom_mask = _face_oval_mask((h, w), points)
+    if cv2.countNonZero(geom_mask) <= 0:
+        empty = np.zeros((h, w), dtype=np.uint8)
+        return empty, empty
+    pore_roi_mask = _as_binary_mask(face_skin_mask, (h, w))
 
     # Restrict the pore mask to the true T-zone: nose bridge + immediate inner
     # cheeks/paranasal zone. This avoids ingesting the forehead, outer cheeks,
@@ -1971,102 +1983,32 @@ def _build_pore_roi_masks(
     # dimensions and trip the pore gate unnecessarily.
     tzone_ids = [1, 33, 133, 263, 362, 61, 291, 234, 454, 152, 296, 300]
     valid_tzone_ids = [idx for idx in tzone_ids if 0 <= idx < points.shape[0]]
-    if len(valid_tzone_ids) >= 5:
-        center = np.mean(points[valid_tzone_ids], axis=0).astype(np.float32)
-        cx = int(np.clip(round(float(center[0])), 0, w - 1))
-        cy = int(np.clip(round(float(center[1])), 0, h - 1))
-        # Keep pore measurement tightly centered on the nose/inner-cheek area.
-        band_w = int(np.clip(min(w * 0.18, 120.0), 80.0, 120.0))
-        band_h = int(np.clip(min(h * 0.22, 100.0), 70.0, 100.0))
-        x0 = max(0, cx - band_w // 2)
-        x1 = min(w, cx + band_w // 2)
-        y0 = max(0, cy - band_h // 2)
-        y1 = min(h, cy + band_h // 2)
-        tzone_window = np.zeros((h, w), dtype=np.uint8)
-        tzone_window[y0:y1, x0:x1] = 255
-        skin_locked_mask = cv2.bitwise_and(skin_locked_mask, tzone_window)
+    if len(valid_tzone_ids) < 5:
+        return geom_mask, np.zeros((h, w), dtype=np.uint8)
+    center = np.mean(points[valid_tzone_ids], axis=0).astype(np.float32)
+    cx = int(np.clip(round(float(center[0])), 0, w - 1))
+    cy = int(np.clip(round(float(center[1])), 0, h - 1))
+    # Keep pore measurement tightly centered on the nose/inner-cheek area.
+    band_w = int(np.clip(min(w * 0.18, 120.0), 80.0, 120.0))
+    band_h = int(np.clip(min(h * 0.22, 100.0), 70.0, 100.0))
+    x0 = max(0, cx - band_w // 2)
+    x1 = min(w, cx + band_w // 2)
+    y0 = max(0, cy - band_h // 2)
+    y1 = min(h, cy + band_h // 2)
+    tzone_window = np.zeros((h, w), dtype=np.uint8)
+    tzone_window[y0:y1, x0:x1] = 255
+    pore_roi_mask = cv2.bitwise_and(pore_roi_mask, tzone_window)
 
-    # Strict cap: pore ROIs must stay in a realistic T-zone range, not whole-face
-    # masks. This is a bounding-box clamp only; it does not change scoring,
-    # confidence, or emit logic outside the pore ROI itself.
-    skin_pixels = int(cv2.countNonZero(skin_locked_mask))
-    if skin_pixels > 25000:
-        ys, xs = np.where(skin_locked_mask > 0)
-        if xs.size > 0 and ys.size > 0:
-            cx = int(np.mean(xs))
-            cy = int(np.mean(ys))
-            band_w = int(np.clip(min(w * 0.14, 100.0), 60.0, 100.0))
-            band_h = int(np.clip(min(h * 0.18, 90.0), 50.0, 90.0))
-            x0 = max(0, cx - band_w // 2)
-            x1 = min(w, cx + band_w // 2)
-            y0 = max(0, cy - band_h // 2)
-            y1 = min(h, cy + band_h // 2)
-            tight_mask = np.zeros((h, w), dtype=np.uint8)
-            tight_mask[y0:y1, x0:x1] = 255
-            skin_locked_mask = cv2.bitwise_and(skin_locked_mask, tight_mask)
-
-    # Primary intersection with upstream skin mask.
-    raw_pixels = int(cv2.countNonZero(face_skin_candidate))
-    intersected_pixels = int(cv2.countNonZero(skin_locked_mask))
-
-    # Fallback when strict skin mask under-segments normal full-face photos.
-    min_intersection = max(500, int(raw_pixels * 0.03))
-    if intersected_pixels < min_intersection:
-        # Use relaxed skin chroma bounds within face contour only.
-        ycrcb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2YCrCb)
-        hsv = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2HSV)
-        y = ycrcb[:, :, 0]
-        cr = ycrcb[:, :, 1]
-        cb = ycrcb[:, :, 2]
-        sat = hsv[:, :, 1]
-        val = hsv[:, :, 2]
-
-        relaxed_skin_bool = np.logical_and.reduce([
-            face_skin_candidate > 0,
-            cr >= 128,
-            cr <= 178,
-            cb >= 78,
-            cb <= 138,
-            sat >= 18,
-            sat <= 235,
-            val >= 35,
-            y >= 35,
-        ])
-        fallback_mask = (relaxed_skin_bool.astype(np.uint8) * 255)
-        fallback_mask = cv2.morphologyEx(
-            fallback_mask,
-            cv2.MORPH_OPEN,
-            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
-        )
-        fallback_mask = cv2.morphologyEx(
-            fallback_mask,
-            cv2.MORPH_CLOSE,
-            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
-        )
-        fallback_mask = cv2.bitwise_and(fallback_mask, face_skin_candidate)
-        fallback_pixels = int(cv2.countNonZero(fallback_mask))
-        if fallback_pixels > 0:
-            skin_locked_mask = fallback_mask
-            intersected_pixels = fallback_pixels
-
-    logger.info(
-        "[PoreROI] full_face_pixels=%d skin_intersected_pixels=%d",
-        raw_pixels,
-        intersected_pixels,
-    )
-    return geom_mask, skin_locked_mask
+    return geom_mask, pore_roi_mask
 
 
 def _extract_native_resolution_pore_roi(
     face_bgr: np.ndarray,
     points: np.ndarray,
-    skin_mask: np.ndarray,
+    face_skin_mask: np.ndarray,
 ) -> tuple[np.ndarray | None, np.ndarray | None, int]:
     geom_mask, skin_locked_mask = _build_pore_roi_masks(
-        face_bgr.shape[:2],
-        points,
-        face_bgr,
-        skin_mask,
+        face_bgr.shape[:2], points, face_skin_mask
     )
     if int(cv2.countNonZero(skin_locked_mask)) <= 0:
         return None, None, 0
@@ -2588,11 +2530,15 @@ def _compute_additional_opencv_metrics(
 
     skin_mask = _as_binary_mask(skin_mask, (h, w))
     if roi_cache is not None:
-        _, face_skin_mask = roi_cache.get_pore_mask((h, w), points, face_bgr, skin_mask)
+        _, face_skin_mask = roi_cache.get_face_skin_mask((h, w), points, skin_mask)
     else:
-        _, face_skin_mask = _build_pore_roi_masks((h, w), points, face_bgr, skin_mask)
+        _, face_skin_mask = _build_face_skin_mask((h, w), points, skin_mask)
     if cv2.countNonZero(face_skin_mask) <= 0:
-        face_skin_mask = skin_mask.copy()
+        return {
+            "sebum_excess_oil_gloss": None,
+            "diffuse_flushing_erythema": None,
+            "skin_tone_radiance_evenness": None,
+        }
     forehead = _as_binary_mask(regions.get("forehead", np.zeros((h, w), dtype=np.uint8)), (h, w))
     if roi_cache is not None:
         t_zone, _ = roi_cache.get_tzone_mask((h, w), points, forehead, skin_mask, face_skin_mask)
@@ -3070,14 +3016,10 @@ def _compute_canonical_patch_metrics(
     gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
 
     glabella = _glabella_region_mask((h, w), points, skin_mask)
-    face_landmarks_present = points.shape[0] > 0
-
     if roi_cache is not None:
-        _, full_face_skin_mask = roi_cache.get_pore_mask((h, w), points, face_bgr, skin_mask)
+        _, full_face_skin_mask = roi_cache.get_face_skin_mask((h, w), points, skin_mask)
     else:
-        _, full_face_skin_mask = _build_pore_roi_masks((h, w), points, face_bgr, skin_mask)
-    if cv2.countNonZero(full_face_skin_mask) <= 0:
-        full_face_skin_mask = skin_mask.copy()
+        _, full_face_skin_mask = _build_face_skin_mask((h, w), points, skin_mask)
     full_face_skin_mask = _as_binary_mask(full_face_skin_mask, (h, w))
     full_face_pixels = int(cv2.countNonZero(full_face_skin_mask))
     skin_mask_pixels = int(cv2.countNonZero(skin_mask))
@@ -3216,34 +3158,6 @@ def _compute_canonical_patch_metrics(
 
     fallback_used = large_roi_fallback_used
     bbox_fallback_used = False
-    core_roi_pixels = max(primary_texture_pixels, primary_pigment_pixels)
-    sparse_primary_roi = (
-        primary_t_zone_pixels <= 100
-        or primary_cheek_pixels < MIN_USABLE_CHEEK_PIXELS
-        or core_roi_pixels < 5000
-    )
-    if face_landmarks_present and sparse_primary_roi:
-        # Landmark bbox fallback does not depend on skin-mask success, but it
-        # must still be clipped to the face oval -- the raw landmark bounding
-        # rectangle's corners fall outside any real face's oval, so left
-        # un-clipped it can pull hair/ear/background pixels directly into a
-        # metric score. Intersecting here (at the point the mask is
-        # selected) means every downstream consumer is safe by construction.
-        bbox_mask = cv2.bitwise_and(
-            _landmark_bbox_mask((h, w), points),
-            _face_oval_mask((h, w), points),
-        )
-        if cv2.countNonZero(bbox_mask) > 0:
-            if not cheek_primary_usable:
-                cheek_mask = bbox_mask
-                redness_roi_source = "full_face_fallback"
-                pigment_roi_source = "full_face_fallback"
-            if not texture_primary_usable:
-                texture_mask = full_face_skin_mask.copy()
-                texture_roi_source = "large_roi_fallback"
-            wrinkle_mask = cv2.bitwise_or(glabella, texture_mask)
-            fallback_used = True
-            bbox_fallback_used = True
 
     raw_components["primary_t_zone_skin_pixels_before_fix"] = float(primary_t_zone_pixels_before_fix)
     raw_components["primary_t_zone_after_expand_pixels"] = float(tzone_meta.get("after_expand_pixels", 0))
@@ -3411,7 +3325,7 @@ def _compute_canonical_patch_metrics(
     pore_l_crop, pore_mask_crop, pore_roi_pixels = _extract_native_resolution_pore_roi(
         face_bgr,
         points,
-        skin_mask,
+        full_face_skin_mask,
     )
     pore_fallback_used = False
     pore_fallback_pixels = 0
@@ -3849,6 +3763,14 @@ TREND_NOISE_FLOOR_EXCLUDED_MULTIPLIER = 3.0
 # NOT itself change any formula; it only lets the trend gate react once a
 # future change bumps an entry.
 METRIC_FORMULA_VERSION: Dict[str, int] = {
+    "localized_redness": 2,
+    "texture_smoothness": 2,
+    "pigment_load": 2,
+    "wrinkle_load": 2,
+    "sebum_excess_oil_gloss": 2,
+    "diffuse_flushing_erythema": 2,
+    "rosacea_severity": 2,
+    "pore_visibility": 2,
     # v2: fixed avg_width quantization (boundingRect integer px -> minAreaRect
     # continuous size) and the 26-32%-of-photos zero-out (82nd-percentile
     # threshold + (3,5) opening kernel erasing thin-but-real furrow
@@ -5827,14 +5749,9 @@ def analyze_skin_patch(
         glabella_pixels,
         under_eye_pixels,
     )
-    full_face_skin_intersected_pixels = int(
+    full_face_pixels = int(
         raw_components.get("full_face_skin_pixels", cv2.countNonZero(mask))
     )
-    full_face_bbox_guard_pixels = 0
-    if norm_points.size > 0:
-        face_bbox_mask = _landmark_bbox_mask(norm.shape[:2], norm_points)
-        full_face_bbox_guard_pixels = int(cv2.countNonZero(face_bbox_mask) * 0.6)
-    full_face_pixels = max(full_face_skin_intersected_pixels, full_face_bbox_guard_pixels)
 
     supplemental_confidence = {
         "sebum_excess_oil_gloss": _conf_from_pixels_and_value(
@@ -5966,11 +5883,8 @@ def analyze_skin_patch(
         if norm_points.size > 0
         else np.zeros(norm.shape[:2], dtype=np.uint8)
     )
-    _, fallback_skin_mask = _build_pore_roi_masks(
-        norm.shape[:2],
-        norm_points,
-        norm,
-        mask_binary,
+    _, fallback_skin_mask = request_roi_cache.get_face_skin_mask(
+        norm.shape[:2], norm_points, mask_binary
     )
     fallback_skin_mask = _as_binary_mask(fallback_skin_mask, norm.shape[:2])
     fallback_skin_pixels = int(cv2.countNonZero(fallback_skin_mask))

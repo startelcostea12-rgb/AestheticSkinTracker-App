@@ -43,7 +43,62 @@ def _native_pore_roi_for(photo_path: Path):
     assert norm_landmarks is not None
     norm_points = main._landmarks_to_points(norm_landmarks, norm.shape[1], norm.shape[0])
 
-    return main._extract_native_resolution_pore_roi(norm, norm_points, mask)
+    _, face_skin_mask = main._build_face_skin_mask(
+        norm.shape[:2], norm_points, mask
+    )
+    return main._extract_native_resolution_pore_roi(
+        norm, norm_points, face_skin_mask
+    )
+
+
+def _face_and_pore_masks_for(photo_path: Path):
+    main.ensure_pipeline_ready()
+    normalized_bgr, _ = main.assess_and_normalize_image(photo_path.read_bytes())
+    landmarks, _, _ = main._extract_primary_landmarks(
+        cv2.cvtColor(normalized_bgr, cv2.COLOR_BGR2RGB)
+    )
+    assert landmarks is not None
+    points = main._landmarks_to_points(
+        landmarks, normalized_bgr.shape[1], normalized_bgr.shape[0]
+    )
+    aligned_face, _ = main._align_and_crop_face(normalized_bgr, points)
+    norm = main.normalize_lighting_and_shadows(aligned_face)
+    skin_mask = main._skin_mask(norm)
+    norm_landmarks, _, _ = main._extract_primary_landmarks(
+        cv2.cvtColor(norm, cv2.COLOR_BGR2RGB)
+    )
+    assert norm_landmarks is not None
+    norm_points = main._landmarks_to_points(
+        norm_landmarks, norm.shape[1], norm.shape[0]
+    )
+    _, face_skin_mask = main._build_face_skin_mask(
+        norm.shape[:2], norm_points, skin_mask
+    )
+    _, pore_roi_mask = main._build_pore_roi_masks(
+        norm.shape[:2], norm_points, face_skin_mask
+    )
+    regions = main._region_masks(norm.shape[:2], skin_mask, norm_points)
+    forehead_skin_mask = cv2.bitwise_and(
+        regions["forehead"], face_skin_mask
+    )
+    return face_skin_mask, pore_roi_mask, forehead_skin_mask
+
+
+def test_face_skin_mask_is_not_limited_to_pore_tzone_window():
+    face_skin_mask, pore_roi_mask, _ = _face_and_pore_masks_for(CLEAR_FACE_PHOTO)
+
+    face_pixels = cv2.countNonZero(face_skin_mask)
+    pore_pixels = cv2.countNonZero(pore_roi_mask)
+    assert face_pixels > pore_pixels > 0
+
+    ys, xs = (pore_roi_mask > 0).nonzero()
+    assert int(xs.max() - xs.min() + 1) <= 120
+    assert int(ys.max() - ys.min() + 1) <= 100
+
+
+def test_forehead_face_skin_intersection_is_nontrivial_on_normal_face():
+    _, _, forehead_skin_mask = _face_and_pore_masks_for(CLEAR_FACE_PHOTO)
+    assert cv2.countNonZero(forehead_skin_mask) >= main.MIN_USABLE_TEXTURE_ROI_PIXELS
 
 
 def test_pore_roi_crop_is_not_upsampled_to_fixed_canvas():
