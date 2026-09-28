@@ -683,6 +683,7 @@ String _describeUploadFailure(Object error) {
 
 const String aiScanPerFrameDiagnosticsKey = 'per_frame_diagnostics';
 const String rednessTrendLockReasonsKey = 'redness_trend_lock_reasons';
+const String cheekSideConventionSubjectAnatomical = 'subject_anatomical';
 
 List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
   required List<Map<String, dynamic>?> frameResponses,
@@ -706,6 +707,7 @@ List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
     return <String, dynamic>{
       'frame_number': index + 1,
       'cheek_side': imageQuality['redness_cheek_side'],
+      'cheek_side_convention': imageQuality['cheek_side_convention'],
       'mask_pixel_count': imageQuality['redness_cheek_roi_pixels'],
       'cheek_p95_a_after_wb': imageQuality['redness_cheek_p95_a_after_wb'],
       'cheek_p10_a_after_wb': imageQuality['redness_cheek_p10_a_after_wb'],
@@ -778,7 +780,19 @@ downgradeRednessTrendForCaptureMismatch({
   final currentQuality = imageQuality(currentPayload);
   final baselineQuality = imageQuality(baselinePayload);
   final currentSide = currentQuality['redness_cheek_side']?.toString().trim();
-  final baselineSide = baselineQuality['redness_cheek_side']?.toString().trim();
+    final storedBaselineSide = baselineQuality['redness_cheek_side']
+      ?.toString()
+      .trim();
+    final baselineConvention = baselineQuality['cheek_side_convention']
+      ?.toString()
+      .trim();
+    final baselineSide = baselineConvention == cheekSideConventionSubjectAnatomical
+      ? storedBaselineSide
+      : switch (storedBaselineSide) {
+        'left' => 'right',
+        'right' => 'left',
+        _ => storedBaselineSide,
+      };
   final reasons = <String>{};
   if (existingRednessLockReason == 'path_mismatch') {
     reasons.add('path_mismatch');

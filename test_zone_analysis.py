@@ -36,6 +36,10 @@ def test_zone_analysis_emits_only_supported_valid_roi_combinations() -> None:
     assert "texture_smoothness" in result["forehead"]["metrics"]
     assert "pigment_load" in result["left_cheek"]["metrics"]
     assert result["left_cheek"]["crop"]["coordinate_space"] == "normalized_face"
+    assert (
+        result["left_cheek"]["crop"]["left"]
+        > result["right_cheek"]["crop"]["left"]
+    )
 
 
 def test_zone_analysis_omits_insufficient_fallback_roi() -> None:

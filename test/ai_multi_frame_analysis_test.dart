@@ -13,9 +13,12 @@ void main() {
     required double p10,
     required double p95,
     required List<double> frameP95,
+    String? cheekSideConvention = cheekSideConventionSubjectAnatomical,
   }) => <String, dynamic>{
     'image_quality': <String, dynamic>{
       'redness_cheek_side': cheekSide,
+      if (cheekSideConvention != null)
+        'cheek_side_convention': cheekSideConvention,
       'redness_cheek_p10_a_after_wb': p10,
       'redness_cheek_p95_a_after_wb': p95,
     },
@@ -104,6 +107,54 @@ void main() {
       expect(result.trendStatus['localized_redness'], 'improved');
       expect(result.trendDeltas['localized_redness'], 12.0);
       expect(result.trendLockReasons, isEmpty);
+    });
+
+    test('new scan and legacy baseline of the same physical cheek compare', () {
+      final result = downgradeRednessTrendForCaptureMismatch(
+        trendStatus: const {'localized_redness': 'improved'},
+        trendDeltas: const {'localized_redness': 12.0},
+        trendLockReasons: const {},
+        baselinePayload: rednessPayload(
+          cheekSide: 'right',
+          cheekSideConvention: null,
+          frameP95: const [10.0, 12.0, 11.0],
+          p10: 4.0,
+          p95: 11.0,
+        ),
+        currentPayload: rednessPayload(
+          cheekSide: 'left',
+          frameP95: const [11.0, 13.0, 12.0],
+          p10: 5.0,
+          p95: 12.0,
+        ),
+      );
+
+      expect(result.rednessLockReasons, isEmpty);
+      expect(result.trendStatus['localized_redness'], 'improved');
+    });
+
+    test('different physical cheeks still trigger cheek mismatch', () {
+      final result = downgradeRednessTrendForCaptureMismatch(
+        trendStatus: const {'localized_redness': 'improved'},
+        trendDeltas: const {'localized_redness': 12.0},
+        trendLockReasons: const {},
+        baselinePayload: rednessPayload(
+          cheekSide: 'left',
+          cheekSideConvention: null,
+          frameP95: const [10.0, 12.0, 11.0],
+          p10: 4.0,
+          p95: 11.0,
+        ),
+        currentPayload: rednessPayload(
+          cheekSide: 'left',
+          frameP95: const [11.0, 13.0, 12.0],
+          p10: 5.0,
+          p95: 12.0,
+        ),
+      );
+
+      expect(result.rednessLockReasons, contains('cheek_mismatch'));
+      expect(result.trendStatus.containsKey('localized_redness'), isFalse);
     });
 
     test('path mismatch alone leaves redness status and delta empty', () {
@@ -419,6 +470,7 @@ void main() {
           'status': 'success',
           'image_quality': {
             'redness_cheek_side': frameNumber == 1 ? 'left' : 'right',
+            'cheek_side_convention': cheekSideConventionSubjectAnatomical,
             'redness_cheek_roi_pixels': frameNumber == 1 ? 2100 : 2300,
             'redness_cheek_p95_a_after_wb': frameNumber == 1 ? 31.5 : 33.5,
             'redness_cheek_p10_a_after_wb': frameNumber == 1 ? 20.5 : 21.5,
@@ -460,6 +512,13 @@ void main() {
         aggregate.response[aiScanPerFrameDiagnosticsKey] as List<dynamic>;
     expect(diagnostics, hasLength(3));
     expect(diagnostics[0], containsPair('cheek_side', 'left'));
+    expect(
+      diagnostics[0],
+      containsPair(
+        'cheek_side_convention',
+        cheekSideConventionSubjectAnatomical,
+      ),
+    );
     expect(diagnostics[0], containsPair('localized_redness', 20.0));
     expect(diagnostics[0], containsPair('cheek_p10_a_after_wb', 20.5));
     expect(diagnostics[0], containsPair('shutter_seconds', 1 / 120));

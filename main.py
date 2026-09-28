@@ -2300,6 +2300,17 @@ def is_redness_unset(current_value):
     )
 
 
+CHEEK_SIDE_CONVENTION = "subject_anatomical"
+
+
+def _subject_anatomical_cheek_side(internal_side: str) -> str:
+    if internal_side == "left":
+        return "right"
+    if internal_side == "right":
+        return "left"
+    return internal_side
+
+
 def _compute_zone_based_metrics(
     face_bgr: np.ndarray,
     skin_mask: np.ndarray,
@@ -2396,7 +2407,7 @@ def _compute_zone_based_metrics(
                     )
                 )
             )
-            side_names.append(side_name)
+            side_names.append(_subject_anatomical_cheek_side(side_name))
             side_masks.append(side_pixels)
             side_p95s.append(side_p95)
         redness_signal = max(side_spreads, default=0.0)
@@ -5331,8 +5342,8 @@ def _compute_zone_analysis(
 
     raw_zones = {
         "forehead": regions.get("forehead"),
-        "left_cheek": regions.get("left_cheek"),
-        "right_cheek": regions.get("right_cheek"),
+        "left_cheek": regions.get("right_cheek"),
+        "right_cheek": regions.get("left_cheek"),
         "nose": _nose_region_mask((h, w), np.asarray([]), skin),
     }
     # The nose mask needs landmarks; callers pass it through regions when
@@ -6901,6 +6912,7 @@ def analyze_skin_patch(
         "face_skin_pixels": int(raw_components.get("full_face_skin_pixels", 0.0)),
         "pore_roi_pixels": int(raw_components.get("primary_pore_roi_pixels", 0.0)),
         "u_zone_pixels": int(redness_diagnostics.get("u_zone_pixels", 0)),
+        "cheek_side_convention": CHEEK_SIDE_CONVENTION,
         "localized_redness_mask_kind": redness_mask_kind,
         "localized_redness_mask_pixels": int(
             redness_diagnostics.get("cheek_roi_pixels")

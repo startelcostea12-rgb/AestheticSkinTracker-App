@@ -41,6 +41,7 @@ NEW_IMAGE_QUALITY_KEYS = {
     "face_skin_pixels",
     "pore_roi_pixels",
     "u_zone_pixels",
+    "cheek_side_convention",
     "localized_redness_mask_kind",
     "localized_redness_mask_pixels",
     "texture_smoothness_mask_kind",
@@ -168,7 +169,7 @@ def test_within_cheek_spread_branch_reports_the_winning_cheek():
     assert logged == plain
 
     assert diagnostics["branch"] == "within_cheek_spread"
-    assert diagnostics["cheek_side"] == "right"
+    assert diagnostics["cheek_side"] == "left"
     assert diagnostics["baseline_p95_a"] is None
     lab = cv2.cvtColor(face, cv2.COLOR_BGR2LAB)
     a_blur = cv2.GaussianBlur(lab[:, :, 1].astype(np.float32), (0, 0), sigmaX=2.0)
@@ -306,6 +307,7 @@ def test_full_pipeline_emits_fields_without_changing_any_score():
     assert iq_with["redness_cheek_p95_a_before_wb"] is not None
     assert iq_with["face_skin_pixels"] > iq_with["pore_roi_pixels"] > 0
     assert iq_with["u_zone_pixels"] > 0
+    assert iq_with["cheek_side_convention"] == "subject_anatomical"
     assert iq_with["localized_redness_mask_kind"] in {"left_cheek", "right_cheek"}
     assert iq_with["localized_redness_mask_pixels"] > 0
     assert iq_with["texture_smoothness_mask_kind"] == "forehead_skin"
