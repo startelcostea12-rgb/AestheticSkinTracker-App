@@ -1064,6 +1064,7 @@ class _MetricRowData {
     required this.initialBaseline,
     required this.honestyStatus,
     required this.honestyLabel,
+    required this.trendLocked,
     required this.hasRealBaseline,
     required this.hasComparableCurrentValue,
   });
@@ -1077,6 +1078,7 @@ class _MetricRowData {
   final bool initialBaseline;
   final _HonestyStatus honestyStatus;
   final String honestyLabel;
+  final bool trendLocked;
   final bool hasRealBaseline;
   final bool hasComparableCurrentValue;
 }
@@ -2109,6 +2111,7 @@ class _MetricCard extends StatelessWidget {
         initialBaseline: true,
         honestyStatus: _HonestyStatus.insufficientSignal,
         honestyLabel: 'Starting point',
+        trendLocked: false,
         hasRealBaseline: false,
         hasComparableCurrentValue: metric.hasComparableCurrentValue,
       );
@@ -2194,6 +2197,7 @@ class _MetricCard extends StatelessWidget {
       initialBaseline: initialBaseline,
       honestyStatus: assessment.status,
       honestyLabel: honestyLabel,
+      trendLocked: assessment.lockReason != null,
       hasRealBaseline: assessment.hasRealBaseline,
       hasComparableCurrentValue: metric.hasComparableCurrentValue,
     );
@@ -2203,8 +2207,12 @@ class _MetricCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final row = _buildMetricRowData();
     final chipLabel = row.honestyLabel;
-    final chipIcon = _chipIcon(row.honestyStatus);
-    final chipColor = _chipColor(row.honestyStatus);
+    final chipIcon = row.trendLocked
+      ? Icons.help_outline_rounded
+      : _chipIcon(row.honestyStatus);
+    final chipColor = row.trendLocked
+      ? const Color(0xFF8E7F6D)
+      : _chipColor(row.honestyStatus);
     const titleColor = AppColors.textStructure;
     final headlineDelta = row.honestyLabel;
     final precision = metricPrecisionPresentation(metric);

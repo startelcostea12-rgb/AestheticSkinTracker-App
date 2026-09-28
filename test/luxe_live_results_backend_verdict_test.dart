@@ -134,6 +134,9 @@ void main() {
       expect(find.text('Stable'), findsNothing);
       expect(find.byIcon(Icons.trending_up_rounded), findsNothing);
       expect(find.byIcon(Icons.trending_down_rounded), findsNothing);
+      expect(find.byIcon(Icons.trending_flat_rounded), findsNothing);
+      final label = tester.widget<Text>(find.textContaining('Not comparable:'));
+      expect(label.style?.color, const Color(0xFF8E7F6D));
     },
   );
 
