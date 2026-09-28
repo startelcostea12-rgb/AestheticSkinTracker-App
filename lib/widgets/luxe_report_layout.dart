@@ -598,13 +598,21 @@ class LuxeMetricParser {
           spec.higherIsWorse ?? _isDefectMetric(spec.deltaKey);
       final baselineCandidates = _baselineCandidateKeys(spec.deltaKey);
       final showTrendVerdict = shouldShowTrendVerdict(spec.deltaKey);
-      final baseline = _findUsableBaselineValue(
-        baselineMetricMatrix,
-        baselineCandidates,
-      );
+      final baseline = showTrendVerdict
+          ? _findUsableBaselineValue(
+              baselineMetricMatrix,
+              baselineCandidates,
+            )
+          : _findPresentBaselineValue(
+              baselineMetricMatrix,
+              baselineCandidates,
+            );
       final hasBaseline = baseline != null && baseline.isFinite;
       final hasComparisonBaseline =
-          hasBaseline && _isUsableBaselineValue(baseline);
+          hasBaseline &&
+          (showTrendVerdict
+              ? _isUsableBaselineValue(baseline)
+              : baseline >= 0.0);
 
       final currentConfidenceValue = _resolveMetricConfidenceValue(
         metricKey: spec.deltaKey,
@@ -1040,6 +1048,20 @@ class LuxeMetricParser {
     }
     return null;
   }
+
+  static double? _findPresentBaselineValue(
+    Map<String, dynamic> targetMap,
+    List<String> candidateKeys,
+  ) {
+    final map = _canonicalizeMetricMap(targetMap);
+    for (final candidate in candidateKeys) {
+      final key = _canonicalMetricKey(candidate);
+      final value = _asDoubleOrNull(map[key]);
+      if (value != null && value.isFinite && value >= 0.0) return value;
+    }
+    return null;
+  }
+
 
   static Map<String, dynamic> _canonicalizeMetricMap(dynamic value) {
     final source = _asMap(value);

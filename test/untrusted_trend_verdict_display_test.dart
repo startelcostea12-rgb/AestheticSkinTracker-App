@@ -80,6 +80,43 @@ void main() {
     expect(find.textContaining('20.0%'), findsNothing);
   });
 
+  testWidgets('real low rosacea baseline is Recorded, not Starting point', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      harness(const <String, dynamic>{
+        'is_follow_up': true,
+        'local_history_count': 2,
+        'metric_matrix': {'rosacea_severity': 0.43333333333333335},
+        'baseline_metric_matrix': {
+          'rosacea_severity': 0.3666666666666667,
+        },
+        'metric_formula_versions': {'rosacea_severity': 2},
+        'baseline_metric_formula_versions': {'rosacea_severity': 2},
+      }),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Recorded'), findsOneWidget);
+    expect(find.text('Starting point'), findsNothing);
+    expect(find.textContaining('Baseline 0.4'), findsWidgets);
+  });
+
+  testWidgets('missing rosacea baseline remains Starting point', (tester) async {
+    await tester.pumpWidget(
+      harness(const <String, dynamic>{
+        'is_follow_up': true,
+        'local_history_count': 2,
+        'metric_matrix': {'rosacea_severity': 0.43333333333333335},
+        'metric_formula_versions': {'rosacea_severity': 2},
+      }),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Starting point'), findsOneWidget);
+    expect(find.text('Recorded'), findsNothing);
+  });
+
   test('worsening percentage drops the leading minus sign', () {
     expect(
       LuxeMetricParser.formatDisplayDelta(
