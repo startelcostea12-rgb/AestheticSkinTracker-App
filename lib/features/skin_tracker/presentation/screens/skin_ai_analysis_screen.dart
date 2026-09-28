@@ -64,6 +64,8 @@ class SkinAiAnalysisScreen extends StatefulWidget {
 
 enum _Stage { capture, analyzing, results }
 
+enum _DebugExportAction { burstLog, scanData }
+
 class MultiFrameAnalysisAggregate {
   const MultiFrameAnalysisAggregate({
     required this.response,
@@ -2763,56 +2765,52 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         backgroundColor: AppColors.cardBackground,
         elevation: 0.5,
         iconTheme: IconThemeData(color: MyApp.clinicalNavy),
-        title: Row(
-          children: [
-            Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    AppColors.champagneGold.withValues(alpha: 0.26),
-                    AppColors.cardBackground,
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: AppColors.champagneGold.withValues(alpha: 0.42),
-                  width: 0.6,
-                ),
-              ),
-              child: const Icon(
-                Icons.auto_awesome_rounded,
-                color: AppColors.champagneGold,
-                size: 16,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              'Skin Scan',
-              style: TextStyle(
-                color: MyApp.clinicalNavy,
-                fontWeight: FontWeight.w900,
-                fontSize: 16,
-              ),
-            ),
-          ],
+        title: Text(
+          'Skin Scan',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: MyApp.clinicalNavy,
+            fontWeight: FontWeight.w900,
+            fontSize: 16,
+          ),
         ),
         actions: [
           if (kDebugMode)
             Builder(
-              builder: (buttonContext) => TextButton.icon(
-                onPressed: () => _exportBurstLuminanceLog(buttonContext),
-                icon: const Icon(Icons.bug_report_outlined, size: 16),
-                label: const Text('Export Burst Log'),
-              ),
-            ),
-          if (kDebugMode)
-            Builder(
-              builder: (buttonContext) => TextButton.icon(
-                onPressed: () => _exportScanData(buttonContext),
-                icon: const Icon(Icons.table_view_outlined, size: 16),
-                label: const Text('Export Scan Data'),
+              builder: (buttonContext) => PopupMenuButton<_DebugExportAction>(
+                tooltip: 'Debug exports',
+                icon: const Icon(Icons.more_vert_rounded),
+                onSelected: (action) async {
+                  switch (action) {
+                    case _DebugExportAction.burstLog:
+                      await _exportBurstLuminanceLog(buttonContext);
+                    case _DebugExportAction.scanData:
+                      await _exportScanData(buttonContext);
+                  }
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                    value: _DebugExportAction.burstLog,
+                    child: Row(
+                      children: [
+                        Icon(Icons.bug_report_outlined, size: 18),
+                        SizedBox(width: 10),
+                        Text('Export Burst Log'),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: _DebugExportAction.scanData,
+                    child: Row(
+                      children: [
+                        Icon(Icons.table_view_outlined, size: 18),
+                        SizedBox(width: 10),
+                        Text('Export Scan Data'),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
           if (_stage == _Stage.results)
