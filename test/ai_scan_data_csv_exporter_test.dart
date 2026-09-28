@@ -104,11 +104,6 @@ void main() {
             'rosacea_severity': 1.4,
             'wrinkle_load': 45.4,
           },
-          'trend_status': <String, dynamic>{
-            'pigment_load': 'stable',
-            'rosacea_severity': 'stable',
-            'wrinkle_load': 'stable',
-          },
           'trend_lock_reasons': <String, dynamic>{
             'pigment_load': 'lighting_mismatch',
             'rosacea_severity': 'lighting_mismatch',
@@ -124,6 +119,8 @@ void main() {
       expect(row['pigment_load_trend_lock_reason'], 'lighting_mismatch');
       expect(row['rosacea_severity_trend_lock_reason'], 'lighting_mismatch');
       expect(row['wrinkle_load_trend_lock_reason'], 'lighting_mismatch');
+      expect(row['pigment_load_trend_status'], isEmpty);
+      expect(row['pigment_load_value'], '7.0');
     });
 
     test('AI scan with no backend rawPayload is skipped', () {

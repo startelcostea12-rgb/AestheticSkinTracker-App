@@ -33,9 +33,14 @@ void main() {
         currentPayload: exposurePayload(iso: 80, brightnessValue: 3.77),
       );
 
-      for (final metric in result.trendStatus.keys) {
-        expect(result.trendStatus[metric], 'stable');
-        expect(result.trendDeltas[metric], 0.0);
+      for (final metric in const <String>[
+        'pigment_load',
+        'rosacea_severity',
+        'wrinkle_load',
+        'pore_visibility',
+      ]) {
+        expect(result.trendStatus.containsKey(metric), isFalse);
+        expect(result.trendDeltas.containsKey(metric), isFalse);
         expect(result.trendLockReasons[metric], 'lighting_mismatch');
       }
     });
@@ -76,13 +81,34 @@ void main() {
           baselinePayload: pair.baseline,
           currentPayload: pair.current,
         );
-        expect(result.trendStatus['texture_smoothness'], 'stable');
-        expect(result.trendDeltas['texture_smoothness'], 0.0);
+        expect(result.trendStatus.containsKey('texture_smoothness'), isFalse);
+        expect(result.trendDeltas.containsKey('texture_smoothness'), isFalse);
         expect(
           result.trendLockReasons['texture_smoothness'],
           'lighting_mismatch',
         );
       }
+    });
+
+    test('any existing lock reason clears status and delta', () {
+      final result = clearLockedTrendVerdicts(
+        trendStatus: const {
+          'localized_redness': 'stable',
+          'texture_smoothness': 'improved',
+        },
+        trendDeltas: const {
+          'localized_redness': 0.0,
+          'texture_smoothness': 12.0,
+        },
+        trendLockReasons: const {
+          'localized_redness': 'cheek_mismatch',
+        },
+      );
+
+      expect(result.trendStatus.containsKey('localized_redness'), isFalse);
+      expect(result.trendDeltas.containsKey('localized_redness'), isFalse);
+      expect(result.trendStatus['texture_smoothness'], 'improved');
+      expect(result.trendDeltas['texture_smoothness'], 12.0);
     });
 
     test('exactly one Bv unit remains comparable', () {

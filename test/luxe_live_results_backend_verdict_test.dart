@@ -141,6 +141,25 @@ void main() {
   );
 
   testWidgets(
+    'a lock reason without trend status or delta still shows Not comparable',
+    (tester) async {
+      final payload = basePayload(
+        baseline: 22.3,
+        current: 27.9,
+        trendLockReasons: {'rosacea_severity': 'lighting_mismatch'},
+      );
+
+      await tester.pumpWidget(harness(payload));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Not comparable:'), findsOneWidget);
+      expect(find.text('No verdict for this metric'), findsNothing);
+      expect(find.byIcon(Icons.trending_up_rounded), findsNothing);
+      expect(find.byIcon(Icons.trending_down_rounded), findsNothing);
+    },
+  );
+
+  testWidgets(
     'backend "worsened" shows a directional label with the backend\'s own delta',
     (tester) async {
       final payload = basePayload(

@@ -747,15 +747,39 @@ lockTrendsForLightingMismatch({
   final updatedStatus = Map<String, String>.from(trendStatus);
   final updatedDeltas = Map<String, double>.from(trendDeltas);
   final updatedLockReasons = Map<String, String>.from(trendLockReasons);
-  for (final metricKey in trendStatus.keys) {
-    updatedStatus[metricKey] = 'stable';
-    updatedDeltas[metricKey] = 0.0;
+  for (final metricKey in trendStatus.keys.toList()) {
+    updatedStatus.remove(metricKey);
+    updatedDeltas.remove(metricKey);
     updatedLockReasons[metricKey] = 'lighting_mismatch';
   }
   return (
     trendStatus: updatedStatus,
     trendDeltas: updatedDeltas,
     trendLockReasons: updatedLockReasons,
+  );
+}
+
+({
+  Map<String, String> trendStatus,
+  Map<String, double> trendDeltas,
+  Map<String, String> trendLockReasons,
+})
+clearLockedTrendVerdicts({
+  required Map<String, String> trendStatus,
+  required Map<String, double> trendDeltas,
+  required Map<String, String> trendLockReasons,
+}) {
+  final updatedStatus = Map<String, String>.from(trendStatus);
+  final updatedDeltas = Map<String, double>.from(trendDeltas);
+  for (final entry in trendLockReasons.entries) {
+    if (entry.value.trim().isEmpty) continue;
+    updatedStatus.remove(entry.key);
+    updatedDeltas.remove(entry.key);
+  }
+  return (
+    trendStatus: updatedStatus,
+    trendDeltas: updatedDeltas,
+    trendLockReasons: Map<String, String>.from(trendLockReasons),
   );
 }
 
@@ -2269,12 +2293,17 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           baselinePayload:
             _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
         );
+        final unlockedVerdictsOnly = clearLockedTrendVerdicts(
+          trendStatus: lightingAdjustedTrend.trendStatus,
+          trendDeltas: lightingAdjustedTrend.trendDeltas,
+          trendLockReasons: lightingAdjustedTrend.trendLockReasons,
+        );
         final Map<String, double> serverTrendDeltas =
-          lightingAdjustedTrend.trendDeltas;
+          unlockedVerdictsOnly.trendDeltas;
         final Map<String, String> serverTrendStatus =
-          lightingAdjustedTrend.trendStatus;
+          unlockedVerdictsOnly.trendStatus;
         final Map<String, String> serverTrendLockReasons =
-          lightingAdjustedTrend.trendLockReasons;
+          unlockedVerdictsOnly.trendLockReasons;
       // Write the (possibly downgraded) trend fields back into
       // backendResponse -- both locations _mergePayloadForPersistence reads
       // from -- so what gets persisted to ScanHistoryEntry.rawPayload

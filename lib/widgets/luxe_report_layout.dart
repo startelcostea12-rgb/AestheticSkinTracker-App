@@ -683,7 +683,7 @@ class LuxeMetricParser {
           backendTrendDeltaPct: usesBackendTrend ? backendTrendDelta : null,
           backendTrendStatus: usesBackendTrend ? backendTrendStatus : null,
           usesBackendTrend: usesBackendTrend,
-          backendTrendLockReason: usesBackendTrend ? backendTrendLockReason : null,
+          backendTrendLockReason: backendTrendLockReason,
           currentRangeMin: rangeMin,
           currentRangeMax: rangeMax,
           contributorCount: contributorCount,
@@ -1198,6 +1198,18 @@ _HonestyAssessment _assessMetricHonesty({
     trendLockReason: backendTrendLockReason,
     trendDeltaPct: backendTrendDeltaPct,
   );
+  final normalizedLockReason = backendTrendLockReason?.trim();
+  if (resolvedFromBackend == null &&
+      normalizedLockReason != null &&
+      normalizedLockReason.isNotEmpty) {
+    return _HonestyAssessment(
+      status: _HonestyStatus.stable,
+      reason: 'backend trend lock=$normalizedLockReason',
+      deltaPct: null,
+      hasRealBaseline: hasRealBaseline,
+      lockReason: normalizedLockReason,
+    );
+  }
   // The legacy local-recompute fallback below must be reachable ONLY when
   // the backend genuinely sent no trend_status for this metric (i.e.
   // resolvedFromBackend is null) — never merely because a caller forgot to
