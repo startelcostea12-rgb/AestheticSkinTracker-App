@@ -2344,7 +2344,14 @@ def _compute_zone_based_metrics(
 
     diffuse_threshold = max(138.0, median_a + 5.0)
     diffuse_mask = np.logical_and(u_zone_pixels, a_blur >= diffuse_threshold)
-    diffuse_density = float(np.clip(np.mean(diffuse_mask) * 100.0, 0.0, 100.0))
+    diffuse_density = float(
+        np.clip(
+            (np.count_nonzero(diffuse_mask) / max(np.count_nonzero(u_zone_pixels), 1))
+            * 100.0,
+            0.0,
+            100.0,
+        )
+    )
     personal_lab_baseline = _coalesce_personal_lab_baseline(baseline_matrix or {})
     baseline_a_p95 = safe_float(personal_lab_baseline.get("a_p95"))
     if baseline_a_p95 is not None:

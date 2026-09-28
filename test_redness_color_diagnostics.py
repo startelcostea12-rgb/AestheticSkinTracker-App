@@ -9,6 +9,7 @@ checks the scored output is identical with and without them.
 from __future__ import annotations
 
 from pathlib import Path
+from unittest import mock
 
 import cv2
 import numpy as np
@@ -173,6 +174,44 @@ def test_within_cheek_spread_branch_reports_the_winning_cheek():
     assert diagnostics["mean_b_after_wb"] == pytest.approx(
         float(np.mean(lab[:, :, 2][right_mask]))
     )
+
+
+def test_rosacea_diffuse_density_uses_u_zone_denominator():
+    face, skin, regions = _zone_fixture()
+    points = np.zeros((0, 2), dtype=np.float32)
+    captured_density: list[float] = []
+
+    def capture_density(p95_a, baseline_a_ref, diffuse_density, **kwargs):
+        captured_density.append(diffuse_density)
+        return {
+            "localized_redness": 10.0,
+            "diffuse_flushing_erythema": diffuse_density,
+            "rosacea_before": diffuse_density,
+            "rosacea_severity": diffuse_density,
+            "rosacea_reason": "unchanged",
+        }
+
+    with mock.patch.object(
+        main,
+        "compute_localized_redness_and_rosacea",
+        side_effect=capture_density,
+    ):
+        main._compute_zone_based_metrics(face, skin, regions, points)
+
+    lab = cv2.cvtColor(face, cv2.COLOR_BGR2LAB)
+    a_blur = cv2.GaussianBlur(
+        lab[:, :, 1].astype(np.float32), (0, 0), sigmaX=2.0
+    )
+    u_zone = cv2.bitwise_and(
+        cv2.bitwise_or(regions["left_cheek"], regions["right_cheek"]),
+        skin,
+    ) > 0
+    threshold = max(138.0, float(np.percentile(a_blur[u_zone], 50)) + 5.0)
+    diffuse = np.logical_and(u_zone, a_blur >= threshold)
+    expected = np.count_nonzero(diffuse) / np.count_nonzero(u_zone) * 100.0
+
+    assert captured_density
+    assert captured_density[0] == pytest.approx(expected)
 
 
 def test_baseline_p95_anchor_branch_reports_both_cheeks_and_baseline():
