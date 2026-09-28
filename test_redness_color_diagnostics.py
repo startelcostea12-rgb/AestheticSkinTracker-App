@@ -306,12 +306,16 @@ def test_full_pipeline_emits_fields_without_changing_any_score():
     assert iq_with["redness_cheek_p95_a_before_wb"] is not None
     assert iq_with["face_skin_pixels"] > iq_with["pore_roi_pixels"] > 0
     assert iq_with["u_zone_pixels"] > 0
-    assert iq_with["localized_redness_mask_kind"] == "cheek_primary"
+    assert iq_with["localized_redness_mask_kind"] in {"left_cheek", "right_cheek"}
     assert iq_with["localized_redness_mask_pixels"] > 0
+    assert iq_with["texture_smoothness_mask_kind"] == "forehead_skin"
     assert iq_with["texture_smoothness_mask_pixels"] > 0
+    assert iq_with["texture_smoothness_mask_pixels"] < iq_with["face_skin_pixels"]
+    assert iq_with["pigment_load_mask_kind"] == "u_zone"
     assert iq_with["pigment_load_mask_pixels"] > 0
+    assert iq_with["pigment_load_mask_pixels"] == iq_with["u_zone_pixels"]
     assert iq_with["pore_visibility_mask_kind"] == "tzone_pore"
-    assert iq_with["diffuse_flushing_erythema_mask_kind"] == "face_skin"
+    assert iq_with["diffuse_flushing_erythema_mask_kind"] == "u_zone_nose_face_skin"
     assert iq_with["redness_cheek_p10_a_before_wb"] is not None
     # Without the pre-white-balance image only the "before" percentiles are unknown.
     assert iq_without["redness_cheek_p10_a_before_wb"] is None

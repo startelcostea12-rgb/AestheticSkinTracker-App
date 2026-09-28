@@ -2574,7 +2574,7 @@ def _compute_additional_opencv_metrics(
     flush_roi = cv2.bitwise_and(flush_roi, face_skin_mask)
     flush_area = max(int(cv2.countNonZero(flush_roi)), 1)
     if mask_diagnostics is not None:
-        mask_diagnostics["diffuse_flushing_erythema_mask_kind"] = "face_skin"
+        mask_diagnostics["diffuse_flushing_erythema_mask_kind"] = "u_zone_nose_face_skin"
         mask_diagnostics["diffuse_flushing_erythema_mask_pixels"] = int(
             cv2.countNonZero(flush_roi)
         )
@@ -3145,12 +3145,15 @@ def _compute_canonical_patch_metrics(
         texture_mask = forehead_skin_mask
         texture_primary_usable = True
         texture_roi_source = "primary_roi"
+        texture_mask_kind = "forehead_skin"
     elif cheek_primary_usable:
         texture_mask = primary_cheek_mask
         texture_primary_usable = True
         texture_roi_source = "cheek_expand_no_skin" if cheek_expand_no_skin_used else "primary_roi"
+        texture_mask_kind = "u_zone"
     else:
         texture_mask = full_face_skin_mask.copy()
+        texture_mask_kind = "face_skin"
 
     if cheek_primary_usable:
         redness_roi_source = (
@@ -3212,6 +3215,8 @@ def _compute_canonical_patch_metrics(
     raw_components["pigment_cheek_primary_no_skin_mask_used"] = 1.0 if pigment_roi_source == "cheek_primary_no_skin_mask" else 0.0
     raw_components["pigment_full_face_fallback_used"] = 1.0 if pigment_roi_source == "full_face_fallback" else 0.0
     raw_components["texture_primary_used"] = 1.0 if texture_roi_source == "primary_roi" else 0.0
+    raw_components["texture_forehead_skin_used"] = 1.0 if texture_mask_kind == "forehead_skin" else 0.0
+    raw_components["texture_u_zone_used"] = 1.0 if texture_mask_kind == "u_zone" else 0.0
     raw_components["texture_cheek_expand_no_skin_used"] = 1.0 if texture_roi_source == "cheek_expand_no_skin" else 0.0
     raw_components["texture_bbox_fallback_used"] = 1.0 if texture_roi_source == "approximate_face_bbox" else 0.0
     raw_components["texture_large_fallback_used"] = 1.0 if texture_roi_source == "large_roi_fallback" else 0.0
@@ -6817,6 +6822,16 @@ def analyze_skin_patch(
     )
     def metric_mask_kind(metric_key: str) -> str | None:
         path = metric_extraction_paths.get(metric_key)
+        if metric_key == "texture_smoothness":
+            if raw_components.get("texture_forehead_skin_used", 0.0) > 0.5:
+                return "forehead_skin"
+            if raw_components.get("texture_u_zone_used", 0.0) > 0.5:
+                return "u_zone"
+        if metric_key == "pigment_load" and path in {
+            "cheek_primary",
+            "cheek_primary_no_skin_mask",
+        }:
+            return "u_zone"
         if path in {"cheek_primary", "cheek_primary_no_skin_mask", "cheek_expand_no_skin"}:
             return "cheek_primary"
         if path == "fallback" and metric_key == "pore_visibility":
@@ -6824,6 +6839,14 @@ def analyze_skin_patch(
         if path in {"primary_roi", "full_face_fallback", "large_roi_fallback", "approximate_face_bbox", "laplacian_fallback"}:
             return "face_skin"
         return None
+
+    redness_mask_kind = metric_mask_kind("localized_redness")
+    if redness_branch == "within_cheek_spread":
+        cheek_side = redness_diagnostics.get("cheek_side")
+        if cheek_side in {"left", "right"}:
+            redness_mask_kind = f"{cheek_side}_cheek"
+    elif redness_branch == "baseline_p95_anchor":
+        redness_mask_kind = "u_zone"
 
     image_quality_payload = {
         **(quality_profile or {}),
@@ -6836,7 +6859,7 @@ def analyze_skin_patch(
         "face_skin_pixels": int(raw_components.get("full_face_skin_pixels", 0.0)),
         "pore_roi_pixels": int(raw_components.get("primary_pore_roi_pixels", 0.0)),
         "u_zone_pixels": int(redness_diagnostics.get("u_zone_pixels", 0)),
-        "localized_redness_mask_kind": metric_mask_kind("localized_redness"),
+        "localized_redness_mask_kind": redness_mask_kind,
         "localized_redness_mask_pixels": int(
             redness_diagnostics.get("cheek_roi_pixels")
             or raw_components.get("localized_redness_roi_pixels", 0.0)
