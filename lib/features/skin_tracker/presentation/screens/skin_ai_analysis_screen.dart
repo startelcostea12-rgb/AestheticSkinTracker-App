@@ -690,6 +690,26 @@ List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
       'cheek_p10_a_after_wb': imageQuality['redness_cheek_p10_a_after_wb'],
       'cheek_p10_a_before_wb': imageQuality['redness_cheek_p10_a_before_wb'],
       'localized_redness': metricMatrix['localized_redness'],
+        'face_skin_pixels': imageQuality['face_skin_pixels'],
+        'pore_roi_pixels': imageQuality['pore_roi_pixels'],
+        'u_zone_pixels': imageQuality['u_zone_pixels'],
+        'localized_redness_mask_kind':
+          imageQuality['localized_redness_mask_kind'],
+        'localized_redness_mask_pixels':
+          imageQuality['localized_redness_mask_pixels'],
+        'texture_smoothness_mask_kind':
+          imageQuality['texture_smoothness_mask_kind'],
+        'texture_smoothness_mask_pixels':
+          imageQuality['texture_smoothness_mask_pixels'],
+        'pigment_load_mask_kind': imageQuality['pigment_load_mask_kind'],
+        'pigment_load_mask_pixels': imageQuality['pigment_load_mask_pixels'],
+        'pore_visibility_mask_kind': imageQuality['pore_visibility_mask_kind'],
+        'pore_visibility_mask_pixels':
+          imageQuality['pore_visibility_mask_pixels'],
+        'diffuse_flushing_erythema_mask_kind':
+          imageQuality['diffuse_flushing_erythema_mask_kind'],
+        'diffuse_flushing_erythema_mask_pixels':
+          imageQuality['diffuse_flushing_erythema_mask_pixels'],
       ...exposure.toJson(),
     };
   }, growable: false);

@@ -2333,6 +2333,8 @@ def _compute_zone_based_metrics(
     right_cheek = regions.get("right_cheek", np.zeros((h, w), dtype=np.uint8))
     u_zone = cv2.bitwise_and(cv2.bitwise_or(left_cheek, right_cheek), skin_mask)
     u_zone_pixels = u_zone > 0
+    if redness_diagnostics is not None:
+        redness_diagnostics["u_zone_pixels"] = int(np.count_nonzero(u_zone_pixels))
 
     a_blur = cv2.GaussianBlur(lab[:, :, 1].astype(np.float32), (0, 0), sigmaX=2.0)
     if np.any(u_zone_pixels):
@@ -2513,6 +2515,7 @@ def _compute_additional_opencv_metrics(
     points: np.ndarray,
     *,
     roi_cache: _RequestRoiCache | None = None,
+    mask_diagnostics: Dict[str, Any] | None = None,
 ) -> Dict[str, float]:
     h, w = face_bgr.shape[:2]
     if h == 0 or w == 0:
@@ -2570,6 +2573,11 @@ def _compute_additional_opencv_metrics(
     flush_roi = cv2.bitwise_or(cv2.bitwise_or(left_cheek, right_cheek), nose)
     flush_roi = cv2.bitwise_and(flush_roi, face_skin_mask)
     flush_area = max(int(cv2.countNonZero(flush_roi)), 1)
+    if mask_diagnostics is not None:
+        mask_diagnostics["diffuse_flushing_erythema_mask_kind"] = "face_skin"
+        mask_diagnostics["diffuse_flushing_erythema_mask_pixels"] = int(
+            cv2.countNonZero(flush_roi)
+        )
     a_channel = lab[:, :, 1].astype(np.float32)
     a_blur = cv2.GaussianBlur(a_channel, (0, 0), sigmaX=3.0)
     roi_values = a_blur[flush_roi > 0]
@@ -5605,6 +5613,7 @@ def analyze_skin_patch(
     # any current candidate_values entry.
     acne_activity_score = float(np.clip(100.0 - (yolo_kept * 10.0), 0.0, 100.0))
     fingerprint = hashlib.sha256(norm.tobytes()).hexdigest()
+    additional_mask_diagnostics: Dict[str, Any] = {}
     try:
         additional_metrics = _compute_additional_opencv_metrics(
             norm,
@@ -5612,6 +5621,7 @@ def analyze_skin_patch(
             regions,
             norm_points,
             roi_cache=request_roi_cache,
+            mask_diagnostics=additional_mask_diagnostics,
         )
     except Exception as exc:
         logger.warning(
@@ -6805,6 +6815,16 @@ def analyze_skin_patch(
         points,
         redness_diagnostics.get("mask"),
     )
+    def metric_mask_kind(metric_key: str) -> str | None:
+        path = metric_extraction_paths.get(metric_key)
+        if path in {"cheek_primary", "cheek_primary_no_skin_mask", "cheek_expand_no_skin"}:
+            return "cheek_primary"
+        if path == "fallback" and metric_key == "pore_visibility":
+            return "tzone_pore"
+        if path in {"primary_roi", "full_face_fallback", "large_roi_fallback", "approximate_face_bbox", "laplacian_fallback"}:
+            return "face_skin"
+        return None
+
     image_quality_payload = {
         **(quality_profile or {}),
         **_redness_color_diagnostics(
@@ -6812,6 +6832,32 @@ def analyze_skin_patch(
             branch=redness_branch,
             p10_a_before_wb=p10_a_before_wb,
             p95_a_before_wb=p95_a_before_wb,
+        ),
+        "face_skin_pixels": int(raw_components.get("full_face_skin_pixels", 0.0)),
+        "pore_roi_pixels": int(raw_components.get("primary_pore_roi_pixels", 0.0)),
+        "u_zone_pixels": int(redness_diagnostics.get("u_zone_pixels", 0)),
+        "localized_redness_mask_kind": metric_mask_kind("localized_redness"),
+        "localized_redness_mask_pixels": int(
+            redness_diagnostics.get("cheek_roi_pixels")
+            or raw_components.get("localized_redness_roi_pixels", 0.0)
+        ),
+        "texture_smoothness_mask_kind": metric_mask_kind("texture_smoothness"),
+        "texture_smoothness_mask_pixels": int(
+            raw_components.get("texture_roi_pixels", 0.0)
+        ),
+        "pigment_load_mask_kind": metric_mask_kind("pigment_load"),
+        "pigment_load_mask_pixels": int(
+            raw_components.get("pigment_roi_pixels", 0.0)
+        ),
+        "pore_visibility_mask_kind": "tzone_pore",
+        "pore_visibility_mask_pixels": int(
+            raw_components.get("primary_pore_roi_pixels", 0.0)
+        ),
+        "diffuse_flushing_erythema_mask_kind": additional_mask_diagnostics.get(
+            "diffuse_flushing_erythema_mask_kind"
+        ),
+        "diffuse_flushing_erythema_mask_pixels": additional_mask_diagnostics.get(
+            "diffuse_flushing_erythema_mask_pixels"
         ),
     }
 

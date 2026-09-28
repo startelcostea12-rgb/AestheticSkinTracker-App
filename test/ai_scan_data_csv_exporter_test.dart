@@ -172,6 +172,19 @@ void main() {
               'exposure_bias': -0.3,
               'shutter_seconds': 0.008333333333333333,
               'brightness_value': 4.5,
+              'face_skin_pixels': 18000,
+              'pore_roi_pixels': 6200,
+              'u_zone_pixels': 9500,
+              'localized_redness_mask_kind': 'cheek_primary',
+              'localized_redness_mask_pixels': 9500,
+              'texture_smoothness_mask_kind': 'face_skin',
+              'texture_smoothness_mask_pixels': 18000,
+              'pigment_load_mask_kind': 'cheek_primary',
+              'pigment_load_mask_pixels': 9500,
+              'pore_visibility_mask_kind': 'tzone_pore',
+              'pore_visibility_mask_pixels': 6200,
+              'diffuse_flushing_erythema_mask_kind': 'face_skin',
+              'diffuse_flushing_erythema_mask_pixels': 10200,
             },
             <String, dynamic>{
               'frame_number': 2,
@@ -205,6 +218,15 @@ void main() {
       expect(row['frame1_cheek_side'], 'left');
       expect(row['frame1_cheek_p10_a_after_wb'], '20.5');
       expect(row['frame1_shutter_seconds'], '0.008333333333333333');
+      expect(row['frame1_face_skin_pixels'], '18000');
+      expect(row['frame1_pore_roi_pixels'], '6200');
+      expect(row['frame1_u_zone_pixels'], '9500');
+      expect(row['frame1_localized_redness_mask_kind'], 'cheek_primary');
+      expect(row['frame1_pore_visibility_mask_kind'], 'tzone_pore');
+      expect(
+        row['frame1_diffuse_flushing_erythema_mask_pixels'],
+        '10200',
+      );
       expect(row['frame2_localized_redness'], isEmpty);
       expect(row['frame2_brightness_value'], isEmpty);
       expect(row['frame3_iso'], isEmpty);

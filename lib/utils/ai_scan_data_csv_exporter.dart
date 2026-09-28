@@ -87,6 +87,19 @@ class AiScanDataCsvExporter {
     'exposure_bias',
     'shutter_seconds',
     'brightness_value',
+    'face_skin_pixels',
+    'pore_roi_pixels',
+    'u_zone_pixels',
+    'localized_redness_mask_kind',
+    'localized_redness_mask_pixels',
+    'texture_smoothness_mask_kind',
+    'texture_smoothness_mask_pixels',
+    'pigment_load_mask_kind',
+    'pigment_load_mask_pixels',
+    'pore_visibility_mask_kind',
+    'pore_visibility_mask_pixels',
+    'diffuse_flushing_erythema_mask_kind',
+    'diffuse_flushing_erythema_mask_pixels',
   ];
 
   static List<ScanHistoryEntry> exportableScans(

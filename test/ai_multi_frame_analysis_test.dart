@@ -396,6 +396,19 @@ void main() {
             'redness_cheek_p95_a_after_wb': frameNumber == 1 ? 31.5 : 33.5,
             'redness_cheek_p10_a_after_wb': frameNumber == 1 ? 20.5 : 21.5,
             'redness_cheek_p10_a_before_wb': frameNumber == 1 ? 19.5 : 20.5,
+            'face_skin_pixels': 18000,
+            'pore_roi_pixels': 6200,
+            'u_zone_pixels': 9500,
+            'localized_redness_mask_kind': 'cheek_primary',
+            'localized_redness_mask_pixels': 9500,
+            'texture_smoothness_mask_kind': 'face_skin',
+            'texture_smoothness_mask_pixels': 18000,
+            'pigment_load_mask_kind': 'cheek_primary',
+            'pigment_load_mask_pixels': 9500,
+            'pore_visibility_mask_kind': 'tzone_pore',
+            'pore_visibility_mask_pixels': 6200,
+            'diffuse_flushing_erythema_mask_kind': 'face_skin',
+            'diffuse_flushing_erythema_mask_pixels': 10200,
           },
           'metric_matrix': {
             'localized_redness': frameNumber == 1 ? 20.0 : 40.0,
@@ -423,6 +436,15 @@ void main() {
     expect(diagnostics[0], containsPair('localized_redness', 20.0));
     expect(diagnostics[0], containsPair('cheek_p10_a_after_wb', 20.5));
     expect(diagnostics[0], containsPair('shutter_seconds', 1 / 120));
+    expect(diagnostics[0], containsPair('face_skin_pixels', 18000));
+    expect(
+      diagnostics[0],
+      containsPair('localized_redness_mask_kind', 'cheek_primary'),
+    );
+    expect(
+      diagnostics[0],
+      containsPair('pore_visibility_mask_kind', 'tzone_pore'),
+    );
     expect(diagnostics[1], containsPair('cheek_side', isNull));
     expect(diagnostics[1], containsPair('localized_redness', isNull));
     expect(diagnostics[1], containsPair('iso', 125));
