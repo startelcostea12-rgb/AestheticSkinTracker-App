@@ -1745,6 +1745,7 @@ class _RecoveryTimelineScreenState extends State<RecoveryTimelineScreen> {
       ]) {
         final current = _extractMetric(scan, spec.$2);
         final prev = _extractMetric(previous, spec.$2);
+        if (spec.$1 == 'Wrinkle' || spec.$1 == 'Rosacea') continue;
         if (current == null || prev == null) continue;
         final improvement = prev - current;
         if (improvement > bestDelta) {
@@ -1894,6 +1895,7 @@ class _RecoveryTimelineScreenState extends State<RecoveryTimelineScreen> {
     final value = data.value;
     final previous = data.previous;
     final lowerIsBetter = data.lowerIsBetter;
+    final suppressTrend = label == 'Wrinkle' || label == 'Rosacea';
     final delta = previous == null ? null : value - previous;
     final severity = _metricValueColor(value, lowerIsBetter: lowerIsBetter);
     final band = _severityBandForValue(value, lowerIsBetter: lowerIsBetter);
@@ -1909,7 +1911,7 @@ class _RecoveryTimelineScreenState extends State<RecoveryTimelineScreen> {
         : improved
         ? AppColors.mutedSage
         : AppColors.softTerracotta;
-    final trendLabel = delta == null
+    final trendLabel = suppressTrend || delta == null
         ? null
         : delta.abs() < 0.25
         ? 'stable from ${previousValue!.toStringAsFixed(1)}'
@@ -1940,7 +1942,7 @@ class _RecoveryTimelineScreenState extends State<RecoveryTimelineScreen> {
                   ),
                 ),
               ),
-              if (previous != null)
+              if (previous != null && !suppressTrend)
                 _trendArrow(value, previous, lowerIsBetter: lowerIsBetter),
             ],
           ),

@@ -19,7 +19,7 @@ class SkinScanCoachCopy {
       sentences.add(
         isFollowUp
             ? 'This follow-up reads fairly steady versus baseline, so the safest move is to keep the routine simple and consistent.'
-            : 'Starting point shows a fairly calm overall pattern, so this scan is best used as your benchmark rather than a progress claim.',
+            : 'This scan shows a fairly calm overall pattern, so it is best used as a benchmark rather than a progress claim.',
       );
     } else {
       final leadPhrase = _joinWithCommasAndAnd(
@@ -34,13 +34,15 @@ class SkinScanCoachCopy {
       sentences.add(
         isFollowUp
             ? 'This follow-up centers on $leadPhrase.'
-            : 'Starting point shows $leadPhrase.',
+            : 'This scan centers on $leadPhrase.',
       );
     }
 
     final highest = topConcerns.isEmpty
         ? 0.0
-        : topConcerns.map((entry) => entry.value).reduce((a, b) => a > b ? a : b);
+        : topConcerns
+              .map((entry) => entry.value)
+              .reduce((a, b) => a > b ? a : b);
     if (highest >= 4.0) {
       sentences.add(
         barrierStressed
@@ -56,9 +58,11 @@ class SkinScanCoachCopy {
     if (isFollowUp) {
       final trendSentences = _trendSentences(trendDeltas);
       if (trendSentences.isEmpty) {
-        sentences.add(
-          'Most of the measured pattern looks stable versus baseline, which is useful because it means the current routine is at least holding its ground.',
-        );
+        if (trendDeltas.isEmpty) {
+          sentences.add(
+            'Most of the measured pattern looks stable versus baseline, which is useful because it means the current routine is at least holding its ground.',
+          );
+        }
       } else {
         sentences.addAll(trendSentences.take(2));
       }
@@ -96,7 +100,10 @@ class SkinScanCoachCopy {
       }
     }
 
-    return sentences.where((sentence) => sentence.trim().isNotEmpty).take(6).join(' ');
+    return sentences
+        .where((sentence) => sentence.trim().isNotEmpty)
+        .take(6)
+        .join(' ');
   }
 
   static String buildRoutineHeader({
@@ -132,10 +139,10 @@ class SkinScanCoachCopy {
     }
 
     if (barrierStressed || sensitivitySignal >= 4.0) {
-      return 'Starting point shows $concernText, and the barrier looks a bit reactive, so the routine should stay gentle, fragrance-free, and low-spirited on actives until the skin feels calmer.';
+      return 'This scan shows $concernText, and the barrier looks a bit reactive, so the routine should stay gentle, fragrance-free, and low-spirited on actives until the skin feels calmer.';
     }
 
-    return 'Starting point shows $concernText, so I would build around a gentle cleanse, hydration, barrier support, and one targeted active rather than trying to do everything at once.';
+    return 'This scan shows $concernText, so I would build around a gentle cleanse, hydration, barrier support, and one targeted active rather than trying to do everything at once.';
   }
 
   static ({List<String> amSteps, List<String> pmSteps}) buildRoutine({
@@ -155,7 +162,8 @@ class SkinScanCoachCopy {
       rosacea,
       acne,
     ].reduce((a, b) => a > b ? a : b);
-    final calmFirst = inflammation >= 4 || barrierStressed || sensitivitySignal >= 4;
+    final calmFirst =
+        inflammation >= 4 || barrierStressed || sensitivitySignal >= 4;
     final allowActives = !calmFirst && isFollowUp;
 
     final am = <String>[
@@ -207,12 +215,36 @@ class SkinScanCoachCopy {
     Map<String, double> scores,
   ) {
     final concerns = <({String key, String label, double value})>[
-      (key: 'redness', label: 'redness / flushing', value: scores['redness'] ?? 0),
-      (key: 'rosacea_intensity', label: 'rosacea-pattern reactivity', value: scores['rosacea_intensity'] ?? 0),
-      (key: 'acne_severity', label: 'breakout activity', value: scores['acne_severity'] ?? 0),
-      (key: 'texture', label: 'texture roughness', value: scores['texture'] ?? 0),
-      (key: 'pigment', label: 'uneven tone / marks', value: scores['pigment'] ?? 0),
-      (key: 'wrinkle', label: 'fine lines / wrinkles', value: scores['wrinkle'] ?? 0),
+      (
+        key: 'redness',
+        label: 'redness / flushing',
+        value: scores['redness'] ?? 0,
+      ),
+      (
+        key: 'rosacea_intensity',
+        label: 'rosacea-pattern reactivity',
+        value: scores['rosacea_intensity'] ?? 0,
+      ),
+      (
+        key: 'acne_severity',
+        label: 'breakout activity',
+        value: scores['acne_severity'] ?? 0,
+      ),
+      (
+        key: 'texture',
+        label: 'texture roughness',
+        value: scores['texture'] ?? 0,
+      ),
+      (
+        key: 'pigment',
+        label: 'uneven tone / marks',
+        value: scores['pigment'] ?? 0,
+      ),
+      (
+        key: 'wrinkle',
+        label: 'fine lines / wrinkles',
+        value: scores['wrinkle'] ?? 0,
+      ),
     ]..sort((a, b) => b.value.compareTo(a.value));
 
     return concerns.where((entry) => entry.value >= 0.5).take(3).toList();
@@ -225,16 +257,16 @@ class SkinScanCoachCopy {
       (key: 'localized_redness', label: 'Redness'),
       (key: 'texture_smoothness', label: 'Texture'),
       (key: 'pigment_load', label: 'Pigment'),
-      (key: 'wrinkle_load', label: 'Wrinkles'),
       (key: 'breakout_activity', label: 'Breakouts'),
-      (key: 'rosacea_severity', label: 'Rosacea reactivity'),
     ];
     final sentences = <String>[];
     for (final spec in trendSpecs) {
       final delta = trendDeltas[spec.key];
       if (delta == null || !delta.isFinite) continue;
       if (delta.abs() < 1.0) {
-        sentences.add('${spec.label} is stable versus baseline, so there is no need to chase a bigger change right now.');
+        sentences.add(
+          '${spec.label} is stable versus baseline, so there is no need to chase a bigger change right now.',
+        );
       } else if (delta < 0) {
         sentences.add('${spec.label} has improved versus baseline.');
       } else {

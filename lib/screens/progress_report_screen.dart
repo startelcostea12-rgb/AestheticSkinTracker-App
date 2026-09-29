@@ -317,56 +317,52 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
     }
 
     final groups =
-        grouped.entries
-            .map((entry) {
-              final ordered = List<ScanHistoryEntry>.from(entry.value)
-                ..sort(_ProcedureScanGroup._compareScansByTimestampAscThenId);
-              final procedureId = ordered
-                  .map((scan) => (scan.procedureId ?? '').trim())
-                  .firstWhere((id) => id.isNotEmpty, orElse: () => '');
-              final comparison = procedureId.isNotEmpty
-                  ? _procedurePhotoComparisonById[procedureId]
-                  : null;
+        grouped.entries.map((entry) {
+          final ordered = List<ScanHistoryEntry>.from(entry.value)
+            ..sort(_ProcedureScanGroup._compareScansByTimestampAscThenId);
+          final procedureId = ordered
+              .map((scan) => (scan.procedureId ?? '').trim())
+              .firstWhere((id) => id.isNotEmpty, orElse: () => '');
+          final comparison = procedureId.isNotEmpty
+              ? _procedurePhotoComparisonById[procedureId]
+              : null;
 
-              final baselineScanId =
-                  comparison?['baselineScanId']?.trim();
-              final latestScanId = comparison?['latestScanId']?.trim();
+          final baselineScanId = comparison?['baselineScanId']?.trim();
+          final latestScanId = comparison?['latestScanId']?.trim();
 
-              ScanHistoryEntry? baseline;
-              if (baselineScanId != null && baselineScanId.isNotEmpty) {
-                for (final scan in ordered) {
-                  if (scan.id == baselineScanId) {
-                    baseline = scan;
-                    break;
-                  }
-                }
+          ScanHistoryEntry? baseline;
+          if (baselineScanId != null && baselineScanId.isNotEmpty) {
+            for (final scan in ordered) {
+              if (scan.id == baselineScanId) {
+                baseline = scan;
+                break;
               }
-              baseline ??= ordered.first;
+            }
+          }
+          baseline ??= ordered.first;
 
-              ScanHistoryEntry? latest;
-              if (latestScanId != null && latestScanId.isNotEmpty) {
-                for (final scan in ordered.reversed) {
-                  if (scan.id == latestScanId) {
-                    latest = scan;
-                    break;
-                  }
-                }
+          ScanHistoryEntry? latest;
+          if (latestScanId != null && latestScanId.isNotEmpty) {
+            for (final scan in ordered.reversed) {
+              if (scan.id == latestScanId) {
+                latest = scan;
+                break;
               }
-              latest ??= ordered.last;
+            }
+          }
+          latest ??= ordered.last;
 
-              return _ProcedureScanGroup(
-                key: entry.key,
-                scans: ordered,
-                baselineEntry: baseline,
-                latestEntry: latest,
-              );
-            })
-            .toList()
-          ..sort((a, b) {
-            final ts = b.latest.timestamp.compareTo(a.latest.timestamp);
-            if (ts != 0) return ts;
-            return a.latest.id.compareTo(b.latest.id);
-          });
+          return _ProcedureScanGroup(
+            key: entry.key,
+            scans: ordered,
+            baselineEntry: baseline,
+            latestEntry: latest,
+          );
+        }).toList()..sort((a, b) {
+          final ts = b.latest.timestamp.compareTo(a.latest.timestamp);
+          if (ts != 0) return ts;
+          return a.latest.id.compareTo(b.latest.id);
+        });
     return groups;
   }
 
@@ -423,10 +419,11 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
         latest,
         latestRow.key,
       );
-      final normalizedBaselineValue = ScanDetailScreen.normalizeMetricValueTo100(
-        latestRow.key,
-        extractedBaseline,
-      );
+      final normalizedBaselineValue =
+          ScanDetailScreen.normalizeMetricValueTo100(
+            latestRow.key,
+            extractedBaseline,
+          );
       final latestValue = ScanDetailScreen.normalizeMetricValueTo100(
         latestRow.key,
         extractedCurrent,
@@ -585,17 +582,24 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
       color: AppColors.refinedSlate,
     );
     final deltas = _metricDeltas(group.baseline, group.latest);
-    final hasInitialBaseline = deltas.any((delta) => delta.isInitialBaseline);
-    final comparable = deltas.where((delta) => delta.hasValidComparison);
+    final displayableDeltas = deltas
+        .where((delta) => !metricsWithHiddenTrendVerdicts.contains(delta.key))
+        .toList();
+    final hasInitialBaseline = displayableDeltas.any(
+      (delta) => delta.isInitialBaseline,
+    );
+    final comparable = displayableDeltas.where(
+      (delta) => delta.hasValidComparison,
+    );
     final improvedCount = hasInitialBaseline
-      ? 0
-      : comparable.where((delta) => delta.improved).length;
+        ? 0
+        : comparable.where((delta) => delta.improved).length;
     final worsenedCount = hasInitialBaseline
-      ? 0
-      : comparable.where((delta) => delta.worsened).length;
+        ? 0
+        : comparable.where((delta) => delta.worsened).length;
     final pendingCount = hasInitialBaseline
-      ? 0
-      : deltas.length - improvedCount - worsenedCount;
+        ? 0
+        : displayableDeltas.length - improvedCount - worsenedCount;
     final dateRange = group.count > 1
         ? '${_shortDate(group.baseline.timestamp)} -> ${_shortDate(group.latest.timestamp)}'
         : _shortDate(group.latest.timestamp);
@@ -607,7 +611,8 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
         onTap: () {
           Navigator.of(context).push(
             MaterialPageRoute(
-              builder: (_) => _ProcedureScanComparisonDetailScreen(group: group),
+              builder: (_) =>
+                  _ProcedureScanComparisonDetailScreen(group: group),
             ),
           );
         },
@@ -697,7 +702,7 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
                       Wrap(
                         spacing: 6,
                         runSpacing: 6,
-                        children: deltas.isEmpty
+                        children: displayableDeltas.isEmpty
                             ? [
                                 _summaryChip(
                                   'Baseline saved',
@@ -725,7 +730,9 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
                                     Icons.schedule_rounded,
                                   ),
                                 if (!hasInitialBaseline)
-                                  ...deltas.take(2).map(_deltaPreviewChip),
+                                  ...displayableDeltas
+                                      .take(2)
+                                      .map(_deltaPreviewChip),
                               ],
                       ),
                     ],
@@ -807,7 +814,9 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
         : (delta.worsened ? AppColors.softTerracotta : AppColors.refinedSlate);
     final arrow = delta.improved
         ? Icons.arrow_upward_rounded
-        : (delta.worsened ? Icons.warning_rounded : Icons.trending_flat_rounded);
+        : (delta.worsened
+              ? Icons.warning_rounded
+              : Icons.trending_flat_rounded);
     return _summaryChip(delta.label, color, arrow);
   }
 
@@ -1522,7 +1531,9 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
                     borderRadius: BorderRadius.circular(999),
                     border: Border.all(
                       color: proc.isCompleted
-                          ? AppColors.kMetricImprovedColor.withValues(alpha: 0.35)
+                          ? AppColors.kMetricImprovedColor.withValues(
+                              alpha: 0.35,
+                            )
                           : AppColors.brandAccent.withValues(alpha: 0.32),
                     ),
                   ),
@@ -1692,10 +1703,10 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
                       if (latestMetrics.redness > 6.0) 'sensitive',
                     ],
                     recentProcedureTypes:
-                      resolvedProcedureType.toLowerCase() !=
-                        'general skincare'
-                      ? recentProcedureTypes
-                      : null,
+                        resolvedProcedureType.toLowerCase() !=
+                            'general skincare'
+                        ? recentProcedureTypes
+                        : null,
                   );
               return ClinicalProductRecommendationsSection(
                 recommendations: recommendations,
@@ -2344,18 +2355,31 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
     final latest = group.latest;
     final focus = group.focus;
     final deltas = _metricDeltas(baseline, latest);
-    final visibleDeltas = deltas.where((delta) => !delta.isInitialBaseline).toList();
-    final hasInitialBaseline = deltas.any((delta) => delta.isInitialBaseline);
-    final comparable = deltas.where((delta) => delta.hasValidComparison);
+    final visibleDeltas = deltas
+        .where(
+          (delta) =>
+              !delta.isInitialBaseline &&
+              !metricsWithHiddenTrendVerdicts.contains(delta.key),
+        )
+        .toList();
+    final displayableDeltas = deltas
+        .where((delta) => !metricsWithHiddenTrendVerdicts.contains(delta.key))
+        .toList();
+    final hasInitialBaseline = displayableDeltas.any(
+      (delta) => delta.isInitialBaseline,
+    );
+    final comparable = displayableDeltas.where(
+      (delta) => delta.hasValidComparison,
+    );
     final improvedCount = hasInitialBaseline
-      ? 0
-      : comparable.where((delta) => delta.improved).length;
+        ? 0
+        : comparable.where((delta) => delta.improved).length;
     final worsenedCount = hasInitialBaseline
-      ? 0
-      : comparable.where((delta) => delta.worsened).length;
+        ? 0
+        : comparable.where((delta) => delta.worsened).length;
     final pendingCount = hasInitialBaseline
-      ? 0
-      : deltas.length - improvedCount - worsenedCount;
+        ? 0
+        : displayableDeltas.length - improvedCount - worsenedCount;
 
     return Scaffold(
       appBar: AppBar(
@@ -2547,42 +2571,49 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
   Widget _metricDeltaRow(_MetricDelta delta) {
     final baselineValue = delta.baselineValue;
     final currentValue = delta.latestValue;
-    print('REPORT CARD [${delta.label}]: Baseline=$baselineValue -> Current=$currentValue');
+    print(
+      'REPORT CARD [${delta.label}]: Baseline=$baselineValue -> Current=$currentValue',
+    );
     final adjustedBaselineForDelta =
         ScanDetailScreen.normalizeLegacyBaselineForDelta(
-      delta.key,
-      baselineValue,
-      currentValue,
-    );
+          delta.key,
+          baselineValue,
+          currentValue,
+        );
     final hasNonPositiveBaselineOrCurrent =
-      baselineValue <= 0.0 || currentValue <= 0.0;
+        baselineValue <= 0.0 || currentValue <= 0.0;
     final baselinePresent =
         adjustedBaselineForDelta.isFinite && adjustedBaselineForDelta > 0.0;
     final currentPresent = currentValue.isFinite && currentValue > 0.0;
     final canShowPercentageBadge =
-      !hasNonPositiveBaselineOrCurrent && baselinePresent && currentPresent;
+        !hasNonPositiveBaselineOrCurrent && baselinePresent && currentPresent;
     // Trend wording/coloring requires BOTH a numerically valid comparison
     // AND a real backend trend_status verdict — never derived from the raw
     // sign of currentValue - baselineValue on its own.
     final resolvedTrend = delta.resolvedTrend;
-    final canShowTrendBadge = canShowPercentageBadge && resolvedTrend != null;
+    final isHiddenTrendMetric = metricsWithHiddenTrendVerdicts.contains(
+      delta.key,
+    );
+    final canShowTrendBadge =
+        !isHiddenTrendMetric && canShowPercentageBadge && resolvedTrend != null;
     final color = canShowTrendBadge
-      ? (resolvedTrend!.isImproved
-          ? AppColors.mutedSage
-          : resolvedTrend.isWorsened
+        ? (resolvedTrend.isImproved
+              ? AppColors.mutedSage
+              : resolvedTrend.isWorsened
               ? AppColors.softTerracotta
               : AppColors.refinedSlate)
-      : AppColors.refinedSlate;
+        : AppColors.refinedSlate;
     final directionIcon = delta.delta > 0
-      ? Icons.arrow_upward_rounded
-      : Icons.arrow_downward_rounded;
+        ? Icons.arrow_upward_rounded
+        : Icons.arrow_downward_rounded;
     final percentDelta = canShowPercentageBadge
-      ? ((currentValue - adjustedBaselineForDelta) / adjustedBaselineForDelta) *
-          100.0
-      : 0.0;
+        ? ((currentValue - adjustedBaselineForDelta) /
+                  adjustedBaselineForDelta) *
+              100.0
+        : 0.0;
     double? badgePercent = canShowTrendBadge ? percentDelta : null;
     final trendLabel = canShowTrendBadge
-        ? (resolvedTrend!.lockHeadline ?? resolvedTrend.label)
+        ? (resolvedTrend.lockHeadline ?? resolvedTrend.label)
         : null;
     String subtext;
     if (!canShowTrendBadge) {
@@ -2593,8 +2624,8 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
       subtext = '$trendLabel $percentPrefix${percentDelta.toStringAsFixed(1)}%';
     }
     final deltaTextColor = canShowTrendBadge
-      ? color
-      : AppColors.refinedSlate.withValues(alpha: 0.72);
+        ? color
+        : AppColors.refinedSlate.withValues(alpha: 0.72);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Container(
@@ -2619,7 +2650,9 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (badgePercent != null && currentValue > 0.0 && baselineValue > 0.0)
+                if (badgePercent != null &&
+                    currentValue > 0.0 &&
+                    baselineValue > 0.0)
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,
@@ -2892,10 +2925,11 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
         latest,
         latestRow.key,
       );
-      final normalizedBaselineValue = ScanDetailScreen.normalizeMetricValueTo100(
-        latestRow.key,
-        extractedBaseline,
-      );
+      final normalizedBaselineValue =
+          ScanDetailScreen.normalizeMetricValueTo100(
+            latestRow.key,
+            extractedBaseline,
+          );
       final latestValue = ScanDetailScreen.normalizeMetricValueTo100(
         latestRow.key,
         extractedCurrent,
@@ -2992,10 +3026,7 @@ class ScanDetailScreen extends StatelessWidget {
           value: scan.estimatedSkinAge.toStringAsFixed(0),
         )
       else if (scan.estimatedSkinAge > 0)
-        (
-          label: 'Estimated Skin Age',
-          value: 'Estimate unavailable',
-        ),
+        (label: 'Estimated Skin Age', value: 'Estimate unavailable'),
       if (scan.lightingConfidence != null)
         (
           label: 'Lighting Confidence',
@@ -3014,13 +3045,13 @@ class ScanDetailScreen extends StatelessWidget {
           value: '${scan.headTiltAngle!.toStringAsFixed(1)} deg',
         ),
     ];
-      final archivedAiPayload = scan.isAiAnalysisScan
+    final archivedAiPayload = scan.isAiAnalysisScan
         ? _buildLuxePayloadForAiScan()
         : const <String, dynamic>{};
-      final archivedAiHistoryCount = scan.isAiAnalysisScan
+    final archivedAiHistoryCount = scan.isAiAnalysisScan
         ? _archivePayloadHistoryCount(archivedAiPayload)
         : 0;
-      final archivedAiHasComparison = scan.isAiAnalysisScan
+    final archivedAiHasComparison = scan.isAiAnalysisScan
         ? _archiveHasResolvedComparison(archivedAiPayload)
         : false;
 
@@ -3233,10 +3264,7 @@ class ScanDetailScreen extends StatelessWidget {
     if (scan.metrics.isNotEmpty) {
       final metricsMap = Map<String, dynamic>.from(scan.metrics);
       final nestedMetrics = asMap(mergedPayload['metrics']);
-      mergedPayload['metrics'] = {
-        ...metricsMap,
-        ...nestedMetrics,
-      };
+      mergedPayload['metrics'] = {...metricsMap, ...nestedMetrics};
     }
 
     DateTime? parseTimestamp(dynamic input) {
@@ -3292,7 +3320,9 @@ class ScanDetailScreen extends StatelessWidget {
       final baselineFromScan = readMetricMatrixValue(baselineMap, key);
       final baselineFromMerged = readMetricMatrixValue(mergedPayload, key);
       final baselineValue = baselineFromScan ?? baselineFromMerged;
-      if (baselineValue == null || !baselineValue.isFinite || baselineValue <= 0.0) {
+      if (baselineValue == null ||
+          !baselineValue.isFinite ||
+          baselineValue <= 0.0) {
         continue;
       }
       baselineMatrix[key] = baselineValue.clamp(0.0, 100.0).toDouble();
@@ -3323,8 +3353,12 @@ class ScanDetailScreen extends StatelessWidget {
       }
     }
 
-    final rawMetricExtractionPaths = asMap(rawPayloadMap['metric_extraction_paths']);
-    final mergedMetricExtractionPaths = asMap(mergedPayload['metric_extraction_paths']);
+    final rawMetricExtractionPaths = asMap(
+      rawPayloadMap['metric_extraction_paths'],
+    );
+    final mergedMetricExtractionPaths = asMap(
+      mergedPayload['metric_extraction_paths'],
+    );
     final metricExtractionPaths = rawMetricExtractionPaths.isNotEmpty
         ? rawMetricExtractionPaths
         : mergedMetricExtractionPaths;
@@ -3422,7 +3456,9 @@ class ScanDetailScreen extends StatelessWidget {
     final out = <String, double>{};
     for (final entry in trendNode.entries) {
       final value = entry.value;
-      final parsed = value is num ? value.toDouble() : double.tryParse(value.toString());
+      final parsed = value is num
+          ? value.toDouble()
+          : double.tryParse(value.toString());
       if (parsed == null || !parsed.isFinite) continue;
       out[entry.key.toString()] = parsed;
     }
@@ -3781,13 +3817,7 @@ class ScanDetailScreen extends StatelessWidget {
       if (value == null) continue;
       final normalized = normalizeMetricValueTo100(spec.key, value);
       if (!normalized.isFinite || normalized <= 0.0) continue;
-      rows.add(
-        (
-          key: spec.key,
-          label: spec.label,
-          value: normalized,
-        ),
-      );
+      rows.add((key: spec.key, label: spec.label, value: normalized));
       consumedKeys.addAll(spec.keys.where((key) => source.containsKey(key)));
       consumedLabels.add(spec.label.toLowerCase());
     }
@@ -4204,7 +4234,10 @@ class ScanDetailScreen extends StatelessWidget {
     return (normalized.clamp(0.0, 100.0) as num).toDouble();
   }
 
-  static double extractBackendMetricValue(dynamic scan, String metricKeyOrTitle) {
+  static double extractBackendMetricValue(
+    dynamic scan,
+    String metricKeyOrTitle,
+  ) {
     if (scan == null) return 0.0;
 
     const canonicalKeys = <String>{
@@ -4310,10 +4343,10 @@ class ScanDetailScreen extends StatelessWidget {
 
     final extraMetricsMap = asMap(extraMetrics);
     final val =
-      searchCanonicalKeyInMap(metricsMap, metricKeyOrTitle) ??
-      searchCanonicalKeyInMap(rawPayloadMap, metricKeyOrTitle) ??
-      searchCanonicalKeyInMap(toMap, metricKeyOrTitle) ??
-      searchCanonicalKeyInMap(extraMetricsMap, metricKeyOrTitle);
+        searchCanonicalKeyInMap(metricsMap, metricKeyOrTitle) ??
+        searchCanonicalKeyInMap(rawPayloadMap, metricKeyOrTitle) ??
+        searchCanonicalKeyInMap(toMap, metricKeyOrTitle) ??
+        searchCanonicalKeyInMap(extraMetricsMap, metricKeyOrTitle);
 
     if (val == null || !val.isFinite) {
       final metricsKeys = metricsMap.keys.toList();
