@@ -4,6 +4,41 @@ import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screen
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  group('buildBaselineMetricMatrix', () {
+    test('keeps canonical reference metrics unchanged over legacy aliases', () {
+      final matrix = buildBaselineMetricMatrix(const {
+        'localized_redness': 0.4,
+        'redness': 8.0,
+        'texture_smoothness': 63.2,
+        'texture': 2.0,
+        'pore_visibility': 7.3,
+        'pores': 0.8,
+        'breakout_activity': 12.4,
+        'acne_severity': 9.0,
+      });
+
+      expect(matrix, {
+        'localized_redness': 0.4,
+        'texture_smoothness': 63.2,
+        'pore_visibility': 7.3,
+        'breakout_activity': 12.4,
+      });
+    });
+
+    test('converts only present legacy values', () {
+      expect(buildBaselineMetricMatrix(const {'pores': 0.8}), {
+        'pore_visibility': 8.0,
+      });
+      expect(buildBaselineMetricMatrix(const {'redness': 3.0}), {
+        'localized_redness': 30.0,
+      });
+      expect(buildBaselineMetricMatrix(const {'texture': 2.0}), {
+        'texture_smoothness': 80.0,
+      });
+      expect(buildBaselineMetricMatrix(const {'unrelated': 4.0}), isNull);
+    });
+  });
+
   test('Track Procedure camera flow contains no backend body upload call', () {
     final source = File(
       'lib/features/skin_tracker/presentation/screens/camera_screen.dart',

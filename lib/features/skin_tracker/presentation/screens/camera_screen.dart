@@ -34,6 +34,38 @@ import 'package:aesthetic_skin_tracker/widgets/makeup_badge.dart';
 import 'package:aesthetic_skin_tracker/widgets/makeup_disclosure_dialog.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 
+Map<String, dynamic>? buildBaselineMetricMatrix(Map<String, double>? refMetrics) {
+  if (refMetrics == null || refMetrics.isEmpty) return null;
+
+  double? readLegacyMetric(List<String> keys) {
+    for (final key in keys) {
+      final value = refMetrics[key];
+      if (value != null) return value.clamp(0.0, 10.0).toDouble();
+    }
+    return null;
+  }
+
+  final matrix = <String, dynamic>{};
+  void addMetric(String key, List<String> legacyKeys, {bool invert = false}) {
+    final current = refMetrics[key];
+    if (current != null) {
+      matrix[key] = current;
+      return;
+    }
+    final legacy = readLegacyMetric(legacyKeys);
+    if (legacy == null) return;
+    matrix[key] = double.parse(
+      ((invert ? 10 - legacy : legacy) * 10).toStringAsFixed(1),
+    );
+  }
+
+  addMetric('localized_redness', const ['redness', 'erythema']);
+  addMetric('texture_smoothness', const ['texture', 'roughness'], invert: true);
+  addMetric('pore_visibility', const ['pores', 'pore']);
+  addMetric('breakout_activity', const ['acne_severity', 'acneSeverity']);
+  return matrix.isEmpty ? null : matrix;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Pure tilt/alignment helpers
 //
@@ -2290,33 +2322,7 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Map<String, dynamic>? _baselineMetricMatrix() {
-    final refMetrics = _referenceScan?.metrics;
-    if (refMetrics == null || refMetrics.isEmpty) {
-      return null;
-    }
-
-    double readMetric(List<String> keys) {
-      for (final key in keys) {
-        final raw = refMetrics[key];
-        if (raw == null) continue;
-        return raw.clamp(0.0, 10.0).toDouble();
-      }
-      return 0.0;
-    }
-
-    final redness = readMetric(const ['redness', 'erythema']);
-    final texture = readMetric(const ['texture', 'roughness']);
-    final pores = readMetric(const ['pores', 'pore']);
-    final acne = readMetric(const ['acne_severity', 'acneSeverity']);
-
-    return {
-      'localized_redness': double.parse((redness * 10).toStringAsFixed(1)),
-      'texture_smoothness': double.parse(
-        ((10 - texture).clamp(0.0, 10.0) * 10).toStringAsFixed(1),
-      ),
-      'pore_visibility': double.parse((pores * 10).toStringAsFixed(1)),
-      'breakout_activity': double.parse((acne * 10).toStringAsFixed(1)),
-    };
+    return buildBaselineMetricMatrix(_referenceScan?.metrics);
   }
 
   Widget _buildGhostReferenceOverlay() {
