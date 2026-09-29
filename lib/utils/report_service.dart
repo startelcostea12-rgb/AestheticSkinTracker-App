@@ -32,6 +32,19 @@ import 'trend_label_resolver.dart';
 import 'report_disclaimer.dart';
 import 'tracked_item_display.dart';
 
+bool reportMetricHasSavedSource(
+  ClinicalMetricDef definition,
+  Map<String, double>? raw,
+) {
+  if (raw == null) return false;
+  if (definition.extractFromRaw != null) {
+    return definition.extractFromRaw!(raw) != null;
+  }
+  final keys = definition.rawSourceKeys;
+  if (keys != null) return keys.any(raw.containsKey);
+  return raw.containsKey(definition.sourceKey);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Input DTO
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2413,6 +2426,10 @@ class ReportService {
     // map rather than collapsing to the 5.0 SkinMetrics placeholder.
     final List<Map<String, dynamic>> rows = [];
     for (final def in defs) {
+      if (!reportMetricHasSavedSource(def, baselineRaw) ||
+          !reportMetricHasSavedSource(def, latestRaw)) {
+        continue;
+      }
       final b = def.valueFromRaw(baselineRaw ?? const {}, baseline);
       final l = def.valueFromRaw(latestRaw ?? const {}, latest);
       // Skip metrics that don't apply for this scan type (null → no raw data
