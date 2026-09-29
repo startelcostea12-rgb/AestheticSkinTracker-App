@@ -1999,9 +1999,7 @@ class _MetricCard extends StatelessWidget {
         subtext: '',
         initialBaseline: !hasBaseline,
         honestyStatus: _HonestyStatus.noVerdict,
-        honestyLabel: hasBaseline
-            ? metric.currentScore.toStringAsFixed(1)
-            : 'Starting point',
+        honestyLabel: hasBaseline ? 'Recorded' : 'Starting point',
         trendLocked: false,
         hasRealBaseline: hasBaseline,
         hasComparableCurrentValue: metric.hasComparableCurrentValue,

@@ -15,10 +15,7 @@ const hiddenMetrics = <String, double>{
 Widget harness(Map<String, dynamic> payload) => MaterialApp(
   home: Scaffold(
     body: SingleChildScrollView(
-      child: LuxeReportLayout(
-        rawPayload: payload,
-        requireBackendVerdict: true,
-      ),
+      child: LuxeReportLayout(rawPayload: payload, requireBackendVerdict: true),
     ),
   ),
 );
@@ -71,9 +68,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Recorded'), findsNothing);
+    expect(find.text('Recorded'), findsNWidgets(hiddenMetrics.length));
     for (final score in hiddenMetrics.values) {
-      expect(find.text(score.toStringAsFixed(1)), findsNWidgets(2));
+      expect(find.text(score.toStringAsFixed(1)), findsOneWidget);
     }
     expect(find.text('Stable - change within tracking noise'), findsOneWidget);
     expect(find.text('Improved'), findsNothing);
@@ -92,22 +89,22 @@ void main() {
         'is_follow_up': true,
         'local_history_count': 2,
         'metric_matrix': {'rosacea_severity': 0.43333333333333335},
-        'baseline_metric_matrix': {
-          'rosacea_severity': 0.3666666666666667,
-        },
+        'baseline_metric_matrix': {'rosacea_severity': 0.3666666666666667},
         'metric_formula_versions': {'rosacea_severity': 2},
         'baseline_metric_formula_versions': {'rosacea_severity': 2},
       }),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Recorded'), findsNothing);
+    expect(find.text('Recorded'), findsOneWidget);
     expect(find.text('Starting point'), findsNothing);
-    expect(find.text('0.4'), findsNWidgets(2));
+    expect(find.text('0.4'), findsOneWidget);
     expect(find.textContaining('4.3'), findsNothing);
   });
 
-  testWidgets('missing rosacea baseline remains Starting point', (tester) async {
+  testWidgets('missing rosacea baseline remains Starting point', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       harness(const <String, dynamic>{
         'is_follow_up': true,
