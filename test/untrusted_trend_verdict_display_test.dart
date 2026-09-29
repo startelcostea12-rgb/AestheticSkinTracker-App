@@ -70,7 +70,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Recorded'), findsNWidgets(hiddenMetrics.length));
+    for (final score in hiddenMetrics.values) {
+      expect(find.text(score.toStringAsFixed(1)), findsOneWidget);
+    }
+    expect(find.text('Recorded'), findsNothing);
+    expect(find.text('Starting point'), findsNothing);
     expect(find.text('Stable - change within tracking noise'), findsOneWidget);
     expect(find.text('Improved'), findsNothing);
     expect(find.text('Worsened'), findsNothing);
@@ -80,7 +84,7 @@ void main() {
     expect(find.textContaining('20.0%'), findsNothing);
   });
 
-  testWidgets('real low rosacea baseline is Recorded, not Starting point', (
+  testWidgets('real low rosacea baseline shows its value, not Starting point', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -97,9 +101,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Recorded'), findsOneWidget);
+    expect(find.text('0.4'), findsOneWidget);
+    expect(find.text('Recorded'), findsNothing);
     expect(find.text('Starting point'), findsNothing);
-    expect(find.textContaining('Baseline 0.4'), findsWidgets);
   });
 
   testWidgets('missing rosacea baseline remains Starting point', (tester) async {
@@ -113,8 +117,27 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.text('0.4'), findsOneWidget);
     expect(find.text('Starting point'), findsOneWidget);
     expect(find.text('Recorded'), findsNothing);
+  });
+
+  testWidgets('stable trusted card has no Starting point subtitle', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      harness(const <String, dynamic>{
+        'is_follow_up': true,
+        'local_history_count': 2,
+        'metric_matrix': {'texture_smoothness': 60.0},
+        'trend_status': {'texture_smoothness': 'stable'},
+        'trend_deltas': {'texture_smoothness': 0.0},
+      }),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Stable - change within tracking noise'), findsOneWidget);
+    expect(find.textContaining('Starting point'), findsNothing);
   });
 
   test('worsening percentage drops the leading minus sign', () {

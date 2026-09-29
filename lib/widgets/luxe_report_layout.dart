@@ -2168,6 +2168,23 @@ class _MetricCard extends StatelessWidget {
   final bool requireBackendVerdict;
 
   _MetricRowData _buildMetricRowData() {
+    if (!metric.showTrendVerdict) {
+      final hasBaseline = metric.hasBaselineValue;
+      return _MetricRowData(
+        baselineValue: metric.baselineScore,
+        currentValue: metric.currentScore,
+        trendDelta: null,
+        badgePercent: null,
+        badgeValueText: null,
+        subtext: '',
+        initialBaseline: !hasBaseline,
+        honestyStatus: _HonestyStatus.noVerdict,
+        honestyLabel: metric.currentScore.toStringAsFixed(1),
+        trendLocked: false,
+        hasRealBaseline: hasBaseline,
+        hasComparableCurrentValue: metric.hasComparableCurrentValue,
+      );
+    }
     final hasComparisonContext =
       showProgressComparison || metric.hasBaselineValue;
     if (!hasComparisonContext) {
@@ -2183,26 +2200,6 @@ class _MetricCard extends StatelessWidget {
         honestyLabel: 'Starting point',
         trendLocked: false,
         hasRealBaseline: false,
-        hasComparableCurrentValue: metric.hasComparableCurrentValue,
-      );
-    }
-
-    if (!metric.showTrendVerdict) {
-      final hasBaseline = metric.hasBaselineValue;
-      return _MetricRowData(
-        baselineValue: metric.baselineScore,
-        currentValue: metric.currentScore,
-        trendDelta: null,
-        badgePercent: null,
-        badgeValueText: null,
-        subtext: hasBaseline
-            ? 'Recorded for reference; trend verdict not shown.'
-            : 'Starting point for future progress tracking',
-        initialBaseline: !hasBaseline,
-        honestyStatus: _HonestyStatus.noVerdict,
-        honestyLabel: hasBaseline ? 'Recorded' : 'Starting point',
-        trendLocked: false,
-        hasRealBaseline: hasBaseline,
         hasComparableCurrentValue: metric.hasComparableCurrentValue,
       );
     }
@@ -2304,9 +2301,13 @@ class _MetricCard extends StatelessWidget {
     final currentDisplayText = row.hasComparableCurrentValue
       ? formatScoreWithSeverityBand(metric.key, row.currentValue)
       : 'Not compared';
-    final comparisonSubtitle = row.hasRealBaseline
+    final comparisonSubtitle = !metric.showTrendVerdict
+      ? (row.hasRealBaseline ? '' : 'Starting point')
+      : row.hasRealBaseline
         ? 'Current $currentDisplayText${precision.rangeSuffix} · Baseline ${row.baselineValue.toStringAsFixed(1)}'
-        : 'Current $currentDisplayText${precision.rangeSuffix} · Starting point';
+      : row.honestyStatus == _HonestyStatus.stable
+      ? 'Current $currentDisplayText${precision.rangeSuffix}'
+      : 'Current $currentDisplayText${precision.rangeSuffix} · Starting point';
     final progressionDeltaText =
       row.badgeValueText == null ? '' : ' (${row.badgeValueText})';
     final progressionLine = !row.hasComparableCurrentValue
@@ -2352,25 +2353,29 @@ class _MetricCard extends StatelessWidget {
                   letterSpacing: 0.1,
                 ),
               ),
-              const SizedBox(height: 2),
-              Text(
-                comparisonSubtitle,
-                style: const TextStyle(
-                  color: titleColor,
-                  fontSize: 10.9,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.1,
+              if (comparisonSubtitle.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  comparisonSubtitle,
+                  style: const TextStyle(
+                    color: titleColor,
+                    fontSize: 10.9,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.1,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                precision.detailText,
-                style: TextStyle(
-                  color: titleColor.withValues(alpha: 0.66),
-                  fontSize: 10.2,
-                  fontWeight: FontWeight.w700,
+              ],
+              if (metric.showTrendVerdict) ...[
+                const SizedBox(height: 3),
+                Text(
+                  precision.detailText,
+                  style: TextStyle(
+                    color: titleColor.withValues(alpha: 0.66),
+                    fontSize: 10.2,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ),
+              ],
               const SizedBox(height: 5),
               Text(
                 metric.name,
@@ -2422,18 +2427,20 @@ class _MetricCard extends StatelessWidget {
                 )
               else
                 const SizedBox.shrink(),
-              const SizedBox(height: 8),
-              Text(
-                progressionLine,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: titleColor,
-                  fontSize: 10.8,
-                  fontWeight: FontWeight.w700,
-                  height: 1.3,
+              if (metric.showTrendVerdict) ...[
+                const SizedBox(height: 8),
+                Text(
+                  progressionLine,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: titleColor,
+                    fontSize: 10.8,
+                    fontWeight: FontWeight.w700,
+                    height: 1.3,
+                  ),
                 ),
-              ),
+              ],
               const SizedBox(height: 8),
               Text(
                 _metricDescription(metric),
