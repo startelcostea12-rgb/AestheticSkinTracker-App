@@ -1981,7 +1981,9 @@ class _MetricCard extends StatelessWidget {
         subtext: 'Starting point for future progress tracking',
         initialBaseline: true,
         honestyStatus: _HonestyStatus.insufficientSignal,
-        honestyLabel: 'Starting point',
+        honestyLabel: metric.hasComparableCurrentValue
+            ? metric.currentScore.toStringAsFixed(1)
+            : 'Starting point',
         trendLocked: false,
         hasRealBaseline: false,
         hasComparableCurrentValue: metric.hasComparableCurrentValue,
@@ -1999,7 +2001,9 @@ class _MetricCard extends StatelessWidget {
         subtext: '',
         initialBaseline: !hasBaseline,
         honestyStatus: _HonestyStatus.noVerdict,
-        honestyLabel: hasBaseline ? 'Recorded' : 'Starting point',
+        honestyLabel: metric.hasComparableCurrentValue
+            ? metric.currentScore.toStringAsFixed(1)
+            : 'Starting point',
         trendLocked: false,
         hasRealBaseline: hasBaseline,
         hasComparableCurrentValue: metric.hasComparableCurrentValue,

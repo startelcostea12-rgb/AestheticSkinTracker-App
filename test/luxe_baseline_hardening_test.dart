@@ -9,15 +9,11 @@ void main() {
       final payload = <String, dynamic>{
         'is_follow_up': true,
         'local_history_count': 2,
-        'metric_matrix': <String, dynamic>{
-          'localized_redness': 17.3,
-        },
+        'metric_matrix': <String, dynamic>{'localized_redness': 17.3},
         'baseline_metric_matrix': <String, dynamic>{
           'calibrated_redness_score': 100.0,
         },
-        'metric_confidence': <String, dynamic>{
-          'localized_redness': 'medium',
-        },
+        'metric_confidence': <String, dynamic>{'localized_redness': 'medium'},
       };
 
       final metrics = LuxeMetricParser.parseTimelinePayload(payload);
@@ -32,9 +28,7 @@ void main() {
       final payload = <String, dynamic>{
         'is_follow_up': true,
         'local_history_count': 2,
-        'metric_matrix': <String, dynamic>{
-          'pigment_load': 28.0,
-        },
+        'metric_matrix': <String, dynamic>{'pigment_load': 28.0},
         'baseline_metric_matrix': <String, dynamic>{
           'pigment_score': 0.0,
           'pigment': 100.0,
@@ -53,15 +47,9 @@ void main() {
       final payload = <String, dynamic>{
         'is_follow_up': true,
         'local_history_count': 2,
-        'metric_matrix': <String, dynamic>{
-          'texture_smoothness': 56.0,
-        },
-        'baseline_metric_matrix': <String, dynamic>{
-          'texture_smoothness': 50.0,
-        },
-        'metric_confidence': <String, dynamic>{
-          'texture_smoothness': 'low',
-        },
+        'metric_matrix': <String, dynamic>{'texture_smoothness': 56.0},
+        'baseline_metric_matrix': <String, dynamic>{'texture_smoothness': 50.0},
+        'metric_confidence': <String, dynamic>{'texture_smoothness': 'low'},
       };
 
       final metrics = LuxeMetricParser.parseTimelinePayload(payload);
@@ -116,15 +104,9 @@ void main() {
         final payload = <String, dynamic>{
           'is_follow_up': true,
           'local_history_count': 2,
-          'metric_matrix': <String, dynamic>{
-            'pigment_load': 10.0,
-          },
-          'baseline_metric_matrix': <String, dynamic>{
-            'pigment_load': 90.0,
-          },
-          'metric_confidence': <String, dynamic>{
-            'pigment_load': 'low',
-          },
+          'metric_matrix': <String, dynamic>{'pigment_load': 10.0},
+          'baseline_metric_matrix': <String, dynamic>{'pigment_load': 90.0},
+          'metric_confidence': <String, dynamic>{'pigment_load': 'low'},
           // Real backend payloads always carry these (see
           // skin_ai_analysis_screen.dart's _mergePayloadForPersistence);
           // matching, known paths on both sides so the path-mismatch
@@ -140,9 +122,7 @@ void main() {
 
         await tester.pumpWidget(
           MaterialApp(
-            home: Scaffold(
-              body: LuxeReportLayout(rawPayload: payload),
-            ),
+            home: Scaffold(body: LuxeReportLayout(rawPayload: payload)),
           ),
         );
         await tester.pumpAndSettle();
@@ -161,15 +141,9 @@ void main() {
         final payload = <String, dynamic>{
           'is_follow_up': true,
           'local_history_count': 2,
-          'metric_matrix': <String, dynamic>{
-            'pigment_load': 10.0,
-          },
-          'baseline_metric_matrix': <String, dynamic>{
-            'pigment_load': 90.0,
-          },
-          'metric_confidence': <String, dynamic>{
-            'pigment_load': 'medium',
-          },
+          'metric_matrix': <String, dynamic>{'pigment_load': 10.0},
+          'baseline_metric_matrix': <String, dynamic>{'pigment_load': 90.0},
+          'metric_confidence': <String, dynamic>{'pigment_load': 'medium'},
           'metric_extraction_paths': <String, dynamic>{
             'pigment_load': 'primary_roi',
           },
@@ -180,9 +154,7 @@ void main() {
 
         await tester.pumpWidget(
           MaterialApp(
-            home: Scaffold(
-              body: LuxeReportLayout(rawPayload: payload),
-            ),
+            home: Scaffold(body: LuxeReportLayout(rawPayload: payload)),
           ),
         );
         await tester.pumpAndSettle();
@@ -195,43 +167,35 @@ void main() {
       },
     );
 
-    testWidgets(
-      'rosacea severity is recorded without trend verdict styling',
-      (tester) async {
-        final payload = <String, dynamic>{
-          'is_follow_up': true,
-          'local_history_count': 2,
-          'metric_matrix': <String, dynamic>{
-            'rosacea_severity': 92.0,
-          },
-          'baseline_metric_matrix': <String, dynamic>{
-            'rosacea_severity': 12.8,
-          },
-          'metric_confidence': <String, dynamic>{
-            'rosacea_severity': 'medium',
-          },
-          'metric_extraction_paths': <String, dynamic>{
-            'rosacea_severity': 'primary_roi',
-          },
-          'baseline_metric_extraction_paths': <String, dynamic>{
-            'rosacea_severity': 'primary_roi',
-          },
-        };
+    testWidgets('rosacea severity is recorded without trend verdict styling', (
+      tester,
+    ) async {
+      final payload = <String, dynamic>{
+        'is_follow_up': true,
+        'local_history_count': 2,
+        'metric_matrix': <String, dynamic>{'rosacea_severity': 92.0},
+        'baseline_metric_matrix': <String, dynamic>{'rosacea_severity': 12.8},
+        'metric_confidence': <String, dynamic>{'rosacea_severity': 'medium'},
+        'metric_extraction_paths': <String, dynamic>{
+          'rosacea_severity': 'primary_roi',
+        },
+        'baseline_metric_extraction_paths': <String, dynamic>{
+          'rosacea_severity': 'primary_roi',
+        },
+      };
 
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: LuxeReportLayout(rawPayload: payload),
-            ),
-          ),
-        );
-        await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: LuxeReportLayout(rawPayload: payload)),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-        expect(find.text('Recorded'), findsOneWidget);
-        expect(find.text('Worsened'), findsNothing);
-        expect(find.byIcon(Icons.trending_down_rounded), findsNothing);
-      },
-    );
+      expect(find.text('Recorded'), findsNothing);
+      expect(find.text('92.0'), findsNWidgets(2));
+      expect(find.text('Worsened'), findsNothing);
+      expect(find.byIcon(Icons.trending_down_rounded), findsNothing);
+    });
 
     testWidgets(
       'a genuine backend "stable" (no trend_lock_reason) keeps the plain '
@@ -240,12 +204,8 @@ void main() {
         final payload = <String, dynamic>{
           'is_follow_up': true,
           'local_history_count': 2,
-          'metric_matrix': <String, dynamic>{
-            'pigment_load': 51.0,
-          },
-          'baseline_metric_matrix': <String, dynamic>{
-            'pigment_load': 50.0,
-          },
+          'metric_matrix': <String, dynamic>{'pigment_load': 51.0},
+          'baseline_metric_matrix': <String, dynamic>{'pigment_load': 50.0},
           'metric_extraction_paths': <String, dynamic>{
             'pigment_load': 'primary_roi',
           },
@@ -258,9 +218,7 @@ void main() {
 
         await tester.pumpWidget(
           MaterialApp(
-            home: Scaffold(
-              body: LuxeReportLayout(rawPayload: payload),
-            ),
+            home: Scaffold(body: LuxeReportLayout(rawPayload: payload)),
           ),
         );
         await tester.pumpAndSettle();
@@ -273,48 +231,38 @@ void main() {
       },
     );
 
-    testWidgets(
-      'a backend "stable" forced by capture_quality_mismatch shows a '
-      'distinct standalone-entry label instead of generic "Stable"',
-      (tester) async {
-        final payload = <String, dynamic>{
-          'is_follow_up': true,
-          'local_history_count': 2,
-          'metric_matrix': <String, dynamic>{
-            'pigment_load': 80.0,
-          },
-          'baseline_metric_matrix': <String, dynamic>{
-            'pigment_load': 50.0,
-          },
-          'metric_extraction_paths': <String, dynamic>{
-            'pigment_load': 'primary_roi',
-          },
-          'baseline_metric_extraction_paths': <String, dynamic>{
-            'pigment_load': 'primary_roi',
-          },
-          'trend_deltas': <String, dynamic>{'pigment_load': 0.0},
-          'trend_status': <String, dynamic>{'pigment_load': 'stable'},
-          'trend_lock_reasons': <String, dynamic>{
-            'pigment_load': 'capture_quality_mismatch',
-          },
-        };
+    testWidgets('a backend "stable" forced by capture_quality_mismatch shows a '
+        'distinct standalone-entry label instead of generic "Stable"', (
+      tester,
+    ) async {
+      final payload = <String, dynamic>{
+        'is_follow_up': true,
+        'local_history_count': 2,
+        'metric_matrix': <String, dynamic>{'pigment_load': 80.0},
+        'baseline_metric_matrix': <String, dynamic>{'pigment_load': 50.0},
+        'metric_extraction_paths': <String, dynamic>{
+          'pigment_load': 'primary_roi',
+        },
+        'baseline_metric_extraction_paths': <String, dynamic>{
+          'pigment_load': 'primary_roi',
+        },
+        'trend_deltas': <String, dynamic>{'pigment_load': 0.0},
+        'trend_status': <String, dynamic>{'pigment_load': 'stable'},
+        'trend_lock_reasons': <String, dynamic>{
+          'pigment_load': 'capture_quality_mismatch',
+        },
+      };
 
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: LuxeReportLayout(rawPayload: payload),
-            ),
-          ),
-        );
-        await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: LuxeReportLayout(rawPayload: payload)),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-        expect(
-          find.text('Stable - change within tracking noise'),
-          findsNothing,
-        );
-        expect(find.textContaining('Standalone entry'), findsWidgets);
-      },
-    );
+      expect(find.text('Stable - change within tracking noise'), findsNothing);
+      expect(find.textContaining('Standalone entry'), findsWidgets);
+    });
 
     testWidgets(
       'trend lock display reads the metric-specific reason, not a wrong-level decoy',
@@ -322,12 +270,8 @@ void main() {
         final payload = <String, dynamic>{
           'is_follow_up': true,
           'local_history_count': 2,
-          'metric_matrix': <String, dynamic>{
-            'pigment_load': 80.0,
-          },
-          'baseline_metric_matrix': <String, dynamic>{
-            'pigment_load': 50.0,
-          },
+          'metric_matrix': <String, dynamic>{'pigment_load': 80.0},
+          'baseline_metric_matrix': <String, dynamic>{'pigment_load': 50.0},
           'metric_extraction_paths': <String, dynamic>{
             'pigment_load': 'primary_roi',
           },
@@ -337,16 +281,12 @@ void main() {
           'trend_deltas': <String, dynamic>{'pigment_load': 0.0},
           'trend_status': <String, dynamic>{'pigment_load': 'stable'},
           'trend_lock_reason': 'capture_quality_mismatch',
-          'trend_lock_reasons': <String, dynamic>{
-            'pigment_load': null,
-          },
+          'trend_lock_reasons': <String, dynamic>{'pigment_load': null},
         };
 
         await tester.pumpWidget(
           MaterialApp(
-            home: Scaffold(
-              body: LuxeReportLayout(rawPayload: payload),
-            ),
+            home: Scaffold(body: LuxeReportLayout(rawPayload: payload)),
           ),
         );
         await tester.pumpAndSettle();
@@ -366,12 +306,8 @@ void main() {
         final payload = <String, dynamic>{
           'is_follow_up': true,
           'local_history_count': 2,
-          'metric_matrix': <String, dynamic>{
-            'pigment_load': 80.0,
-          },
-          'baseline_metric_matrix': <String, dynamic>{
-            'pigment_load': 50.0,
-          },
+          'metric_matrix': <String, dynamic>{'pigment_load': 80.0},
+          'baseline_metric_matrix': <String, dynamic>{'pigment_load': 50.0},
           'metric_extraction_paths': <String, dynamic>{
             'pigment_load': 'primary_roi',
           },
@@ -387,9 +323,7 @@ void main() {
 
         await tester.pumpWidget(
           MaterialApp(
-            home: Scaffold(
-              body: LuxeReportLayout(rawPayload: payload),
-            ),
+            home: Scaffold(body: LuxeReportLayout(rawPayload: payload)),
           ),
         );
         await tester.pumpAndSettle();
