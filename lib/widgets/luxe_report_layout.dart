@@ -1284,6 +1284,9 @@ _HonestyAssessment _assessMetricHonesty({
   }
 
   final normalizedMetricKey = metricKey.trim().toLowerCase();
+  final hidesTrendVerdict = metricsWithHiddenTrendVerdicts.contains(
+    normalizedMetricKey,
+  );
   final higherIsWorseMap = <String>{
     'pore_visibility',
     'breakout_activity',
@@ -1324,7 +1327,9 @@ _HonestyAssessment _assessMetricHonesty({
       hasRealBaseline && pointDelta != null && pointDelta < 2.0;
 
   var status = _HonestyStatus.insufficientSignal;
-  var reason = 'Starting point';
+  var reason = hidesTrendVerdict && hasRealBaseline
+      ? current.toStringAsFixed(1)
+      : 'Starting point';
   // Only set for the legacy-payload path-mismatch case below; every other
   // branch here (unknown path, low confidence, near-zero noise) predates the
   // trend_lock_reason field and isn't one of the recognized reasons, so it
@@ -2198,7 +2203,9 @@ class _MetricCard extends StatelessWidget {
         subtext: '',
         initialBaseline: !hasBaseline,
         honestyStatus: _HonestyStatus.noVerdict,
-        honestyLabel: hasBaseline ? 'Recorded' : 'Starting point',
+        honestyLabel: hasBaseline
+          ? metric.currentScore.toStringAsFixed(1)
+          : 'Starting point',
         trendLocked: false,
         hasRealBaseline: hasBaseline,
         hasComparableCurrentValue: metric.hasComparableCurrentValue,

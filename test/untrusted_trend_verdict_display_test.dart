@@ -71,9 +71,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Recorded'), findsNWidgets(hiddenMetrics.length));
+    expect(find.text('Recorded'), findsNothing);
     for (final score in hiddenMetrics.values) {
-      expect(find.text(score.toStringAsFixed(1)), findsOneWidget);
+      expect(find.text(score.toStringAsFixed(1)), findsNWidgets(2));
     }
     expect(find.text('Stable - change within tracking noise'), findsOneWidget);
     expect(find.text('Improved'), findsNothing);
@@ -84,7 +84,7 @@ void main() {
     expect(find.textContaining('20.0%'), findsNothing);
   });
 
-  testWidgets('real low rosacea baseline is Recorded, not Starting point', (
+  testWidgets('real low rosacea baseline shows its value, not Starting point', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -101,9 +101,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Recorded'), findsOneWidget);
+    expect(find.text('Recorded'), findsNothing);
     expect(find.text('Starting point'), findsNothing);
-    expect(find.text('0.4'), findsOneWidget);
+    expect(find.text('0.4'), findsNWidgets(2));
     expect(find.textContaining('4.3'), findsNothing);
   });
 
