@@ -196,7 +196,7 @@ void main() {
     );
 
     testWidgets(
-      'rosacea severity shows its number without trend verdict styling',
+      'rosacea severity is recorded without trend verdict styling',
       (tester) async {
         final payload = <String, dynamic>{
           'is_follow_up': true,
@@ -227,8 +227,7 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.text('92.0'), findsOneWidget);
-        expect(find.text('Starting point'), findsNothing);
+        expect(find.text('Recorded'), findsOneWidget);
         expect(find.text('Worsened'), findsNothing);
         expect(find.byIcon(Icons.trending_down_rounded), findsNothing);
       },

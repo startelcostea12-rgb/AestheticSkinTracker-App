@@ -4177,7 +4177,6 @@ class ScanDetailScreen extends StatelessWidget {
       'darkspots',
       'elasticity',
       'acneseverity',
-      'rosaceaseverity',
       'swelling',
       'firmness',
       'fatretention',

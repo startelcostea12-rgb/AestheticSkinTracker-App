@@ -1,3 +1,4 @@
+import 'package:aesthetic_skin_tracker/screens/progress_report_screen.dart';
 import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -70,11 +71,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.text('Recorded'), findsNWidgets(hiddenMetrics.length));
     for (final score in hiddenMetrics.values) {
       expect(find.text(score.toStringAsFixed(1)), findsOneWidget);
     }
-    expect(find.text('Recorded'), findsNothing);
-    expect(find.text('Starting point'), findsNothing);
     expect(find.text('Stable - change within tracking noise'), findsOneWidget);
     expect(find.text('Improved'), findsNothing);
     expect(find.text('Worsened'), findsNothing);
@@ -84,7 +84,7 @@ void main() {
     expect(find.textContaining('20.0%'), findsNothing);
   });
 
-  testWidgets('real low rosacea baseline shows its value, not Starting point', (
+  testWidgets('real low rosacea baseline is Recorded, not Starting point', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -101,9 +101,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('0.4'), findsOneWidget);
-    expect(find.text('Recorded'), findsNothing);
+    expect(find.text('Recorded'), findsOneWidget);
     expect(find.text('Starting point'), findsNothing);
+    expect(find.text('0.4'), findsOneWidget);
+    expect(find.textContaining('4.3'), findsNothing);
   });
 
   testWidgets('missing rosacea baseline remains Starting point', (tester) async {
@@ -117,12 +118,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('0.4'), findsOneWidget);
     expect(find.text('Starting point'), findsOneWidget);
     expect(find.text('Recorded'), findsNothing);
+    expect(find.text('0.4'), findsOneWidget);
   });
 
-  testWidgets('stable trusted card has no Starting point subtitle', (
+  testWidgets('stable trusted metric does not say Starting point', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -150,5 +151,13 @@ void main() {
       ),
       '17.3%',
     );
+  });
+
+  test('progress report keeps canonical rosacea on the backend scale', () {
+    final value = ScanDetailScreen.normalizeMetricValueTo100(
+      'rosacea_severity',
+      0.43333333333333335,
+    );
+    expect(value.toStringAsFixed(1), '0.4');
   });
 }

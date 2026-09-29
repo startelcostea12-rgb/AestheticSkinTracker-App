@@ -4584,8 +4584,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     // real redness/rosacea formula metrics instead of adding an invented
     // backend proxy for a signal the backend doesn't measure.
     final barrierStressed =
-        (scores['redness'] ?? 0) >= 4.0 ||
-        (scores['rosacea_intensity'] ?? 0) >= 4.0;
+      _meetsConcernCutoff(scores['redness'] ?? 0, 4.0) ||
+      _meetsConcernCutoff(scores['rosacea_intensity'] ?? 0, 4.0);
     final sentences = <String>[];
 
     if (topConcerns.isEmpty) {
@@ -4598,10 +4598,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       final leadPhrase = _joinWithCommasAndAnd(
         topConcerns
             .take(3)
-            .map(
-              (entry) =>
-                  '${entry.label} at ${entry.value.toStringAsFixed(1)}/10',
-            )
+          .map((entry) => entry.label)
             .toList(),
       );
       sentences.add(
@@ -4614,7 +4611,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final concernValues = topConcerns.take(3).map((entry) => entry.value).toList();
     if (concernValues.isNotEmpty) {
       final highest = concernValues.reduce((a, b) => a > b ? a : b);
-      if (highest >= 4.0) {
+      if (_meetsConcernCutoff(highest, 4.0)) {
         sentences.add(
           barrierStressed
               ? 'That pattern usually means calm-first care should lead, because the barrier looks a little reactive and the skin will tolerate less when actives are stacked.'
@@ -4646,11 +4643,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
     final rosaceaSignal = scores['rosacea_intensity'] ?? 0;
     final acneSignal = scores['acne_severity'] ?? 0;
-    if (rosaceaSignal >= 4.0) {
+    if (_meetsConcernCutoff(rosaceaSignal, 4.0)) {
       sentences.add(
         'Avoid fragrance, menthol, scrubs, and high-strength acids for now, because those are more likely to aggravate redness or stinging than to help this pattern.',
       );
-    } else if (acneSignal >= 3.5) {
+    } else if (_meetsConcernCutoff(acneSignal, 3.5)) {
       sentences.add(
         'Breakout care should stay targeted rather than stacked, so keep any acne step spot-only or very limited until the barrier stays calm.',
       );
@@ -4659,9 +4656,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       final textureSignal = scores['texture'] ?? 0;
       final wrinkleSignal = scores['wrinkle'] ?? 0;
       final visibleTargets = <String>[
-        if (pigmentSignal >= 3.5) 'tone support for pigment',
-        if (textureSignal >= 3.5) 'texture support',
-        if (wrinkleSignal >= 3.5) 'firmness and line support',
+        if (_meetsConcernCutoff(pigmentSignal, 3.5)) 'tone support for pigment',
+        if (_meetsConcernCutoff(textureSignal, 3.5)) 'texture support',
+        if (_meetsConcernCutoff(wrinkleSignal, 3.5)) 'firmness and line support',
       ];
       if (visibleTargets.isNotEmpty) {
         sentences.add(
@@ -4709,7 +4706,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       ),
     ]..sort((a, b) => b.value.compareTo(a.value));
 
-    return concerns.where((entry) => entry.value >= 0.5).take(3).toList();
+    return concerns.where((entry) => _meetsConcernCutoff(entry.value, 0.5)).take(3).toList();
   }
 
   List<String> _coachTrendSentences(Map<String, double> scores) {
@@ -7246,8 +7243,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     const sensitivitySignal = 0.0;
     final barrierStressed =
         sensitivitySignal >= 4.0 ||
-        (scores['redness'] ?? 0) >= 4.0 ||
-        (scores['rosacea_intensity'] ?? 0) >= 4.0;
+      _meetsConcernCutoff(scores['redness'] ?? 0, 4.0) ||
+      _meetsConcernCutoff(scores['rosacea_intensity'] ?? 0, 4.0);
 
     final redness = scores['redness'] ?? 0;
     final rosacea = scores['rosacea_intensity'] ?? 0;
@@ -7257,7 +7254,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       rosacea,
       acne,
     ].reduce((a, b) => a > b ? a : b);
-    final treatInflammationFirst = inflammation >= 4.0 || barrierStressed;
+    final treatInflammationFirst = _meetsConcernCutoff(inflammation, 4.0) || barrierStressed;
 
     final recommendations = _productRecommendationsForScores(scores);
     final routine = _routineForScores(
@@ -7482,33 +7479,35 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// AcneRosaceaPhotoAnalyzer report — neither backed by the real
   /// backend. [metricMatrix] is the same cleaned backend metric_matrix
   /// LuxeReportLayout renders (see _buildLuxeResultsPayload). Maps each
-  /// real formula-metric key onto the 0–10 scale this screen's
-  /// recommendation/coach copy already expects; a key absent from
+  /// real formula-metric key onto the backend's 0–100 scale; a key absent from
   /// metricMatrix (the backend didn't trust it for this scan) scores 0,
   /// same as "no concern found" rather than a fabricated guess.
   Map<String, double> _recommendationScoresFromMetricMatrix(
     Map<String, dynamic> metricMatrix,
   ) {
-    double pct10(String key) {
+    double backendValue(String key) {
       final raw = metricMatrix[key];
       final parsed = raw is num ? raw.toDouble() : double.tryParse('$raw');
       if (parsed == null || parsed.isNaN || parsed.isInfinite) return 0.0;
-      return (parsed.clamp(0.0, 100.0) / 10.0).toDouble();
+      return (parsed.clamp(0.0, 100.0) as num).toDouble();
     }
 
-    final textureSmoothness = pct10('texture_smoothness');
+    final textureSmoothness = backendValue('texture_smoothness');
     return {
-      'pigment': pct10('pigment_load'),
-      'redness': pct10('localized_redness'),
+      'pigment': backendValue('pigment_load'),
+      'redness': backendValue('localized_redness'),
       // Inverted: texture_smoothness is "higher = smoother = better", but
       // this map's convention (matching the rest of this file) is
       // "higher = more concern".
-      'texture': (10.0 - textureSmoothness).clamp(0.0, 10.0).toDouble(),
-      'wrinkle': pct10('wrinkle_load'),
-      'acne_severity': pct10('breakout_activity'),
-      'rosacea_intensity': pct10('rosacea_severity'),
+      'texture': (100.0 - textureSmoothness).clamp(0.0, 100.0).toDouble(),
+      'wrinkle': backendValue('wrinkle_load'),
+      'acne_severity': backendValue('breakout_activity'),
+      'rosacea_intensity': backendValue('rosacea_severity'),
     };
   }
+
+  bool _meetsConcernCutoff(double backendValue, double tenPointCutoff) =>
+      backendValue >= tenPointCutoff * 10.0;
 
   String _coachRoutineHeaderText(
     Map<String, double> scores, {
@@ -7523,12 +7522,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final texture = scores['texture'] ?? 0;
     final wrinkle = scores['wrinkle'] ?? 0;
     final concernParts = <String>[
-      if (redness >= 4.0) 'redness ${redness.toStringAsFixed(1)}',
-      if (rosacea >= 4.0) 'rosacea ${rosacea.toStringAsFixed(1)}',
-      if (acne >= 3.5) 'breakouts ${acne.toStringAsFixed(1)}',
-      if (texture >= 3.5) 'texture ${texture.toStringAsFixed(1)}',
-      if (pigment >= 3.5) 'pigment ${pigment.toStringAsFixed(1)}',
-      if (wrinkle >= 3.5) 'wrinkles ${wrinkle.toStringAsFixed(1)}',
+      if (_meetsConcernCutoff(redness, 4.0)) 'redness',
+      if (_meetsConcernCutoff(rosacea, 4.0)) 'rosacea',
+      if (_meetsConcernCutoff(acne, 3.5)) 'breakouts',
+      if (_meetsConcernCutoff(texture, 3.5)) 'texture',
+      if (_meetsConcernCutoff(pigment, 3.5)) 'pigment',
+      if (_meetsConcernCutoff(wrinkle, 3.5)) 'wrinkles',
     ];
 
     final concernText = concernParts.isEmpty
@@ -7572,7 +7571,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       }
     }
 
-    if (inflammation >= 4) {
+    if (_meetsConcernCutoff(inflammation, 4)) {
       add(
         'SKIN1004 Madagascar Centella Ampoule',
         'Best first step when redness/rosacea/acne are leading. Centella keeps the routine calming before stronger actives.',
@@ -7581,13 +7580,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       );
       add(
         'COSRX Advanced Snail 96 Mucin Essence',
-        'A light barrier-support layer for reactive days; helpful when redness is ${redness.toStringAsFixed(1)} or texture feels stressed.',
+        'A light barrier-support layer for reactive days; helpful when redness or texture feels stressed.',
         Icons.water_drop_outlined,
         MyApp.clinicalTeal,
       );
     }
 
-    if (acne >= 3.5) {
+    if (_meetsConcernCutoff(acne, 3.5)) {
       add(
         'COSRX Acne Pimple Master Patch',
         'Spot-focused support for active breakouts without adding an all-over active while inflammation is high.',
@@ -7596,13 +7595,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       );
       add(
         'Some By Mi AHA-BHA-PHA 30 Days Miracle Toner',
-        'Consider only 1-2 nights weekly after skin feels calm; acne score ${acne.toStringAsFixed(1)} suggests pores may benefit from slow exfoliation.',
+        'Consider only 1-2 nights weekly after skin feels calm; active breakouts suggest pores may benefit from slow exfoliation.',
         Icons.science_outlined,
         const Color(0xFFD06B6B),
       );
     }
 
-    if (rosacea >= 3.5 || redness >= 3.5) {
+    if (_meetsConcernCutoff(rosacea, 3.5) || _meetsConcernCutoff(redness, 3.5)) {
       add(
         'SKIN1004 Centella Probio-Cica Intensive Ampoule',
         'A richer cica option for redness/rosacea-prone days; pairs well with a simple moisturizer and SPF.',
@@ -7611,19 +7610,21 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       );
     }
 
-    if (pigment >= 3.5 || redness < 4 && acne < 4) {
+    if (_meetsConcernCutoff(pigment, 3.5) ||
+      !_meetsConcernCutoff(redness, 4) && !_meetsConcernCutoff(acne, 4)) {
       add(
         'COSRX The Niacinamide 15 Serum',
-        'Niacinamide is a good bridge active for pigment ${pigment.toStringAsFixed(1)} and visible redness, but start slowly if skin is reactive.',
+        'Niacinamide is a good bridge active for pigment and visible redness, but start slowly if skin is reactive.',
         Icons.tonality_rounded,
         MyApp.goldShimmer,
       );
     }
 
-    if ((texture >= 3.5 || wrinkle >= 3.5) && inflammation < 6) {
+    if ((_meetsConcernCutoff(texture, 3.5) || _meetsConcernCutoff(wrinkle, 3.5)) &&
+      !_meetsConcernCutoff(inflammation, 6)) {
       add(
         'Copper peptide serum / GHK-Cu peptide serum',
-        'A barrier-friendly PM option for texture ${texture.toStringAsFixed(1)} and wrinkle ${wrinkle.toStringAsFixed(1)} support without jumping straight to harsh actives.',
+        'A barrier-friendly PM option for texture and wrinkle support without jumping straight to harsh actives.',
         Icons.grain_rounded,
         MyApp.clinicalNavy,
       );
@@ -7743,7 +7744,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       rosacea,
       acne,
     ].reduce((a, b) => a > b ? a : b);
-    final calmFirst = inflammation >= 4 || barrierStressed || sensitivitySignal >= 4;
+    final calmFirst = _meetsConcernCutoff(inflammation, 4) || barrierStressed || sensitivitySignal >= 4;
     final allowActives = !calmFirst && isFollowUp;
 
     final am = <String>[
@@ -7752,16 +7753,16 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           : 'Gentle low-pH cleanser to lift overnight oil and sunscreen without stripping the skin that this scan is trying to protect.',
       calmFirst
           ? 'Centella or heartleaf toner / essence, because that is the calmest way to support a reactive barrier before any active treatment.'
-          : pigment >= 3.5
+          : _meetsConcernCutoff(pigment, 3.5)
           ? 'Hydrating toner or essence, because the scan shows tone support is useful and hydration keeps brightening steps better tolerated.'
-          : texture >= 3.5 || wrinkle >= 3.5
+          : _meetsConcernCutoff(texture, 3.5) || _meetsConcernCutoff(wrinkle, 3.5)
           ? 'Peptide-friendly hydrating essence, because texture and firmness work best when the skin is comfortable first.'
           : 'Simple hydrating essence, because the skin does not need extra noise in the morning.',
       calmFirst
           ? 'Ceramide moisturizer only, or a niacinamide 2-5% serum if you already know your skin tolerates it, so the morning stays barrier-first.'
-          : acne >= 3.5
+          : _meetsConcernCutoff(acne, 3.5)
           ? 'Niacinamide 2-5% serum or a light breakout-support serum, because the scan shows acne is present but the routine should still avoid stacking actives.'
-          : pigment >= 3.5
+          : _meetsConcernCutoff(pigment, 3.5)
           ? 'Niacinamide 2-5% serum, because it fits uneven tone and visible redness without pushing the skin too hard.'
           : 'Ceramide moisturizer, because keeping water in the skin is still the safest way to support the current scan pattern.',
       'Broad-spectrum SPF 30+, because it protects collagen, pigment, redness, and any progress this scan is tracking.',
@@ -7771,19 +7772,19 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       'Gentle cleanse, and if you wore sunscreen or makeup, double cleanse first so the evening routine starts from a clean surface.',
       calmFirst
           ? 'Centella, snail mucin, or a bland hydrating serum tonight, because the scan says calming the barrier should come before any stronger treatment.'
-          : allowActives && (texture >= 3.5 || wrinkle >= 3.5)
+          : allowActives && (_meetsConcernCutoff(texture, 3.5) || _meetsConcernCutoff(wrinkle, 3.5))
           ? 'GHK-Cu Copper Tripeptide-1 at night, because texture and firmness concerns respond best when the barrier is calm and the routine stays consistent.'
-          : allowActives && pigment >= 3.5
+          : allowActives && _meetsConcernCutoff(pigment, 3.5)
           ? 'GHK-Cu Copper Tripeptide-1 or another gentle peptide serum, because the scan favors quiet repair more than aggressive exfoliation.'
           : 'Hydrating serum or peptide step only if the skin stays comfortable, because the routine does not need to be overloaded.',
       calmFirst
           ? 'Ceramide barrier cream, because sealing the routine with lipids is the safest way to keep the skin quiet while redness or sensitivity is visible.'
-          : acne >= 3.5
+          : _meetsConcernCutoff(acne, 3.5)
           ? 'Barrier cream plus a spot-only acne patch on active blemishes, because breakout support should stay targeted instead of turning into a full-face stack.'
           : 'Barrier cream, because this scan still benefits more from steady repair than from piling on more treatment steps.',
       calmFirst
           ? 'Skip acids, retinoids, and scrubs for now; if you want a weekly active later, wait until the skin is calm for several nights in a row.'
-          : allowActives && (texture >= 3.5 || wrinkle >= 3.5 || pigment >= 3.5)
+          : allowActives && (_meetsConcernCutoff(texture, 3.5) || _meetsConcernCutoff(wrinkle, 3.5) || _meetsConcernCutoff(pigment, 3.5))
           ? 'If you add an exfoliant later, keep it to one calm night a week and do not stack it with GHK-Cu or spot acne care.'
           : 'If the skin feels stable, keep any extra treatment step optional rather than mandatory so you do not crowd the routine.',
     ];
