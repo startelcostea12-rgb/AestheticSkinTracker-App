@@ -2358,8 +2358,7 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
     final visibleDeltas = deltas
         .where(
           (delta) =>
-              !delta.isInitialBaseline &&
-              !metricsWithHiddenTrendVerdicts.contains(delta.key),
+              !delta.isInitialBaseline,
         )
         .toList();
     final displayableDeltas = deltas
@@ -2616,7 +2615,13 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
         ? (resolvedTrend.lockHeadline ?? resolvedTrend.label)
         : null;
     String subtext;
-    if (!canShowTrendBadge) {
+    if (isHiddenTrendMetric) {
+      badgePercent = null;
+      final lockReason = resolvedTrend?.lockReason;
+      subtext = lockReason == null
+          ? 'Recorded'
+          : 'Not comparable: ${resolvedTrend?.lockShortLabel ?? lockReason}';
+    } else if (!canShowTrendBadge) {
       badgePercent = null;
       subtext = 'Tracks visible appearance in key zones';
     } else {
