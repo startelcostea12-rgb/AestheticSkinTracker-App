@@ -14,6 +14,7 @@ import 'backend_config.dart';
 import 'procedure_intelligence.dart';
 import 'report_service.dart';
 import 'trend_label_resolver.dart';
+
 // --- Storage keys for AppPrefs ---
 const String _reportRecordsKey = 'premium_report_records';
 const String _coachMessagesKey = 'premium_coach_messages';
@@ -308,7 +309,9 @@ class PremiumRecoveryService {
     );
 
     final trendStatus = trendStatusMapFromRawPayload(latest.rawPayload);
-    final trendLockReasons = trendLockReasonMapFromRawPayload(latest.rawPayload);
+    final trendLockReasons = trendLockReasonMapFromRawPayload(
+      latest.rawPayload,
+    );
 
     ResolvedTrendLabel? trendFor(String key) {
       final canonicalKey = shortMetricKeyToCanonical[key];
@@ -333,19 +336,24 @@ class PremiumRecoveryService {
       trendFor('wrinkle'),
       trendFor('elasticity'),
     ];
-    final improvedCount = metricTrends.where((trend) => trend?.isImproved ?? false).length;
-    final worsenedCount = metricTrends.where((trend) => trend?.isWorsened ?? false).length;
+    final improvedCount = metricTrends
+        .where((trend) => trend?.isImproved ?? false)
+        .length;
+    final worsenedCount = metricTrends
+        .where((trend) => trend?.isWorsened ?? false)
+        .length;
     final direction = improvedCount > worsenedCount && improvedCount > 0
         ? 'improving'
         : worsenedCount > improvedCount && worsenedCount > 0
         ? 'worsening'
         : 'tracking';
-    final pct = ((swellingDelta.abs() +
-              textureDelta.abs() +
-              wrinkleDelta.abs() +
-              contourDelta.abs()) /
-          4)
-        .round();
+    final pct =
+        ((swellingDelta.abs() +
+                    textureDelta.abs() +
+                    wrinkleDelta.abs() +
+                    contourDelta.abs()) /
+                4)
+            .round();
 
     final highlights = <String>[
       '${ProcedureIntelligence.metricLabel('redness', procedureType)} trend: ${directionWord(trendFor('redness'), 'stable')} by ${swellingDelta.abs().round()}%',
@@ -362,7 +370,8 @@ class PremiumRecoveryService {
 
     return ProgressPhotoInsight(
       id: premiumEntityId('insight'),
-      summary: '$scope appears $direction by about $pct% vs your baseline photo.',
+      summary:
+          '$scope appears $direction by about $pct% vs your baseline photo.',
       highlights: highlights,
       createdAt: DateTime.now(),
       procedureType: procedureType,
@@ -379,7 +388,9 @@ class PremiumRecoveryService {
     required DateTime startDate,
     String? uploadedInstructionImageRef,
   }) async {
-    final resolvedProcedureType = _resolveProcedureType(explicit: procedureType);
+    final resolvedProcedureType = _resolveProcedureType(
+      explicit: procedureType,
+    );
     AppLogger.verbose(
       '[PremiumRecoveryService.buildCustomPlanFromNotes] resolvedProcedureType=$resolvedProcedureType',
     );
@@ -570,34 +581,19 @@ class PremiumRecoveryService {
     final day = procedure?.startDate == null
         ? 0
         : (DateTime.now()
-                  .difference(
-                    DateTime(
-                      procedure!.startDate.year,
-                      procedure.startDate.month,
-                      procedure.startDate.day,
-                    ),
-                  )
-                  .inDays +
-              1)
+                      .difference(
+                        DateTime(
+                          procedure!.startDate.year,
+                          procedure.startDate.month,
+                          procedure.startDate.day,
+                        ),
+                      )
+                      .inDays +
+                  1)
               .clamp(1, 999);
-    final scanData = scans.take(5).map((scan) {
-      final metrics = scan.toSkinMetrics();
-      return <String, dynamic>{
-        'id': scan.id,
-        'timestamp': scan.timestamp.toIso8601String(),
-        'procedure': (scan.procedure ?? '').trim(),
-        'procedureId': (scan.procedureId ?? '').trim(),
-        'scanType': scan.resolvedScanType,
-        'metrics': {
-          'redness': metrics.redness,
-          'texture': metrics.texture,
-          'wrinkle': metrics.wrinkle,
-          'pore': metrics.pore,
-          'darkSpots': metrics.darkSpots,
-          'elasticity': metrics.elasticity,
-        },
-      };
-    }).toList();
+    final scanData = AiIntelligenceEngine.buildAiScanContext(
+      scans: scans.take(5).toList(),
+    );
 
     final requestBody = <String, dynamic>{
       'prompt': question,
@@ -1035,41 +1031,13 @@ class PremiumRecoveryService {
     String consistencyLine;
     if (scans.isEmpty) {
       scanLine = 'No scan history available yet.';
-      consistencyLine =
-          'Consistency score is unavailable yet because there are no recent scans.';
+      consistencyLine = 'No scan match context is available yet.';
     } else {
       final latest = scans.first;
-      final poseSimilarity = latest.metrics['capture_pose_similarity'];
-      final landmarkQuality = latest.metrics['capture_landmark_quality'];
-      final consistencyScore = latest.metrics['consistency_score'];
-      final qualityBits = <String>[];
-      if (poseSimilarity != null) {
-        qualityBits.add('pose similarity ${poseSimilarity.round()}%');
-      }
-      if (landmarkQuality != null) {
-        qualityBits.add('landmark quality ${(landmarkQuality * 100).round()}%');
-      }
-      if (latest.lightingConfidence != null) {
-        qualityBits.add(
-          'lighting ${(latest.lightingConfidence! * 100).round()}%',
-        );
-      }
-      final qualitySummary = qualityBits.isEmpty
-          ? 'quality metrics limited'
-          : qualityBits.join(', ');
       scanLine =
-          '${scans.length} recovery scans available; latest capture has $qualitySummary.';
-
-      if (consistencyScore != null) {
-        consistencyLine =
-            'Recent capture consistency is ${(consistencyScore * 100).round()}%, which helps trend confidence.';
-      } else if (poseSimilarity is num || landmarkQuality is num) {
-        consistencyLine =
-            'Recent scan consistency appears usable for trend review, though not fully scored.';
-      } else {
-        consistencyLine =
-            'Recent scan consistency is limited; comparisons may be less precise.';
-      }
+          'Latest scan date: ${latest.timestamp.toIso8601String()}. Scan match status is supplied separately.';
+      consistencyLine =
+          'Scan match status and lock reasons are supplied per scan; no metric values are included.';
     }
 
     final timelineMilestones =
@@ -1103,13 +1071,8 @@ class PremiumRecoveryService {
         timelineProgressLine =
             'Timeline progress is in an early calibration phase.';
       } else {
-        final elapsed = now
-            .difference(firstDate)
-            .inDays
-            .clamp(0, totalSpanDays);
-        final progressPct = ((elapsed / totalSpanDays) * 100).round();
         timelineProgressLine =
-            'You are about $progressPct% through your planned recovery timeline.';
+            'Timeline milestones are available for the current procedure.';
       }
     }
 
@@ -1154,13 +1117,15 @@ class PremiumRecoveryService {
         ? 'No additional recent journal highlights.'
         : 'Recent journal highlights: ${recentJournalHighlights.join(' | ')}.';
 
-    final recentUserJournalNotes = generalJournalEntries
-        .where(
-          (entry) =>
-              entry.content.trim().isNotEmpty || entry.title.trim().isNotEmpty,
-        )
-        .toList()
-      ..sort((a, b) => b.date.compareTo(a.date));
+    final recentUserJournalNotes =
+        generalJournalEntries
+            .where(
+              (entry) =>
+                  entry.content.trim().isNotEmpty ||
+                  entry.title.trim().isNotEmpty,
+            )
+            .toList()
+          ..sort((a, b) => b.date.compareTo(a.date));
     final generalJournalLine = recentUserJournalNotes.isEmpty
         ? 'No recent general journal notes.'
         : 'Recent user journal notes: ${recentUserJournalNotes.take(3).map((entry) => entry.content.trim().isNotEmpty ? entry.content.trim() : entry.title.trim()).where((text) => text.isNotEmpty).join(' | ')}.';

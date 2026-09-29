@@ -23,7 +23,6 @@ import '../models/product_tracker.dart';
 import '../models/scan_history.dart';
 import 'app_logger.dart';
 import 'procedure_intelligence.dart';
-import 'procedure_metric_set.dart';
 import 'trend_label_resolver.dart';
 
 // ---------------------------------------------------------------------------
@@ -1023,10 +1022,12 @@ class AiIntelligenceEngine {
       baseline,
     );
     final canonicalKey = shortMetricKeyToCanonical[def.sourceKey];
-    final String? backendTrendStatus =
-        canonicalKey == null ? null : trendStatus?[canonicalKey];
-    final String? backendTrendLockReason =
-        canonicalKey == null ? null : trendLockReason?[canonicalKey];
+    final String? backendTrendStatus = canonicalKey == null
+        ? null
+        : trendStatus?[canonicalKey];
+    final String? backendTrendLockReason = canonicalKey == null
+        ? null
+        : trendLockReason?[canonicalKey];
     final resolvedTrend = resolveTrendLabel(
       trendStatus: backendTrendStatus,
       trendLockReason: backendTrendLockReason,
@@ -1448,7 +1449,6 @@ class AiIntelligenceEngine {
       return 'General Skincare';
     }
 
-    final resolvedProcedureType = resolveProcedureType();
     final hasProcedure = procedures.isNotEmpty;
     final hasScans = scans.length >= 2;
     final hasProducts = products.isNotEmpty;
@@ -1546,50 +1546,6 @@ class AiIntelligenceEngine {
       final sortedScans = List<ScanHistoryEntry>.from(scans)
         ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
       final latest = sortedScans.first;
-      final baseline = sortedScans.last;
-
-      if (baseline.id != latest.id) {
-        final latestMetrics = latest.toSkinMetrics();
-        final baselineMetrics = baseline.toSkinMetrics();
-        if (isBodyProcedure) {
-          final bodyMetricSet = getMetricsForProcedure(
-            procedureMetricContextType(
-              procedureType: procedures.first.type,
-              customDescription: procedures.first.customDescription,
-              focusArea: procedures.first.focusArea,
-            ),
-          );
-          for (final metric in bodyMetricSet.additional.take(3)) {
-            final trendInsight = _generateTrendInsight(
-              metricLabel: metric.label,
-              latest: metric.valueFor(latestMetrics, rawMetrics: latest.metrics),
-              baseline: metric.valueFor(
-                baselineMetrics,
-                rawMetrics: baseline.metrics,
-              ),
-              lowerIsBetter: metric.lowerIsBetter,
-              bodyRecoveryLanguage: true,
-            );
-            if (trendInsight != null) insights.add(trendInsight);
-          }
-        } else {
-          final rednessInsight = _generateTrendInsight(
-            metricLabel: 'Erythema',
-            latest: latestMetrics.redness,
-            baseline: baselineMetrics.redness,
-            lowerIsBetter: true,
-          );
-          if (rednessInsight != null) insights.add(rednessInsight);
-
-          final textureInsight = _generateTrendInsight(
-            metricLabel: 'Skin Texture Quality',
-            latest: latestMetrics.texture,
-            baseline: baselineMetrics.texture,
-            lowerIsBetter: true,
-          );
-          if (textureInsight != null) insights.add(textureInsight);
-        }
-      }
 
       // Days since last scan
       final daysSinceLastScan = DateTime.now()
@@ -2046,72 +2002,61 @@ class AiIntelligenceEngine {
   // Coach Context Builder (for AI Recovery Coach enrichment)
   // ---------------------------------------------------------------------------
 
+  static List<Map<String, dynamic>> buildAiScanContext({
+    required List<ScanHistoryEntry> scans,
+  }) {
+    final sorted = List<ScanHistoryEntry>.from(scans)
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+    return [for (final scan in sorted) _scanContextEntry(scan)];
+  }
+
+  static Map<String, dynamic> _scanContextEntry(ScanHistoryEntry scan) {
+    Map<String, dynamic> asMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return const <String, dynamic>{};
+    }
+
+    final payload = scan.rawPayload ?? const <String, dynamic>{};
+    final nestedLuxe = asMap(payload['luxePayload']);
+    final matrix = asMap(payload['metric_matrix']).isNotEmpty
+        ? asMap(payload['metric_matrix'])
+        : asMap(asMap(payload['metrics'])['metric_matrix']);
+    final rawLocks = asMap(nestedLuxe['trend_lock_reasons']).isNotEmpty
+        ? asMap(nestedLuxe['trend_lock_reasons'])
+        : asMap(payload['trend_lock_reasons']);
+    final lockReasons =
+        rawLocks.values
+            .map((value) => value.toString().trim())
+            .where((value) => value.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
+    final hasPhoto = (scan.imagePath ?? '').trim().isNotEmpty;
+    final status = matrix.isNotEmpty ? 'matched' : 'photo_only';
+
+    return {
+      'date': scan.timestamp.toIso8601String(),
+      if ((scan.procedureId ?? '').trim().isNotEmpty)
+        'procedure_id': scan.procedureId!.trim(),
+      'status': status,
+      if (status == 'photo_only')
+        'reason': hasPhoto
+            ? 'no recorded metric match'
+            : 'no photo or recorded metric match',
+      if (lockReasons.isNotEmpty) 'lock_reasons': lockReasons,
+    };
+  }
+
   /// Builds a rich metric context string for injecting into the AI coach prompt.
   static String buildCoachMetricContext({
     required List<ScanHistoryEntry> scans,
     String? procedureType,
   }) {
-    if (scans.isEmpty) return 'No scan data available yet.';
-
-    final sorted = List<ScanHistoryEntry>.from(scans)
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-
-    final latest = sorted.first.toSkinMetrics();
-    final baseline = sorted.length > 1 ? sorted.last.toSkinMetrics() : null;
-
-    final buf = StringBuffer();
-    buf.writeln(
-      'Latest skin scan metrics (scale 1-10; redness/texture/wrinkle/pore/darkSpots = lower is better; elasticity = higher is better):',
-    );
-    buf.writeln(
-      '  Redness: ${latest.redness.toStringAsFixed(1)}${_levelSuffix(_interpretRedness(latest.redness).level)}',
-    );
-    buf.writeln(
-      '  Texture: ${latest.texture.toStringAsFixed(1)}${_levelSuffix(_interpretTexture(latest.texture).level)}',
-    );
-    buf.writeln(
-      '  Wrinkles: ${latest.wrinkle.toStringAsFixed(1)}${_levelSuffix(_interpretWrinkle(latest.wrinkle).level)}',
-    );
-    buf.writeln(
-      '  Pores: ${latest.pore.toStringAsFixed(1)}${_levelSuffix(_interpretPore(latest.pore).level)}',
-    );
-    buf.writeln(
-      '  Dark Spots: ${latest.darkSpots.toStringAsFixed(1)}${_levelSuffix(_interpretDarkSpots(latest.darkSpots).level)}',
-    );
-    buf.writeln(
-      '  Elasticity: ${latest.elasticity.toStringAsFixed(1)}${_levelSuffix(_interpretElasticity(latest.elasticity).level)}',
-    );
-
-    if (baseline != null) {
-      buf.writeln('\nBaseline comparison (earliest scan):');
-      final rDelta = latest.redness - baseline.redness;
-      final tDelta = latest.texture - baseline.texture;
-      final eDelta = latest.elasticity - baseline.elasticity;
-      buf.writeln(
-        '  Redness trend: ${rDelta < 0
-            ? '↓ improved'
-            : rDelta > 0.3
-            ? '↑ worsened'
-            : 'stable'} (${rDelta.toStringAsFixed(1)})',
-      );
-      buf.writeln(
-        '  Texture trend: ${tDelta < 0
-            ? '↓ improved'
-            : tDelta > 0.3
-            ? '↑ worsened'
-            : 'stable'} (${tDelta.toStringAsFixed(1)})',
-      );
-      buf.writeln(
-        '  Elasticity trend: ${eDelta > 0
-            ? '↑ improved'
-            : eDelta < -0.3
-            ? '↓ declined'
-            : 'stable'} (${eDelta.toStringAsFixed(1)})',
-      );
-      buf.writeln('  Total scans tracked: ${sorted.length}');
-    }
-
-    return buf.toString();
+    final entries = buildAiScanContext(scans: scans);
+    if (entries.isEmpty) return 'No scan context available yet.';
+    return 'Scan context: ${entries.join(' | ')}';
   }
 
   static String _levelSuffix(MetricClinicalLevel level) {

@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import '../models/peptide_model.dart';
 import '../models/scan_history.dart';
 import 'app_prefs.dart';
+import 'ai_intelligence_engine.dart';
 import 'trend_label_resolver.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -605,7 +606,8 @@ class PeptideService {
         );
         final dir = resolvedTrend == null || resolvedTrend.isInsufficientSignal
             ? 'changed'
-            : (resolvedTrend.lockShortLabel ?? resolvedTrend.label.toLowerCase());
+            : (resolvedTrend.lockShortLabel ??
+                  resolvedTrend.label.toLowerCase());
         insight =
             'After ${peptide.daysTracked}d of $conc${peptide.name}, '
             '${top.key} $dir by ${top.value.abs().toStringAsFixed(1)} pts.';
@@ -780,83 +782,10 @@ class PeptideService {
           ' (baseline ${_fmtDate(baseline.timestamp)}'
           ' → latest ${_fmtDate(latest.timestamp)})',
         );
-
-        // Body metrics (always include if present; lead for body stacks).
-        final bodyLine = _summarizeMetrics(baseline.metrics, latest.metrics, [
-          [
-            'Weight (lbs)',
-            ['weightLbs', 'weight'],
-          ],
-          [
-            'Body Fat %',
-            ['bodyFatPct', 'bodyFat'],
-          ],
-          [
-            'Waist (in)',
-            ['waistInches', 'waist', 'waistCm'],
-          ],
-          [
-            'Muscle (lbs)',
-            ['muscleMassLbs', 'muscleMass', 'leanMass'],
-          ],
-          [
-            'Appetite Control',
-            ['satietyScore', 'appetiteControl', 'satiety'],
-          ],
-        ]);
-        if (bodyLine.isNotEmpty) {
-          buf.writeln('  Body metrics: $bodyLine');
-        }
-
-        // Skin metrics from latest SkinMetrics-style fields.
-        final skinLine = _summarizeMetrics(baseline.metrics, latest.metrics, [
-          [
-            'Redness',
-            ['redness', 'inflammation', 'swelling'],
-          ],
-          [
-            'Texture',
-            ['texture'],
-          ],
-          [
-            'Wrinkles',
-            ['wrinkles', 'wrinkle'],
-          ],
-          [
-            'Pores',
-            ['pores', 'pore'],
-          ],
-          [
-            'Dark Spots',
-            ['darkSpots'],
-          ],
-          [
-            'Elasticity',
-            ['elasticity'],
-          ],
-          [
-            'Hydration',
-            ['hydration', 'barrierHealth'],
-          ],
-          [
-            'Firmness',
-            ['firmness'],
-          ],
-          [
-            'Evenness',
-            ['evenness', 'tone', 'skinTone'],
-          ],
-        ]);
-        if (skinLine.isNotEmpty) {
-          buf.writeln('  Skin metrics: $skinLine');
-        }
-
-        // Estimated skin age trend (when present).
-        if (baseline.estimatedSkinAge > 0 || latest.estimatedSkinAge > 0) {
-          buf.writeln(
-            '  Estimated skin age: ${baseline.estimatedSkinAge.toStringAsFixed(1)} → ${latest.estimatedSkinAge.toStringAsFixed(1)}',
-          );
-        }
+        final scanContext = AiIntelligenceEngine.buildAiScanContext(
+          scans: sorted,
+        );
+        buf.writeln('  Scan match context: $scanContext');
       } else {
         buf.writeln('  Scans on file: 0 (no metrics yet)');
       }
