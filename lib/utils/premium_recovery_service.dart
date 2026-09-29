@@ -966,15 +966,33 @@ class PremiumRecoveryService {
     Procedure? procedure,
   ) async {
     final allScans = await AppPrefs.getScanEntries();
-    final sorted = List<ScanHistoryEntry>.from(allScans)
+    return scopeScansToProcedure(allScans, procedure);
+  }
+
+  static List<ScanHistoryEntry> scopeScansToProcedure(
+    List<ScanHistoryEntry> scans,
+    Procedure? procedure,
+  ) {
+    final sorted = List<ScanHistoryEntry>.from(scans)
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
-    if (procedure == null) return sorted;
+    if (procedure == null) {
+      AppLogger.verbose(
+        '[PremiumRecoveryService] no active procedure; sending zero scans to AI Coach',
+      );
+      return const [];
+    }
 
     final scoped = sorted
         .where((scan) => (scan.procedureId ?? '').trim() == procedure.id)
         .toList();
-    return scoped.isNotEmpty ? scoped : sorted;
+    if (scoped.isEmpty) {
+      AppLogger.verbose(
+        '[PremiumRecoveryService] procedure id miss for ${procedure.id}; sending zero scans to AI Coach',
+      );
+      return const [];
+    }
+    return scoped;
   }
 
   static _CoachContextSnapshot _buildCoachContext({
