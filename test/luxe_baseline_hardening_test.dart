@@ -192,7 +192,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Recorded'), findsNothing);
-      expect(find.text('92.0'), findsNWidgets(2));
+      expect(find.text('Rosacea Severity'), findsOneWidget);
+      expect(find.text('92.0'), findsOneWidget);
       expect(find.text('Worsened'), findsNothing);
       expect(find.byIcon(Icons.trending_down_rounded), findsNothing);
     });

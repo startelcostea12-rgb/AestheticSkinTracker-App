@@ -70,7 +70,17 @@ void main() {
 
     expect(find.text('Recorded'), findsNothing);
     for (final score in hiddenMetrics.values) {
-      expect(find.text(score.toStringAsFixed(1)), findsNWidgets(2));
+      expect(find.text(score.toStringAsFixed(1)), findsOneWidget);
+    }
+    for (final label in const [
+      'Wrinkle Load',
+      'Rosacea Severity',
+      'Diffuse Flushing Erythema',
+      'Pore Contraction Index',
+      'Under Eye Dark Circle Density',
+      'Under Eye Texture Density',
+    ]) {
+      expect(find.text(label), findsOneWidget);
     }
     expect(find.text('Stable - change within tracking noise'), findsOneWidget);
     expect(find.text('Improved'), findsNothing);
@@ -98,11 +108,12 @@ void main() {
 
     expect(find.text('Recorded'), findsNothing);
     expect(find.text('Starting point'), findsNothing);
-    expect(find.text('0.4'), findsNWidgets(2));
+    expect(find.text('Rosacea Severity'), findsOneWidget);
+    expect(find.text('0.4'), findsOneWidget);
     expect(find.textContaining('4.3'), findsNothing);
   });
 
-  testWidgets('missing rosacea baseline remains Starting point', (
+  testWidgets('missing rosacea baseline still shows its current value', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -117,7 +128,8 @@ void main() {
 
     expect(find.text('Starting point'), findsNothing);
     expect(find.text('Recorded'), findsNothing);
-    expect(find.text('0.4'), findsNWidgets(2));
+    expect(find.text('Rosacea Severity'), findsOneWidget);
+    expect(find.text('0.4'), findsOneWidget);
   });
 
   testWidgets('stable trusted metric does not say Starting point', (

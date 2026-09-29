@@ -1982,7 +1982,7 @@ class _MetricCard extends StatelessWidget {
         initialBaseline: true,
         honestyStatus: _HonestyStatus.insufficientSignal,
         honestyLabel: metric.hasComparableCurrentValue
-            ? metric.currentScore.toStringAsFixed(1)
+            ? metric.name
             : 'Starting point',
         trendLocked: false,
         hasRealBaseline: false,
@@ -2002,7 +2002,7 @@ class _MetricCard extends StatelessWidget {
         initialBaseline: !hasBaseline,
         honestyStatus: _HonestyStatus.noVerdict,
         honestyLabel: metric.hasComparableCurrentValue
-            ? metric.currentScore.toStringAsFixed(1)
+            ? metric.name
             : 'Starting point',
         trendLocked: false,
         hasRealBaseline: hasBaseline,
@@ -2104,6 +2104,9 @@ class _MetricCard extends StatelessWidget {
         : _chipColor(row.honestyStatus);
     const titleColor = AppColors.textStructure;
     final headlineDelta = row.honestyLabel;
+    final hideDuplicateMetricName =
+        metricsWithHiddenTrendVerdicts.contains(metric.key) &&
+        row.hasComparableCurrentValue;
     final precision = metricPrecisionPresentation(metric);
     final currentDisplayText = row.hasComparableCurrentValue
         ? formatScoreWithSeverityBand(metric.key, row.currentValue)
@@ -2180,15 +2183,17 @@ class _MetricCard extends StatelessWidget {
                   ),
                 ),
               ],
-              const SizedBox(height: 5),
-              Text(
-                metric.name,
-                style: TextStyle(
-                  color: titleColor.withValues(alpha: 0.88),
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
+              if (!hideDuplicateMetricName) ...[
+                const SizedBox(height: 5),
+                Text(
+                  metric.name,
+                  style: TextStyle(
+                    color: titleColor.withValues(alpha: 0.88),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ),
+              ],
               const SizedBox(height: 10),
               if (row.badgePercent != null &&
                   row.badgeValueText != null &&
