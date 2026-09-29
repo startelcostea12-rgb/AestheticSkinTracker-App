@@ -166,17 +166,15 @@ class LuxeMetricParser {
     if (shouldDisplayPointDelta(baseline)) {
       final points = (current - baseline).abs();
       final sign = includeSign
-          ? (deltaPct > 0
-                ? '+'
-                : (deltaPct < 0 ? '-' : ''))
+          ? (deltaPct > 0 ? '+' : (deltaPct < 0 ? '-' : ''))
           : '';
       return '$sign${points.toStringAsFixed(1)} pts';
     }
 
-    final capped = deltaPct.abs().clamp(
-      0.0,
-      _displayDeltaCapPercent,
-    ).toDouble();
+    final capped = deltaPct
+        .abs()
+        .clamp(0.0, _displayDeltaCapPercent)
+        .toDouble();
     if (includeSign) {
       final sign = deltaPct > 0 ? '+' : '';
       return '$sign${capped.toStringAsFixed(1)}%';
@@ -356,28 +354,18 @@ class LuxeMetricParser {
     Map<String, dynamic> payload, {
     required bool initialBaseline,
   }) {
-    debugPrint('=== TRACE PAYLOAD: TOP LEVEL KEYS ===');
-    debugPrint(payload.keys.toList().toString());
-    debugPrint('=== TRACE PAYLOAD: metric_matrix ===');
-    debugPrint(payload['metric_matrix']?.toString());
-    debugPrint('=== TRACE PAYLOAD: opencv_metrics ===');
-    debugPrint(payload['opencv_metrics']?.toString());
-    debugPrint('=== TRACE PAYLOAD: metrics SUBMAP ===');
-    debugPrint(payload['metrics']?.toString());
-    debugPrint('=== TRACE PAYLOAD: baseline SUBMAP ===');
-    debugPrint(payload['baseline']?.toString());
-    debugPrint('=== TRACE PAYLOAD: current SUBMAP ===');
-    debugPrint(payload['current']?.toString());
-
-    final baselineNode = _canonicalizeMetricMap(payload['baseline']);
     final metricsNode = _canonicalizeMetricMap(payload['metrics']);
 
     final metricMatrix = _canonicalizeMetricMap(payload['metric_matrix']);
     final baselineMetricMatrix = _canonicalizeMetricMap(
       payload['baseline_metric_matrix'],
     );
-    final metricConfidence = _canonicalizeMetricMap(payload['metric_confidence']);
-    final nestedMetricConfidence = _canonicalizeMetricMap(metricsNode['metric_confidence']);
+    final metricConfidence = _canonicalizeMetricMap(
+      payload['metric_confidence'],
+    );
+    final nestedMetricConfidence = _canonicalizeMetricMap(
+      metricsNode['metric_confidence'],
+    );
     final nestedMetricsRoot = _asMap(payload['metrics']);
     final nestedRootMetricConfidence = _canonicalizeMetricMap(
       nestedMetricsRoot['metric_confidence'],
@@ -390,7 +378,9 @@ class LuxeMetricParser {
     );
     final trendDeltas = _canonicalizeMetricMap(payload['trend_deltas']);
     final trendStatus = _canonicalizeMetricMap(payload['trend_status']);
-    final trendLockReasons = _canonicalizeMetricMap(payload['trend_lock_reasons']);
+    final trendLockReasons = _canonicalizeMetricMap(
+      payload['trend_lock_reasons'],
+    );
     final multiFrameAnalysis = _asMap(payload['multi_frame_analysis']);
     final metricRanges = _canonicalizeMetricMap(
       multiFrameAnalysis['metric_ranges'],
@@ -402,31 +392,6 @@ class LuxeMetricParser {
       multiFrameAnalysis['requested_frames'],
     );
 
-    _traceMapEntries('payload.baseline', baselineNode);
-    _traceMapEntries('payload.baseline_metric_matrix', baselineMetricMatrix);
-    _traceMapEntries('payload.metric_matrix', metricMatrix);
-    debugPrint(
-      'BASELINE KEYS current=${metricMatrix.keys.toList()} baseline=${baselineMetricMatrix.keys.toList()}',
-    );
-
-    const traceMetrics = <String>[
-      'localized_redness',
-      'texture_smoothness',
-      'pore_visibility',
-      'wrinkle_load',
-      'pigment_load',
-      'rosacea_severity',
-      'skin_tone_radiance_evenness',
-      'structural_firmness_elasticity',
-    ];
-    for (final metricKey in traceMetrics) {
-      final paths = _findKeyPaths(payload, metricKey, path: 'payload');
-      debugPrint(
-        'LUXE TRACE PAYLOAD METRIC PRESENCE: key=$metricKey exists=${paths.isNotEmpty} paths=$paths',
-      );
-    }
-
-    debugPrint('LUXE TRACE: metric_matrix keys=${metricMatrix.keys.toList()}');
     const knownSpecs = <_ServerMetricSpec>[
       _ServerMetricSpec(
         deltaKey: 'localized_redness',
@@ -462,11 +427,7 @@ class LuxeMetricParser {
       _ServerMetricSpec(
         deltaKey: 'rosacea_severity',
         name: 'Rosacea Severity',
-        currentKeys: [
-          'rosacea_severity',
-          'rosacea',
-          'rosacea_score',
-        ],
+        currentKeys: ['rosacea_severity', 'rosacea', 'rosacea_score'],
         higherIsWorse: true,
       ),
       _ServerMetricSpec(
@@ -491,9 +452,7 @@ class LuxeMetricParser {
       ),
     ];
 
-    final knownSpecByKey = {
-      for (final spec in knownSpecs) spec.deltaKey: spec,
-    };
+    final knownSpecByKey = {for (final spec in knownSpecs) spec.deltaKey: spec};
 
     final activeMetricMatrix = metricMatrix.isNotEmpty
         ? metricMatrix
@@ -522,49 +481,12 @@ class LuxeMetricParser {
       );
     }
 
-    final supportedKeys = supportedSpecs.map((s) => s.deltaKey).join(', ');
-    debugPrint(
-      'LUXE CARDS: dynamically rendering these ${supportedSpecs.length} metrics: [$supportedKeys]',
-    );
     if (supportedSpecs.isEmpty) {
-      debugPrint('TRACE CARD: No supported metrics found in selected overlay source map.');
       return const [];
     }
 
-    double detectScaleMultiplier(
-      Map<String, dynamic> sourceMap,
-      String sourceName,
-    ) {
-      if (sourceMap.isEmpty) {
-        debugPrint(
-          'TRACE SCALING [$sourceName]: source empty -> multiplier=1.0',
-        );
-        return 1.0;
-      }
-      double maxRaw = 0.0;
-      for (final spec in supportedSpecs) {
-        final v = extractValue(sourceMap, spec.currentKeys);
-        if (v > maxRaw) maxRaw = v;
-      }
-      final multiplier = (maxRaw > 0.0 && maxRaw <= 10.0) ? 10.0 : 1.0;
-      debugPrint(
-        'TRACE SCALING [$sourceName]: maxRaw=$maxRaw -> sourceMultiplier=$multiplier',
-      );
-      return multiplier;
-    }
-
-    double normalizeToHundred({
-      required String metricKey,
-      required String sourceName,
-      required String sourceMapKey,
-      required double raw,
-      required double multiplier,
-    }) {
-      final normalized = raw.clamp(0.0, 100.0).toDouble();
-      return normalized;
-    }
-
-    final metricMatrixScale = detectScaleMultiplier(activeMetricMatrix, 'payload.metric_matrix');
+    double normalizeToHundred({required double raw}) =>
+        raw.clamp(0.0, 100.0).toDouble();
 
     final out = <LuxeMetric>[];
     for (final spec in supportedSpecs) {
@@ -573,10 +495,7 @@ class LuxeMetricParser {
         <String>[spec.deltaKey],
       );
       final currentRaw = extractedCurrent.value;
-      const currentSourceName = 'payload.metric_matrix';
-      final currentScale = metricMatrixScale;
-      final currentSourceMapKey = 'metric_matrix.${spec.deltaKey}';
-        final hasComparableCurrentValue =
+      final hasComparableCurrentValue =
           extractedCurrent.sourceMapKey != 'not_found' && currentRaw >= 0.0;
       final currentExtractionPath = _normalizeExtractionPath(
         extractionPaths[spec.deltaKey],
@@ -585,28 +504,16 @@ class LuxeMetricParser {
         baselineExtractionPaths[spec.deltaKey],
       );
 
-      final current = normalizeToHundred(
-        metricKey: spec.deltaKey,
-        sourceName: currentSourceName,
-        sourceMapKey: currentSourceMapKey,
-        raw: currentRaw,
-        multiplier: currentScale,
-      );
+      final current = normalizeToHundred(raw: currentRaw);
       final hasDetectedCurrentValue = hasComparableCurrentValue;
 
-        final lowerIsBetter =
+      final lowerIsBetter =
           spec.higherIsWorse ?? _isDefectMetric(spec.deltaKey);
       final baselineCandidates = _baselineCandidateKeys(spec.deltaKey);
       final showTrendVerdict = shouldShowTrendVerdict(spec.deltaKey);
       final baseline = showTrendVerdict
-          ? _findUsableBaselineValue(
-              baselineMetricMatrix,
-              baselineCandidates,
-            )
-          : _findPresentBaselineValue(
-              baselineMetricMatrix,
-              baselineCandidates,
-            );
+          ? _findUsableBaselineValue(baselineMetricMatrix, baselineCandidates)
+          : _findPresentBaselineValue(baselineMetricMatrix, baselineCandidates);
       final hasBaseline = baseline != null && baseline.isFinite;
       final hasComparisonBaseline =
           hasBaseline &&
@@ -623,67 +530,44 @@ class LuxeMetricParser {
           nestedRootMetricConfidence,
         ],
       );
-        final rangeNode = _asMap(metricRanges[spec.deltaKey]);
-        final rangeMin = _asDoubleOrNull(rangeNode['min']);
-        final rangeMax = _asDoubleOrNull(rangeNode['max']);
-        final contributorCount =
+      final rangeNode = _asMap(metricRanges[spec.deltaKey]);
+      final rangeMin = _asDoubleOrNull(rangeNode['min']);
+      final rangeMax = _asDoubleOrNull(rangeNode['max']);
+      final contributorCount =
           _asIntOrNull(metricContributorCounts[spec.deltaKey]) ??
           _asIntOrNull(rangeNode['count']);
-
-      debugPrint(
-        'BASELINE MATCH [${spec.deltaKey}] matchedKey=${hasBaseline ? 'baseline_metric_matrix.${spec.deltaKey}' : 'not_found'} raw=${hasBaseline ? baseline.toStringAsFixed(2) : 'nan'} aliasUsed=none final=${hasBaseline ? baseline.toStringAsFixed(2) : 'nan'}',
-      );
 
       var resolvedCurrent = current;
 
       double improvementPercent;
       final backendTrendDelta = _asDoubleOrNull(trendDeltas[spec.deltaKey]);
       final backendTrendStatus = trendStatus[spec.deltaKey]?.toString().trim();
-      final backendTrendLockReasonRaw = trendLockReasons[spec.deltaKey]?.toString().trim();
+      final backendTrendLockReasonRaw = trendLockReasons[spec.deltaKey]
+          ?.toString()
+          .trim();
       final backendTrendLockReason =
           backendTrendLockReasonRaw == null || backendTrendLockReasonRaw.isEmpty
-              ? null
-              : backendTrendLockReasonRaw;
+          ? null
+          : backendTrendLockReasonRaw;
       final hasBackendTrendDelta =
           backendTrendDelta != null && backendTrendDelta.isFinite;
       final hasBackendTrendStatus =
           backendTrendStatus != null && backendTrendStatus.isNotEmpty;
       final usesBackendTrend = hasBackendTrendDelta && hasBackendTrendStatus;
 
-      String trendSource;
       if (usesBackendTrend) {
         improvementPercent = backendTrendDelta;
-        trendSource = 'payload.trend_deltas';
-        debugPrint(
-          'LUXE TREND SOURCE [${spec.deltaKey}]: using payload.trend_deltas + payload.trend_status status=$backendTrendStatus deltaPct=${improvementPercent.toStringAsFixed(4)}',
-        );
       } else {
         if (hasComparisonBaseline && baseline != 0.0) {
-          improvementPercent = ((resolvedCurrent - baseline) / baseline) * 100.0;
+          improvementPercent =
+              ((resolvedCurrent - baseline) / baseline) * 100.0;
         } else {
           improvementPercent = 0.0;
         }
-        trendSource = currentSourceName;
-        debugPrint(
-          'LUXE TREND FALLBACK [${spec.deltaKey}]: missing backend trend fields (trend_delta=$hasBackendTrendDelta trend_status=$hasBackendTrendStatus). Using Dart recompute for legacy payload.',
-        );
       }
-
-      debugPrint(
-        'TRACE BASELINE [${spec.deltaKey}] hasBaseline=$hasBaseline initialBaselineInput=$initialBaseline comparisonBaseline=$hasComparisonBaseline',
-      );
 
       if (!resolvedCurrent.isFinite || resolvedCurrent < 0.0) {
         continue;
-      }
-
-      if (spec.deltaKey == 'localized_redness' ||
-          spec.deltaKey == 'pore_visibility' ||
-          spec.deltaKey == 'breakout_activity' ||
-          spec.deltaKey == 'texture_smoothness') {
-        debugPrint(
-          'LUXE TRACE TARGET [${spec.deltaKey}]: current=$resolvedCurrent baseline=$baseline deltaPct=$improvementPercent source=$trendSource',
-        );
       }
 
       if (!hasComparableCurrentValue) {
@@ -691,7 +575,9 @@ class LuxeMetricParser {
       }
 
       final baselineForCard = hasComparisonBaseline ? baseline : 0.0;
-      final improvementForCard = hasComparisonBaseline ? improvementPercent : 0.0;
+      final improvementForCard = hasComparisonBaseline
+          ? improvementPercent
+          : 0.0;
 
       out.add(
         LuxeMetric(
@@ -721,17 +607,13 @@ class LuxeMetricParser {
       );
     }
     final loaded = out.where((m) => m.hasDetectedCurrentValue).toList();
-    if (loaded.isEmpty) {
-      debugPrint(
-        'TRACE CARD: No non-zero current metrics resolved. Cards may show 0.0/No baseline trend.',
-      );
-    }
-    final loadedKeys = loaded.map((m) => m.key).join(', ');
-    debugPrint('FINAL VISIBLE METRICS count=${loaded.length} keys=$loadedKeys');
     return loaded;
   }
 
-  static double extractValue(Map<String, dynamic> data, List<String> targetKeys) {
+  static double extractValue(
+    Map<String, dynamic> data,
+    List<String> targetKeys,
+  ) {
     return _extractValueWithKey(data, targetKeys).value;
   }
 
@@ -890,51 +772,6 @@ class LuxeMetricParser {
     return int.tryParse(value?.toString() ?? '');
   }
 
-  static void _traceMapEntries(String label, Map<String, dynamic> map) {
-    debugPrint('=== TRACE PAYLOAD MAP DUMP: $label (count=${map.length}) ===');
-    if (map.isEmpty) {
-      debugPrint('$label=<empty>');
-      return;
-    }
-    final sortedKeys = map.keys.toList()..sort();
-    for (final key in sortedKeys) {
-      debugPrint('$label[$key]=${map[key]}');
-    }
-  }
-
-  static List<String> _findKeyPaths(
-    dynamic node,
-    String targetKey, {
-    required String path,
-  }) {
-    final matches = <String>[];
-    final targetLower = targetKey.toLowerCase();
-
-    void visit(dynamic value, String currentPath) {
-      if (value is Map) {
-        value.forEach((rawKey, nestedValue) {
-          final key = rawKey.toString();
-          final nextPath = '$currentPath.$key';
-          if (key.toLowerCase() == targetLower) {
-            matches.add(nextPath);
-          }
-          visit(nestedValue, nextPath);
-        });
-        return;
-      }
-      if (value is Iterable) {
-        var index = 0;
-        for (final nestedValue in value) {
-          visit(nestedValue, '$currentPath[$index]');
-          index += 1;
-        }
-      }
-    }
-
-    visit(node, path);
-    return matches;
-  }
-
   static String _canonicalMetricKey(String rawKey) {
     final normalized = rawKey.trim().toLowerCase();
     return _metricKeyAliases[normalized] ?? normalized;
@@ -942,10 +779,7 @@ class LuxeMetricParser {
 
   static List<String> _baselineCandidateKeys(String metricKey) {
     final canonical = _canonicalMetricKey(metricKey);
-    final base = <String>{
-      canonical,
-      metricKey.trim().toLowerCase(),
-    };
+    final base = <String>{canonical, metricKey.trim().toLowerCase()};
 
     switch (canonical) {
       case 'localized_redness':
@@ -998,11 +832,7 @@ class LuxeMetricParser {
         ]);
         break;
       case 'rosacea_severity':
-        base.addAll([
-          'rosacea_severity',
-          'rosacea',
-          'rosacea_score',
-        ]);
+        base.addAll(['rosacea_severity', 'rosacea', 'rosacea_score']);
         break;
       case 'skin_tone_radiance_evenness':
         base.addAll([
@@ -1062,7 +892,6 @@ class LuxeMetricParser {
     return null;
   }
 
-
   static Map<String, dynamic> _canonicalizeMetricMap(dynamic value) {
     final source = _asMap(value);
     if (source.isEmpty) return const <String, dynamic>{};
@@ -1088,7 +917,6 @@ class LuxeMetricParser {
         .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
         .join(' ');
   }
-
 }
 
 class _ServerMetricSpec {
@@ -1213,7 +1041,6 @@ _HonestyAssessment _assessMetricHonesty({
   String? backendTrendStatus,
   bool usesBackendTrend = false,
   String? backendTrendLockReason,
-  bool emitLog = true,
   // See LuxeReportLayout.requireBackendVerdict. When true, a metric with a
   // real baseline and a comparable current value but no usable backend
   // trend_status (resolvedFromBackend below is null) returns noVerdict
@@ -1233,9 +1060,7 @@ _HonestyAssessment _assessMetricHonesty({
   }
 
   final hasRealBaseline = hasBaselineValue ?? baseline > 0.0;
-  final normalizedBackendTrendStatus = backendTrendStatus
-      ?.trim()
-      .toLowerCase();
+  final normalizedBackendTrendStatus = backendTrendStatus?.trim().toLowerCase();
   final resolvedFromBackend = resolveTrendLabel(
     trendStatus: backendTrendStatus,
     trendLockReason: backendTrendLockReason,
@@ -1267,16 +1092,13 @@ _HonestyAssessment _assessMetricHonesty({
     'caller instead of relying on the local-recompute fallback.',
   );
   if (resolvedFromBackend != null) {
-    final mappedBackendStatus = _fromTrendDirection(resolvedFromBackend.direction);
-    if (emitLog) {
-      final formattedDelta = backendTrendDeltaPct?.toStringAsFixed(1) ?? 'null';
-      debugPrint(
-        'HONESTY [$metricKey]= current=${current.toStringAsFixed(2)} baseline=${baseline.toStringAsFixed(2)} deltaPct=$formattedDelta source=payload.trend_deltas status=${mappedBackendStatus.name} rawStatus=$normalizedBackendTrendStatus',
-      );
-    }
+    final mappedBackendStatus = _fromTrendDirection(
+      resolvedFromBackend.direction,
+    );
     return _HonestyAssessment(
       status: mappedBackendStatus,
-      reason: 'backend trend_status=${normalizedBackendTrendStatus ?? 'unknown'}',
+      reason:
+          'backend trend_status=${normalizedBackendTrendStatus ?? 'unknown'}',
       deltaPct: resolvedFromBackend.deltaPct,
       hasRealBaseline: hasRealBaseline,
       lockReason: resolvedFromBackend.lockReason,
@@ -1322,8 +1144,10 @@ _HonestyAssessment _assessMetricHonesty({
   final lowConfidenceLargeSwing =
       lowConfidence && deltaPct != null && deltaPct.abs() >= swingThreshold;
   final withinClinicalStableBand =
-      hasRealBaseline && deltaPct != null && deltaPct.abs() < honestyStableBandPct;
-    final withinPointNoiseBand =
+      hasRealBaseline &&
+      deltaPct != null &&
+      deltaPct.abs() < honestyStableBandPct;
+  final withinPointNoiseBand =
       hasRealBaseline && pointDelta != null && pointDelta < 2.0;
 
   var status = _HonestyStatus.insufficientSignal;
@@ -1377,21 +1201,14 @@ _HonestyAssessment _assessMetricHonesty({
         : (increased ? 'higherIsBetter increase' : 'higherIsBetter decrease');
   }
 
-  final formattedDelta = deltaPct == null ? 'null' : deltaPct.toStringAsFixed(1);
-  if (emitLog) {
-    debugPrint(
-      'HONESTY [$metricKey]= current=${current.toStringAsFixed(2)} baseline=${baseline.toStringAsFixed(2)} deltaPct=$formattedDelta higherIsWorse=$higherIsWorse status=${status.name} reason=$reason',
-    );
-  }
-
   return _HonestyAssessment(
     status: status,
     reason: reason,
     deltaPct:
         (status == _HonestyStatus.insufficientSignal ||
-                status == _HonestyStatus.noVerdict)
-            ? null
-            : deltaPct,
+            status == _HonestyStatus.noVerdict)
+        ? null
+        : deltaPct,
     hasRealBaseline: hasRealBaseline && !lowConfidenceZeroCurrent,
     lockReason: lockReason,
   );
@@ -1469,7 +1286,10 @@ String _shortLockReasonPhrase(String reason) {
 /// change Track Procedure's, progress report's, or history's existing
 /// wording (including the "Standalone entry" lock headline those screens
 /// already show and already have passing tests for).
-String _liveHonestyLabel(_HonestyAssessment assessment, {required bool isBodyMetric}) {
+String _liveHonestyLabel(
+  _HonestyAssessment assessment, {
+  required bool isBodyMetric,
+}) {
   if (assessment.status == _HonestyStatus.insufficientSignal && isBodyMetric) {
     return 'Body tracking';
   }
@@ -1553,7 +1373,7 @@ class LuxeReportLayout extends StatefulWidget {
 }
 
 class _LuxeReportLayoutState extends State<LuxeReportLayout>
-  with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
   bool _showAiOverlay = true;
   String? _selectedMetricKey;
   String? _highlightedZone;
@@ -1628,7 +1448,9 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
       decoration: BoxDecoration(
         color: AppColors.cardBackground,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.brandAccent.withValues(alpha: 0.30)),
+        border: Border.all(
+          color: AppColors.brandAccent.withValues(alpha: 0.30),
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1680,7 +1502,9 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.softTerracotta.withValues(alpha: 0.35)),
+          border: Border.all(
+            color: AppColors.softTerracotta.withValues(alpha: 0.35),
+          ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1723,18 +1547,16 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.brandAccent.withValues(alpha: 0.30)),
+        border: Border.all(
+          color: AppColors.brandAccent.withValues(alpha: 0.30),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Row(
             children: [
-              Icon(
-                Icons.flag_rounded,
-                size: 16,
-                color: AppColors.brandAccent,
-              ),
+              Icon(Icons.flag_rounded, size: 16, color: AppColors.brandAccent),
               SizedBox(width: 8),
               Text(
                 'Baseline scan captured',
@@ -1770,9 +1592,7 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
     );
   }
 
-  Widget _buildClinicalProgressSummary(
-    List<LuxeMetric> metrics,
-  ) {
+  Widget _buildClinicalProgressSummary(List<LuxeMetric> metrics) {
     if (metrics.isEmpty || metrics.every((m) => m.initialBaseline)) {
       return const SizedBox.shrink();
     }
@@ -1795,7 +1615,6 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         usesBackendTrend: metric.usesBackendTrend,
         backendTrendLockReason: metric.backendTrendLockReason,
         requireBackendVerdict: widget.requireBackendVerdict,
-        emitLog: false,
       );
       final metricName = metric.name;
       if (assessment.status == _HonestyStatus.noVerdict) {
@@ -1836,7 +1655,9 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
       decoration: BoxDecoration(
         color: AppColors.cardBackground,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.brandAccent.withValues(alpha: 0.30)),
+        border: Border.all(
+          color: AppColors.brandAccent.withValues(alpha: 0.30),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1892,23 +1713,19 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         widget.rawPayload.containsKey('localHistoryCount') ||
         widget.rawPayload.containsKey('is_follow_up') ||
         widget.rawPayload.containsKey('isFollowUp');
-    final localHistoryCount = widget.localHistoryCount ??
+    final localHistoryCount =
+        widget.localHistoryCount ??
         LuxeMetricParser._asDouble(
           widget.rawPayload['local_history_count'] ??
               widget.rawPayload['localHistoryCount'],
         ).round();
-    final procedureIdForLog =
-      (widget.rawPayload['procedure_id'] ??
-          widget.rawPayload['procedureId'] ??
-          widget.rawPayload['selected_procedure_id'])
-        ?.toString() ??
-      'unknown';
-    final explicitFollowUp = widget.isFollowUp ??
+    final explicitFollowUp =
+        widget.isFollowUp ??
         (widget.rawPayload['is_follow_up'] == true ||
             widget.rawPayload['isFollowUp'] == true);
     final initialBaseline = widget.rawPayload['initial_baseline'] == true;
     final showProgressComparison =
-      (explicitFollowUp || localHistoryCount >= 2) && !initialBaseline;
+        (explicitFollowUp || localHistoryCount >= 2) && !initialBaseline;
     final metrics = LuxeMetricParser.parseTimelinePayload(widget.rawPayload);
     final visibleMetrics = metrics.where((m) => !m.initialBaseline).toList();
     final willRenderCards = visibleMetrics.isNotEmpty;
@@ -1917,35 +1734,19 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         !explicitFollowUp &&
         metrics.isNotEmpty &&
         metrics.every((m) => m.initialBaseline);
-    final reason = widget.gateReason ??
+    final reason =
+        widget.gateReason ??
         (willRenderCards
-        ? (showProgressComparison
-          ? (hasLocalHistoryMetadata
-            ? (explicitFollowUp
-              ? 'explicit follow-up flag from local history'
-              : 'local history count >= 2')
-            : 'baseline-follow-up pair detected from scan payload')
-          : 'baseline metrics available (progress compare pending)')
-        : 'no displayable metric_matrix keys in payload');
-
-    debugPrint(
-      'LUXE GATE: localHistoryCount=$localHistoryCount isFollowUp=$explicitFollowUp willRenderCards=$willRenderCards reason=$reason',
-    );
-    debugPrint(
-      '[BASELINE_READ] source=payload_history_gate procedureId=$procedureIdForLog '
-      'baselineScanId=${widget.rawPayload['baselineScanId'] ?? 'none'} '
-      'latestScanId=${widget.rawPayload['latestScanId'] ?? 'none'} '
-      'localHistoryCount=$localHistoryCount isFollowUp=$explicitFollowUp '
-      'willRenderCards=$willRenderCards reason=$reason',
-    );
+            ? (showProgressComparison
+                  ? (hasLocalHistoryMetadata
+                        ? (explicitFollowUp
+                              ? 'explicit follow-up flag from local history'
+                              : 'local history count >= 2')
+                        : 'baseline-follow-up pair detected from scan payload')
+                  : 'baseline metrics available (progress compare pending)')
+            : 'no displayable metric_matrix keys in payload');
 
     if (!willRenderCards) {
-      debugPrint(
-        '[BASELINE_READ] source=payload_history_gate procedureId=$procedureIdForLog '
-        'baselineScanId=${widget.rawPayload['baselineScanId'] ?? 'none'} '
-        'latestScanId=${widget.rawPayload['latestScanId'] ?? 'none'} '
-        'reason=baseline_pending_gate_block',
-      );
       if (!showBaselinePendingFooter) {
         return const SizedBox.shrink();
       }
@@ -1958,9 +1759,6 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         ),
       );
     }
-    debugPrint(
-      'FOLLOWUP UI: localHistoryCount=$localHistoryCount isFollowUp=$explicitFollowUp cardsRendered=${visibleMetrics.length}',
-    );
     if (visibleMetrics.isEmpty) {
       return showBaselinePendingFooter
           ? Container(
@@ -1974,9 +1772,9 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
           : const SizedBox.shrink();
     }
     final showComparisonFrames =
-      showProgressComparison &&
-      widget.baselineImageProvider != null &&
-      widget.currentImageProvider != null;
+        showProgressComparison &&
+        widget.baselineImageProvider != null &&
+        widget.currentImageProvider != null;
     final captureConsistency = captureConsistencyForPayload(
       widget.rawPayload,
       isBodyProcedure: false,
@@ -1998,7 +1796,9 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.brandAccent.withValues(alpha: 0.28)),
+                border: Border.all(
+                  color: AppColors.brandAccent.withValues(alpha: 0.28),
+                ),
               ),
               child: Row(
                 children: [
@@ -2135,11 +1935,7 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
   Widget _buildCaptureConsistencyNote(CaptureConsistencyResult result) {
     return Row(
       children: [
-        const Icon(
-          Icons.tune_rounded,
-          size: 15,
-          color: AppColors.brandAccent,
-        ),
+        const Icon(Icons.tune_rounded, size: 15, color: AppColors.brandAccent),
         const SizedBox(width: 7),
         Expanded(
           child: Text(
@@ -2174,7 +1970,7 @@ class _MetricCard extends StatelessWidget {
 
   _MetricRowData _buildMetricRowData() {
     final hasComparisonContext =
-      showProgressComparison || metric.hasBaselineValue;
+        showProgressComparison || metric.hasBaselineValue;
     if (!hasComparisonContext && !metric.showTrendVerdict) {
       return _MetricRowData(
         baselineValue: 0.0,
@@ -2204,8 +2000,8 @@ class _MetricCard extends StatelessWidget {
         initialBaseline: !hasBaseline,
         honestyStatus: _HonestyStatus.noVerdict,
         honestyLabel: hasBaseline
-          ? metric.currentScore.toStringAsFixed(1)
-          : 'Starting point',
+            ? metric.currentScore.toStringAsFixed(1)
+            : 'Starting point',
         trendLocked: false,
         hasRealBaseline: hasBaseline,
         hasComparableCurrentValue: metric.hasComparableCurrentValue,
@@ -2260,20 +2056,21 @@ class _MetricCard extends StatelessWidget {
     // subtext uses the fuller one-sentence explanation.
     final stableLockDetail = assessment.stableLockDetail;
     final subtext = assessment.hasRealBaseline
-      ? (assessment.reason ==
-            'Re-scan recommended (Lighting/Angle variance)'
-          ? assessment.reason
-          : stableLockDetail ?? assessment.label)
+        ? (assessment.reason == 'Re-scan recommended (Lighting/Angle variance)'
+              ? assessment.reason
+              : stableLockDetail ?? assessment.label)
         : 'Tracks visible appearance in key zones';
     const bodyEarlyAccessMessage =
         'Body tracking is still building your baseline — trends will appear as more scans accumulate. Check back after a few more sessions.';
 
     final honestyLabel = requireBackendVerdict
         ? _liveHonestyLabel(assessment, isBodyMetric: isBodyMetric)
-        : (assessment.status == _HonestyStatus.insufficientSignal && isBodyMetric
+        : (assessment.status == _HonestyStatus.insufficientSignal &&
+                  isBodyMetric
               ? 'Body tracking'
               : assessment.stableLockHeadline ?? assessment.label);
-    final finalSubtext = assessment.status == _HonestyStatus.insufficientSignal && isBodyMetric
+    final finalSubtext =
+        assessment.status == _HonestyStatus.insufficientSignal && isBodyMetric
         ? bodyEarlyAccessMessage
         : subtext;
 
@@ -2298,29 +2095,30 @@ class _MetricCard extends StatelessWidget {
     final row = _buildMetricRowData();
     final chipLabel = row.honestyLabel;
     final chipIcon = row.trendLocked
-      ? Icons.help_outline_rounded
-      : _chipIcon(row.honestyStatus);
+        ? Icons.help_outline_rounded
+        : _chipIcon(row.honestyStatus);
     final chipColor = row.trendLocked
-      ? const Color(0xFF8E7F6D)
-      : _chipColor(row.honestyStatus);
+        ? const Color(0xFF8E7F6D)
+        : _chipColor(row.honestyStatus);
     const titleColor = AppColors.textStructure;
     final headlineDelta = row.honestyLabel;
     final precision = metricPrecisionPresentation(metric);
     final currentDisplayText = row.hasComparableCurrentValue
-      ? formatScoreWithSeverityBand(metric.key, row.currentValue)
-      : 'Not compared';
+        ? formatScoreWithSeverityBand(metric.key, row.currentValue)
+        : 'Not compared';
     final comparisonSubtitle = !metric.showTrendVerdict
-      ? currentDisplayText
-      : row.hasRealBaseline
+        ? currentDisplayText
+        : row.hasRealBaseline
         ? 'Current $currentDisplayText${precision.rangeSuffix} · Baseline ${row.baselineValue.toStringAsFixed(1)}'
-      : 'Current $currentDisplayText${precision.rangeSuffix}';
-    final progressionDeltaText =
-      row.badgeValueText == null ? '' : ' (${row.badgeValueText})';
+        : 'Current $currentDisplayText${precision.rangeSuffix}';
+    final progressionDeltaText = row.badgeValueText == null
+        ? ''
+        : ' (${row.badgeValueText})';
     final progressionLine = !row.hasComparableCurrentValue
-      ? '${metric.name}: Not compared (${row.subtext})'
-      : row.hasRealBaseline
-      ? '${metric.name}: ${row.baselineValue.toStringAsFixed(1)} -> ${row.currentValue.toStringAsFixed(1)}$progressionDeltaText '
-        '(${row.subtext})'
+        ? '${metric.name}: Not compared (${row.subtext})'
+        : row.hasRealBaseline
+        ? '${metric.name}: ${row.baselineValue.toStringAsFixed(1)} -> ${row.currentValue.toStringAsFixed(1)}$progressionDeltaText '
+              '(${row.subtext})'
         : '${metric.name}: ${row.currentValue.toStringAsFixed(1)} current scan (${row.subtext})';
 
     return Material(
@@ -2396,7 +2194,10 @@ class _MetricCard extends StatelessWidget {
                   row.hasRealBaseline &&
                   row.badgePercent!.abs() > 0.0)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: chipColor.withValues(alpha: 0.14),
                     borderRadius: BorderRadius.circular(999),
@@ -2522,15 +2323,14 @@ class _MetricCard extends StatelessWidget {
 }
 
 class _AiOverlayPainter extends CustomPainter {
-  _AiOverlayPainter({
-    required this.highlightedZone,
-    required this.pulse,
-  }) : super(repaint: pulse);
+  _AiOverlayPainter({required this.highlightedZone, required this.pulse})
+    : super(repaint: pulse);
 
   final String? highlightedZone;
   final Animation<double>? pulse;
 
-  bool _isZone(String zone) => highlightedZone == zone || highlightedZone == 'full_face';
+  bool _isZone(String zone) =>
+      highlightedZone == zone || highlightedZone == 'full_face';
 
   @override
   void paint(Canvas canvas, Size size) {
