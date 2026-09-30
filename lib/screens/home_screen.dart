@@ -29,6 +29,8 @@ import '../utils/ai_product_recommendation_engine.dart';
 import '../widgets/scan_based_recommendations_card.dart';
 import '../widgets/bridge_card.dart';
 import 'package:aesthetic_skin_tracker/features/procedures/presentation/procedure_profiles_screen.dart';
+import 'ai_nurse_chat_screen.dart';
+import 'face_mesh_demo_screen.dart';
 
 const Color _clinicalSage = AppColors.brandAccent;
 const Color _mintHighlight = AppColors.champagneGold;
@@ -113,7 +115,7 @@ class _ProcedureScanOptionTile extends StatelessWidget {
 }
 
 class _HomePageState extends State<HomePage>
-  with RouteAware, WidgetsBindingObserver {
+    with RouteAware, WidgetsBindingObserver {
   List<TrackedProduct> _trackedProducts = [];
   int _selectedIndex = 0;
   String _userName = '';
@@ -122,7 +124,12 @@ class _HomePageState extends State<HomePage>
   List<Map<String, dynamic>> _activeProcedures = const [];
   List<models.Procedure> _activeProcedureModels = [];
   List<PeptideEntry> _activePeptides = const [];
+  List<PeptideStack> _peptideStacks = const [];
+  String? _selectedProcedureId;
   List<ScanHistoryEntry> _allScans = [];
+  ScanHistoryEntry? _homePairBaseline;
+  ScanHistoryEntry? _homePairLatest;
+  String _homePairMessage = 'No comparable pair yet.';
   int _scanCount = 0;
   bool _showSecondScanPrompt = false;
   int _baselineTrackScanCount = 0;
@@ -435,9 +442,9 @@ class _HomePageState extends State<HomePage>
                             backgroundColor: const Color(0xFF7A8B7B),
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 14),
-                            shadowColor: const Color(0xFF7A8B7B).withValues(
-                              alpha: 0.28,
-                            ),
+                            shadowColor: const Color(
+                              0xFF7A8B7B,
+                            ).withValues(alpha: 0.28),
                             elevation: 2,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(14),
@@ -496,11 +503,15 @@ class _HomePageState extends State<HomePage>
     final procedureEntries = await AppPrefs.getProcedureEntries();
     final scanEntries = await AppPrefs.getScanEntries();
     final peptides = await PeptideService.loadAll();
+    final peptideStacks = await PeptideService.loadStacks();
+    final selectedProcedureId = await AppPrefs.getSelectedProcedureIdOrNull();
     final procedureModels = procedureEntries
         .map<models.Procedure>((entry) => models.Procedure.fromJson(entry))
         .toList();
     final totalScans = scanEntries.length;
-    final secondScanPromptState = await _resolveSecondScanPromptState(scanEntries);
+    final secondScanPromptState = await _resolveSecondScanPromptState(
+      scanEntries,
+    );
     if (!mounted) return;
     setState(() {
       _userName = name;
@@ -509,11 +520,14 @@ class _HomePageState extends State<HomePage>
       _activeProcedures = procedureEntries;
       _activeProcedureModels = procedureModels;
       _activePeptides = peptides.where((p) => p.isActive).toList();
+      _peptideStacks = peptideStacks;
+      _selectedProcedureId = selectedProcedureId;
       _allScans = scanEntries;
       _scanCount = totalScans;
       _showSecondScanPrompt = secondScanPromptState.showPrompt;
       _baselineTrackScanCount = secondScanPromptState.trackCount;
     });
+    await _resolveHomePair();
     await _loadSkincareJournals();
   }
 
@@ -525,13 +539,480 @@ class _HomePageState extends State<HomePage>
     });
   }
 
+  models.Procedure? get _homeProcedure {
+    final active = _activeProcedureModels
+        .where((procedure) => !procedure.isCompleted)
+        .toList(growable: false);
+    for (final procedure in active) {
+      if (procedure.id == _selectedProcedureId) return procedure;
+    }
+    return active.firstOrNull;
+  }
+
+  PeptideStack? get _homePeptideStack {
+    final activeStackIds = _activePeptides
+        .map((entry) => entry.stackId)
+        .whereType<String>()
+        .toSet();
+    for (final stack in _peptideStacks) {
+      if (activeStackIds.contains(stack.id)) return stack;
+    }
+    return null;
+  }
+
+  String? get _homeProtocolProcedureId =>
+      _homeProcedure?.id ?? _homePeptideStack?.procedureId;
+
+  Future<void> _resolveHomePair() async {
+    final procedureId = _homeProtocolProcedureId?.trim();
+    if (procedureId == null || procedureId.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _homePairBaseline = null;
+        _homePairLatest = null;
+        _homePairMessage = 'No comparable pair yet. Link a scan to a protocol.';
+      });
+      return;
+    }
+
+    final procedureScans =
+        _allScans
+            .where(
+              (scan) =>
+                  scan.resolvedScanType ==
+                      ScanHistoryEntry.scanTypeAiAnalysis &&
+                  (scan.procedureId ?? '').trim() == procedureId,
+            )
+            .toList()
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    if (procedureScans.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _homePairBaseline = null;
+        _homePairLatest = null;
+        _homePairMessage = 'No pair yet. Your first matched scan starts it.';
+      });
+      return;
+    }
+
+    final latest = procedureScans.first;
+    final latestRejection = aiBaselineRejectionReason(latest);
+    if (latestRejection != null) {
+      if (!mounted) return;
+      setState(() {
+        _homePairBaseline = null;
+        _homePairLatest = latest;
+        _homePairMessage = 'Not comparable: $latestRejection';
+      });
+      return;
+    }
+
+    final key = latest.aiBaselineKey;
+    final keyMatches = procedureScans
+        .where((scan) => scan.aiBaselineKey == key)
+        .toList(growable: false);
+    final registry = await AppPrefs.getAiBaselineRegistryState(key);
+    final resolution = resolveAiBaseline(
+      key: key,
+      keyMatches: keyMatches,
+      allScans: _allScans,
+      pinnedScanId: registry.baselineScanId,
+      registryEntryExists: registry.hasEntry,
+      resetAt: registry.resetAt,
+    );
+    final baseline = resolution.baselineScan;
+    final baselineRejection = baseline == null
+        ? null
+        : aiBaselineRejectionReason(baseline);
+    if (baseline == null ||
+        baseline.id == latest.id ||
+        baselineRejection != null ||
+        !ScanHistoryEntry.scanEnginesComparable(
+          baseline.scanEngine,
+          latest.scanEngine,
+        )) {
+      if (!mounted) return;
+      final reason = resolution.ignoredPinReason ?? baselineRejection;
+      setState(() {
+        _homePairBaseline = null;
+        _homePairLatest = latest;
+        _homePairMessage = reason != null
+            ? 'Not comparable: $reason'
+            : baseline == null || baseline.id == latest.id
+            ? 'No pair yet. Take another scan with the same angle and guide.'
+            : 'Not comparable: the analysis method changed.';
+      });
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _homePairBaseline = baseline;
+      _homePairLatest = latest;
+      _homePairMessage = '';
+    });
+  }
+
+  Future<void> _openProtocolScan() async {
+    var procedureId = _homeProtocolProcedureId?.trim();
+    if ((procedureId == null || procedureId.isEmpty) &&
+        _activePeptides.isNotEmpty) {
+      final stack = _homePeptideStack;
+      final bodyFocused = _activePeptides.any((entry) {
+        final text = '${entry.name} ${entry.category}'.toLowerCase();
+        return text.contains('body-composition') ||
+            text.contains('body composition') ||
+            text.contains('semaglutide') ||
+            text.contains('tirzepatide') ||
+            text.contains('retatrutide') ||
+            text.contains('liraglutide') ||
+            text.contains('tesamorelin') ||
+            text.contains('aod-9604') ||
+            text.contains('sermorelin') ||
+            text.contains('ipamorelin') ||
+            text.contains('mots-c');
+      });
+      final procedure = models.Procedure(
+        id: 'pep_home_${DateTime.now().millisecondsSinceEpoch}',
+        type: bodyFocused ? 'Body Composition Peptides' : 'Peptide Tracking',
+        category: bodyFocused ? 'Body Composition' : 'Peptide',
+        provider: 'Self',
+        startDate: DateTime.now(),
+        numSessions: 1,
+      );
+      await AppPrefs.addProcedureToHistory(procedure.toJson());
+      await AppPrefs.setSelectedProcedureId(procedure.id);
+      if (stack != null) {
+        await PeptideService.setStackProcedure(stack.id, procedure.id);
+      }
+      procedureId = procedure.id;
+    }
+
+    if (procedureId != null && procedureId.isNotEmpty) {
+      await AppPrefs.setSelectedProcedureId(procedureId);
+    }
+    if (!mounted) return;
+    await _openSkinScan();
+  }
+
+  Future<void> _openMoreMenu(ScanHistoryEntry? latestScan) async {
+    final previous = latestScan == null
+        ? null
+        : _findPreviousComparableScan(_allScans, latestScan);
+    final procedureType = latestScan == null
+        ? null
+        : _getProcedureTypeForScan(latestScan);
+    final latestMetrics = latestScan?.toSkinMetrics();
+    final previousMetrics = previous?.toSkinMetrics();
+    if (latestScan != null) {
+      final facialValues = _facialMetricSnapshot(latestScan);
+      _debugLatestScanKeyAuditIfNeeded(
+        latestScan,
+        facialValues,
+        _latestEstimatedSkinAgeFromCanonical(latestScan, facialValues),
+      );
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => SafeArea(
+        child: FractionallySizedBox(
+          heightFactor: 0.9,
+          child: Material(
+            color: AppColors.warmAlabaster,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 30),
+              children: [
+                Text('More', style: MyApp.sectionTitleStyle()),
+                const SizedBox(height: 12),
+                _moreMenuTile(
+                  sheetContext,
+                  Icons.storefront_outlined,
+                  'Product Store',
+                  () => Navigator.of(context).pushNamed('/store'),
+                ),
+                _moreMenuTile(
+                  sheetContext,
+                  Icons.shopping_cart_outlined,
+                  'Cart',
+                  () => Navigator.of(context).pushNamed('/cart'),
+                ),
+                _moreMenuTile(
+                  sheetContext,
+                  Icons.emoji_events_outlined,
+                  'Challenges',
+                  () => Navigator.of(context).pushNamed('/challenges'),
+                ),
+                _moreMenuTile(
+                  sheetContext,
+                  Icons.psychology_alt_outlined,
+                  'AI Nurse Chat',
+                  () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const AiNurseChatScreen(),
+                    ),
+                  ),
+                ),
+                _moreMenuTile(
+                  sheetContext,
+                  Icons.face_retouching_natural_outlined,
+                  'Face Mesh Demo',
+                  () => Navigator.of(context).push(FaceMeshDemoScreen.route()),
+                ),
+                _buildPremiumRecoveryCard(AppColors.refinedSlate),
+                const SizedBox(height: 10),
+                _buildQuickActionFeatureCards(AppColors.refinedSlate),
+                const SizedBox(height: 10),
+                _buildQuickShortcutsRow(AppColors.refinedSlate),
+                if (_nextUpcomingAppointment != null) ...[
+                  const SizedBox(height: 12),
+                  _buildUpcomingAppointmentCard(AppColors.refinedSlate),
+                ],
+                if (latestScan == null) ...[
+                  const SizedBox(height: 12),
+                  _buildNoScansCard(),
+                ],
+                if (latestScan != null && latestMetrics != null) ...[
+                  const SizedBox(height: 12),
+                  ScanBasedRecommendationsCard(
+                    latest: latestMetrics,
+                    baseline: previousMetrics,
+                    procedureType: procedureType,
+                    aiCoachProducts: _aiCoachRecommendationsFromScan(
+                      latestScan,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  BridgeCard(
+                    scans: _allScans,
+                    activeProcedure: _homeProcedure,
+                    activePeptides: _activePeptides,
+                  ),
+                  const SizedBox(height: 12),
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => ScanDetailScreen(scan: latestScan),
+                        ),
+                      );
+                    },
+                    child: _buildLatestScanSummaryCard(
+                      context,
+                      scan: latestScan,
+                      latestEstimatedAge: _latestEstimatedSkinAgeFromCanonical(
+                        latestScan,
+                        _facialMetricSnapshot(latestScan),
+                      ),
+                      metricCount: ScanDetailScreen.displayMetricsFor(
+                        latestScan,
+                      ).length,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                _buildCompactStatsRow(AppColors.refinedSlate),
+                const SizedBox(height: 12),
+                _buildAiDailyBriefingCard(AppColors.refinedSlate),
+                const SizedBox(height: 12),
+                _buildQuickTipsCarousel(AppColors.refinedSlate),
+                if (_showSecondScanPrompt) ...[
+                  const SizedBox(height: 12),
+                  _buildSecondScanPromptCard(AppColors.refinedSlate),
+                ],
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.of(sheetContext).pop();
+                    Navigator.of(context).pushNamed('/settings');
+                  },
+                  icon: const Icon(Icons.settings_outlined),
+                  label: const Text('Settings'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _moreMenuTile(
+    BuildContext sheetContext,
+    IconData icon,
+    String title,
+    VoidCallback onTap,
+  ) => ListTile(
+    leading: Icon(icon, color: _clinicalSage),
+    title: Text(title),
+    trailing: const Icon(Icons.chevron_right_rounded),
+    onTap: () {
+      Navigator.of(sheetContext).pop();
+      onTap();
+    },
+  );
+
+  Widget _buildProtocolHomeCard() {
+    final procedure = _homeProcedure;
+    final stack = _homePeptideStack;
+    final activeNames = stack == null
+        ? _activePeptides.map((entry) => entry.name).toList(growable: false)
+        : _activePeptides
+              .where((entry) => entry.stackId == stack.id)
+              .map((entry) => entry.name)
+              .toList(growable: false);
+    final protocolTitle =
+        procedure?.type ??
+        (stack?.name ??
+            (activeNames.isNotEmpty
+                ? 'Peptide protocol'
+                : 'No active protocol'));
+    final detail = procedure != null
+        ? [
+            if ((procedure.focusArea ?? '').trim().isNotEmpty)
+              procedure.focusArea!.trim(),
+            'Started ${_formatProcedureDate(procedure.startDate.toIso8601String())}',
+            if (_nextUpcomingAppointment != null)
+              'Next appointment ${_formatProcedureDate(_nextUpcomingAppointment!.nextAppointmentDate!.toIso8601String())}',
+            if (stack != null) 'Peptide stack: ${stack.name}',
+          ].join(' · ')
+        : activeNames.join(' · ');
+    final hasProtocol =
+        procedure != null || stack != null || activeNames.isNotEmpty;
+
+    return Container(
+      key: const ValueKey('home_protocol_scan_pair'),
+      padding: const EdgeInsets.all(18),
+      decoration: _homePremiumCardDecoration(borderColor: _clinicalSage),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.track_changes_rounded, color: _clinicalSage),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  hasProtocol ? 'Current protocol' : 'Start a protocol',
+                  style: MyApp.sectionTitleStyle(color: _darkSlateInk),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            protocolTitle,
+            style: const TextStyle(
+              color: _darkSlateInk,
+              fontSize: 19,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          if (detail.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              detail,
+              style: TextStyle(
+                color: _darkSlateInk.withValues(alpha: 0.72),
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 48,
+            child: FilledButton.icon(
+              key: const ValueKey('home_protocol_scan_button'),
+              onPressed: _openProtocolScan,
+              icon: const Icon(Icons.photo_camera_outlined),
+              label: const Text('Scan this protocol'),
+            ),
+          ),
+          if (!hasProtocol) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 8,
+              children: [
+                TextButton(
+                  onPressed: () =>
+                      Navigator.of(context).pushNamed('/create-procedure'),
+                  child: const Text('Start a procedure'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pushNamed(
+                    '/peptide-tracker',
+                    arguments: const {'initialTab': 1},
+                  ),
+                  child: const Text('Start a peptide stack'),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 14),
+          InkWell(
+            key: const ValueKey('home_last_comparable_pair'),
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => Navigator.of(context).pushNamed(
+              '/timeline',
+              arguments: {
+                if (_homeProtocolProcedureId != null)
+                  'procedureId': _homeProtocolProcedureId,
+              },
+            ),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.warmAlabaster,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.borders),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Last comparable pair',
+                    style: TextStyle(
+                      color: _darkSlateInk,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _homePairBaseline != null && _homePairLatest != null
+                        ? '${_formatLatestScanDate(_homePairBaseline!.timestamp)} → ${_formatLatestScanDate(_homePairLatest!.timestamp)}'
+                        : _homePairMessage,
+                    style: TextStyle(
+                      color: _darkSlateInk.withValues(alpha: 0.75),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<({bool showPrompt, int trackCount})> _resolveSecondScanPromptState(
     List<ScanHistoryEntry> scanEntries,
   ) async {
-    final aiScans = scanEntries
-        .where((scan) => scan.resolvedScanType == ScanHistoryEntry.scanTypeAiAnalysis)
-        .toList()
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final aiScans =
+        scanEntries
+            .where(
+              (scan) =>
+                  scan.resolvedScanType == ScanHistoryEntry.scanTypeAiAnalysis,
+            )
+            .toList()
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
     if (aiScans.isEmpty) {
       return (showPrompt: false, trackCount: 0);
@@ -540,16 +1021,23 @@ class _HomePageState extends State<HomePage>
     final latestAi = aiScans.first;
     final procedureId = (latestAi.procedureId ?? '').trim();
     if (procedureId.isNotEmpty) {
-      final comparison = await AppPrefs.getProcedurePhotoComparison(procedureId);
+      final comparison = await AppPrefs.getProcedurePhotoComparison(
+        procedureId,
+      );
       final baselineId = (comparison['baselineScanId'] ?? '').trim();
       final trackScans = aiScans
           .where((scan) => (scan.procedureId ?? '').trim() == procedureId)
           .length;
       final hasBaseline = baselineId.isNotEmpty;
-      return (showPrompt: hasBaseline && trackScans < 2, trackCount: trackScans);
+      return (
+        showPrompt: hasBaseline && trackScans < 2,
+        trackCount: trackScans,
+      );
     }
 
-    final baselineCandidateCount = aiScans.where((scan) => scan.isBaseline).length;
+    final baselineCandidateCount = aiScans
+        .where((scan) => scan.isBaseline)
+        .length;
     final hasBaseline = baselineCandidateCount > 0;
     final trackScans = aiScans.length;
     return (showPrompt: hasBaseline && trackScans < 2, trackCount: trackScans);
@@ -558,7 +1046,10 @@ class _HomePageState extends State<HomePage>
   Widget _buildSecondScanPromptCard(Color textColor) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-      decoration: _homePremiumCardDecoration(borderColor: _clinicalSage, borderAlpha: 0.30),
+      decoration: _homePremiumCardDecoration(
+        borderColor: _clinicalSage,
+        borderAlpha: 0.30,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -615,9 +1106,7 @@ class _HomePageState extends State<HomePage>
               label: const Text('Add second scan'),
               style: OutlinedButton.styleFrom(
                 foregroundColor: _darkSlateInk,
-                side: BorderSide(
-                  color: _clinicalSage.withValues(alpha: 0.45),
-                ),
+                side: BorderSide(color: _clinicalSage.withValues(alpha: 0.45)),
                 textStyle: const TextStyle(
                   fontWeight: FontWeight.w800,
                   fontSize: 12,
@@ -826,9 +1315,9 @@ class _HomePageState extends State<HomePage>
   }
 
   Future<void> _openSkinScan() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const SkinAiAnalysisScreen()),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const SkinAiAnalysisScreen()));
     await _refreshData();
   }
 
@@ -864,10 +1353,7 @@ class _HomePageState extends State<HomePage>
                   const SizedBox(height: 20),
                   const Text(
                     'Track one first to attach scans.',
-                    style: TextStyle(
-                      fontSize: 15,
-                      color: Color(0xFF1E2225),
-                    ),
+                    style: TextStyle(fontSize: 15, color: Color(0xFF1E2225)),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 32),
@@ -965,13 +1451,14 @@ class _HomePageState extends State<HomePage>
                               );
                               await AppPrefs.setSelectedProcedureId(null);
                               if (!context.mounted) return;
+                              // This entry remains CameraCapturePurpose.skincareTracking.
                               Navigator.of(context)
                                   .push(
                                     MaterialPageRoute(
                                       builder: (_) => const CameraScreen(
                                         isSkincareScan: true,
-                                        capturePurpose:
-                                            CameraCapturePurpose.skincareTracking,
+                                        capturePurpose: CameraCapturePurpose
+                                            .skincareTracking,
                                       ),
                                     ),
                                   )
@@ -1078,9 +1565,7 @@ class _HomePageState extends State<HomePage>
                       const SizedBox(height: 8),
                       const Text(
                         'No existing procedures yet.',
-                        style: TextStyle(
-                          color: Color(0xFF1E2225),
-                        ),
+                        style: TextStyle(color: Color(0xFF1E2225)),
                       ),
                     ],
                     const SizedBox(height: 16),
@@ -1289,8 +1774,6 @@ class _HomePageState extends State<HomePage>
     return '${monthNames[local.month - 1]} ${local.day.toString().padLeft(2, '0')}';
   }
 
-
-
   bool _isLowConfidence(dynamic confidenceValue) {
     if (confidenceValue == null) return false;
     if (confidenceValue is num) {
@@ -1301,10 +1784,7 @@ class _HomePageState extends State<HomePage>
     return text == 'low';
   }
 
-  dynamic _confidenceForMetric(
-    ScanHistoryEntry scan,
-    List<String> keys,
-  ) {
+  dynamic _confidenceForMetric(ScanHistoryEntry scan, List<String> keys) {
     final payload = scan.rawPayload ?? const <String, dynamic>{};
     Map<String, dynamic> asMap(dynamic value) {
       if (value is Map<String, dynamic>) return value;
@@ -1382,44 +1862,44 @@ class _HomePageState extends State<HomePage>
     if (value == null || !value.isFinite) {
       final aliasKeys = switch (canonicalKey) {
         'localized_redness' => const <String>[
-            'localized_redness',
-            'redness',
-            'erythema',
-          ],
+          'localized_redness',
+          'redness',
+          'erythema',
+        ],
         'texture_smoothness' => const <String>[
-            'texture_smoothness',
-            'textureSmoothness',
-            'smoothness',
-            'texture',
-            'roughness',
-          ],
+          'texture_smoothness',
+          'textureSmoothness',
+          'smoothness',
+          'texture',
+          'roughness',
+        ],
         'wrinkle_load' => const <String>[
-            'wrinkle_load',
-            'wrinkle',
-            'wrinkles',
-            'rhytids',
-            'fineLines',
-          ],
+          'wrinkle_load',
+          'wrinkle',
+          'wrinkles',
+          'rhytids',
+          'fineLines',
+        ],
         'pore_visibility' => const <String>[
-            'pore_visibility',
-            'poreVisibility',
-            'pore',
-            'pores',
-          ],
+          'pore_visibility',
+          'poreVisibility',
+          'pore',
+          'pores',
+        ],
         'pigment_load' => const <String>[
-            'pigment_load',
-            'pigment',
-            'pigmentation',
-            'darkSpots',
-            'dark_spots',
-            'dark spots',
-          ],
+          'pigment_load',
+          'pigment',
+          'pigmentation',
+          'darkSpots',
+          'dark_spots',
+          'dark spots',
+        ],
         'structural_firmness_elasticity' => const <String>[
-            'structural_firmness_elasticity',
-            'elasticity',
-            'firmness',
-            'skinFirmness',
-          ],
+          'structural_firmness_elasticity',
+          'elasticity',
+          'firmness',
+          'skinFirmness',
+        ],
         _ => <String>[canonicalKey],
       };
       value = readFromMap(scan.metrics, aliasKeys);
@@ -1470,18 +1950,15 @@ class _HomePageState extends State<HomePage>
         'pore_visibility',
         const <String>['pore_visibility'],
       ),
-      'pigment_load': _readCanonicalHomepageMetric(
-        scan,
-        'pigment_load',
-        const <String>[
-          'pigment_load',
-          'pigment',
-          'pigmentation',
-          'darkSpots',
-          'dark_spots',
-          'dark spots',
-        ],
-      ),
+      'pigment_load':
+          _readCanonicalHomepageMetric(scan, 'pigment_load', const <String>[
+            'pigment_load',
+            'pigment',
+            'pigmentation',
+            'darkSpots',
+            'dark_spots',
+            'dark spots',
+          ]),
       'structural_firmness_elasticity': _readCanonicalHomepageMetric(
         scan,
         'structural_firmness_elasticity',
@@ -1530,7 +2007,9 @@ class _HomePageState extends State<HomePage>
       return latestScan.estimatedSkinAge;
     }
 
-    final payloadAge = readAgeFromMap(latestScan.rawPayload ?? const <String, dynamic>{});
+    final payloadAge = readAgeFromMap(
+      latestScan.rawPayload ?? const <String, dynamic>{},
+    );
     if (payloadAge != null) return payloadAge;
 
     final metricsAge = readAgeFromMap(latestScan.metrics);
@@ -1585,9 +2064,7 @@ class _HomePageState extends State<HomePage>
     final payloadNestedMatrix = asMap(payloadMetrics['metric_matrix']);
     final payloadNestedOpenCv = asMap(payloadMetrics['opencv_metrics']);
 
-    const poreCandidates = <String>[
-      'pore_visibility',
-    ];
+    const poreCandidates = <String>['pore_visibility'];
     const ageCandidates = <String>[
       'estimatedSkinAge',
       'estimated_skin_age',
@@ -1675,7 +2152,10 @@ class _HomePageState extends State<HomePage>
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: _clinicalSage.withValues(alpha: 0.10),
                   borderRadius: BorderRadius.circular(999),
@@ -1694,7 +2174,9 @@ class _HomePageState extends State<HomePage>
           const SizedBox(height: 14),
           Text(
             latestEstimatedAge == null
-                ? (scan.hasTrustworthyEstimatedSkinAge ? 'Ready for review' : 'Estimate unavailable')
+                ? (scan.hasTrustworthyEstimatedSkinAge
+                      ? 'Ready for review'
+                      : 'Estimate unavailable')
                 : '${latestEstimatedAge.round()} years',
             style: const TextStyle(
               fontSize: 28,
@@ -1909,10 +2391,17 @@ class _HomePageState extends State<HomePage>
 
   models.Procedure? get _nextUpcomingAppointment {
     final now = DateTime.now();
-    final upcoming = _activeProcedureModels
-        .where((p) => p.nextAppointmentDate != null && p.nextAppointmentDate!.isAfter(now))
-        .toList()
-      ..sort((a, b) => a.nextAppointmentDate!.compareTo(b.nextAppointmentDate!));
+    final upcoming =
+        _activeProcedureModels
+            .where(
+              (p) =>
+                  p.nextAppointmentDate != null &&
+                  p.nextAppointmentDate!.isAfter(now),
+            )
+            .toList()
+          ..sort(
+            (a, b) => a.nextAppointmentDate!.compareTo(b.nextAppointmentDate!),
+          );
     return upcoming.isEmpty ? null : upcoming.first;
   }
 
@@ -1920,7 +2409,8 @@ class _HomePageState extends State<HomePage>
     final procedure = _nextUpcomingAppointment;
     if (procedure == null) return const SizedBox.shrink();
     final date = procedure.nextAppointmentDate!;
-    final dateLabel = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    final dateLabel =
+        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
     return InkWell(
       borderRadius: BorderRadius.circular(14),
       onTap: () {
@@ -2076,11 +2566,11 @@ class _HomePageState extends State<HomePage>
           name.contains('cream') ||
           name.contains('mask') ||
           (purpose.contains('treatment') && !purpose.contains('sunscreen'));
-        if (isNight) {
-          _nightSteps.add(entry);
-        } else {
-          _morningSteps.add(entry);
-        }
+      if (isNight) {
+        _nightSteps.add(entry);
+      } else {
+        _morningSteps.add(entry);
+      }
     }
     if (_nightSteps.any(
           (s) => s['product'].toString().toLowerCase().contains('retinol'),
@@ -2120,6 +2610,11 @@ class _HomePageState extends State<HomePage>
         centerTitle: false,
         actions: [
           IconButton(
+            tooltip: 'More',
+            onPressed: () => _openMoreMenu(latestScan),
+            icon: const Icon(Icons.more_horiz_rounded, color: textColor),
+          ),
+          IconButton(
             onPressed: () async {
               await Navigator.of(context).pushNamed('/settings');
               await _refreshData();
@@ -2136,6 +2631,8 @@ class _HomePageState extends State<HomePage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                _buildProtocolHomeCard(),
+                const SizedBox(height: 20),
                 _buildWelcomeSection(),
                 const SizedBox(height: 12),
                 if (_userClinic.isNotEmpty || _trackedProcedure.isNotEmpty)
@@ -2160,149 +2657,6 @@ class _HomePageState extends State<HomePage>
                       ],
                     ),
                   ),
-                const SizedBox(height: 12),
-                BridgeCard(
-                  scans: sortedScans,
-                  activeProcedure: _activeProcedureModels.isNotEmpty
-                      ? _activeProcedureModels.first
-                      : null,
-                  activePeptides: _activePeptides,
-                ),
-                if (_nextUpcomingAppointment != null) ...[
-                  const SizedBox(height: 12),
-                  _buildUpcomingAppointmentCard(textColor),
-                ],
-                const SizedBox(height: 18),
-
-                _buildSectionHeader(
-                  Icons.flash_on_rounded,
-                  'Quick Actions',
-                  textColor,
-                ),
-                const SizedBox(height: 14),
-                _buildQuickActionFeatureCards(textColor),
-
-                const SizedBox(height: 16),
-                _buildQuickShortcutsRow(textColor),
-
-                const SizedBox(height: 24),
-                _buildSectionHeader(
-                  Icons.assessment_outlined,
-                  'At a Glance',
-                  textColor,
-                ),
-                const SizedBox(height: 12),
-                _buildCompactStatsRow(textColor),
-                if (_showSecondScanPrompt) ...[
-                  const SizedBox(height: 12),
-                  _buildSecondScanPromptCard(textColor),
-                ],
-
-                const SizedBox(height: 24),
-                _buildSectionHeader(
-                  Icons.psychology_outlined,
-                  'Daily Insights',
-                  textColor,
-                ),
-                const SizedBox(height: 12),
-                _buildAiDailyBriefingCard(textColor),
-
-                const SizedBox(height: 20),
-                _buildQuickTipsCarousel(textColor),
-                const SizedBox(height: 14),
-                _buildPremiumRecoveryCard(textColor),
-                const SizedBox(height: 30),
-
-                if (latestScan == null)
-                  _buildNoScansCard()
-                else
-                  Builder(
-                    builder: (context) {
-                      final currentLatestScan = latestScan;
-                      final latestMetrics = currentLatestScan.toSkinMetrics();
-                      final latestFacialValues = _facialMetricSnapshot(
-                        currentLatestScan,
-                      );
-                      final procedureType = _getProcedureTypeForScan(
-                        currentLatestScan,
-                      );
-                      final previousEntry = _findPreviousComparableScan(
-                        sortedScans,
-                        currentLatestScan,
-                      );
-                      final previousMetrics = previousEntry?.toSkinMetrics();
-                      final latestEstimatedAge =
-                          _latestEstimatedSkinAgeFromCanonical(
-                            currentLatestScan,
-                            latestFacialValues,
-                          );
-                      _debugLatestScanKeyAuditIfNeeded(
-                        currentLatestScan,
-                        latestFacialValues,
-                        latestEstimatedAge,
-                      );
-                      final metricPreview =
-                          ScanDetailScreen.displayMetricsFor(currentLatestScan);
-
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildSectionHeader(
-                            Icons.document_scanner_outlined,
-                            'Latest Scan',
-                            textColor,
-                          ),
-                          const SizedBox(height: 10),
-                          Text(
-                            _getScanType(currentLatestScan),
-                            style: const TextStyle(
-                              fontSize: 16,
-                              color: _clinicalSage,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Taken: ${_formatLatestScanDate(currentLatestScan.timestamp)}',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: textColor.withValues(alpha: 0.7),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          GestureDetector(
-                            onTap: () async {
-                              await Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) =>
-                                      ScanDetailScreen(scan: currentLatestScan),
-                                ),
-                              );
-                              await _refreshData();
-                            },
-                            child: _buildLatestScanSummaryCard(
-                              context,
-                              scan: currentLatestScan,
-                              latestEstimatedAge: latestEstimatedAge,
-                              metricCount: metricPreview.length,
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          ScanBasedRecommendationsCard(
-                            latest: latestMetrics,
-                            baseline: previousMetrics,
-                            procedureType: procedureType,
-                            aiCoachProducts: _aiCoachRecommendationsFromScan(
-                              latestScan,
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-
-                const SizedBox(height: 36),
-
                 _buildSectionHeaderWithAction(
                   icon: Icons.medical_services_outlined,
                   title: 'Procedures',
@@ -2697,10 +3051,7 @@ class _HomePageState extends State<HomePage>
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: const Color(0xFFF4F6F4),
-                  border: Border.all(
-                    color: _clinicalSage,
-                    width: 1,
-                  ),
+                  border: Border.all(color: _clinicalSage, width: 1),
                   boxShadow: [
                     BoxShadow(
                       color: _clinicalSage.withValues(alpha: 0.10),
@@ -2808,10 +3159,14 @@ class _HomePageState extends State<HomePage>
                           vertical: 7,
                         ),
                         decoration: BoxDecoration(
-                          color: AppColors.champagneGold.withValues(alpha: 0.14),
+                          color: AppColors.champagneGold.withValues(
+                            alpha: 0.14,
+                          ),
                           borderRadius: BorderRadius.circular(999),
                           border: Border.all(
-                            color: AppColors.champagneGold.withValues(alpha: 0.42),
+                            color: AppColors.champagneGold.withValues(
+                              alpha: 0.42,
+                            ),
                             width: 1,
                           ),
                         ),
@@ -2907,9 +3262,7 @@ class _HomePageState extends State<HomePage>
       color: AppColors.cardBackground,
       borderRadius: BorderRadius.circular(18),
       border: Border.all(
-        color: (borderColor ?? _clinicalSage).withValues(
-          alpha: borderAlpha,
-        ),
+        color: (borderColor ?? _clinicalSage).withValues(alpha: borderAlpha),
         width: 0.9,
       ),
       boxShadow: [
@@ -2954,10 +3307,7 @@ class _HomePageState extends State<HomePage>
               gradient: const LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: <Color>[
-                  Colors.white,
-                  _lightSageTint,
-                ],
+                colors: <Color>[Colors.white, _lightSageTint],
               ),
               borderRadius: BorderRadius.circular(22),
               border: Border.all(
@@ -3054,8 +3404,9 @@ class _HomePageState extends State<HomePage>
                                       ),
                                       boxShadow: [
                                         BoxShadow(
-                                          color: _clinicalSage
-                                              .withValues(alpha: 0.35),
+                                          color: _clinicalSage.withValues(
+                                            alpha: 0.35,
+                                          ),
                                           blurRadius: 8,
                                           offset: const Offset(0, 2),
                                         ),
@@ -3088,9 +3439,7 @@ class _HomePageState extends State<HomePage>
                                   fontSize: 12.5,
                                   height: 1.4,
                                   fontWeight: FontWeight.w500,
-                                  color: _darkSlateInk.withValues(
-                                    alpha: 0.66,
-                                  ),
+                                  color: _darkSlateInk.withValues(alpha: 0.66),
                                 ),
                               ),
                               const SizedBox(height: 14),
@@ -3186,10 +3535,7 @@ class _HomePageState extends State<HomePage>
               gradient: const LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: <Color>[
-                  Colors.white,
-                  _lightSageTint,
-                ],
+                colors: <Color>[Colors.white, _lightSageTint],
               ),
               borderRadius: BorderRadius.circular(22),
               border: Border.all(
@@ -3263,7 +3609,7 @@ class _HomePageState extends State<HomePage>
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               const Text(
-                                      'Skin Scan',
+                                'Skin Scan',
                                 style: TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.w900,
@@ -3466,22 +3812,20 @@ class _HomePageState extends State<HomePage>
           final isPremiumHub = item.label == 'Premium Hub';
           const cardBackground = Color(0xFFF4F6F4);
 
-            final cardBackgroundColor = isPremiumHub
+          final cardBackgroundColor = isPremiumHub
               ? const Color(0xFFE8EFE9)
-                : cardBackground;
-            final cardBorder = isPremiumHub
+              : cardBackground;
+          final cardBorder = isPremiumHub
               ? const Color(0xFF7A8B7B)
-                : _clinicalSage.withValues(alpha: 0.20);
-            final iconBackground = isPremiumHub
-              ? Colors.white
-                : Colors.white;
-            final iconBorder = isPremiumHub
+              : _clinicalSage.withValues(alpha: 0.20);
+          final iconBackground = isPremiumHub ? Colors.white : Colors.white;
+          final iconBorder = isPremiumHub
               ? _clinicalSage.withValues(alpha: 0.45)
-                : _clinicalSage.withValues(alpha: 0.20);
-            final iconColor = isPremiumHub
+              : _clinicalSage.withValues(alpha: 0.20);
+          final iconColor = isPremiumHub
               ? const Color(0xFF7A8B7B)
               : _darkSlateInk;
-            final labelColor = isPremiumHub
+          final labelColor = isPremiumHub
               ? const Color(0xFF7A8B7B)
               : _darkSlateInk;
           return Material(
@@ -3664,12 +4008,7 @@ class _HomePageState extends State<HomePage>
         '${_activeProcedures.length}',
         _clinicalSage,
       ),
-      (
-        Icons.photo_camera_rounded,
-        'Scans',
-        '$_scanCount',
-        _mintHighlight,
-      ),
+      (Icons.photo_camera_rounded, 'Scans', '$_scanCount', _mintHighlight),
     ];
 
     return Container(
@@ -3685,9 +4024,7 @@ class _HomePageState extends State<HomePage>
                   : BoxDecoration(
                       border: Border(
                         left: BorderSide(
-                          color: _clinicalSage.withValues(
-                            alpha: 0.16,
-                          ),
+                          color: _clinicalSage.withValues(alpha: 0.16),
                           width: 0.9,
                         ),
                       ),
@@ -3741,16 +4078,16 @@ class _HomePageState extends State<HomePage>
     final sortedScans = [..._allScans]
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     final latestScan = sortedScans.isNotEmpty ? sortedScans.first : null;
-    final latestScanProcedureType =
-        latestScan != null ? _getProcedureTypeForScan(latestScan) : null;
+    final latestScanProcedureType = latestScan != null
+        ? _getProcedureTypeForScan(latestScan)
+        : null;
     final validActiveProcedureTypes = _activeProcedureModels
         .map((p) => p.type.trim())
         .where((p) => p.isNotEmpty && p.toLowerCase() != 'unknown')
-      .toList();
-    final activeProcedureType =
-      validActiveProcedureTypes.isNotEmpty
-      ? validActiveProcedureTypes.first
-      : null;
+        .toList();
+    final activeProcedureType = validActiveProcedureTypes.isNotEmpty
+        ? validActiveProcedureTypes.first
+        : null;
     final resolvedBriefingProcedureType =
         (latestScanProcedureType?.trim().isNotEmpty == true &&
             latestScanProcedureType!.trim().toLowerCase() != 'unknown')
@@ -3773,9 +4110,7 @@ class _HomePageState extends State<HomePage>
 
     return Container(
       decoration: BoxDecoration(
-        color: MyApp.isDark
-            ? const Color(0xFF2A322C)
-            : const Color(0xFFE8EFE9),
+        color: MyApp.isDark ? const Color(0xFF2A322C) : const Color(0xFFE8EFE9),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
           color: _clinicalSage.withValues(alpha: 0.15),
@@ -3992,9 +4327,7 @@ class _HomePageState extends State<HomePage>
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
       decoration: BoxDecoration(
-        color: MyApp.isDark
-            ? const Color(0xFF2A322C)
-            : const Color(0xFFE8EFE9),
+        color: MyApp.isDark ? const Color(0xFF2A322C) : const Color(0xFFE8EFE9),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
           color: _clinicalSage.withValues(alpha: 0.15),
@@ -4277,34 +4610,42 @@ class _HomePageState extends State<HomePage>
       if (map == null) continue;
 
       final brand = readString(map, const ['brand', 'company', 'maker']);
-      final name = readString(
-        map,
-        const ['name', 'product_name', 'productName', 'title'],
-      );
-      final reason = readString(
-        map,
-        const ['clinical_reason', 'reason', 'reason_tag', 'why'],
-      );
-      final guidance = readString(
-        map,
-        const ['usage_guidance', 'usage', 'how_to_use', 'guidance'],
-      );
-      final evidence = readString(
-        map,
-        const ['evidence_level', 'evidence', 'evidenceLevel'],
-      );
-      final link = readString(
-        map,
-        const ['affiliate_url', 'affiliateLink', 'link', 'url'],
-      );
-      final image = readString(
-        map,
-        const ['image_url', 'imageUrl', 'image', 'thumbnail'],
-      );
-      final category = readString(
-        map,
-        const ['category', 'type', 'bucket'],
-      );
+      final name = readString(map, const [
+        'name',
+        'product_name',
+        'productName',
+        'title',
+      ]);
+      final reason = readString(map, const [
+        'clinical_reason',
+        'reason',
+        'reason_tag',
+        'why',
+      ]);
+      final guidance = readString(map, const [
+        'usage_guidance',
+        'usage',
+        'how_to_use',
+        'guidance',
+      ]);
+      final evidence = readString(map, const [
+        'evidence_level',
+        'evidence',
+        'evidenceLevel',
+      ]);
+      final link = readString(map, const [
+        'affiliate_url',
+        'affiliateLink',
+        'link',
+        'url',
+      ]);
+      final image = readString(map, const [
+        'image_url',
+        'imageUrl',
+        'image',
+        'thumbnail',
+      ]);
+      final category = readString(map, const ['category', 'type', 'bucket']);
 
       if (name.isEmpty) continue;
       final dedupeKey = '${brand.toLowerCase()}|${name.toLowerCase()}';
@@ -4314,11 +4655,13 @@ class _HomePageState extends State<HomePage>
         AIProductRecommendation(
           productName: name,
           brand: brand.isEmpty ? 'Recommended' : brand,
-          clinicalReason: reason.isEmpty ? 'Recommended by AI Coach pipeline.' : reason,
-          usageGuidance:
-              guidance.isEmpty ? 'Follow product label and patch test first.' : guidance,
-          evidenceLevel:
-              evidence.isEmpty ? 'AI Coach guidance' : evidence,
+          clinicalReason: reason.isEmpty
+              ? 'Recommended by AI Coach pipeline.'
+              : reason,
+          usageGuidance: guidance.isEmpty
+              ? 'Follow product label and patch test first.'
+              : guidance,
+          evidenceLevel: evidence.isEmpty ? 'AI Coach guidance' : evidence,
           affiliateLink: link,
           imageUrl: image,
           category: category.isEmpty ? 'Suggested' : category,
@@ -4513,9 +4856,7 @@ class SingleJournalEntryScreen extends StatelessWidget {
                         ),
                         Text(
                           dateStr,
-                          style: const TextStyle(
-                            color: Color(0xFF1E2225),
-                          ),
+                          style: const TextStyle(color: Color(0xFF1E2225)),
                         ),
                       ],
                     ),
@@ -4533,7 +4874,13 @@ class SingleJournalEntryScreen extends StatelessWidget {
                     Row(
                       children: [
                         Text(
-                          ['=��P', '=���', '=���', '=���', '=�Ѧ'][entry.moodRating - 1],
+                          [
+                            '=��P',
+                            '=���',
+                            '=���',
+                            '=���',
+                            '=�Ѧ',
+                          ][entry.moodRating - 1],
                           style: const TextStyle(fontSize: 32),
                         ),
                       ],
@@ -4577,6 +4924,3 @@ class SingleJournalEntryScreen extends StatelessWidget {
     }
   }
 }
-
-
-
