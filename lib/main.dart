@@ -295,6 +295,8 @@ class _AestheticSkinTrackerState extends State<AestheticSkinTracker> {
     switch (settings.name) {
       case '/home':
         return const HomePage();
+      case '/first-run-protocol':
+        return const FirstRunProtocolScreen();
       case '/paywall':
         return const PaywallScreen();
       case '/conversion-diagnostics':
@@ -342,7 +344,11 @@ class _AestheticSkinTrackerState extends State<AestheticSkinTracker> {
       case '/challenges/yearend':
         return YearEndChallengeScreen(onChangeProcedure: () {});
       case '/peptide-tracker':
-        return const PeptideTrackerScreen();
+        final args = settings.arguments;
+        final initialTab = args is Map && args['initialTab'] is num
+            ? (args['initialTab'] as num).toInt()
+            : null;
+        return PeptideTrackerScreen(initialTab: initialTab);
       case '/peptide-library':
         return const PeptideTrackerScreen(initialTab: 3);
       case '/peptide-reconstitution':
@@ -534,5 +540,3 @@ class _ProcedureDetailLoaderState extends State<_ProcedureDetailLoader> {
     );
   }
 }
-
-

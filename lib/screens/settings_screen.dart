@@ -1084,9 +1084,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await AppPrefs.clearAllScanHistoryAndBaselines();
     await _loadProfilePrefs();
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(
+    ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Scan history and baselines cleared (dev).'),
       ),
@@ -1184,11 +1182,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (confirmed != true) return;
     await AppPrefs.setTourCompleted(false);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Welcome tour reset. Relaunch to view it again.'),
-      ),
-    );
+    await Navigator.of(context).pushNamed('/welcome-tour');
   }
 
   Future<void> _editTrackedProcedure() async {

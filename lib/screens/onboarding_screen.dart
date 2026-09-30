@@ -4,6 +4,13 @@ import 'dart:math' as math;
 
 import '../app_theme.dart';
 import '../utils/app_prefs.dart';
+import '../models/peptide_model.dart';
+import '../utils/peptide_service.dart';
+
+bool hasSavedFirstRunProtocol({
+  required List<Map<String, dynamic>> procedures,
+  required List<PeptideEntry> peptides,
+}) => procedures.isNotEmpty || peptides.isNotEmpty;
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -52,16 +59,16 @@ class _SplashScreenState extends State<SplashScreen>
     _isRouting = true;
     _autoRouteTimer?.cancel(); // Cancel timer before navigation
     await AppPrefs.getScanEntries();
-    final skinProfileComplete = await AppPrefs.isSkinProfileComplete();
-    final tourCompleted = await AppPrefs.isTourCompleted();
+    final procedures = await AppPrefs.getProcedureEntries();
+    final peptides = await PeptideService.loadAll();
+    final hasProtocol = hasSavedFirstRunProtocol(
+      procedures: procedures,
+      peptides: peptides,
+    );
     if (!mounted) return;
-    if (skinProfileComplete) {
-      Navigator.of(
-        context,
-      ).pushReplacementNamed(tourCompleted ? '/home' : '/welcome-tour');
-    } else {
-      Navigator.of(context).pushReplacementNamed('/onboarding');
-    }
+    Navigator.of(
+      context,
+    ).pushReplacementNamed(hasProtocol ? '/home' : '/first-run-protocol');
   }
 
   Future<void> _startAutoRoute() async {
@@ -145,7 +152,9 @@ class _SplashScreenState extends State<SplashScreen>
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF7A8B7B).withValues(alpha: 0.20),
+                          color: const Color(
+                            0xFF7A8B7B,
+                          ).withValues(alpha: 0.20),
                           blurRadius: 24,
                           offset: const Offset(0, 10),
                         ),
@@ -250,6 +259,135 @@ class _SplashScreenState extends State<SplashScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class FirstRunProtocolScreen extends StatelessWidget {
+  const FirstRunProtocolScreen({super.key});
+
+  Future<void> _returnHomeWhenProtocolSaved(BuildContext context) async {
+    final procedures = await AppPrefs.getProcedureEntries();
+    final peptides = await PeptideService.loadAll();
+    if (!context.mounted ||
+        !hasSavedFirstRunProtocol(procedures: procedures, peptides: peptides)) {
+      return;
+    }
+    Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = MyApp.clinicalNavy;
+    return Scaffold(
+      backgroundColor: AppColors.warmAlabaster,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        title: const Text('Choose your starting point'),
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
+          children: [
+            Text(
+              'What are you tracking?',
+              style: TextStyle(
+                color: textColor,
+                fontSize: 25,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Choose a protocol to make your next scan and recovery timeline easier to organize.',
+              style: TextStyle(
+                color: textColor.withValues(alpha: 0.72),
+                fontSize: 14,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 24),
+            _FirstRunAction(
+              icon: Icons.medical_services_outlined,
+              title: 'Start a procedure protocol',
+              subtitle: 'Track treatment dates, recovery and progress photos.',
+              onPressed: () async {
+                await Navigator.of(context).pushNamed('/create-procedure');
+                if (context.mounted) {
+                  await _returnHomeWhenProtocolSaved(context);
+                }
+              },
+            ),
+            const SizedBox(height: 12),
+            _FirstRunAction(
+              icon: Icons.science_outlined,
+              title: 'Start a peptide protocol',
+              subtitle: 'Log a peptide or organize a stack before scanning.',
+              onPressed: () async {
+                await Navigator.of(context).pushNamed(
+                  '/peptide-tracker',
+                  arguments: const {'initialTab': 1},
+                );
+                if (context.mounted) {
+                  await _returnHomeWhenProtocolSaved(context);
+                }
+              },
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(
+                context,
+              ).pushNamedAndRemoveUntil('/ai-coach', (_) => false),
+              icon: const Icon(Icons.photo_camera_outlined),
+              label: const Text('Skip to Scan'),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(56),
+                foregroundColor: textColor,
+                side: BorderSide(color: textColor.withValues(alpha: 0.3)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FirstRunAction extends StatelessWidget {
+  const _FirstRunAction({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 88,
+      child: FilledButton.tonalIcon(
+        onPressed: onPressed,
+        icon: Icon(icon),
+        label: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 3),
+            Text(subtitle, maxLines: 2),
+          ],
+        ),
+        style: FilledButton.styleFrom(
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        ),
       ),
     );
   }

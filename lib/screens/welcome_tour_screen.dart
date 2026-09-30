@@ -103,15 +103,6 @@ class _WelcomeTourScreenState extends State<WelcomeTourScreen>
   }
 
   Future<void> _finishTour() async {
-    final skinProfileComplete = await AppPrefs.isSkinProfileComplete();
-    if (!mounted) return;
-    if (!skinProfileComplete) {
-      Navigator.of(
-        context,
-      ).pushNamedAndRemoveUntil('/onboarding', (route) => false);
-      return;
-    }
-
     await AppPrefs.setTourCompleted(true);
     if (!mounted) return;
     Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
