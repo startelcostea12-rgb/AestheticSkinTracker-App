@@ -447,6 +447,7 @@ void main() {
       });
       expect(aggregate.response['metric_extraction_paths'], {
         'texture_smoothness': 'laplacian_fallback',
+        'pore_visibility': 'skipped',
       });
       expect(aggregate.response['baseline_metric_extraction_paths'], {
         'texture_smoothness': 'primary_roi',
@@ -457,9 +458,57 @@ void main() {
       expect(nestedMetrics['trend_deltas'], {'texture_smoothness': 5.0});
       expect(nestedMetrics['metric_extraction_paths'], {
         'texture_smoothness': 'laplacian_fallback',
+        'pore_visibility': 'skipped',
       });
     },
   );
+
+  test(
+    'pore visibility omissions retain their path without a metric value',
+    () {
+      for (final reason in ['pose', 'dog_spread', 'crop', 'skipped']) {
+        final aggregate = averageBackendAnalysisFrames([
+          {
+            'metric_matrix': {'localized_redness': 20.0},
+            'metric_extraction_paths': {'pore_visibility': reason},
+          },
+        ], requestedFrames: 1);
+
+        expect(
+          aggregate.response['metric_matrix'],
+          isNot(contains('pore_visibility')),
+          reason: reason,
+        );
+        expect(
+          (aggregate.response['metric_extraction_paths']
+              as Map)['pore_visibility'],
+          reason,
+          reason: reason,
+        );
+        final metrics = aggregate.response['metrics'] as Map<String, dynamic>;
+        expect(
+          (metrics['metric_extraction_paths'] as Map)['pore_visibility'],
+          reason,
+          reason: reason,
+        );
+      }
+    },
+  );
+
+  test('scored pore visibility remains primary_roi through aggregation', () {
+    final aggregate = averageBackendAnalysisFrames([
+      {
+        'metric_matrix': {'pore_visibility': 79.6},
+        'metric_extraction_paths': {'pore_visibility': 'primary_roi'},
+      },
+    ], requestedFrames: 1);
+
+    expect(aggregate.response['metric_matrix'], {'pore_visibility': 79.6});
+    expect(
+      (aggregate.response['metric_extraction_paths'] as Map)['pore_visibility'],
+      'primary_roi',
+    );
+  });
 
   test(
     'trend fields read from a nested metrics node are honored the same as '
@@ -567,6 +616,9 @@ void main() {
             'diffuse_flushing_erythema_mask_kind': 'face_skin',
             'diffuse_flushing_erythema_mask_pixels': 10200,
           },
+            'metric_extraction_paths': {
+              'pore_visibility': frameNumber == 1 ? 'pose' : 'dog_spread',
+            },
           'metric_matrix': {
             'localized_redness': frameNumber == 1 ? 20.0 : 40.0,
             if (frameNumber == 1) 'pigment_load': 12.0,
@@ -614,6 +666,10 @@ void main() {
       diagnostics[0],
       containsPair('pore_visibility_mask_kind', 'tzone_pore'),
     );
+      expect(
+        diagnostics[0],
+        containsPair('pore_visibility_extraction_path', 'pose'),
+      );
     expect(diagnostics[1], containsPair('cheek_side', isNull));
     expect(diagnostics[1], containsPair('localized_redness', isNull));
     expect(diagnostics[1], containsPair('iso', 125));

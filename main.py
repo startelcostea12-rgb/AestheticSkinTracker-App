@@ -3429,6 +3429,12 @@ def _compute_canonical_patch_metrics(
     raw_components["pores_roi_pixels"] = float(pore_roi_pixels)
     raw_components["pore_pose_pitch"] = round(float(pose_pitch), 4)
     raw_components["pore_pose_yaw"] = round(float(pose_yaw), 4)
+    raw_components["pore_visibility_face_detected"] = 1.0 if face_detected else 0.0
+    raw_components["pore_visibility_pose_ok"] = 1.0 if pose_ok else 0.0
+    raw_components["pore_visibility_crop_available"] = (
+        1.0 if pore_l_crop is not None and pore_mask_crop is not None else 0.0
+    )
+    raw_components["pore_visibility_dog_spread_failed"] = 0.0
 
     if (
         face_detected
@@ -3474,6 +3480,7 @@ def _compute_canonical_patch_metrics(
                         pose_yaw,
                     )
                 else:
+                    raw_components["pore_visibility_dog_spread_failed"] = 1.0
                     logger.info(
                         "PORE OMITTED reason=confidence_%s roi_pixels=%d",
                         pore_confidence,
@@ -4216,6 +4223,22 @@ def _compute_metric_extraction_paths(
         out[key] = "primary_roi"
 
     return out
+
+
+def _pore_visibility_omission_path(raw_components: Dict[str, float]) -> str:
+    if (
+        raw_components.get("pore_visibility_face_detected", 0.0) <= 0.5
+        or raw_components.get("pore_visibility_pose_ok", 0.0) <= 0.5
+    ):
+        return "pose"
+    if (
+        raw_components.get("pore_visibility_crop_available", 0.0) <= 0.5
+        or raw_components.get("primary_pore_roi_pixels", 0.0) <= 5000.0
+    ):
+        return "crop"
+    if raw_components.get("pore_visibility_dog_spread_failed", 0.0) > 0.5:
+        return "dog_spread"
+    return "skipped"
 
 
 def _metric_higher_is_worse(metric_key: str) -> bool:
@@ -6636,6 +6659,11 @@ def analyze_skin_patch(
         metric_status[emitted_key] = "computed"
         emitted_path = metric_extraction_paths.get(emitted_key, "primary_roi")
         metric_extraction_paths[emitted_key] = _normalize_extraction_path_label(emitted_path)
+
+    if "pore_visibility" not in metric_matrix:
+        metric_extraction_paths["pore_visibility"] = _pore_visibility_omission_path(
+            raw_components
+        )
 
     if "localized_redness" in metric_matrix:
         logger.info(

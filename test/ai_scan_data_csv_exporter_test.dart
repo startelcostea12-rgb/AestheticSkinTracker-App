@@ -95,6 +95,62 @@ void main() {
       expect(row['breakout_activity_extraction_path'], 'full_face_yolo');
     });
 
+    test('exports pore visibility omission reasons without a score', () {
+      final scans = <ScanHistoryEntry>[
+        _aiScan(
+          'scan-pore-pose',
+          rawPayload: const <String, dynamic>{
+            'metric_matrix': <String, dynamic>{'localized_redness': 20.0},
+            'metric_extraction_paths': <String, dynamic>{
+              'pore_visibility': 'pose',
+            },
+            'metric_formula_versions': <String, dynamic>{'pore_visibility': 3},
+          },
+        ),
+        _aiScan(
+          'scan-pore-spread',
+          rawPayload: const <String, dynamic>{
+            'metric_matrix': <String, dynamic>{'localized_redness': 20.0},
+            'metric_extraction_paths': <String, dynamic>{
+              'pore_visibility': 'dog_spread',
+            },
+            'metric_formula_versions': <String, dynamic>{'pore_visibility': 3},
+          },
+        ),
+        _aiScan(
+          'scan-pore-scored',
+          rawPayload: const <String, dynamic>{
+            'metric_matrix': <String, dynamic>{'pore_visibility': 79.6},
+            'metric_extraction_paths': <String, dynamic>{
+              'pore_visibility': 'primary_roi',
+            },
+            'metric_formula_versions': <String, dynamic>{'pore_visibility': 3},
+          },
+        ),
+      ];
+
+      final rows = _parse(
+        AiScanDataCsvExporter.format(scans, registryBaselineScanIds: const {}),
+      );
+      final byId = {for (final row in rows) row['scan_id']: row};
+
+      for (final entry in <String, String>{
+        'scan-pore-pose': 'pose',
+        'scan-pore-spread': 'dog_spread',
+      }.entries) {
+        expect(byId[entry.key]!['pore_visibility_value'], isEmpty);
+        expect(
+          byId[entry.key]!['pore_visibility_extraction_path'],
+          entry.value,
+        );
+        expect(byId[entry.key]!['pore_visibility_formula_version'], '3');
+      }
+      expect(byId['scan-pore-scored']!['pore_visibility_value'], '79.6');
+      expect(
+        byId['scan-pore-scored']!['pore_visibility_extraction_path'],
+        'primary_roi',
+      );
+    });
     test('exports lighting lock reason for every refused metric', () {
       final scan = _aiScan(
         'scan-light-lock',
@@ -253,6 +309,7 @@ void main() {
               'pigment_load_mask_pixels': 9500,
               'pore_visibility_mask_kind': 'tzone_pore',
               'pore_visibility_mask_pixels': 6200,
+              'pore_visibility_extraction_path': 'pose',
               'chin_pore_visibility_mask_kind': 'chin_pore',
               'chin_pore_visibility_mask_pixels': 7100,
               'diffuse_flushing_erythema_mask_kind': 'face_skin',
@@ -298,6 +355,7 @@ void main() {
       expect(row['frame1_u_zone_pixels'], '9500');
       expect(row['frame1_localized_redness_mask_kind'], 'cheek_primary');
       expect(row['frame1_pore_visibility_mask_kind'], 'tzone_pore');
+      expect(row['frame1_pore_visibility_extraction_path'], 'pose');
       expect(row['frame1_chin_pore_visibility_mask_kind'], 'chin_pore');
       expect(row['frame1_chin_pore_visibility_mask_pixels'], '7100');
       expect(header, contains('chin_pore_visibility_value'));

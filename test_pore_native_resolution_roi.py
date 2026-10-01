@@ -133,6 +133,28 @@ def test_pore_visibility_reaches_high_confidence_on_real_clear_face_photo():
 
     assert metric_confidence.get("pore_visibility") == "high"
     assert metric_matrix.get("pore_visibility") is not None
+    assert result["metric_extraction_paths"]["pore_visibility"] == "primary_roi"
+
+
+def test_pore_visibility_omission_path_reports_pose_crop_and_dog_spread():
+    valid_components = {
+        "pore_visibility_face_detected": 1.0,
+        "pore_visibility_pose_ok": 1.0,
+        "pore_visibility_crop_available": 1.0,
+        "primary_pore_roi_pixels": 9100.0,
+        "pore_visibility_dog_spread_failed": 0.0,
+    }
+
+    assert main._pore_visibility_omission_path(
+        {**valid_components, "pore_visibility_pose_ok": 0.0}
+    ) == "pose"
+    assert main._pore_visibility_omission_path(
+        {**valid_components, "pore_visibility_dog_spread_failed": 1.0}
+    ) == "dog_spread"
+    assert main._pore_visibility_omission_path(
+        {**valid_components, "pore_visibility_crop_available": 0.0}
+    ) == "crop"
+    assert main._pore_visibility_omission_path(valid_components) == "skipped"
 
 
 def test_pore_visibility_is_omitted_below_5000_pixels_without_fallback():

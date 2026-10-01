@@ -104,6 +104,7 @@ class AiScanDataCsvExporter {
     'pigment_load_mask_pixels',
     'pore_visibility_mask_kind',
     'pore_visibility_mask_pixels',
+    'pore_visibility_extraction_path',
     'chin_pore_visibility_mask_kind',
     'chin_pore_visibility_mask_pixels',
     'diffuse_flushing_erythema_mask_kind',

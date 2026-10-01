@@ -428,6 +428,25 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     }
   }
 
+  if (averagedMatrix.containsKey('pore_visibility')) {
+    resolvedExtractionPaths['pore_visibility'] = 'primary_roi';
+  } else {
+    const poreOmissionPaths = {'pose', 'dog_spread', 'crop', 'skipped'};
+    for (final response in responses) {
+      final metricsNode = _dynamicMap(response['metrics']);
+      final path = _perFrameTrendNode(
+        response,
+        metricsNode,
+        'metric_extraction_paths',
+      )['pore_visibility']?.toString();
+      if (path != null && poreOmissionPaths.contains(path)) {
+        resolvedExtractionPaths['pore_visibility'] = path;
+        break;
+      }
+    }
+    resolvedExtractionPaths.putIfAbsent('pore_visibility', () => 'skipped');
+  }
+
   final first = successfulResponses.first;
   final response = Map<String, dynamic>.from(first);
   final metricsNode = Map<String, dynamic>.from(_dynamicMap(first['metrics']));
@@ -799,6 +818,10 @@ List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
     final metricMatrix = _dynamicMap(response?['metric_matrix']).isNotEmpty
         ? _dynamicMap(response?['metric_matrix'])
         : _dynamicMap(metricsNode['metric_matrix']);
+    final metricExtractionPaths =
+        _dynamicMap(response?['metric_extraction_paths']).isNotEmpty
+        ? _dynamicMap(response?['metric_extraction_paths'])
+        : _dynamicMap(metricsNode['metric_extraction_paths']);
     final exposure = index < frameExposureMetadata.length
         ? frameExposureMetadata[index]
         : const AiScanFrameExposure();
@@ -829,6 +852,8 @@ List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
         'pore_visibility_mask_kind': imageQuality['pore_visibility_mask_kind'],
         'pore_visibility_mask_pixels':
           imageQuality['pore_visibility_mask_pixels'],
+        'pore_visibility_extraction_path':
+          metricExtractionPaths['pore_visibility'],
         'chin_pore_visibility_mask_kind':
           imageQuality['chin_pore_visibility_mask_kind'],
         'chin_pore_visibility_mask_pixels':
