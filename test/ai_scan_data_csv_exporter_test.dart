@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:aesthetic_skin_tracker/models/ai_scan_frame_exposure.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_comparison_baseline.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_scan_data_csv_exporter.dart';
@@ -298,6 +299,12 @@ void main() {
               'shutter_seconds': 0.008333333333333333,
               'brightness_value': 4.5,
               'flash_fired': false,
+              'exposure_lock_succeeded': true,
+              'lens_position': null,
+              'white_balance_temperature': null,
+              'white_balance_red_gain': null,
+              'white_balance_green_gain': null,
+              'white_balance_blue_gain': null,
               'face_skin_pixels': 18000,
               'pore_roi_pixels': 6200,
               'u_zone_pixels': 9500,
@@ -327,6 +334,7 @@ void main() {
               'exposure_bias': null,
               'shutter_seconds': null,
               'brightness_value': null,
+              'exposure_lock_succeeded': true,
             },
           ],
         },
@@ -350,6 +358,17 @@ void main() {
       expect(row['frame1_cheek_p10_a_after_wb'], '20.5');
       expect(row['frame1_shutter_seconds'], '0.008333333333333333');
       expect(row['frame1_flash_fired'], 'false');
+      expect(row['frame1_exposure_lock_succeeded'], 'true');
+      expect(row['frame2_exposure_lock_succeeded'], 'true');
+      for (final field in const [
+        'lens_position',
+        'white_balance_temperature',
+        'white_balance_red_gain',
+        'white_balance_green_gain',
+        'white_balance_blue_gain',
+      ]) {
+        expect(row['frame1_$field'], isEmpty);
+      }
       expect(row['frame1_face_skin_pixels'], '18000');
       expect(row['frame1_pore_roi_pixels'], '6200');
       expect(row['frame1_u_zone_pixels'], '9500');
@@ -368,31 +387,68 @@ void main() {
       expect(row['frame3_iso'], isEmpty);
     });
 
-    test('old scans leave only the new color columns and comparison id empty', () {
-      final oldScan = _aiScan(
-        'scan-old',
-        rawPayload: const <String, dynamic>{
-          'metric_matrix': <String, dynamic>{'localized_redness': 5.3},
-          'image_quality': <String, dynamic>{'chroma_cast': 7.31},
-        },
-      );
+    test(
+      'failed exposure lock exports false with unavailable optics empty',
+      () {
+        final scan = _aiScan(
+          'scan-unlocked-exposure',
+          rawPayload: <String, dynamic>{
+            'metric_matrix': <String, dynamic>{'localized_redness': 30.0},
+            'per_frame_diagnostics': List<Map<String, dynamic>>.generate(
+              3,
+              (index) =>
+                  AiScanFrameExposure(exposureLockSucceeded: false).toJson(),
+            ),
+          },
+        );
+        final row = _parse(
+          AiScanDataCsvExporter.format([
+            scan,
+          ], registryBaselineScanIds: const {}),
+        ).single;
+        for (var frame = 1; frame <= 3; frame++) {
+          expect(row['frame${frame}_exposure_lock_succeeded'], 'false');
+          for (final field in const [
+            'lens_position',
+            'white_balance_temperature',
+            'white_balance_red_gain',
+            'white_balance_green_gain',
+            'white_balance_blue_gain',
+          ]) {
+            expect(row['frame${frame}_$field'], isEmpty);
+          }
+        }
+      },
+    );
 
-      final row = _parse(
-        AiScanDataCsvExporter.format(
-          [oldScan],
-          registryBaselineScanIds: const {'scan-old'},
-        ),
-      ).single;
+    test(
+      'old scans leave only the new color columns and comparison id empty',
+      () {
+        final oldScan = _aiScan(
+          'scan-old',
+          rawPayload: const <String, dynamic>{
+            'metric_matrix': <String, dynamic>{'localized_redness': 5.3},
+            'image_quality': <String, dynamic>{'chroma_cast': 7.31},
+          },
+        );
 
-      for (final column in AiScanDataCsvExporter.colorDiagnosticColumns) {
-        expect(row[column], isEmpty, reason: column);
-      }
-      expect(row['comparison_baseline_scan_id'], isEmpty);
-      expect(row['comparison_baseline_source'], isEmpty);
-      expect(row['is_baseline'], 'true');
-      expect(row['image_quality.chroma_cast'], '7.31');
-      expect(row['localized_redness_value'], '5.3');
-    });
+        final row = _parse(
+          AiScanDataCsvExporter.format(
+            [oldScan],
+            registryBaselineScanIds: const {'scan-old'},
+          ),
+        ).single;
+
+        for (final column in AiScanDataCsvExporter.colorDiagnosticColumns) {
+          expect(row[column], isEmpty, reason: column);
+        }
+        expect(row['comparison_baseline_scan_id'], isEmpty);
+        expect(row['comparison_baseline_source'], isEmpty);
+        expect(row['is_baseline'], 'true');
+        expect(row['image_quality.chroma_cast'], '7.31');
+        expect(row['localized_redness_value'], '5.3');
+      },
+    );
 
     test('is_baseline comes from the AI baseline registry, not isBaseline', () {
       final procedureBaseline = _aiScan('scan-procedure', isBaseline: true);

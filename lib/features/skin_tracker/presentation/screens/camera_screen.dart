@@ -234,6 +234,18 @@ Future<void> forceAiScanFlashOff({
   await setFlashMode(FlashMode.off);
 }
 
+Future<bool> requestAiBurstExposureLock(
+  Future<void> Function() setLocked,
+) async {
+  try {
+    await setLocked();
+    return true;
+  } catch (error) {
+    debugPrint('AI burst exposure lock unsupported: $error');
+    return false;
+  }
+}
+
 Future<T> captureAiScanFrameWithFlashOff<T>({
   required Future<void> Function(FlashMode mode) setFlashMode,
   required Future<T> Function() capture,
@@ -3392,7 +3404,10 @@ class _CameraScreenState extends State<CameraScreen>
     int? stillHeight,
     AiScanFrameExposure exposure,
   })
-  _burstFrameExifAndStillSize(Uint8List bytes) {
+  _burstFrameExifAndStillSize(
+    Uint8List bytes, {
+    required bool exposureLockSucceeded,
+  }) {
     img.Image? decoded;
     try {
       decoded = img.decodeImage(bytes);
@@ -3436,7 +3451,11 @@ class _CameraScreenState extends State<CameraScreen>
       fields:
           'exposure_time=$exposureTime iso=$iso '
           'exposure_bias=$exposureBias brightness_value=$brightnessValue '
-          'flash=$flash flash_fired=$flashFired',
+          'flash=$flash flash_fired=$flashFired '
+          'exposure_lock_succeeded=$exposureLockSucceeded '
+          'lens_position=null white_balance_temperature=null '
+          'white_balance_red_gain=null white_balance_green_gain=null '
+          'white_balance_blue_gain=null',
       stillWidth: decoded?.width,
       stillHeight: decoded?.height,
       exposure: AiScanFrameExposure(
@@ -3451,6 +3470,7 @@ class _CameraScreenState extends State<CameraScreen>
             double.tryParse(brightnessValue ?? '') ??
             exifRationalAsDouble(brightnessValue),
         flashFired: flashFired,
+        exposureLockSucceeded: exposureLockSucceeded,
       ),
     );
   }
@@ -5102,11 +5122,9 @@ class _CameraScreenState extends State<CameraScreen>
         _lightingStreamActive = false;
       }
 
-      try {
-        await controller.setExposureMode(ExposureMode.locked);
-      } catch (e) {
-        debugPrint('AI burst exposure lock unsupported: $e');
-      }
+      final exposureLockSucceeded = await requestAiBurstExposureLock(
+        () => controller.setExposureMode(ExposureMode.locked),
+      );
 
       await Future<void>.delayed(const Duration(milliseconds: 200));
       for (var index = 0; index < 3; index++) {
@@ -5138,7 +5156,10 @@ class _CameraScreenState extends State<CameraScreen>
       for (final file in capturedFiles) {
         final bytes = await file.readAsBytes();
         burstLuminances.add(meanLuminanceFromImageBytes(bytes));
-        final exifAndSize = _burstFrameExifAndStillSize(bytes);
+        final exifAndSize = _burstFrameExifAndStillSize(
+          bytes,
+          exposureLockSucceeded: exposureLockSucceeded,
+        );
         burstExifFields.add(exifAndSize.fields);
         burstExposureMetadata.add(exifAndSize.exposure);
         burstStillWidths.add(exifAndSize.stillWidth);

@@ -18,6 +18,50 @@ Uint8List _solidColorJpeg(int r, int g, int b, {int size = 8}) {
 }
 
 void main() {
+  test('successful AI exposure-lock request is recorded once', () async {
+    var requests = 0;
+    final succeeded = await requestAiBurstExposureLock(() async {
+      requests++;
+    });
+    expect(succeeded, isTrue);
+    expect(requests, 1);
+    expect(
+      AiScanFrameExposure(
+        exposureLockSucceeded: succeeded,
+      ).toJson()['exposure_lock_succeeded'],
+      isTrue,
+    );
+  });
+
+  test('failed AI exposure lock still permits all three captures', () async {
+    var requests = 0;
+    var captures = 0;
+    final succeeded = await requestAiBurstExposureLock(() async {
+      requests++;
+      throw StateError('lock unsupported');
+    });
+    for (var frame = 0; frame < 3; frame++) {
+      await captureAiScanFrameWithFlashOff<void>(
+        setFlashMode: (_) async {},
+        capture: () async {
+          captures++;
+        },
+      );
+    }
+    expect(succeeded, isFalse);
+    expect(requests, 1);
+    expect(captures, 3);
+    final metadata = AiScanFrameExposure(
+      exposureLockSucceeded: succeeded,
+    ).toJson();
+    expect(metadata['exposure_lock_succeeded'], isFalse);
+    expect(metadata['lens_position'], isNull);
+    expect(metadata['white_balance_temperature'], isNull);
+    expect(metadata['white_balance_red_gain'], isNull);
+    expect(metadata['white_balance_green_gain'], isNull);
+    expect(metadata['white_balance_blue_gain'], isNull);
+  });
+
   test('EXIF rationals become decimal values and missing values stay null', () {
     expect(exifRationalAsDouble('1/120'), closeTo(1 / 120, 1e-12));
     expect(exifRationalAsDouble('-1/3'), closeTo(-1 / 3, 1e-12));

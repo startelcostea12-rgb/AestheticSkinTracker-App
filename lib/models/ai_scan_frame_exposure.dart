@@ -23,6 +23,12 @@ class AiScanFrameExposure {
     this.shutterSeconds,
     this.brightnessValue,
     this.flashFired,
+    this.exposureLockSucceeded,
+    this.lensPosition,
+    this.whiteBalanceTemperature,
+    this.whiteBalanceRedGain,
+    this.whiteBalanceGreenGain,
+    this.whiteBalanceBlueGain,
   });
 
   final int? iso;
@@ -30,6 +36,12 @@ class AiScanFrameExposure {
   final double? shutterSeconds;
   final double? brightnessValue;
   final bool? flashFired;
+  final bool? exposureLockSucceeded;
+  final double? lensPosition;
+  final double? whiteBalanceTemperature;
+  final double? whiteBalanceRedGain;
+  final double? whiteBalanceGreenGain;
+  final double? whiteBalanceBlueGain;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'iso': iso,
@@ -37,5 +49,11 @@ class AiScanFrameExposure {
     'shutter_seconds': shutterSeconds,
     'brightness_value': brightnessValue,
     'flash_fired': flashFired,
+    'exposure_lock_succeeded': exposureLockSucceeded,
+    'lens_position': lensPosition,
+    'white_balance_temperature': whiteBalanceTemperature,
+    'white_balance_red_gain': whiteBalanceRedGain,
+    'white_balance_green_gain': whiteBalanceGreenGain,
+    'white_balance_blue_gain': whiteBalanceBlueGain,
   };
 }
