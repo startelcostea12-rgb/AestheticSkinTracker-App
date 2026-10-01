@@ -80,23 +80,45 @@ def _analyze_case(case: dict[str, Any]) -> dict[str, float]:
 
 
 @pytest.fixture(scope="module")
-def regression_results() -> tuple[dict[str, Any], dict[str, dict[str, float]]]:
+def regression_results() -> tuple[
+    dict[str, Any], dict[str, dict[str, float]], dict[str, str]
+]:
     manifest = _load_manifest()
-    results = {
-        case["id"]: _analyze_case(case)
-        for case in manifest["cases"]
-    }
-    return manifest, results
+    results: dict[str, dict[str, float]] = {}
+    setup_errors: dict[str, str] = {}
+    for case in manifest["cases"]:
+        try:
+            results[case["id"]] = _analyze_case(case)
+        except Exception as exc:
+            setup_errors[case["id"]] = (
+                f"{case['photo_path']}: {type(exc).__name__}: {exc}"
+            )
+    return manifest, results, setup_errors
+
+
+def test_fixture_setup_errors_are_reported(
+    regression_results: tuple[
+        dict[str, Any], dict[str, dict[str, float]], dict[str, str]
+    ],
+) -> None:
+    _manifest, _results, setup_errors = regression_results
+    assert not setup_errors, "Fixture setup error(s):\n" + "\n".join(
+        f"{case_id}: {error}" for case_id, error in setup_errors.items()
+    )
 
 
 def test_full_pipeline_metric_regressions(
-    regression_results: tuple[dict[str, Any], dict[str, dict[str, float]]],
+    regression_results: tuple[
+        dict[str, Any], dict[str, dict[str, float]], dict[str, str]
+    ],
 ) -> None:
-    manifest, results = regression_results
+    manifest, results, setup_errors = regression_results
     failures: list[str] = []
 
     for case in manifest["cases"]:
         if not case["strict"]:
+            continue
+        if case["id"] in setup_errors:
             continue
         photo_metrics = results[case["id"]]
         for metric, expected in case["metrics"].items():
@@ -118,13 +140,17 @@ def test_full_pipeline_metric_regressions(
 
 
 def test_tracked_outliers_are_reported_without_gating(
-    regression_results: tuple[dict[str, Any], dict[str, dict[str, float]]],
+    regression_results: tuple[
+        dict[str, Any], dict[str, dict[str, float]], dict[str, str]
+    ],
 ) -> None:
-    manifest, results = regression_results
+    manifest, results, setup_errors = regression_results
     tracked_lines: list[str] = []
 
     for case in manifest["cases"]:
         if case["strict"]:
+            continue
+        if case["id"] in setup_errors:
             continue
         photo_metrics = results[case["id"]]
         for metric, expected in case["metrics"].items():
@@ -140,7 +166,9 @@ def test_tracked_outliers_are_reported_without_gating(
 
 
 def test_glabellar_wrinkle_depth_no_longer_zeroes_out_on_nikki3(
-    regression_results: tuple[dict[str, Any], dict[str, dict[str, float]]],
+    regression_results: tuple[
+        dict[str, Any], dict[str, dict[str, float]], dict[str, str]
+    ],
 ) -> None:
     """Regression guard for the specific bug fixed in formula v2: nikki3 used
     to have glabellar_wrinkle_depth entirely omitted (the 82nd-percentile
@@ -149,7 +177,7 @@ def test_glabellar_wrinkle_depth_no_longer_zeroes_out_on_nikki3(
     independent of the manifest's numeric band, so a future retune can't
     silently reintroduce the omission while still passing a loosened band.
     """
-    _manifest, results = regression_results
-    value = results["nikki3"].get("glabellar_wrinkle_depth")
+    _manifest, results, _setup_errors = regression_results
+    value = results.get("nikki3", {}).get("glabellar_wrinkle_depth")
     assert value is not None, "glabellar_wrinkle_depth is missing again on nikki3"
     assert value > 0.0, f"glabellar_wrinkle_depth zeroed out again on nikki3: {value}"
