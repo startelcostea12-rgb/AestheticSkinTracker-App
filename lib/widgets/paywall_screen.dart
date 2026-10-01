@@ -133,13 +133,24 @@ class _PaywallScreenState extends State<PaywallScreen> {
   }
 
   Future<void> _purchase() async {
+    if (!kIsWeb && _selectedPackage == null) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage =
+            'Live pricing is temporarily unavailable. You can still continue with listed plan pricing.';
+      });
+      return;
+    }
+
     unawaited(
       ConversionAnalytics.track(
         ConversionEvent.trialStart,
         properties: <String, dynamic>{
           'surface': 'paywall_screen',
           'billing_cycle': _annual ? 'annual' : 'monthly',
-          'channel': (kIsWeb || _selectedPackage == null) ? 'simulated' : 'store',
+          'channel': (kIsWeb || _selectedPackage == null)
+              ? 'simulated'
+              : 'store',
         },
       ),
     );
@@ -149,9 +160,8 @@ class _PaywallScreenState extends State<PaywallScreen> {
       _errorMessage = null;
     });
     try {
-      if (kIsWeb || _selectedPackage == null) {
-        // Web / no-store fallback: simulate a successful purchase locally so
-        // QA flows continue to work.
+      if (kIsWeb) {
+        // Web has no store purchase path; keep the local QA simulation.
         await Future<void>.delayed(const Duration(milliseconds: 700));
         await PremiumAccess.setPremiumUnlocked(true);
         unawaited(
