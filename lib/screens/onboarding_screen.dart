@@ -4,13 +4,6 @@ import 'dart:math' as math;
 
 import '../app_theme.dart';
 import '../utils/app_prefs.dart';
-import '../models/peptide_model.dart';
-import '../utils/peptide_service.dart';
-
-bool hasSavedFirstRunProtocol({
-  required List<Map<String, dynamic>> procedures,
-  required List<PeptideEntry> peptides,
-}) => procedures.isNotEmpty || peptides.isNotEmpty;
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -54,28 +47,19 @@ class _SplashScreenState extends State<SplashScreen>
     super.dispose();
   }
 
-  Future<void> _navigateByProfile() async {
+  void _navigateToStart() {
     if (_isRouting) return;
     _isRouting = true;
     _autoRouteTimer?.cancel(); // Cancel timer before navigation
-    await AppPrefs.getScanEntries();
-    final procedures = await AppPrefs.getProcedureEntries();
-    final peptides = await PeptideService.loadAll();
-    final hasProtocol = hasSavedFirstRunProtocol(
-      procedures: procedures,
-      peptides: peptides,
-    );
     if (!mounted) return;
-    Navigator.of(
-      context,
-    ).pushReplacementNamed(hasProtocol ? '/home' : '/first-run-protocol');
+    Navigator.of(context).pushReplacementNamed('/first-run-protocol');
   }
 
   Future<void> _startAutoRoute() async {
     _autoRouteTimer?.cancel();
-    _autoRouteTimer = Timer(const Duration(milliseconds: 2600), () async {
+    _autoRouteTimer = Timer(const Duration(milliseconds: 2600), () {
       if (!mounted) return;
-      await _navigateByProfile();
+      _navigateToStart();
     });
   }
 
@@ -267,16 +251,6 @@ class _SplashScreenState extends State<SplashScreen>
 class FirstRunProtocolScreen extends StatelessWidget {
   const FirstRunProtocolScreen({super.key});
 
-  Future<void> _returnHomeWhenProtocolSaved(BuildContext context) async {
-    final procedures = await AppPrefs.getProcedureEntries();
-    final peptides = await PeptideService.loadAll();
-    if (!context.mounted ||
-        !hasSavedFirstRunProtocol(procedures: procedures, peptides: peptides)) {
-      return;
-    }
-    Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);
-  }
-
   @override
   Widget build(BuildContext context) {
     final textColor = MyApp.clinicalNavy;
@@ -311,42 +285,17 @@ class FirstRunProtocolScreen extends StatelessWidget {
             const SizedBox(height: 24),
             _FirstRunAction(
               icon: Icons.medical_services_outlined,
-              title: 'Start a procedure protocol',
-              subtitle: 'Track treatment dates, recovery and progress photos.',
-              onPressed: () async {
-                await Navigator.of(context).pushNamed('/create-procedure');
-                if (context.mounted) {
-                  await _returnHomeWhenProtocolSaved(context);
-                }
-              },
+              title: 'Procedure',
+              subtitle: 'Scan and track your skin progress.',
+              onPressed: () => Navigator.of(context).pushNamed('/ai-coach'),
             ),
             const SizedBox(height: 12),
             _FirstRunAction(
               icon: Icons.science_outlined,
-              title: 'Start a peptide protocol',
-              subtitle: 'Log a peptide or organize a stack before scanning.',
-              onPressed: () async {
-                await Navigator.of(context).pushNamed(
-                  '/peptide-tracker',
-                  arguments: const {'initialTab': 1},
-                );
-                if (context.mounted) {
-                  await _returnHomeWhenProtocolSaved(context);
-                }
-              },
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: () => Navigator.of(
-                context,
-              ).pushNamedAndRemoveUntil('/ai-coach', (_) => false),
-              icon: const Icon(Icons.photo_camera_outlined),
-              label: const Text('Skip to Scan'),
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size.fromHeight(56),
-                foregroundColor: textColor,
-                side: BorderSide(color: textColor.withValues(alpha: 0.3)),
-              ),
+              title: 'Peptide',
+              subtitle: 'Open your peptide tracker.',
+              onPressed: () =>
+                  Navigator.of(context).pushNamed('/peptide-tracker'),
             ),
           ],
         ),
