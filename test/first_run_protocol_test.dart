@@ -1,5 +1,6 @@
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import 'package:aesthetic_skin_tracker/screens/onboarding_screen.dart';
+import 'package:aesthetic_skin_tracker/screens/peptide_tracker_screen.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -44,6 +45,24 @@ void main() {
     await tester.tap(find.text('Peptide'));
     await tester.pumpAndSettle();
     expect(find.text('Peptide tracker'), findsOneWidget);
+  });
+
+  testWidgets('Peptide never shows the face photo upload acknowledgment', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      MaterialApp(
+        home: const FirstRunProtocolScreen(),
+        routes: {'/peptide-tracker': (_) => const PeptideTrackerScreen()},
+      ),
+    );
+
+    await tester.tap(find.text('Peptide'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Peptide Tracker'), findsOneWidget);
+    expect(find.text('Face photo upload'), findsNothing);
   });
 
   for (final destination in const [

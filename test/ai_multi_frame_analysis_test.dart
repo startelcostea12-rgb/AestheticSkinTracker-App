@@ -281,45 +281,36 @@ void main() {
   });
 
   test('averages each metric over only frames with a finite value', () {
-    final aggregate = averageBackendAnalysisFrames(
-      [
-        {
-          'status': 'success',
+    final aggregate = averageBackendAnalysisFrames([
+      {
+        'status': 'success',
+        'metric_confidence': {
+          'localized_redness': 'high',
+          'pigment_load': 'medium',
+        },
+        'metric_matrix': {'localized_redness': 10.0, 'pigment_load': 20.0},
+      },
+      {
+        'status': 'success',
+        'metrics': {
           'metric_confidence': {
-            'localized_redness': 'high',
-            'pigment_load': 'medium',
+            'localized_redness': 'medium',
+            'texture_smoothness': 'low',
           },
           'metric_matrix': {
-            'localized_redness': 10.0,
-            'pigment_load': 20.0,
+            'localized_redness': 20.0,
+            'pigment_load': null,
+            'texture_smoothness': 60.0,
           },
         },
-        {
-          'status': 'success',
-          'metrics': {
-            'metric_confidence': {
-              'localized_redness': 'medium',
-              'texture_smoothness': 'low',
-            },
-            'metric_matrix': {
-              'localized_redness': 20.0,
-              'pigment_load': null,
-              'texture_smoothness': 60.0,
-            },
-          },
-        },
-        {
-          'status': 'success',
-          'metric_confidence': {'localized_redness': 'high'},
-          'metric_matrix': {
-            'localized_redness': 30.0,
-            'pigment_load': 'invalid',
-          },
-        },
-        {'status': 'error', 'metric_matrix': <String, dynamic>{}},
-      ],
-      requestedFrames: 4,
-    );
+      },
+      {
+        'status': 'success',
+        'metric_confidence': {'localized_redness': 'high'},
+        'metric_matrix': {'localized_redness': 30.0, 'pigment_load': 'invalid'},
+      },
+      {'status': 'error', 'metric_matrix': <String, dynamic>{}},
+    ], requestedFrames: 4);
 
     final matrix = aggregate.response['metric_matrix'] as Map<String, double>;
     expect(matrix['localized_redness'], 20.0);
@@ -365,22 +356,19 @@ void main() {
   });
 
   test('confidence is taken only from a frame that contributed the metric', () {
-    final aggregate = averageBackendAnalysisFrames(
-      [
-        {
-          'metric_matrix': {'localized_redness': 10.0},
-          'metric_confidence': {
-            'localized_redness': 'high',
-            'pigment_load': 'low',
-          },
+    final aggregate = averageBackendAnalysisFrames([
+      {
+        'metric_matrix': {'localized_redness': 10.0},
+        'metric_confidence': {
+          'localized_redness': 'high',
+          'pigment_load': 'low',
         },
-        {
-          'metric_matrix': {'pigment_load': 24.0},
-          'metric_confidence': {'pigment_load': 'high'},
-        },
-      ],
-      requestedFrames: 2,
-    );
+      },
+      {
+        'metric_matrix': {'pigment_load': 24.0},
+        'metric_confidence': {'pigment_load': 'high'},
+      },
+    ], requestedFrames: 2);
 
     expect(aggregate.response['metric_confidence'], {
       'localized_redness': 'high',
@@ -388,80 +376,65 @@ void main() {
     });
   });
 
-  test(
-    'trend verdict for a metric is taken from the frame whose own value is '
-    'closest to the displayed average, not always frame 1',
-    () {
-      // texture_smoothness values 28.7, 39.5, 50.2 average to 39.466..., so
-      // frame 2 (39.5) is the nearest contributor -- its own backend-computed
-      // trend fields for texture_smoothness must be the ones surfaced,
-      // reproducing the bug where frame 1's "improved" was shown next to the
-      // averaged value even though frame 1's own raw value never justified it.
-      final aggregate = averageBackendAnalysisFrames(
-        [
-          {
-            'metric_matrix': {'texture_smoothness': 28.7},
-            'metric_extraction_paths': {
-              'texture_smoothness': 'primary_roi',
-            },
-            'baseline_metric_extraction_paths': {
-              'texture_smoothness': 'primary_roi',
-            },
-            'trend_status': {'texture_smoothness': 'improved'},
-            'trend_deltas': {'texture_smoothness': 100.0},
-            'trend_lock_reasons': <String, dynamic>{},
-          },
-          {
-            'metric_matrix': {'texture_smoothness': 39.5},
-            'metric_extraction_paths': {
-              'texture_smoothness': 'laplacian_fallback',
-            },
-            'baseline_metric_extraction_paths': {
-              'texture_smoothness': 'primary_roi',
-            },
-            'trend_status': {'texture_smoothness': 'stable'},
-            'trend_deltas': {'texture_smoothness': 5.0},
-            'trend_lock_reasons': <String, dynamic>{},
-          },
-          {
-            'metric_matrix': {'texture_smoothness': 50.2},
-            'metric_extraction_paths': {
-              'texture_smoothness': 'large_roi_fallback',
-            },
-            'baseline_metric_extraction_paths': {
-              'texture_smoothness': 'primary_roi',
-            },
-            'trend_status': {'texture_smoothness': 'improved'},
-            'trend_deltas': {'texture_smoothness': 158.0},
-            'trend_lock_reasons': <String, dynamic>{},
-          },
-        ],
-        requestedFrames: 3,
-      );
+  test('trend verdict for a metric is taken from the frame whose own value is '
+      'closest to the displayed average, not always frame 1', () {
+    // texture_smoothness values 28.7, 39.5, 50.2 average to 39.466..., so
+    // frame 2 (39.5) is the nearest contributor -- its own backend-computed
+    // trend fields for texture_smoothness must be the ones surfaced,
+    // reproducing the bug where frame 1's "improved" was shown next to the
+    // averaged value even though frame 1's own raw value never justified it.
+    final aggregate = averageBackendAnalysisFrames([
+      {
+        'metric_matrix': {'texture_smoothness': 28.7},
+        'metric_extraction_paths': {'texture_smoothness': 'primary_roi'},
+        'baseline_metric_extraction_paths': {
+          'texture_smoothness': 'primary_roi',
+        },
+        'trend_status': {'texture_smoothness': 'improved'},
+        'trend_deltas': {'texture_smoothness': 100.0},
+        'trend_lock_reasons': <String, dynamic>{},
+      },
+      {
+        'metric_matrix': {'texture_smoothness': 39.5},
+        'metric_extraction_paths': {'texture_smoothness': 'laplacian_fallback'},
+        'baseline_metric_extraction_paths': {
+          'texture_smoothness': 'primary_roi',
+        },
+        'trend_status': {'texture_smoothness': 'stable'},
+        'trend_deltas': {'texture_smoothness': 5.0},
+        'trend_lock_reasons': <String, dynamic>{},
+      },
+      {
+        'metric_matrix': {'texture_smoothness': 50.2},
+        'metric_extraction_paths': {'texture_smoothness': 'large_roi_fallback'},
+        'baseline_metric_extraction_paths': {
+          'texture_smoothness': 'primary_roi',
+        },
+        'trend_status': {'texture_smoothness': 'improved'},
+        'trend_deltas': {'texture_smoothness': 158.0},
+        'trend_lock_reasons': <String, dynamic>{},
+      },
+    ], requestedFrames: 3);
 
-      expect(aggregate.response['trend_status'], {
-        'texture_smoothness': 'stable',
-      });
-      expect(aggregate.response['trend_deltas'], {
-        'texture_smoothness': 5.0,
-      });
-      expect(aggregate.response['metric_extraction_paths'], {
-        'texture_smoothness': 'laplacian_fallback',
-        'pore_visibility': 'skipped',
-      });
-      expect(aggregate.response['baseline_metric_extraction_paths'], {
-        'texture_smoothness': 'primary_roi',
-      });
-      final nestedMetrics =
-          aggregate.response['metrics'] as Map<String, dynamic>;
-      expect(nestedMetrics['trend_status'], {'texture_smoothness': 'stable'});
-      expect(nestedMetrics['trend_deltas'], {'texture_smoothness': 5.0});
-      expect(nestedMetrics['metric_extraction_paths'], {
-        'texture_smoothness': 'laplacian_fallback',
-        'pore_visibility': 'skipped',
-      });
-    },
-  );
+    expect(aggregate.response['trend_status'], {
+      'texture_smoothness': 'stable',
+    });
+    expect(aggregate.response['trend_deltas'], {'texture_smoothness': 5.0});
+    expect(aggregate.response['metric_extraction_paths'], {
+      'texture_smoothness': 'laplacian_fallback',
+      'pore_visibility': 'skipped',
+    });
+    expect(aggregate.response['baseline_metric_extraction_paths'], {
+      'texture_smoothness': 'primary_roi',
+    });
+    final nestedMetrics = aggregate.response['metrics'] as Map<String, dynamic>;
+    expect(nestedMetrics['trend_status'], {'texture_smoothness': 'stable'});
+    expect(nestedMetrics['trend_deltas'], {'texture_smoothness': 5.0});
+    expect(nestedMetrics['metric_extraction_paths'], {
+      'texture_smoothness': 'laplacian_fallback',
+      'pore_visibility': 'skipped',
+    });
+  });
 
   test(
     'pore visibility omissions retain their path without a metric value',
@@ -510,246 +483,269 @@ void main() {
     );
   });
 
-  test(
-    'trend fields read from a nested metrics node are honored the same as '
-    'top-level ones when picking the nearest frame',
-    () {
-      final aggregate = averageBackendAnalysisFrames(
-        [
-          {
-            'metrics': {
-              'metric_matrix': {'localized_redness': 10.0},
-              'trend_status': {'localized_redness': 'worsened'},
-              'trend_deltas': {'localized_redness': -40.0},
-              'trend_lock_reasons': {
-                'localized_redness': 'some_reason',
-              },
-            },
-          },
-          {
-            'metrics': {
-              'metric_matrix': {'localized_redness': 30.0},
-              'trend_status': {'localized_redness': 'stable'},
-              'trend_deltas': {'localized_redness': 2.0},
-            },
-          },
-        ],
-        requestedFrames: 2,
-      );
+  test('trend fields read from a nested metrics node are honored the same as '
+      'top-level ones when picking the nearest frame', () {
+    final aggregate = averageBackendAnalysisFrames([
+      {
+        'metrics': {
+          'metric_matrix': {'localized_redness': 10.0},
+          'trend_status': {'localized_redness': 'worsened'},
+          'trend_deltas': {'localized_redness': -40.0},
+          'trend_lock_reasons': {'localized_redness': 'some_reason'},
+        },
+      },
+      {
+        'metrics': {
+          'metric_matrix': {'localized_redness': 30.0},
+          'trend_status': {'localized_redness': 'stable'},
+          'trend_deltas': {'localized_redness': 2.0},
+        },
+      },
+    ], requestedFrames: 2);
 
-      // Average is 20.0, exactly between the two frames' own values (10.0
-      // and 30.0) -- both are equally close, so the tie-break (first
-      // strictly-smaller distance wins) keeps frame 1's worsened verdict.
-      expect(aggregate.response['metric_matrix'], {
-        'localized_redness': 20.0,
-      });
-      expect(aggregate.response['trend_status'], {
-        'localized_redness': 'worsened',
-      });
-      expect(aggregate.response['trend_lock_reasons'], {
-        'localized_redness': 'some_reason',
-      });
-    },
-  );
+    // Average is 20.0, exactly between the two frames' own values (10.0
+    // and 30.0) -- both are equally close, so the tie-break (first
+    // strictly-smaller distance wins) keeps frame 1's worsened verdict.
+    expect(aggregate.response['metric_matrix'], {'localized_redness': 20.0});
+    expect(aggregate.response['trend_status'], {
+      'localized_redness': 'worsened',
+    });
+    expect(aggregate.response['trend_lock_reasons'], {
+      'localized_redness': 'some_reason',
+    });
+  });
 
   test('throws when no frame contributes a finite metric', () {
     expect(
-      () => averageBackendAnalysisFrames(
-        [
-          {
-            'metric_matrix': {'localized_redness': null},
-          },
-        ],
-        requestedFrames: 1,
-      ),
+      () => averageBackendAnalysisFrames([
+        {
+          'metric_matrix': {'localized_redness': null},
+        },
+      ], requestedFrames: 1),
       throwsStateError,
     );
   });
 
-  test('uploads all three frames and excludes a failed frame from averages', () async {
-    final requestedFrameNumbers = <int>[];
-    final aggregate = await analyzeBackendFrames(
-      [
-        Uint8List.fromList([1]),
-        Uint8List.fromList([2]),
-        Uint8List.fromList([3]),
-      ],
-      frameExposureMetadata: const [
-        AiScanFrameExposure(
-          iso: 100,
-          exposureBias: -0.3,
-          shutterSeconds: 1 / 120,
-          brightnessValue: 4.5,
-          flashFired: false,
-        ),
-        AiScanFrameExposure(iso: 125),
-        AiScanFrameExposure(
-          iso: 160,
-          exposureBias: 0.0,
-          shutterSeconds: 1 / 60,
-        ),
-      ],
-      uploadFrame: (frame, frameNumber) async {
-        requestedFrameNumbers.add(frameNumber);
-        if (frameNumber == 2) throw Exception('no face detected');
-        return {
-          'status': 'success',
-          'image_quality': {
-            'redness_cheek_side': frameNumber == 1 ? 'left' : 'right',
-            'cheek_side_convention': cheekSideConventionSubjectAnatomical,
-            'redness_both_cheeks_in_dead_zone': false,
-            'redness_cheek_roi_pixels': frameNumber == 1 ? 2100 : 2300,
-            'redness_cheek_p95_a_after_wb': frameNumber == 1 ? 31.5 : 33.5,
-            'redness_cheek_p10_a_after_wb': frameNumber == 1 ? 20.5 : 21.5,
-            'redness_cheek_p10_a_before_wb': frameNumber == 1 ? 19.5 : 20.5,
-            'face_skin_pixels': 18000,
-            'pore_roi_pixels': 6200,
-            'u_zone_pixels': 9500,
-            'localized_redness_mask_kind': 'cheek_primary',
-            'localized_redness_mask_pixels': 9500,
-            'texture_smoothness_mask_kind': 'face_skin',
-            'texture_smoothness_mask_pixels': 18000,
-            'pigment_load_mask_kind': 'cheek_primary',
-            'pigment_load_mask_pixels': 9500,
-            'pore_visibility_mask_kind': 'tzone_pore',
-            'pore_visibility_mask_pixels': 6200,
-            'diffuse_flushing_erythema_mask_kind': 'face_skin',
-            'diffuse_flushing_erythema_mask_pixels': 10200,
+  test(
+    'missing upload acknowledgment never calls the frame uploader',
+    () async {
+      var uploadCalls = 0;
+      await expectLater(
+        analyzeBackendFrames(
+          [
+            Uint8List.fromList([1]),
+          ],
+          photoUploadAccepted: false,
+          uploadFrame: (frame, frameNumber) async {
+            uploadCalls++;
+            return {
+              'metric_matrix': {'localized_redness': 20.0},
+            };
           },
+        ),
+        throwsStateError,
+      );
+      expect(uploadCalls, 0);
+    },
+  );
+
+  test(
+    'uploads all three frames after acceptance and excludes a failed frame from averages',
+    () async {
+      final requestedFrameNumbers = <int>[];
+      final aggregate = await analyzeBackendFrames(
+        [
+          Uint8List.fromList([1]),
+          Uint8List.fromList([2]),
+          Uint8List.fromList([3]),
+        ],
+        photoUploadAccepted: true,
+        frameExposureMetadata: const [
+          AiScanFrameExposure(
+            iso: 100,
+            exposureBias: -0.3,
+            shutterSeconds: 1 / 120,
+            brightnessValue: 4.5,
+            flashFired: false,
+          ),
+          AiScanFrameExposure(iso: 125),
+          AiScanFrameExposure(
+            iso: 160,
+            exposureBias: 0.0,
+            shutterSeconds: 1 / 60,
+          ),
+        ],
+        uploadFrame: (frame, frameNumber) async {
+          requestedFrameNumbers.add(frameNumber);
+          if (frameNumber == 2) throw Exception('no face detected');
+          return {
+            'status': 'success',
+            'image_quality': {
+              'redness_cheek_side': frameNumber == 1 ? 'left' : 'right',
+              'cheek_side_convention': cheekSideConventionSubjectAnatomical,
+              'redness_both_cheeks_in_dead_zone': false,
+              'redness_cheek_roi_pixels': frameNumber == 1 ? 2100 : 2300,
+              'redness_cheek_p95_a_after_wb': frameNumber == 1 ? 31.5 : 33.5,
+              'redness_cheek_p10_a_after_wb': frameNumber == 1 ? 20.5 : 21.5,
+              'redness_cheek_p10_a_before_wb': frameNumber == 1 ? 19.5 : 20.5,
+              'face_skin_pixels': 18000,
+              'pore_roi_pixels': 6200,
+              'u_zone_pixels': 9500,
+              'localized_redness_mask_kind': 'cheek_primary',
+              'localized_redness_mask_pixels': 9500,
+              'texture_smoothness_mask_kind': 'face_skin',
+              'texture_smoothness_mask_pixels': 18000,
+              'pigment_load_mask_kind': 'cheek_primary',
+              'pigment_load_mask_pixels': 9500,
+              'pore_visibility_mask_kind': 'tzone_pore',
+              'pore_visibility_mask_pixels': 6200,
+              'diffuse_flushing_erythema_mask_kind': 'face_skin',
+              'diffuse_flushing_erythema_mask_pixels': 10200,
+            },
             'metric_extraction_paths': {
               'pore_visibility': frameNumber == 1 ? 'pose' : 'dog_spread',
             },
-          'metric_matrix': {
-            'localized_redness': frameNumber == 1 ? 20.0 : 40.0,
-            if (frameNumber == 1) 'pigment_load': 12.0,
-          },
-        };
-      },
-    );
+            'metric_matrix': {
+              'localized_redness': frameNumber == 1 ? 20.0 : 40.0,
+              if (frameNumber == 1) 'pigment_load': 12.0,
+            },
+          };
+        },
+      );
 
-    expect(requestedFrameNumbers, [1, 2, 3]);
-    expect(aggregate.requestedFrames, 3);
-    expect(aggregate.successfulFrames, 2);
-    expect(aggregate.response['metric_matrix'], {
-      'localized_redness': 30.0,
-      'pigment_load': 12.0,
-    });
-    expect(aggregate.metricContributorCounts, {
-      'localized_redness': 2,
-      'pigment_load': 1,
-    });
-    final diagnostics =
-        aggregate.response[aiScanPerFrameDiagnosticsKey] as List<dynamic>;
-    expect(diagnostics, hasLength(3));
-    expect(diagnostics[0], containsPair('cheek_side', 'left'));
-    expect(
-      diagnostics[0],
-      containsPair(
-        'cheek_side_convention',
-        cheekSideConventionSubjectAnatomical,
-      ),
-    );
-    expect(
-      diagnostics[0],
-      containsPair('redness_both_cheeks_in_dead_zone', isFalse),
-    );
-    expect(diagnostics[0], containsPair('localized_redness', 20.0));
-    expect(diagnostics[0], containsPair('cheek_p10_a_after_wb', 20.5));
-    expect(diagnostics[0], containsPair('shutter_seconds', 1 / 120));
-    expect(diagnostics[0], containsPair('flash_fired', isFalse));
-    expect(diagnostics[0], containsPair('face_skin_pixels', 18000));
-    expect(
-      diagnostics[0],
-      containsPair('localized_redness_mask_kind', 'cheek_primary'),
-    );
-    expect(
-      diagnostics[0],
-      containsPair('pore_visibility_mask_kind', 'tzone_pore'),
-    );
+      expect(requestedFrameNumbers, [1, 2, 3]);
+      expect(aggregate.requestedFrames, 3);
+      expect(aggregate.successfulFrames, 2);
+      expect(aggregate.response['metric_matrix'], {
+        'localized_redness': 30.0,
+        'pigment_load': 12.0,
+      });
+      expect(aggregate.metricContributorCounts, {
+        'localized_redness': 2,
+        'pigment_load': 1,
+      });
+      final diagnostics =
+          aggregate.response[aiScanPerFrameDiagnosticsKey] as List<dynamic>;
+      expect(diagnostics, hasLength(3));
+      expect(diagnostics[0], containsPair('cheek_side', 'left'));
+      expect(
+        diagnostics[0],
+        containsPair(
+          'cheek_side_convention',
+          cheekSideConventionSubjectAnatomical,
+        ),
+      );
+      expect(
+        diagnostics[0],
+        containsPair('redness_both_cheeks_in_dead_zone', isFalse),
+      );
+      expect(diagnostics[0], containsPair('localized_redness', 20.0));
+      expect(diagnostics[0], containsPair('cheek_p10_a_after_wb', 20.5));
+      expect(diagnostics[0], containsPair('shutter_seconds', 1 / 120));
+      expect(diagnostics[0], containsPair('flash_fired', isFalse));
+      expect(diagnostics[0], containsPair('face_skin_pixels', 18000));
+      expect(
+        diagnostics[0],
+        containsPair('localized_redness_mask_kind', 'cheek_primary'),
+      );
+      expect(
+        diagnostics[0],
+        containsPair('pore_visibility_mask_kind', 'tzone_pore'),
+      );
       expect(
         diagnostics[0],
         containsPair('pore_visibility_extraction_path', 'pose'),
       );
-    expect(diagnostics[1], containsPair('cheek_side', isNull));
-    expect(diagnostics[1], containsPair('localized_redness', isNull));
-    expect(diagnostics[1], containsPair('iso', 125));
-    expect(diagnostics[1], containsPair('brightness_value', isNull));
-    expect(diagnostics[2], containsPair('cheek_side', 'right'));
-    expect(diagnostics[2], containsPair('localized_redness', 40.0));
-    expect(diagnostics[2], containsPair('brightness_value', isNull));
+      expect(diagnostics[1], containsPair('cheek_side', isNull));
+      expect(diagnostics[1], containsPair('localized_redness', isNull));
+      expect(diagnostics[1], containsPair('iso', 125));
+      expect(diagnostics[1], containsPair('brightness_value', isNull));
+      expect(diagnostics[2], containsPair('cheek_side', 'right'));
+      expect(diagnostics[2], containsPair('localized_redness', 40.0));
+      expect(diagnostics[2], containsPair('brightness_value', isNull));
 
-    final saved = ScanHistoryEntry.fromJson(
-      ScanHistoryEntry(
-        id: 'three-frame-scan',
-        timestamp: DateTime.parse('2026-09-26T06:13:00Z'),
-        scanType: ScanHistoryEntry.scanTypeAiAnalysis,
-        estimatedSkinAge: 0,
-        metrics: const <String, double>{},
-        rawPayload: aggregate.response,
-      ).toJson(),
-    );
-    final storedDiagnostics =
-        saved.rawPayload![aiScanPerFrameDiagnosticsKey] as List<dynamic>;
-    expect(storedDiagnostics, hasLength(3));
-    expect(storedDiagnostics[1], containsPair('localized_redness', isNull));
-    expect(storedDiagnostics[1], containsPair('brightness_value', isNull));
-  });
+      final saved = ScanHistoryEntry.fromJson(
+        ScanHistoryEntry(
+          id: 'three-frame-scan',
+          timestamp: DateTime.parse('2026-09-26T06:13:00Z'),
+          scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+          estimatedSkinAge: 0,
+          metrics: const <String, double>{},
+          rawPayload: aggregate.response,
+        ).toJson(),
+      );
+      final storedDiagnostics =
+          saved.rawPayload![aiScanPerFrameDiagnosticsKey] as List<dynamic>;
+      expect(storedDiagnostics, hasLength(3));
+      expect(storedDiagnostics[1], containsPair('localized_redness', isNull));
+      expect(storedDiagnostics[1], containsPair('brightness_value', isNull));
+    },
+  );
 
-  test('AI multi-frame mode is opt-in and Track Procedure remains single-path', () {
-    const trackProcedure = CameraScreen();
-    const aiAnalysis = CameraScreen(
-      isSkincareScan: true,
-      aiMultiFrameCapture: true,
-      capturePurpose: CameraCapturePurpose.aiSkinAnalysis,
-    );
+  test(
+    'AI multi-frame mode is opt-in and Track Procedure remains single-path',
+    () {
+      const trackProcedure = CameraScreen();
+      const aiAnalysis = CameraScreen(
+        isSkincareScan: true,
+        aiMultiFrameCapture: true,
+        capturePurpose: CameraCapturePurpose.aiSkinAnalysis,
+      );
 
-    expect(trackProcedure.aiMultiFrameCapture, isFalse);
-    expect(aiAnalysis.aiMultiFrameCapture, isTrue);
+      expect(trackProcedure.aiMultiFrameCapture, isFalse);
+      expect(aiAnalysis.aiMultiFrameCapture, isTrue);
 
-    final source = File(
-      'lib/features/skin_tracker/presentation/screens/camera_screen.dart',
-    ).readAsStringSync();
-    expect(source, contains('Future<XFile?> _captureFromLiveCamera()'));
-    expect(source, contains('navigator.pop(imagePathToSave);'));
-    expect(source, contains('Future<void> _captureAiSkinAnalysisFrames()'));
-    expect(source, contains('for (var index = 0; index < 3; index++)'));
-    expect(source, contains('AiSkinAnalysisCaptureResult('));
-  });
+      final source = File(
+        'lib/features/skin_tracker/presentation/screens/camera_screen.dart',
+      ).readAsStringSync();
+      expect(source, contains('Future<XFile?> _captureFromLiveCamera()'));
+      expect(source, contains('navigator.pop(imagePathToSave);'));
+      expect(source, contains('Future<void> _captureAiSkinAnalysisFrames()'));
+      expect(source, contains('for (var index = 0; index < 3; index++)'));
+      expect(source, contains('AiSkinAnalysisCaptureResult('));
+    },
+  );
 
-  test('AI backend fields carry distinct current and previous capture quality tags', () {
-    final fields = buildAiSkinAnalysisBackendFields(
-      focusArea: 'Full Face',
-      currentCaptureQuality: 'normal',
-      baselineCaptureQuality: 'normal',
-    );
+  test(
+    'AI backend fields carry distinct current and previous capture quality tags',
+    () {
+      final fields = buildAiSkinAnalysisBackendFields(
+        focusArea: 'Full Face',
+        currentCaptureQuality: 'normal',
+        baselineCaptureQuality: 'normal',
+      );
 
-    expect(fields['capture_quality'], 'normal');
-    expect(fields['baseline_capture_quality'], 'normal');
-    expect(fields['capture_quality'], fields['baseline_capture_quality']);
+      expect(fields['capture_quality'], 'normal');
+      expect(fields['baseline_capture_quality'], 'normal');
+      expect(fields['capture_quality'], fields['baseline_capture_quality']);
 
-    final mismatched = buildAiSkinAnalysisBackendFields(
-      focusArea: 'Full Face',
-      currentCaptureQuality: 'normal',
-      baselineCaptureQuality: 'low_light',
-    );
-    expect(mismatched['capture_quality'], 'normal');
-    expect(mismatched['baseline_capture_quality'], 'low_light');
-  });
+      final mismatched = buildAiSkinAnalysisBackendFields(
+        focusArea: 'Full Face',
+        currentCaptureQuality: 'normal',
+        baselineCaptureQuality: 'low_light',
+      );
+      expect(mismatched['capture_quality'], 'normal');
+      expect(mismatched['baseline_capture_quality'], 'low_light');
+    },
+  );
 
-  test('AI backend fields carry pose template and guide type for both scans', () {
-    final fields = buildAiSkinAnalysisBackendFields(
-      focusArea: 'Full Face',
-      poseTemplate: 'Front',
-      baselinePoseTemplate: 'Front',
-      guideType: 'facial',
-      baselineGuideType: 'facial',
-    );
+  test(
+    'AI backend fields carry pose template and guide type for both scans',
+    () {
+      final fields = buildAiSkinAnalysisBackendFields(
+        focusArea: 'Full Face',
+        poseTemplate: 'Front',
+        baselinePoseTemplate: 'Front',
+        guideType: 'facial',
+        baselineGuideType: 'facial',
+      );
 
-    expect(fields['pose_template'], 'Front');
-    expect(fields['baseline_pose_template'], 'Front');
-    expect(fields['guide_type'], 'facial');
-    expect(fields['baseline_guide_type'], 'facial');
-  });
+      expect(fields['pose_template'], 'Front');
+      expect(fields['baseline_pose_template'], 'Front');
+      expect(fields['guide_type'], 'facial');
+      expect(fields['baseline_guide_type'], 'facial');
+    },
+  );
 
   test('AI backend fields omit pose/guide keys entirely when unknown', () {
     final fields = buildAiSkinAnalysisBackendFields(focusArea: 'Full Face');

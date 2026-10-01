@@ -994,6 +994,7 @@ downgradeRednessTrendForCaptureMismatch({
 
 Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
   List<Uint8List> frames, {
+  required bool photoUploadAccepted,
   required Future<Map<String, dynamic>> Function(
     Uint8List frame,
     int frameNumber,
@@ -1001,6 +1002,9 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
   List<AiScanFrameExposure> frameExposureMetadata =
       const <AiScanFrameExposure>[],
 }) async {
+  if (!photoUploadAccepted) {
+    throw StateError('Face photo upload acknowledgment is required.');
+  }
   final responses = <Map<String, dynamic>>[];
   final responsesByFrame = List<Map<String, dynamic>?>.filled(
     frames.length,
@@ -2143,6 +2147,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   Future<void> _runAnalysis() async {
     final path = _imagePath;
     if (path == null || path.isEmpty) return;
+    if (!_consentAccepted && !await _reviewConsent()) return;
+    if (!mounted || !_consentAccepted) return;
     setState(() {
       _stage = _Stage.analyzing;
       _analysisError = null;
@@ -2244,6 +2250,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           : aiScanFormulaVersions(_previousFocusAreaScan!);
       final aggregate = await analyzeBackendFrames(
         frames,
+        photoUploadAccepted: _consentAccepted,
         frameExposureMetadata: _analysisFrameExposureMetadata,
         uploadFrame: (frame, frameNumber) =>
             remote_analysis.SkinAnalysisService.uploadSingleImageFile(
@@ -3074,10 +3081,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   // ── Stage 1: capture ──────────────────────────────────────────────
 
   Widget _buildCaptureStage() {
-    // Run stays disabled until BOTH a photo is ready (camera/gallery photos
-    // always pass through the mandatory crop step) AND the user has accepted
-    // the pre-analysis disclaimer.
-    final canRun = (_imagePath ?? '').isNotEmpty && _consentAccepted;
+    final canRun = (_imagePath ?? '').isNotEmpty;
     final actionLabel = _capturePrimaryActionLabel();
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
@@ -4007,106 +4011,106 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     );
   }
 
-  /// Non-dismissible pre-analysis consent. The user must explicitly accept
-  /// before the "Run AI Analysis" button unlocks. Reinforces that this is
-  /// not medical advice, not a diagnosis, and for personal tracking only.
-  Future<void> _reviewConsent() async {
+  /// The scan stays local until the photo-upload acknowledgment is accepted.
+  Future<bool> _reviewConsent() async {
     final accepted = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
-      builder: (ctx) => PopScope(
-        canPop: false,
-        child: AlertDialog(
-          backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-          ),
-          titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-          contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-          title: Row(
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: AppColors.champagneGold.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(
-                  Icons.health_and_safety_outlined,
-                  color: AppColors.champagneGold,
-                  size: 19,
-                ),
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+        contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+        title: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: AppColors.champagneGold.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(10),
               ),
-              const SizedBox(width: 10),
-              const Expanded(
-                child: Text(
-                  'Before you continue',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
-                ),
+              child: const Icon(
+                Icons.health_and_safety_outlined,
+                color: AppColors.champagneGold,
+                size: 19,
               ),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _consentBullet(
-                  Icons.info_outline_rounded,
-                  'This is not medical advice',
-                  'This tool does not diagnose any condition and is not a '
-                      'substitute for a licensed dermatologist or physician.',
-                ),
-                _consentBullet(
-                  Icons.auto_awesome_outlined,
-                  'Educational & personal tracking only',
-                  'Results are estimates generated from a photo to help you '
-                      'observe and track changes over time — not to make '
-                      'treatment decisions.',
-                ),
-                _consentBullet(
-                  Icons.warning_amber_rounded,
-                  'Photos can be misread',
-                  'Lighting, angle, makeup and image quality all affect the '
-                      'output. Findings may be incomplete or inaccurate.',
-                ),
-                _consentBullet(
-                  Icons.local_hospital_outlined,
-                  'Seek professional care',
-                  'For any concern, changing or painful lesion, or a '
-                      'persistent symptom, please consult a qualified '
-                      'healthcare professional.',
-                ),
-              ],
             ),
-          ),
-          actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
+            const SizedBox(width: 10),
+            const Expanded(
               child: Text(
-                'Cancel',
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  color: MyApp.clinicalSlate,
-                ),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              style: MyApp.primaryGoldButton,
-              child: const Text(
-                'I Understand and Continue',
-                style: TextStyle(fontWeight: FontWeight.w900),
+                'Before you continue',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
               ),
             ),
           ],
         ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _consentBullet(
+                Icons.cloud_upload_outlined,
+                'Face photo upload',
+                'Your face photo leaves this phone and is sent to the '
+                    'analysis server for processing. Accept only if you '
+                    'agree to send it.',
+              ),
+              _consentBullet(
+                Icons.info_outline_rounded,
+                'This is not medical advice',
+                'This tool does not diagnose any condition and is not a '
+                    'substitute for a licensed dermatologist or physician.',
+              ),
+              _consentBullet(
+                Icons.auto_awesome_outlined,
+                'Educational & personal tracking only',
+                'Results are estimates generated from a photo to help you '
+                    'observe and track changes over time — not to make '
+                    'treatment decisions.',
+              ),
+              _consentBullet(
+                Icons.warning_amber_rounded,
+                'Photos can be misread',
+                'Lighting, angle, makeup and image quality all affect the '
+                    'output. Findings may be incomplete or inaccurate.',
+              ),
+              _consentBullet(
+                Icons.local_hospital_outlined,
+                'Seek professional care',
+                'For any concern, changing or painful lesion, or a '
+                    'persistent symptom, please consult a qualified '
+                    'healthcare professional.',
+              ),
+            ],
+          ),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              'Cancel',
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                color: MyApp.clinicalSlate,
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: MyApp.primaryGoldButton,
+            child: const Text(
+              'I Understand and Continue',
+              style: TextStyle(fontWeight: FontWeight.w900),
+            ),
+          ),
+        ],
       ),
     );
-    if (!mounted) return;
+    if (!mounted) return false;
     if (accepted == true) setState(() => _consentAccepted = true);
+    return accepted == true;
   }
 
   Widget _consentBullet(IconData icon, String title, String body) {
@@ -4180,8 +4184,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                   children: [
                     Text(
                       accepted
-                          ? 'Disclaimer accepted'
-                          : 'Review the progress-tracking disclaimer',
+                          ? 'Photo upload acknowledged'
+                          : 'Review face photo upload',
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w900,
@@ -4191,8 +4195,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                     const SizedBox(height: 2),
                     Text(
                       accepted
-                          ? 'You can generate your progress report below. Tap “View” to read it again.'
-                          : 'Required before report generation. Tap to read and accept.',
+                          ? 'You can run your scan. Tap “View” to read the acknowledgment again.'
+                          : 'Your photo will be sent to the analysis server. Tap to review before uploading.',
                       style: TextStyle(
                         fontSize: 11,
                         height: 1.35,
