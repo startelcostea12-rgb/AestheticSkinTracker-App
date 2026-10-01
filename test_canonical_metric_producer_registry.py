@@ -33,6 +33,7 @@ EXPECTED_PRODUCERS = {
     "texture_smoothness": "canonical_metric_matrix",
     "pigment_load": "canonical_metric_matrix",
     "pore_visibility": "canonical_metric_matrix",
+    "chin_pore_visibility": "canonical_metric_matrix",
     "wrinkle_load": "canonical_metric_matrix",
     "breakout_activity": "canonical_metric_matrix",
     "sebum_excess_oil_gloss": "additional_metrics",

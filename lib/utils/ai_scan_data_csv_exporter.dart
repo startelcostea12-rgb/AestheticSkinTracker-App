@@ -6,6 +6,7 @@ const List<String> aiScanDataCanonicalMetricKeys = <String>[
   'texture_smoothness',
   'pigment_load',
   'pore_visibility',
+  'chin_pore_visibility',
   'wrinkle_load',
   'breakout_activity',
   'sebum_excess_oil_gloss',
@@ -103,6 +104,8 @@ class AiScanDataCsvExporter {
     'pigment_load_mask_pixels',
     'pore_visibility_mask_kind',
     'pore_visibility_mask_pixels',
+    'chin_pore_visibility_mask_kind',
+    'chin_pore_visibility_mask_pixels',
     'diffuse_flushing_erythema_mask_kind',
     'diffuse_flushing_erythema_mask_pixels',
   ];

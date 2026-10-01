@@ -2002,6 +2002,33 @@ def _build_pore_roi_masks(
     return geom_mask, pore_roi_mask
 
 
+def _build_chin_pore_mask(
+    shape: Tuple[int, int],
+    points: np.ndarray,
+    face_skin_mask: np.ndarray,
+) -> np.ndarray:
+    h, w = shape
+    chin_ids = [
+        61, 58, 172, 136, 150, 149, 176, 148, 152, 377, 400, 378,
+        379, 365, 397, 288, 361, 291, 375, 321, 314, 17, 84, 181, 91, 146,
+    ]
+    valid_ids = [idx for idx in chin_ids if 0 <= idx < points.shape[0]]
+    if len(valid_ids) < 5:
+        return np.zeros((h, w), dtype=np.uint8)
+
+    chin_mask = _polygon_mask((h, w), points[valid_ids])
+    mouth_ids = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 308]
+    valid_mouth_ids = [idx for idx in mouth_ids if 0 <= idx < points.shape[0]]
+    if len(valid_mouth_ids) >= 3:
+        mouth_mask = _polygon_mask((h, w), points[valid_mouth_ids])
+        chin_mask = cv2.bitwise_and(chin_mask, cv2.bitwise_not(mouth_mask))
+
+    chin_mask = cv2.bitwise_and(chin_mask, _as_binary_mask(face_skin_mask, (h, w)))
+    if cv2.countNonZero(chin_mask) <= 0:
+        return np.zeros((h, w), dtype=np.uint8)
+    return chin_mask
+
+
 def _extract_native_resolution_pore_roi(
     face_bgr: np.ndarray,
     points: np.ndarray,
@@ -2078,6 +2105,34 @@ def _extract_native_resolution_pore_roi(
     # small crop to a fixed canvas (as a prior version did) destroys the
     # pore-scale detail the DoG filter is meant to measure, and made the pixel
     # count below meaningless as a real-detail gate.
+    return l_crop, mask_crop, int(cv2.countNonZero(mask_crop))
+
+
+def _extract_native_resolution_chin_pore_roi(
+    face_bgr: np.ndarray,
+    points: np.ndarray,
+    face_skin_mask: np.ndarray,
+) -> tuple[np.ndarray | None, np.ndarray | None, int]:
+    chin_mask = _build_chin_pore_mask(face_bgr.shape[:2], points, face_skin_mask)
+    if cv2.countNonZero(chin_mask) <= 0:
+        return None, None, 0
+
+    ys, xs = np.where(chin_mask > 0)
+    if xs.size == 0 or ys.size == 0:
+        return None, None, 0
+
+    x0 = int(np.min(xs))
+    x1 = int(np.max(xs)) + 1
+    y0 = int(np.min(ys))
+    y1 = int(np.max(ys)) + 1
+
+    if (x1 - x0) < 3 or (y1 - y0) < 3:
+        return None, None, 0
+
+    lab = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2LAB)
+    l_channel = lab[:, :, 0].astype(np.float32)
+    l_crop = l_channel[y0:y1, x0:x1]
+    mask_crop = np.where(chin_mask[y0:y1, x0:x1] > 0, 255, 0).astype(np.uint8)
     return l_crop, mask_crop, int(cv2.countNonZero(mask_crop))
 
 
@@ -3438,6 +3493,72 @@ def _compute_canonical_patch_metrics(
             pose_yaw,
         )
 
+    chin_l_crop, chin_mask_crop, chin_pore_roi_pixels = _extract_native_resolution_chin_pore_roi(
+        face_bgr,
+        points,
+        full_face_skin_mask,
+    )
+    raw_components["chin_pore_roi_pixels"] = float(chin_pore_roi_pixels)
+    raw_components["chin_pore_visibility_mask_kind"] = "chin_pore"
+    raw_components["chin_pore_visibility_mask_pixels"] = float(chin_pore_roi_pixels)
+    if (
+        face_detected
+        and pose_ok
+        and chin_l_crop is not None
+        and chin_mask_crop is not None
+        and chin_pore_roi_pixels > 5000
+    ):
+        blur_small = cv2.GaussianBlur(chin_l_crop, (0, 0), 1.0)
+        blur_large = cv2.GaussianBlur(chin_l_crop, (0, 0), 2.0)
+        dog = np.abs(blur_small - blur_large)
+        dog_vals = dog[chin_mask_crop > 0]
+        if dog_vals.size > 0:
+            chin_response_mean = float(np.mean(dog_vals))
+            chin_spread = float(np.std(dog_vals))
+            if not np.isfinite(chin_response_mean) or not np.isfinite(chin_spread):
+                confidence["chin_pore_visibility"] = "low"
+                logger.info(
+                    "CHIN_PORE OMITTED reason=non_finite_stats roi_pixels=%d mean=%s spread=%s",
+                    chin_pore_roi_pixels,
+                    chin_response_mean,
+                    chin_spread,
+                )
+            else:
+                chin_confidence = _pore_signal_conf(chin_pore_roi_pixels, chin_spread)
+                confidence["chin_pore_visibility"] = chin_confidence
+                raw_components["chin_pore_hf_energy"] = round(float(chin_response_mean), 4)
+                raw_components["chin_pore_spread"] = round(float(chin_spread), 4)
+                if chin_confidence != "low":
+                    pores = 100.0 / (1.0 + math.exp(-(chin_response_mean - 7.5) / 1.9))
+                    matrix["chin_pore_visibility"] = round(float(np.clip(pores, 0.0, 100.0)), 1)
+                    logger.info(
+                        "CHIN_PORE SCORED value=%.1f confidence=%s roi_pixels=%d pitch=%.2f yaw=%.2f",
+                        matrix["chin_pore_visibility"],
+                        chin_confidence,
+                        chin_pore_roi_pixels,
+                        pose_pitch,
+                        pose_yaw,
+                    )
+                else:
+                    logger.info(
+                        "CHIN_PORE OMITTED reason=confidence_%s roi_pixels=%d",
+                        chin_confidence,
+                        chin_pore_roi_pixels,
+                    )
+        else:
+            confidence["chin_pore_visibility"] = "low"
+            logger.info("CHIN_PORE OMITTED reason=empty_signal")
+    else:
+        confidence["chin_pore_visibility"] = "low"
+        logger.info(
+            "CHIN_PORE OMITTED reason=gate_failed face_detected=%s pose_ok=%s roi_pixels=%d pitch=%.2f yaw=%.2f",
+            face_detected,
+            pose_ok,
+            chin_pore_roi_pixels,
+            pose_pitch,
+            pose_yaw,
+        )
+
     raw_components["primary_pore_roi_pixels"] = float(pore_roi_pixels)
     raw_components["fallback_pore_roi_pixels"] = 0.0
     raw_components["pore_fallback_used"] = 0.0
@@ -3649,6 +3770,7 @@ CANONICAL_METRIC_ORDER = [
     "texture_smoothness",
     "pigment_load",
     "pore_visibility",
+    "chin_pore_visibility",
     "wrinkle_load",
     "breakout_activity",
     "sebum_excess_oil_gloss",
@@ -3669,6 +3791,7 @@ HIGHER_IS_WORSE_METRICS = {
     "diffuse_flushing_erythema",
     "pigment_load",
     "pore_visibility",
+    "chin_pore_visibility",
     "wrinkle_load",
     "glabellar_wrinkle_depth",
     "breakout_activity",
@@ -3789,6 +3912,7 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     "diffuse_flushing_erythema": 2,
     "rosacea_severity": 2,
     "pore_visibility": 3,
+    "chin_pore_visibility": 1,
     "pore_contraction_index": 2,
     # v2: fixed avg_width quantization (boundingRect integer px -> minAreaRect
     # continuous size) and the 26-32%-of-photos zero-out (82nd-percentile
@@ -6100,6 +6224,7 @@ def analyze_skin_patch(
         "texture_smoothness": canonical_metric_matrix.get("texture_smoothness"),
         "pigment_load": canonical_metric_matrix.get("pigment_load"),
         "pore_visibility": canonical_metric_matrix.get("pore_visibility"),
+        "chin_pore_visibility": canonical_metric_matrix.get("chin_pore_visibility"),
         "wrinkle_load": canonical_metric_matrix.get("wrinkle_load"),
         "breakout_activity": canonical_metric_matrix.get("breakout_activity"),
         "sebum_excess_oil_gloss": additional_metrics.get("sebum_excess_oil_gloss"),
@@ -6245,6 +6370,7 @@ def analyze_skin_patch(
         "texture_smoothness",
         "pigment_load",
         "pore_visibility",
+        "chin_pore_visibility",
         "wrinkle_load",
         "breakout_activity",
         "skin_tone_radiance_evenness",
@@ -6942,6 +7068,10 @@ def analyze_skin_patch(
         "pore_visibility_mask_kind": "tzone_pore",
         "pore_visibility_mask_pixels": int(
             raw_components.get("primary_pore_roi_pixels", 0.0)
+        ),
+        "chin_pore_visibility_mask_kind": "chin_pore",
+        "chin_pore_visibility_mask_pixels": int(
+            raw_components.get("chin_pore_visibility_mask_pixels", 0.0)
         ),
         "diffuse_flushing_erythema_mask_kind": additional_mask_diagnostics.get(
             "diffuse_flushing_erythema_mask_kind"

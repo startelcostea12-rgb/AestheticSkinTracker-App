@@ -165,3 +165,43 @@ def test_pore_visibility_is_omitted_below_5000_pixels_without_fallback():
     assert raw["primary_pore_roi_pixels"] == 4999
     assert raw["fallback_pore_roi_pixels"] == 0
     assert raw["pore_fallback_used"] == 0
+
+
+def test_chin_pore_visibility_is_separate_from_tzone_and_omitted_under_5000_pixels():
+    image = np.full((200, 200, 3), 128, dtype=np.uint8)
+    skin = np.full((200, 200), 255, dtype=np.uint8)
+    points = np.zeros((468, 2), dtype=np.float32)
+    regions = {
+        "forehead": skin.copy(),
+        "left_cheek": skin.copy(),
+        "right_cheek": skin.copy(),
+    }
+
+    chin_crop = np.full((71, 71), 128, dtype=np.float32)
+    chin_mask = np.full((71, 71), 255, dtype=np.uint8)
+    tzone_crop = np.linspace(100.0, 200.0, num=71 * 71, dtype=np.float32).reshape(71, 71)
+    tzone_mask = np.full((71, 71), 255, dtype=np.uint8)
+
+    with mock.patch.object(
+        main,
+        "_extract_native_resolution_chin_pore_roi",
+        return_value=(chin_crop, chin_mask, 4999),
+    ), mock.patch.object(
+        main,
+        "_extract_native_resolution_pore_roi",
+        return_value=(tzone_crop, tzone_mask, 15000),
+    ):
+        matrix, _confidence, raw = main._compute_canonical_patch_metrics(
+            image,
+            skin,
+            regions,
+            points,
+            yolo_kept=0,
+            yolo_max_conf=0.0,
+        )
+
+    assert "chin_pore_visibility" not in matrix
+    assert raw["chin_pore_visibility_mask_pixels"] == 4999
+    assert raw["chin_pore_visibility_mask_pixels"] < raw["primary_pore_roi_pixels"]
+    assert raw["primary_pore_roi_pixels"] == 15000
+    assert raw["chin_pore_visibility_mask_kind"] == "chin_pore"

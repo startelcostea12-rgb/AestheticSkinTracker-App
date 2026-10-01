@@ -253,6 +253,8 @@ void main() {
               'pigment_load_mask_pixels': 9500,
               'pore_visibility_mask_kind': 'tzone_pore',
               'pore_visibility_mask_pixels': 6200,
+              'chin_pore_visibility_mask_kind': 'chin_pore',
+              'chin_pore_visibility_mask_pixels': 7100,
               'diffuse_flushing_erythema_mask_kind': 'face_skin',
               'diffuse_flushing_erythema_mask_pixels': 10200,
             },
@@ -296,6 +298,9 @@ void main() {
       expect(row['frame1_u_zone_pixels'], '9500');
       expect(row['frame1_localized_redness_mask_kind'], 'cheek_primary');
       expect(row['frame1_pore_visibility_mask_kind'], 'tzone_pore');
+      expect(row['frame1_chin_pore_visibility_mask_kind'], 'chin_pore');
+      expect(row['frame1_chin_pore_visibility_mask_pixels'], '7100');
+      expect(header, contains('chin_pore_visibility_value'));
       expect(
         row['frame1_diffuse_flushing_erythema_mask_pixels'],
         '10200',

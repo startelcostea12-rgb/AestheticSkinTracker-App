@@ -829,6 +829,10 @@ List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
         'pore_visibility_mask_kind': imageQuality['pore_visibility_mask_kind'],
         'pore_visibility_mask_pixels':
           imageQuality['pore_visibility_mask_pixels'],
+        'chin_pore_visibility_mask_kind':
+          imageQuality['chin_pore_visibility_mask_kind'],
+        'chin_pore_visibility_mask_pixels':
+          imageQuality['chin_pore_visibility_mask_pixels'],
         'diffuse_flushing_erythema_mask_kind':
           imageQuality['diffuse_flushing_erythema_mask_kind'],
         'diffuse_flushing_erythema_mask_pixels':

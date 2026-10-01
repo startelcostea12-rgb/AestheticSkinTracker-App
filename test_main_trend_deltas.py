@@ -1163,11 +1163,10 @@ class BaselineFormulaVersionComparisonTests(unittest.TestCase):
 
 class MetricFormulaVersionRegistryTests(unittest.TestCase):
     def test_registry_only_contains_deliberately_bumped_metrics(self) -> None:
-        # glabellar_wrinkle_depth is the only metric whose formula has
-        # actually changed so far (v2: fixed avg_width quantization and the
-        # 26-32%-of-photos zero-out -- see METRIC_FORMULA_VERSION's comment
-        # in main.py). Every other metric's formula is unchanged, so this
-        # registry must not silently grow beyond that one deliberate bump.
+        # glabellar_wrinkle_depth is the only existing metric whose formula
+        # has changed so far. chin_pore_visibility is a newly introduced,
+        # independent metric at its initial version, not a change to
+        # pore_visibility's formula.
         self.assertEqual(
             METRIC_FORMULA_VERSION,
             {
@@ -1179,6 +1178,7 @@ class MetricFormulaVersionRegistryTests(unittest.TestCase):
                 "diffuse_flushing_erythema": 2,
                 "rosacea_severity": 2,
                 "pore_visibility": 3,
+                "chin_pore_visibility": 1,
                 "pore_contraction_index": 2,
                 "glabellar_wrinkle_depth": 2,
             },

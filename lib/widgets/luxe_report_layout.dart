@@ -14,6 +14,7 @@ const Set<String> metricsWithHiddenTrendVerdicts = <String>{
   'rosacea_severity',
   'diffuse_flushing_erythema',
   'pore_contraction_index',
+  'chin_pore_visibility',
   'under_eye_dark_circle_density',
   'under_eye_texture_density',
 };

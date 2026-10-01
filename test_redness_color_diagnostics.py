@@ -51,6 +51,8 @@ NEW_IMAGE_QUALITY_KEYS = {
     "pigment_load_mask_pixels",
     "pore_visibility_mask_kind",
     "pore_visibility_mask_pixels",
+    "chin_pore_visibility_mask_kind",
+    "chin_pore_visibility_mask_pixels",
     "diffuse_flushing_erythema_mask_kind",
     "diffuse_flushing_erythema_mask_pixels",
 }
@@ -339,6 +341,9 @@ def test_full_pipeline_emits_fields_without_changing_any_score():
     assert iq_with["pigment_load_mask_pixels"] > 0
     assert iq_with["pigment_load_mask_pixels"] == iq_with["u_zone_pixels"]
     assert iq_with["pore_visibility_mask_kind"] == "tzone_pore"
+    assert iq_with["chin_pore_visibility_mask_kind"] == "chin_pore"
+    assert iq_with["pore_visibility_mask_pixels"] >= 5000
+    assert iq_with["chin_pore_visibility_mask_pixels"] >= 5000
     assert iq_with["diffuse_flushing_erythema_mask_kind"] == "u_zone_nose_face_skin"
     assert iq_with["redness_cheek_p10_a_before_wb"] is not None
     # Without the pre-white-balance image only the "before" percentiles are unknown.
