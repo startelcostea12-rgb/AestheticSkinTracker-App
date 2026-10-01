@@ -24,6 +24,7 @@ import 'skin_journey_journal_screen.dart';
 import 'package:aesthetic_skin_tracker/features/ai_coach/presentation/screens/premium_recovery_hub_screen.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import '../utils/premium_access.dart';
+import '../utils/trend_label_resolver.dart';
 import '../widgets/premium_feature_sheet.dart';
 import '../utils/ai_intelligence_engine.dart';
 import '../utils/ai_product_recommendation_engine.dart';
@@ -596,61 +597,46 @@ class _HomePageState extends State<HomePage>
       return;
     }
 
-    final latest = procedureScans.first;
-    final latestRejection = aiBaselineRejectionReason(latest);
-    if (latestRejection != null) {
-      if (!mounted) return;
-      setState(() {
-        _homePairBaseline = null;
-        _homePairLatest = latest;
-        _homePairMessage = 'Not comparable: $latestRejection';
-      });
-      return;
-    }
+    for (final latest in procedureScans) {
+      if (aiBaselineRejectionReason(latest) != null) continue;
+      final key = latest.aiBaselineKey;
+      final keyMatches = procedureScans
+          .where((scan) => scan.aiBaselineKey == key)
+          .toList(growable: false);
+      final registry = await AppPrefs.getAiBaselineRegistryState(key);
+      final resolution = resolveAiBaseline(
+        key: key,
+        keyMatches: keyMatches,
+        allScans: _allScans,
+        pinnedScanId: registry.baselineScanId,
+        registryEntryExists: registry.hasEntry,
+        resetAt: registry.resetAt,
+      );
+      final baseline = resolution.baselineScan;
+      if (baseline == null ||
+          baseline.id == latest.id ||
+          aiBaselineRejectionReason(baseline) != null ||
+          !ScanHistoryEntry.scanEnginesComparable(
+            baseline.scanEngine,
+            latest.scanEngine,
+          )) {
+        continue;
+      }
 
-    final key = latest.aiBaselineKey;
-    final keyMatches = procedureScans
-        .where((scan) => scan.aiBaselineKey == key)
-        .toList(growable: false);
-    final registry = await AppPrefs.getAiBaselineRegistryState(key);
-    final resolution = resolveAiBaseline(
-      key: key,
-      keyMatches: keyMatches,
-      allScans: _allScans,
-      pinnedScanId: registry.baselineScanId,
-      registryEntryExists: registry.hasEntry,
-      resetAt: registry.resetAt,
-    );
-    final baseline = resolution.baselineScan;
-    final baselineRejection = baseline == null
-        ? null
-        : aiBaselineRejectionReason(baseline);
-    if (baseline == null ||
-        baseline.id == latest.id ||
-        baselineRejection != null ||
-        !ScanHistoryEntry.scanEnginesComparable(
-          baseline.scanEngine,
-          latest.scanEngine,
-        )) {
       if (!mounted) return;
-      final reason = resolution.ignoredPinReason ?? baselineRejection;
       setState(() {
-        _homePairBaseline = null;
+        _homePairBaseline = baseline;
         _homePairLatest = latest;
-        _homePairMessage = reason != null
-            ? 'Not comparable: $reason'
-            : baseline == null || baseline.id == latest.id
-            ? 'No pair yet. Take another scan with the same angle and guide.'
-            : 'Not comparable: the analysis method changed.';
+        _homePairMessage = '';
       });
       return;
     }
 
     if (!mounted) return;
     setState(() {
-      _homePairBaseline = baseline;
-      _homePairLatest = latest;
-      _homePairMessage = '';
+      _homePairBaseline = null;
+      _homePairLatest = null;
+      _homePairMessage = 'No comparable pair yet.';
     });
   }
 
@@ -955,16 +941,8 @@ class _HomePageState extends State<HomePage>
             ),
           ],
           const SizedBox(height: 14),
-          InkWell(
+          Container(
             key: const ValueKey('home_last_comparable_pair'),
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => Navigator.of(context).pushNamed(
-              '/timeline',
-              arguments: {
-                if (_homeProtocolProcedureId != null)
-                  'procedureId': _homeProtocolProcedureId,
-              },
-            ),
             child: Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -994,6 +972,22 @@ class _HomePageState extends State<HomePage>
                       fontWeight: FontWeight.w600,
                     ),
                   ),
+                  if (_homePairBaseline != null && _homePairLatest != null) ...[
+                    const SizedBox(height: 10),
+                    for (final metric in const [
+                      ('texture_smoothness', 'Texture'),
+                      ('pigment_load', 'Pigment'),
+                      ('skin_tone_radiance_evenness', 'Radiance'),
+                      ('structural_firmness_elasticity', 'Firmness'),
+                      ('pore_visibility', 'Pore visibility'),
+                      ('localized_redness', 'Redness'),
+                    ])
+                      _buildHomePairMetric(
+                        _homePairLatest!,
+                        metric.$1,
+                        metric.$2,
+                      ),
+                  ],
                 ],
               ),
             ),
@@ -1185,6 +1179,33 @@ class _HomePageState extends State<HomePage>
     );
     final type = (match?['type'] ?? '').toString().trim();
     return type.isEmpty ? null : type;
+  }
+
+  Widget _buildHomePairMetric(ScanHistoryEntry scan, String key, String label) {
+    final value = scan.metrics[key];
+    final lockReason = trendLockReasonMapFromRawPayload(scan.rawPayload)[key];
+    final locked = lockReason != null && lockReason.trim().isNotEmpty;
+    final trend = locked
+        ? null
+        : resolveTrendLabel(
+            trendStatus: trendStatusMapFromRawPayload(scan.rawPayload)[key],
+          );
+    return Padding(
+      key: ValueKey('home_pair_metric_$key'),
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        children: [
+          Expanded(child: Text(label)),
+          Text(
+            value == null || !value.isFinite
+                ? 'Unavailable'
+                : value.toStringAsFixed(1),
+          ),
+          const SizedBox(width: 10),
+          Text(locked ? 'Not comparable' : (trend?.label ?? '')),
+        ],
+      ),
+    );
   }
 
   bool _isSameScanContext(ScanHistoryEntry scan, ScanHistoryEntry reference) {
