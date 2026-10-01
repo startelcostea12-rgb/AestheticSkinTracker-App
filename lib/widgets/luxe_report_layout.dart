@@ -1630,15 +1630,7 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         statements.add('$metricName: ${lockDetail ?? 'Stable.'}');
         continue;
       }
-      final delta = assessment.deltaPct ?? 0.0;
-      final deltaText = LuxeMetricParser.formatDisplayDelta(
-        baseline: metric.baselineScore,
-        current: metric.currentScore,
-        deltaPct: delta,
-      );
-      statements.add(
-        '$metricName: ${assessment.label}${delta.abs() > 0 ? ' by $deltaText' : ''}.',
-      );
+      statements.add('$metricName: ${assessment.label}.');
     }
 
     if (statements.isEmpty) {
@@ -2090,10 +2082,6 @@ class _MetricCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final row = _buildMetricRowData();
-    final chipLabel = row.honestyLabel;
-    final chipIcon = row.trendLocked
-        ? Icons.help_outline_rounded
-        : _chipIcon(row.honestyStatus);
     final chipColor = row.trendLocked
         ? const Color(0xFF8E7F6D)
         : _chipColor(row.honestyStatus);
@@ -2111,17 +2099,15 @@ class _MetricCard extends StatelessWidget {
         : row.hasRealBaseline
         ? 'Current $currentDisplayText${precision.rangeSuffix} · Baseline ${row.baselineValue.toStringAsFixed(1)}'
         : 'Current $currentDisplayText${precision.rangeSuffix}';
-    final progressionDeltaText = row.badgeValueText == null
-        ? ''
-        : ' (${row.badgeValueText})';
     final progressionLine = !row.hasComparableCurrentValue
         ? '${metric.name}: Not compared (${row.subtext})'
         : row.hasRealBaseline
-        ? '${metric.name}: ${row.baselineValue.toStringAsFixed(1)} -> ${row.currentValue.toStringAsFixed(1)}$progressionDeltaText '
+        ? '${metric.name}: ${row.baselineValue.toStringAsFixed(1)} -> ${row.currentValue.toStringAsFixed(1)} '
               '(${row.subtext})'
         : '${metric.name}: ${row.currentValue.toStringAsFixed(1)} current scan (${row.subtext})';
 
     return Material(
+      key: ValueKey('result_metric_${metric.key}'),
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
@@ -2190,50 +2176,6 @@ class _MetricCard extends StatelessWidget {
                 ),
               ],
               const SizedBox(height: 10),
-              if (row.badgePercent != null &&
-                  row.badgeValueText != null &&
-                  row.currentValue > 0.0 &&
-                  row.hasRealBaseline &&
-                  row.badgePercent!.abs() > 0.0)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 9,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: chipColor.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(chipIcon, size: 11.5, color: chipColor),
-                      const SizedBox(width: 6),
-                      Text(
-                        chipLabel,
-                        style: TextStyle(
-                          color: chipColor,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.1,
-                        ),
-                      ),
-                      if (row.badgeValueText != null) ...[
-                        const SizedBox(width: 6),
-                        Text(
-                          row.badgeValueText!,
-                          style: TextStyle(
-                            color: chipColor,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                )
-              else
-                const SizedBox.shrink(),
               if (metric.showTrendVerdict) ...[
                 const SizedBox(height: 8),
                 Text(
@@ -2289,20 +2231,6 @@ class _MetricCard extends StatelessWidget {
         return 'Tracks visible breakout pattern intensity to monitor cosmetic flare-up frequency changes.';
       default:
         return 'Compares baseline and current scan vectors to track visible skin-quality progression.';
-    }
-  }
-
-  IconData _chipIcon(_HonestyStatus status) {
-    switch (status) {
-      case _HonestyStatus.improved:
-        return Icons.trending_up_rounded;
-      case _HonestyStatus.worsened:
-        return Icons.trending_down_rounded;
-      case _HonestyStatus.stable:
-        return Icons.trending_flat_rounded;
-      case _HonestyStatus.insufficientSignal:
-      case _HonestyStatus.noVerdict:
-        return Icons.help_outline_rounded;
     }
   }
 

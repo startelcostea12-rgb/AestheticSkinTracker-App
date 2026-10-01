@@ -181,7 +181,15 @@ void main() {
     };
     await _pumpHomeWithScans(tester, [
       _aiScan(id: 'baseline', timestamp: DateTime(2026, 9, 10)),
-      _aiScan(id: 'latest', timestamp: DateTime(2026, 9, 20), metrics: values),
+      _aiScan(
+        id: 'latest',
+        timestamp: DateTime(2026, 9, 20),
+        metrics: values,
+        rawPayload: const {
+          'trend_status': {'pigment_load': 'worsened'},
+          'trend_deltas': {'pigment_load': -17.3},
+        },
+      ),
     ]);
 
     for (final entry in values.entries) {
@@ -194,6 +202,11 @@ void main() {
         findsOneWidget,
       );
     }
+    final card = find.byKey(const ValueKey('home_last_comparable_pair'));
+    expect(
+      find.descendant(of: card, matching: find.textContaining('%')),
+      findsNothing,
+    );
   });
 
   testWidgets('hidden metrics never receive a verdict on the pair card', (

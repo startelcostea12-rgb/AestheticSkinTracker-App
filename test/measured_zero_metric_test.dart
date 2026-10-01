@@ -115,6 +115,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Baseline 0.0'), findsWidgets);
+    final rednessCard = find.byKey(
+      const ValueKey('result_metric_localized_redness'),
+    );
+    expect(
+      find.descendant(of: rednessCard, matching: find.textContaining('%')),
+      findsNothing,
+    );
     expect(find.byIcon(Icons.trending_up_rounded), findsNothing);
     expect(find.byIcon(Icons.trending_down_rounded), findsNothing);
     expect(

@@ -6120,10 +6120,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     );
   }
 
-  /// Compact trend pill: arrow icon + word (Improved / Worsened /
-  /// Stable) plus the numeric delta for non-stable changes (e.g.
-  /// "Improved +12%"). Green for improvement, coral for worsening, grey when
-  /// stable.
+  /// Compact trend pill: arrow icon + backend verdict.
   Widget _trendChip(
     ({
       IconData icon,
@@ -6134,11 +6131,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     })
     trend,
   ) {
-    final showsPercent = trend.label == 'Improved' || trend.label == 'Worsened';
-    final percentDelta = trend.percentDelta;
-    final deltaText = (showsPercent && percentDelta != null)
-        ? ' ${percentDelta > 0 ? '+' : ''}${percentDelta.toStringAsFixed(0)}%'
-        : '';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: BoxDecoration(
@@ -6155,7 +6147,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           Icon(trend.icon, size: 10, color: trend.color),
           const SizedBox(width: 3),
           Text(
-            '${trend.label}$deltaText',
+            trend.label,
             style: TextStyle(
               fontSize: 8.5,
               letterSpacing: 0.4,

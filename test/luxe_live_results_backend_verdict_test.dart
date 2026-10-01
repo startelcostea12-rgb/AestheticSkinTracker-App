@@ -33,6 +33,7 @@ void main() {
   Map<String, dynamic> basePayload({
     required double baseline,
     required double current,
+    String metricKey = 'pigment_load',
     Map<String, dynamic>? trendDeltas,
     Map<String, dynamic>? trendStatus,
     Map<String, dynamic>? trendLockReasons,
@@ -40,13 +41,11 @@ void main() {
     return <String, dynamic>{
       'is_follow_up': true,
       'local_history_count': 2,
-      'metric_matrix': <String, dynamic>{'pigment_load': current},
-      'baseline_metric_matrix': <String, dynamic>{'pigment_load': baseline},
-      'metric_extraction_paths': <String, dynamic>{
-        'pigment_load': 'primary_roi',
-      },
+      'metric_matrix': <String, dynamic>{metricKey: current},
+      'baseline_metric_matrix': <String, dynamic>{metricKey: baseline},
+      'metric_extraction_paths': <String, dynamic>{metricKey: 'primary_roi'},
       'baseline_metric_extraction_paths': <String, dynamic>{
-        'pigment_load': 'primary_roi',
+        metricKey: 'primary_roi',
       },
       if (trendDeltas != null) 'trend_deltas': trendDeltas,
       if (trendStatus != null) 'trend_status': trendStatus,
@@ -137,6 +136,11 @@ void main() {
       expect(find.byIcon(Icons.trending_flat_rounded), findsNothing);
       final label = tester.widget<Text>(find.textContaining('Not comparable:'));
       expect(label.style?.color, const Color(0xFF8E7F6D));
+      final card = find.byKey(const ValueKey('result_metric_pigment_load'));
+      expect(
+        find.descendant(of: card, matching: find.textContaining('%')),
+        findsNothing,
+      );
     },
   );
 
@@ -160,7 +164,7 @@ void main() {
   );
 
   testWidgets(
-    'backend "worsened" shows a directional label with the backend\'s own delta',
+    'backend "worsened" keeps its verdict and score without a percent',
     (tester) async {
       final payload = basePayload(
         baseline: 22.3,
@@ -173,9 +177,47 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Worsened'), findsWidgets);
-      expect(find.byIcon(Icons.trending_down_rounded), findsWidgets);
+      expect(find.textContaining('27.9'), findsWidgets);
+      expect(find.text('Pigment Load: Worsened.'), findsOneWidget);
+      final card = find.byKey(const ValueKey('result_metric_pigment_load'));
+      expect(
+        find.descendant(of: card, matching: find.textContaining('%')),
+        findsNothing,
+      );
+      expect(find.textContaining('25.1%'), findsNothing);
     },
   );
+
+  testWidgets('unlocked texture still says Stable without a percent', (
+    tester,
+  ) async {
+    final payload = basePayload(
+      baseline: 42.0,
+      current: 42.5,
+      metricKey: 'texture_smoothness',
+      trendStatus: {'texture_smoothness': 'stable'},
+      trendDeltas: {'texture_smoothness': 1.2},
+    );
+    await tester.pumpWidget(harness(payload));
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(const ValueKey('result_metric_texture_smoothness'));
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.textContaining('Stable - change within tracking noise'),
+      ),
+      findsWidgets,
+    );
+    expect(
+      find.descendant(of: card, matching: find.textContaining('42.5')),
+      findsWidgets,
+    );
+    expect(
+      find.descendant(of: card, matching: find.textContaining('%')),
+      findsNothing,
+    );
+  });
 
   testWidgets(
     'without requireBackendVerdict, a missing trend_status still falls back '
