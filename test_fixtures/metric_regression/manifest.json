@@ -65,7 +65,7 @@
     {
       "id": "st1",
       "photo_path": "test_fixtures/metric_regression/st1.jpg",
-      "preprocess": {"mode": "center_crop_resize_jpeg", "crop_fraction": 0.9, "size": 512},
+      "preprocess": {"mode": "center_crop_resize_jpeg", "crop_fraction": 0.93, "size": 512},
       "notes": "Severe rosacea reference with a documented mixed redness/pigment presentation. The redness baseline uses the recalibrated p95 formula; pigment remains independently calibrated.",
       "strict": true,
       "metrics": {

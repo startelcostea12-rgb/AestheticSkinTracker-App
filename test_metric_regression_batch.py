@@ -28,9 +28,6 @@ REPO_ROOT = Path(__file__).resolve().parent
 MANIFEST_PATH = REPO_ROOT / "test_fixtures" / "metric_regression" / "manifest.json"
 # These four texture_smoothness v2 / wrinkle_load v2 bands were recorded from
 # current-code scores after 2f14aaa split the pore ROI from the face-skin mask.
-ST1_SKIP_REASON = (
-    "st1 normalized crop loses the lower face; a wider crop moves pinned scores"
-)
 
 
 def _load_manifest() -> dict[str, Any]:
@@ -86,27 +83,19 @@ def _analyze_case(case: dict[str, Any]) -> dict[str, float]:
 
 @pytest.fixture(scope="module")
 def regression_results() -> tuple[
-    dict[str, Any], dict[str, dict[str, float]], dict[str, str], dict[str, str]
+    dict[str, Any], dict[str, dict[str, float]], dict[str, str]
 ]:
     manifest = _load_manifest()
     results: dict[str, dict[str, float]] = {}
     setup_errors: dict[str, str] = {}
-    skipped_cases: dict[str, str] = {}
     for case in manifest["cases"]:
-        if case["id"] == "st1":
-            skipped_cases[case["id"]] = ST1_SKIP_REASON
-            continue
         try:
             results[case["id"]] = _analyze_case(case)
         except Exception as exc:
             setup_errors[case["id"]] = (
                 f"{case['photo_path']}: {type(exc).__name__}: {exc}"
             )
-    return manifest, results, setup_errors, skipped_cases
-
-
-def test_st1_fixture_is_skipped_until_normalized_crop_keeps_face() -> None:
-    pytest.skip(ST1_SKIP_REASON)
+    return manifest, results, setup_errors
 
 
 def test_fixture_setup_errors_are_reported(
@@ -114,14 +103,12 @@ def test_fixture_setup_errors_are_reported(
         dict[str, Any],
         dict[str, dict[str, float]],
         dict[str, str],
-        dict[str, str],
     ],
 ) -> None:
-    _manifest, _results, setup_errors, skipped_cases = regression_results
+    _manifest, _results, setup_errors = regression_results
     assert not setup_errors, "Fixture setup error(s):\n" + "\n".join(
         f"{case_id}: {error}" for case_id, error in setup_errors.items()
     )
-    assert skipped_cases.get("st1") == ST1_SKIP_REASON
 
 
 def test_full_pipeline_metric_regressions(
@@ -129,16 +116,15 @@ def test_full_pipeline_metric_regressions(
         dict[str, Any],
         dict[str, dict[str, float]],
         dict[str, str],
-        dict[str, str],
     ],
 ) -> None:
-    manifest, results, setup_errors, skipped_cases = regression_results
+    manifest, results, setup_errors = regression_results
     failures: list[str] = []
 
     for case in manifest["cases"]:
         if not case["strict"]:
             continue
-        if case["id"] in setup_errors or case["id"] in skipped_cases:
+        if case["id"] in setup_errors:
             continue
         photo_metrics = results[case["id"]]
         for metric, expected in case["metrics"].items():
@@ -164,16 +150,15 @@ def test_tracked_outliers_are_reported_without_gating(
         dict[str, Any],
         dict[str, dict[str, float]],
         dict[str, str],
-        dict[str, str],
     ],
 ) -> None:
-    manifest, results, setup_errors, skipped_cases = regression_results
+    manifest, results, setup_errors = regression_results
     tracked_lines: list[str] = []
 
     for case in manifest["cases"]:
         if case["strict"]:
             continue
-        if case["id"] in setup_errors or case["id"] in skipped_cases:
+        if case["id"] in setup_errors:
             continue
         photo_metrics = results[case["id"]]
         for metric, expected in case["metrics"].items():
@@ -193,7 +178,6 @@ def test_glabellar_wrinkle_depth_no_longer_zeroes_out_on_nikki3(
         dict[str, Any],
         dict[str, dict[str, float]],
         dict[str, str],
-        dict[str, str],
     ],
 ) -> None:
     """Regression guard for the specific bug fixed in formula v2: nikki3 used
@@ -203,7 +187,7 @@ def test_glabellar_wrinkle_depth_no_longer_zeroes_out_on_nikki3(
     independent of the manifest's numeric band, so a future retune can't
     silently reintroduce the omission while still passing a loosened band.
     """
-    _manifest, results, _setup_errors, _skipped_cases = regression_results
+    _manifest, results, _setup_errors = regression_results
     value = results.get("nikki3", {}).get("glabellar_wrinkle_depth")
     assert value is not None, "glabellar_wrinkle_depth is missing again on nikki3"
     assert value > 0.0, f"glabellar_wrinkle_depth zeroed out again on nikki3: {value}"
