@@ -1,3 +1,4 @@
+import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import 'package:aesthetic_skin_tracker/screens/onboarding_screen.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:flutter/material.dart';
@@ -5,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   testWidgets('start offers exactly Procedure and Peptide', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: FirstRunProtocolScreen()));
 
@@ -42,6 +45,39 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Peptide tracker'), findsOneWidget);
   });
+
+  for (final destination in const [
+    (label: 'Routines', route: '/routines'),
+    (label: 'Log Product', route: '/log-skincare-product'),
+    (label: 'Product Store', route: '/store'),
+  ]) {
+    testWidgets('Procedure opens ${destination.label} from the scan flow', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: const FirstRunProtocolScreen(),
+          routes: {
+            '/ai-coach': (_) => const SkinAiAnalysisScreen(),
+            destination.route: (_) =>
+                Scaffold(body: Text('Opened ${destination.label}')),
+          },
+        ),
+      );
+
+      await tester.tap(find.text('Procedure'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('Skin Scan'), findsOneWidget);
+      expect(find.text('Routines & Products'), findsOneWidget);
+
+      final link = find.text(destination.label);
+      await tester.ensureVisible(link);
+      await tester.tap(link);
+      await tester.pumpAndSettle();
+      expect(find.text('Opened ${destination.label}'), findsOneWidget);
+    });
+  }
 
   testWidgets('splash opens the two-door start even with a saved protocol', (
     tester,

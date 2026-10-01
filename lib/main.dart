@@ -44,6 +44,7 @@ import 'screens/peptide_reconstitution_sheet.dart';
 import 'screens/photo_gallery_screen.dart';
 import 'screens/provider_notes_screen.dart';
 import 'screens/product_store_screen.dart';
+import 'screens/log_skincare_product_screen.dart';
 import 'screens/cart_screen.dart';
 import 'screens/recovery_timeline_screen.dart';
 import 'screens/procedure_history_screen.dart';
@@ -358,6 +359,8 @@ class _AestheticSkinTrackerState extends State<AestheticSkinTracker> {
         return const PhotoGalleryScreen();
       case '/store':
         return const ProductStoreScreen();
+      case '/log-skincare-product':
+        return const LogSkincareProductScreen();
       case '/cart':
         return const CartScreen();
       case '/timeline':

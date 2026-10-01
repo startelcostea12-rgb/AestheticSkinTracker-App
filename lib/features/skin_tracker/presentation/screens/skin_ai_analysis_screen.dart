@@ -3084,6 +3084,34 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       children: [
         _heroIntro(),
         const SizedBox(height: 18),
+        _captureSectionCard(
+          title: 'Routines & Products',
+          eyebrow: 'Procedure tools',
+          icon: Icons.spa_outlined,
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => Navigator.of(context).pushNamed('/routines'),
+                icon: const Icon(Icons.event_note_outlined),
+                label: const Text('Routines'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () =>
+                    Navigator.of(context).pushNamed('/log-skincare-product'),
+                icon: const Icon(Icons.add_circle_outline),
+                label: const Text('Log Product'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => Navigator.of(context).pushNamed('/store'),
+                icon: const Icon(Icons.storefront_outlined),
+                label: const Text('Product Store'),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
         if (_analysisError != null) ...[
           _errorBanner(_analysisError!),
           const SizedBox(height: 14),
