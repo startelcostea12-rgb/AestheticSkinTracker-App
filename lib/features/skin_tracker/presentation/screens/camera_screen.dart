@@ -34,6 +34,90 @@ import 'package:aesthetic_skin_tracker/widgets/makeup_badge.dart';
 import 'package:aesthetic_skin_tracker/widgets/makeup_disclosure_dialog.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 
+class ReferenceAlignmentRow extends StatelessWidget {
+  const ReferenceAlignmentRow({
+    super.key,
+    required this.statusLabel,
+    required this.statusColor,
+    required this.referenceAvailable,
+  });
+
+  final String statusLabel;
+  final Color statusColor;
+  final bool referenceAvailable;
+
+  @override
+  Widget build(BuildContext context) {
+    final backgroundColor = referenceAvailable
+        ? AppColors.mutedSage.withValues(alpha: 0.12)
+        : AppColors.borders.withValues(alpha: 0.34);
+    final borderColor = referenceAvailable
+        ? AppColors.mutedSage.withValues(alpha: 0.32)
+        : AppColors.borders;
+
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            'Reference Alignment',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            softWrap: false,
+            style: TextStyle(
+              color: MyApp.textBrown.withValues(alpha: 0.70),
+              fontWeight: FontWeight.w700,
+              fontSize: 11.4,
+              letterSpacing: 0.2,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Container(
+            alignment: Alignment.centerRight,
+            constraints: const BoxConstraints(maxWidth: 220),
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: borderColor),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    color: statusColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    statusLabel,
+                    key: const ValueKey('reference-alignment-status'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 10.2,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.1,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 Map<String, dynamic>? buildBaselineMetricMatrix(Map<String, double>? refMetrics) {
   if (refMetrics == null || refMetrics.isEmpty) return null;
 
@@ -7470,31 +7554,10 @@ class _CameraScreenState extends State<CameraScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Text(
-                      'Reference Alignment',
-                      style: TextStyle(
-                        color: MyApp.textBrown.withValues(alpha: 0.70),
-                        fontWeight: FontWeight.w700,
-                        fontSize: 11.4,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                    const Spacer(),
-                    _buildSubtleStatusBadge(
-                      label: '$guidanceLabel • $referenceLabel',
-                      textColor: guidanceColor,
-                      backgroundColor: _liveLandmarkAssessment.available
-                          ? AppColors.mutedSage.withValues(alpha: 0.12)
-                          : AppColors.borders.withValues(alpha: 0.34),
-                      borderColor: _liveLandmarkAssessment.available
-                          ? AppColors.mutedSage.withValues(alpha: 0.32)
-                          : AppColors.borders,
-                      showDot: true,
-                      dotColor: guidanceColor,
-                    ),
-                  ],
+                ReferenceAlignmentRow(
+                  statusLabel: '$guidanceLabel • $referenceLabel',
+                  statusColor: guidanceColor,
+                  referenceAvailable: _liveLandmarkAssessment.available,
                 ),
                 const SizedBox(height: 6),
                 Row(

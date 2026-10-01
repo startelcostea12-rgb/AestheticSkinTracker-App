@@ -1,9 +1,45 @@
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
 import 'package:aesthetic_skin_tracker/utils/landmark_assessment.dart';
 import 'package:aesthetic_skin_tracker/widgets/clinical_camera_guidance.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+
+  testWidgets('reference alignment row ellipsizes on a narrow phone', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 220,
+              child: const ReferenceAlignmentRow(
+                statusLabel:
+                    'Adjust face position and reference alignment carefully',
+                statusColor: Colors.brown,
+                referenceAvailable: true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    final status = tester.widget<Text>(
+      find.byKey(const ValueKey('reference-alignment-status')),
+    );
+    expect(status.maxLines, 1);
+    expect(status.overflow, TextOverflow.ellipsis);
+  });
   group('bodyTiltAngleFromAssessment', () {
     test('returns shoulder tilt, completely ignoring rotationProxy (widthRatio)', () {
       // The exact bug scenario: shoulders wider than hips (rotationProxy =
