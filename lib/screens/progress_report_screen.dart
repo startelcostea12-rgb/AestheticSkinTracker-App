@@ -65,6 +65,15 @@ ResolvedTrendLabel? _resolveScanMetricTrend(
   );
 }
 
+String formatProgressReportTrendPercent({
+  required String trendLabel,
+  required double percentDelta,
+  required bool isWorsened,
+}) {
+  final prefix = !isWorsened && percentDelta > 0 ? '+' : '';
+  return '$trendLabel $prefix${percentDelta.abs().toStringAsFixed(1)}%';
+}
+
 enum ProgressReportViewMode { reports, scans }
 
 class _ProcedureScanGroup {
@@ -2625,8 +2634,11 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
       badgePercent = null;
       subtext = 'Tracks visible appearance in key zones';
     } else {
-      final percentPrefix = percentDelta > 0 ? '+' : '';
-      subtext = '$trendLabel $percentPrefix${percentDelta.toStringAsFixed(1)}%';
+      subtext = formatProgressReportTrendPercent(
+        trendLabel: trendLabel ?? '',
+        percentDelta: percentDelta,
+        isWorsened: resolvedTrend?.isWorsened ?? false,
+      );
     }
     final deltaTextColor = canShowTrendBadge
         ? color
@@ -2673,7 +2685,11 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
                         Icon(directionIcon, color: color, size: 13),
                         const SizedBox(width: 4),
                         Text(
-                          '$trendLabel ${badgePercent > 0 ? '+' : ''}${badgePercent.toStringAsFixed(1)}%',
+                          formatProgressReportTrendPercent(
+                            trendLabel: trendLabel ?? '',
+                            percentDelta: badgePercent,
+                            isWorsened: resolvedTrend?.isWorsened ?? false,
+                          ),
                           style: TextStyle(
                             color: color,
                             fontSize: 11,

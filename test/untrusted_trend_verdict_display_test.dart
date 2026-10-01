@@ -21,6 +21,28 @@ Widget harness(Map<String, dynamic> payload) => MaterialApp(
 );
 
 void main() {
+  test('worsening progress percent displays magnitude without a minus', () {
+    expect(
+      formatProgressReportTrendPercent(
+        trendLabel: 'Worsened',
+        percentDelta: -17.3,
+        isWorsened: true,
+      ),
+      'Worsened 17.3%',
+    );
+  });
+
+  test('improving progress percent retains its positive sign', () {
+    expect(
+      formatProgressReportTrendPercent(
+        trendLabel: 'Improved',
+        percentDelta: 17.3,
+        isWorsened: false,
+      ),
+      'Improved +17.3%',
+    );
+  });
+
   testWidgets('six untrusted metrics show values without verdicts or percent', (
     tester,
   ) async {
