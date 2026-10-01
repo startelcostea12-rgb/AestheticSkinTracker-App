@@ -825,12 +825,6 @@ class LuxeMetricParser {
         ]);
         break;
       case 'pore_visibility':
-        base.addAll([
-          'pore_visibility',
-          'pore',
-          'pore_score',
-          'pore_contraction_index',
-        ]);
         break;
       case 'rosacea_severity':
         base.addAll(['rosacea_severity', 'rosacea', 'rosacea_score']);
