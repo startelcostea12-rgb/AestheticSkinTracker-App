@@ -129,6 +129,13 @@ def test_full_pipeline_metric_regressions(
         photo_metrics = results[case["id"]]
         for metric, expected in case["metrics"].items():
             actual = photo_metrics.get(metric)
+            if expected.get("expected_missing", False):
+                if actual is not None:
+                    failures.append(
+                        f"{case['photo_path']} :: {metric} :: actual={actual:.1f}; "
+                        f"expected omitted ({expected.get('omit_reason', 'unspecified')})"
+                    )
+                continue
             if actual is None:
                 failures.append(
                     f"{case['photo_path']} :: {metric} :: missing; "
