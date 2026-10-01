@@ -49,6 +49,7 @@ import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 import 'package:aesthetic_skin_tracker/widgets/image_crop_dialog.dart';
 import 'package:aesthetic_skin_tracker/utils/severity_band.dart';
 import 'package:aesthetic_skin_tracker/widgets/report_paywall_sheet.dart';
+import 'package:aesthetic_skin_tracker/widgets/premium_feature_sheet.dart';
 import 'package:aesthetic_skin_tracker/screens/ai_recovery_coach_screen.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
 import 'package:aesthetic_skin_tracker/screens/create_procedure_screen.dart';
@@ -2611,6 +2612,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
   }
 
   Future<void> _exportProcedureReportPdf() async {
+    if (!await requirePremiumAccess(context)) return;
     // ── Hybrid monetization gate ───────────────────────────────────────────────
     // Premium subscribers → generate immediately.
     // Free users          → require either an unlocked one-time purchase

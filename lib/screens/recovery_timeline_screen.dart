@@ -29,6 +29,7 @@ import '../utils/report_service.dart';
 import '../widgets/report_disclaimer_notice.dart';
 import '../widgets/recovery_timeline_card.dart' show RecoveryTimelineCard;
 import '../widgets/report_share_helper.dart' as report_share;
+import '../widgets/premium_feature_sheet.dart';
 import 'ai_recovery_coach_screen.dart';
 
 class RecoveryTimelineScreen extends StatefulWidget {
@@ -186,6 +187,7 @@ class _RecoveryTimelineScreenState extends State<RecoveryTimelineScreen> {
 
   // ── Export ─────────────────────────────────────────────────────────────
   Future<void> _exportReport() async {
+    if (!await requirePremiumAccess(context)) return;
     final proc = _procedure;
     if (proc == null) return;
     final acceptedDisclaimer = await confirmReportShareDisclaimer(context);

@@ -33,6 +33,7 @@ import 'utils/premium_access.dart';
 import 'utils/report_service.dart';
 import 'services/notification_service.dart';
 import 'widgets/paywall_screen.dart';
+import 'widgets/premium_feature_sheet.dart';
 import 'challenges/challenges_screen.dart';
 import 'challenges/glow_up_challenge_screen.dart';
 import 'challenges/year_end_challenge_screen.dart';
@@ -323,7 +324,7 @@ class _AestheticSkinTrackerState extends State<AestheticSkinTracker> {
       case '/create-procedure':
         return const CreateProcedureScreen();
       case '/procedure-history':
-        return const ProcedureHistoryScreen();
+        return const PremiumRouteGate(child: ProcedureHistoryScreen());
       case '/routines':
         return const RoutinesScreen();
       case '/settings':
@@ -388,9 +389,9 @@ class _AestheticSkinTrackerState extends State<AestheticSkinTracker> {
           procedureLabel: procLabel,
         );
       case '/report':
-        return const ProfessionalReportScreen();
+        return const PremiumRouteGate(child: ProfessionalReportScreen());
       case '/share':
-        return const ShareResultScreen();
+        return const PremiumRouteGate(child: ShareResultScreen());
       default:
         // Dynamic deep-link: /procedures/{id} → load + open detail.
         final name = settings.name ?? '';

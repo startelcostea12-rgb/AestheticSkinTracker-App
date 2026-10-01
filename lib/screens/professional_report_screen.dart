@@ -26,6 +26,7 @@ import '../utils/report_purchase.dart';
 import '../widgets/report_disclaimer_notice.dart';
 import '../widgets/report_share_helper.dart' as report_share;
 import '../widgets/report_paywall_sheet.dart';
+import '../widgets/premium_feature_sheet.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Screen
@@ -89,6 +90,7 @@ class _ProfessionalReportScreenState extends State<ProfessionalReportScreen> {
 
   Future<void> _generateReport() async {
     if (_generating) return;
+    if (!await requirePremiumAccess(context)) return;
 
     final acceptedDisclaimer = await confirmReportShareDisclaimer(context);
     if (!mounted || !acceptedDisclaimer) return;
@@ -233,6 +235,7 @@ class _ProfessionalReportScreenState extends State<ProfessionalReportScreen> {
   // ── Re-download ────────────────────────────────────────────────────────────
 
   Future<void> _redownload(ProfessionalReportRecord record) async {
+    if (!await requirePremiumAccess(context)) return;
     final bytes = ReportService.getPdfBytesFromRecord(record);
     if (bytes == null) {
       if (!mounted) return;

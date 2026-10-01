@@ -24,6 +24,7 @@ import 'skin_journey_journal_screen.dart';
 import 'package:aesthetic_skin_tracker/features/ai_coach/presentation/screens/premium_recovery_hub_screen.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import '../utils/premium_access.dart';
+import '../widgets/premium_feature_sheet.dart';
 import '../utils/ai_intelligence_engine.dart';
 import '../utils/ai_product_recommendation_engine.dart';
 import '../widgets/scan_based_recommendations_card.dart';
@@ -2663,6 +2664,8 @@ class _HomePageState extends State<HomePage>
                   textColor: textColor,
                   actionLabel: 'View All ->',
                   onActionTap: () async {
+                    if (!await requirePremiumAccess(context)) return;
+                    if (!context.mounted) return;
                     await Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => const ProgressReportScreen(),
@@ -2760,6 +2763,8 @@ class _HomePageState extends State<HomePage>
                   textColor: textColor,
                   actionLabel: 'View All ->',
                   onActionTap: () async {
+                    if (!await requirePremiumAccess(context)) return;
+                    if (!context.mounted) return;
                     await Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => const ProgressReportScreen(),
@@ -2873,6 +2878,8 @@ class _HomePageState extends State<HomePage>
                         accent: AppColors.refinedSlate,
                         statusLabel: 'Procedure',
                         onTap: () async {
+                          if (!await requirePremiumAccess(context)) return;
+                          if (!context.mounted) return;
                           await Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => const ProgressReportScreen(
@@ -2891,6 +2898,8 @@ class _HomePageState extends State<HomePage>
                         accent: AppColors.mutedSage,
                         statusLabel: 'Skincare',
                         onTap: () async {
+                          if (!await requirePremiumAccess(context)) return;
+                          if (!context.mounted) return;
                           await Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => const ProgressReportScreen(
@@ -2909,6 +2918,8 @@ class _HomePageState extends State<HomePage>
                         accent: _clinicalSage,
                         statusLabel: 'AI Analysis',
                         onTap: () async {
+                          if (!await requirePremiumAccess(context)) return;
+                          if (!context.mounted) return;
                           await Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => const ProgressReportScreen(

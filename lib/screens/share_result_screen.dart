@@ -11,6 +11,7 @@ import '../utils/premium_recovery_service.dart';
 import '../widgets/report_share_helper.dart' as report_share;
 import '../widgets/clinical_section_header.dart';
 import '../widgets/report_disclaimer_notice.dart';
+import '../widgets/premium_feature_sheet.dart';
 
 class ShareResultScreen extends StatefulWidget {
   const ShareResultScreen({super.key});
@@ -85,6 +86,7 @@ class _ShareResultScreenState extends State<ShareResultScreen> {
   }
 
   Future<void> _shareSavedReport(ProfessionalReportRecord report) async {
+    if (!await requirePremiumAccess(context)) return;
     final decodedBytes = _decodePdfBytes(report.pdfBase64);
     final pdfFileName =
         report.pdfFileName ?? 'professional_report_${report.id}.pdf';

@@ -2,6 +2,43 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import '../utils/premium_access.dart';
+import 'paywall_screen.dart';
+
+class PremiumRouteGate extends StatefulWidget {
+  const PremiumRouteGate({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  State<PremiumRouteGate> createState() => _PremiumRouteGateState();
+}
+
+class _PremiumRouteGateState extends State<PremiumRouteGate> {
+  late final Future<bool> _premium = PremiumAccess.isPremiumUser();
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<bool>(
+      future: _premium,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        return snapshot.data! ? widget.child : const PaywallScreen();
+      },
+    );
+  }
+}
+
+Future<bool> requirePremiumAccess(BuildContext context) async {
+  final premium = await PremiumAccess.isPremiumUser();
+  if (!context.mounted) return false;
+  if (premium) return true;
+  await Navigator.of(context).pushNamed('/paywall');
+  return false;
+}
 
 /// Shows a polished "Premium feature" bottom sheet — used when a free user
 /// taps into a paywall-protected area (e.g. Peptide Tracker, AI Coach, etc.).
