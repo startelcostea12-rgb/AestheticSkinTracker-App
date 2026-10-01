@@ -26,6 +26,8 @@ import main
 
 REPO_ROOT = Path(__file__).resolve().parent
 MANIFEST_PATH = REPO_ROOT / "test_fixtures" / "metric_regression" / "manifest.json"
+# These four texture_smoothness v2 / wrinkle_load v2 bands were recorded from
+# current-code scores after 2f14aaa split the pore ROI from the face-skin mask.
 ST1_SKIP_REASON = (
     "st1 normalized crop loses the lower face; a wider crop moves pinned scores"
 )
