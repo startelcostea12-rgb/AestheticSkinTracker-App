@@ -113,6 +113,53 @@ const Set<String> aiSkinAnalysisCanonicalMetricKeys = <String>{
   'skin_hydration',
 };
 
+Map<String, dynamic> aiBaselineMetricMatrixFromPayload(
+  Map<String, dynamic> payload,
+) {
+  const canonicalKeys = <String>{
+    'a_p95',
+    'localized_redness',
+    'texture_smoothness',
+    'pigment_load',
+    'wrinkle_load',
+    'pore_visibility',
+    'breakout_activity',
+    'sebum_excess_oil_gloss',
+    'diffuse_flushing_erythema',
+    'skin_tone_radiance_evenness',
+    'glabellar_wrinkle_depth',
+    'pore_contraction_index',
+    'structural_firmness_elasticity',
+    'rosacea_severity',
+  };
+  final metrics = _dynamicMap(payload['metrics']);
+  final luxePayload = _dynamicMap(payload['luxePayload']);
+  final luxeMetrics = _dynamicMap(luxePayload['metrics']);
+  final matrixSources = <dynamic>[
+    payload['metric_matrix'],
+    metrics['metric_matrix'],
+    luxePayload['metric_matrix'],
+    luxeMetrics['metric_matrix'],
+  ];
+  final result = <String, dynamic>{};
+
+  for (final source in matrixSources) {
+    final matrix = _dynamicMap(source);
+    for (final entry in matrix.entries) {
+      final key = entry.key.toString().trim().toLowerCase();
+      if (!canonicalKeys.contains(key) || result.containsKey(key)) continue;
+      final value = entry.value;
+      final numeric = value is num
+          ? value.toDouble()
+          : double.tryParse(value.toString());
+      if (numeric == null || !numeric.isFinite || numeric < 0.0) continue;
+      result[key] = numeric;
+    }
+  }
+
+  return result;
+}
+
 Map<String, dynamic>? _asPlainMap(dynamic value) {
   if (value is Map<String, dynamic>) return value;
   if (value is Map) return Map<String, dynamic>.from(value);
@@ -5543,7 +5590,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     for (var i = 0; i < _priorFocusAreaScans.length; i++) {
       final scan = _priorFocusAreaScans[i];
       final hit = _firstUsableMetricFromScan(scan, metricKey, orderedKeys);
-      if (hit == null) continue;
+      if (hit == null || !hit.sourceKey.contains('metric_matrix')) continue;
 
       final candidate = (
         value: hit.value,
@@ -5579,71 +5626,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         _explicitLocalFollowUpFlag || _localHistoryCountForFocusArea >= 2;
     if (!isFollowUp || priorScan == null) return const <String, dynamic>{};
 
-    // Backend-first baseline: only canonical keys from persisted history.
-    const canonicalKeys = <String>{
-      'a_p95',
-      'localized_redness',
-      'texture_smoothness',
-      'pigment_load',
-      'wrinkle_load',
-      'pore_visibility',
-      'breakout_activity',
-      'sebum_excess_oil_gloss',
-      'diffuse_flushing_erythema',
-      'skin_tone_radiance_evenness',
-      'glabellar_wrinkle_depth',
-      'pore_contraction_index',
-      'structural_firmness_elasticity',
-      'rosacea_severity',
-    };
-    final canonicalBaseline = <String, dynamic>{};
-
-    void mergeSource(dynamic source) {
-      if (source is! Map) return;
-      final map = Map<String, dynamic>.from(source);
-      for (final entry in map.entries) {
-        final value = entry.value;
-        final numeric = value is num
-            ? value.toDouble()
-            : double.tryParse(value.toString());
-        if (numeric == null || !numeric.isFinite || numeric < 0.0) continue;
-        final rawKey = entry.key.toString().trim().toLowerCase();
-        // Baseline must come from canonical backend-style keys only.
-        if (!canonicalKeys.contains(rawKey)) continue;
-        canonicalBaseline[rawKey] = numeric;
-      }
-    }
-
     final rawPayload = priorScan.rawPayload ?? const <String, dynamic>{};
-    final nestedMetrics = rawPayload['metrics'];
-    final nestedLuxePayload = rawPayload['luxePayload'];
-
-    mergeSource(rawPayload['metric_matrix']);
-    mergeSource(rawPayload['baseline_metric_matrix']);
-    mergeSource(rawPayload['baseline']);
-    mergeSource(rawPayload['opencv_metrics']);
-    mergeSource(nestedMetrics);
-    if (nestedMetrics is Map) {
-      mergeSource(nestedMetrics['metric_matrix']);
-      mergeSource(nestedMetrics['baseline_metric_matrix']);
-      mergeSource(nestedMetrics['baseline']);
-      mergeSource(nestedMetrics['opencv_metrics']);
-    }
-    if (nestedLuxePayload is Map) {
-      mergeSource(nestedLuxePayload);
-      mergeSource(nestedLuxePayload['metric_matrix']);
-      mergeSource(nestedLuxePayload['baseline_metric_matrix']);
-      mergeSource(nestedLuxePayload['baseline']);
-      final luxeMetrics = nestedLuxePayload['metrics'];
-      mergeSource(luxeMetrics);
-      if (luxeMetrics is Map) {
-        mergeSource(luxeMetrics['metric_matrix']);
-        mergeSource(luxeMetrics['baseline_metric_matrix']);
-        mergeSource(luxeMetrics['baseline']);
-        mergeSource(luxeMetrics['opencv_metrics']);
-      }
-    }
-    mergeSource(priorScan.metrics);
+    final canonicalBaseline = aiBaselineMetricMatrixFromPayload(rawPayload);
 
     final metricAliasFallbacks = <String, List<String>>{
       // Keep empty alias lists to enforce canonical backend key-only baselines.

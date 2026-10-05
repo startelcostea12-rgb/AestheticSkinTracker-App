@@ -8,6 +8,25 @@ import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  group('AI baseline metric matrix source', () {
+    test('matrix value wins over a conflicting metrics value', () {
+      final baseline = aiBaselineMetricMatrixFromPayload({
+        'metric_matrix': {'texture_smoothness': 57.3},
+        'metrics': {'texture_smoothness': 25.23},
+      });
+
+      expect(baseline['texture_smoothness'], 57.3);
+    });
+
+    test('metrics-only value is not used as a baseline', () {
+      final baseline = aiBaselineMetricMatrixFromPayload({
+        'metrics': {'texture_smoothness': 25.23},
+      });
+
+      expect(baseline.containsKey('texture_smoothness'), isFalse);
+    });
+  });
+
   Map<String, dynamic> rednessPayload({
     required String cheekSide,
     required double p10,
