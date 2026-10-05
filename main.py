@@ -2383,8 +2383,10 @@ def _compute_zone_based_metrics(
     # nothing in it feeds back into any score.
     h, w = face_bgr.shape[:2]
     if h == 0 or w == 0:
+        # An empty crop measured nothing; None, not 0.0, so rosacea is
+        # omitted exactly as when zone extraction fails outright.
         return {
-            "rosacea_severity": 0.0,
+            "rosacea_severity": None,
             "under_eye_texture_density": 0.0,
             "under_eye_dark_circle_density": 0.0,
         }

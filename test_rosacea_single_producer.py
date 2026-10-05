@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest import mock
 
+import numpy as np
 import pytest
 
 import main
@@ -83,3 +84,26 @@ def test_post_emission_recomputation_is_gone():
 
 def test_rosacea_formula_version_bumped():
     assert main._metric_formula_version("rosacea_severity") == 3
+
+
+def test_empty_crop_returns_no_rosacea():
+    empty = np.zeros((0, 0, 3), dtype=np.uint8)
+    zone = main._compute_zone_based_metrics(
+        empty, np.zeros((0, 0), dtype=np.uint8), {}, np.zeros((0, 2), dtype=np.float32)
+    )
+    assert zone["rosacea_severity"] is None
+
+
+def test_empty_crop_omits_rosacea_from_pipeline(clear_face_input):
+    normalized, profile = clear_face_input
+    real_zone = main._compute_zone_based_metrics
+
+    def empty_crop_zone(face_bgr, skin_mask, regions, points, **kwargs):
+        return real_zone(face_bgr[:0, :0], skin_mask[:0, :0], regions, points, **kwargs)
+
+    with mock.patch.object(main, "_compute_zone_based_metrics", empty_crop_zone):
+        result = main.analyze_skin_patch(normalized, quality_profile=dict(profile))
+
+    assert result["metric_matrix"]["localized_redness"] > 0.0
+    assert "rosacea_severity" not in result["metric_matrix"]
+    assert result["omitted_metric_reasons"]["rosacea_severity"] == "non_usable_value"
