@@ -24,7 +24,10 @@ void main() {
     return MaterialApp(
       home: Scaffold(
         body: SingleChildScrollView(
-          child: LuxeReportLayout(rawPayload: payload, requireBackendVerdict: true),
+          child: LuxeReportLayout(
+            rawPayload: payload,
+            requireBackendVerdict: true,
+          ),
         ),
       ),
     );
@@ -53,24 +56,23 @@ void main() {
     };
   }
 
-  testWidgets(
-    'backend "stable" with no lock reason: no arrow, no percent',
-    (tester) async {
-      final payload = basePayload(
-        baseline: 22.3,
-        current: 27.9,
-        trendDeltas: {'pigment_load': 0.0},
-        trendStatus: {'pigment_load': 'stable'},
-      );
+  testWidgets('backend "stable" with no lock reason: no arrow, no percent', (
+    tester,
+  ) async {
+    final payload = basePayload(
+      baseline: 22.3,
+      current: 27.9,
+      trendDeltas: {'pigment_load': 0.0},
+      trendStatus: {'pigment_load': 'stable'},
+    );
 
-      await tester.pumpWidget(harness(payload));
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(harness(payload));
+    await tester.pumpAndSettle();
 
-      expect(find.text('Stable - change within tracking noise'), findsOneWidget);
-      expect(find.byIcon(Icons.trending_up_rounded), findsNothing);
-      expect(find.byIcon(Icons.trending_down_rounded), findsNothing);
-    },
-  );
+    expect(find.text('Stable - change within tracking noise'), findsOneWidget);
+    expect(find.byIcon(Icons.trending_up_rounded), findsNothing);
+    expect(find.byIcon(Icons.trending_down_rounded), findsNothing);
+  });
 
   testWidgets(
     'backend "insufficient_signal": not-enough-signal label, no percent',
@@ -216,6 +218,120 @@ void main() {
     expect(
       find.descendant(of: card, matching: find.textContaining('%')),
       findsNothing,
+    );
+  });
+
+  testWidgets('localized redness never renders a verdict', (tester) async {
+    final payload = basePayload(
+      baseline: 30.0,
+      current: 25.0,
+      metricKey: 'localized_redness',
+      trendStatus: {'localized_redness': 'improved'},
+      trendDeltas: {'localized_redness': -16.7},
+    );
+    await tester.pumpWidget(harness(payload));
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(const ValueKey('result_metric_localized_redness'));
+    expect(
+      find.descendant(of: card, matching: find.textContaining('25.0')),
+      findsWidgets,
+    );
+    expect(
+      find.descendant(of: card, matching: find.text('Improved')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: card, matching: find.text('Worsened')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: card, matching: find.textContaining('Stable')),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
+    'firmness hides a 3-point change but preserves a 5-point verdict',
+    (tester) async {
+      Future<void> pumpFirmness(double current) async {
+        await tester.pumpWidget(
+          harness(
+            basePayload(
+              baseline: 40.0,
+              current: current,
+              metricKey: 'structural_firmness_elasticity',
+              trendStatus: {'structural_firmness_elasticity': 'improved'},
+              trendDeltas: {'structural_firmness_elasticity': 12.5},
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await pumpFirmness(43.0);
+      var card = find.byKey(
+        const ValueKey('result_metric_structural_firmness_elasticity'),
+      );
+      expect(
+        find.descendant(of: card, matching: find.textContaining('43.0')),
+        findsWidgets,
+      );
+      expect(
+        find.descendant(of: card, matching: find.text('Improved')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.text('No verdict for this metric'),
+        ),
+        findsOneWidget,
+      );
+
+      await pumpFirmness(45.0);
+      card = find.byKey(
+        const ValueKey('result_metric_structural_firmness_elasticity'),
+      );
+      expect(
+        find.descendant(of: card, matching: find.textContaining('45.0')),
+        findsWidgets,
+      );
+      expect(
+        find.descendant(of: card, matching: find.text('Improved')),
+        findsWidgets,
+      );
+    },
+  );
+
+  testWidgets('pigment hides a one-point change verdict', (tester) async {
+    await tester.pumpWidget(
+      harness(
+        basePayload(
+          baseline: 40.0,
+          current: 41.0,
+          trendStatus: {'pigment_load': 'worsened'},
+          trendDeltas: {'pigment_load': 2.5},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(const ValueKey('result_metric_pigment_load'));
+    expect(
+      find.descendant(of: card, matching: find.textContaining('41.0')),
+      findsWidgets,
+    );
+    expect(
+      find.descendant(of: card, matching: find.text('Worsened')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.text('No verdict for this metric'),
+      ),
+      findsOneWidget,
     );
   });
 

@@ -205,16 +205,18 @@ void main() {
         final payload = <String, dynamic>{
           'is_follow_up': true,
           'local_history_count': 2,
-          'metric_matrix': <String, dynamic>{'pigment_load': 51.0},
-          'baseline_metric_matrix': <String, dynamic>{'pigment_load': 50.0},
+          'metric_matrix': <String, dynamic>{'texture_smoothness': 51.0},
+          'baseline_metric_matrix': <String, dynamic>{
+            'texture_smoothness': 50.0,
+          },
           'metric_extraction_paths': <String, dynamic>{
-            'pigment_load': 'primary_roi',
+            'texture_smoothness': 'primary_roi',
           },
           'baseline_metric_extraction_paths': <String, dynamic>{
-            'pigment_load': 'primary_roi',
+            'texture_smoothness': 'primary_roi',
           },
-          'trend_deltas': <String, dynamic>{'pigment_load': 0.0},
-          'trend_status': <String, dynamic>{'pigment_load': 'stable'},
+          'trend_deltas': <String, dynamic>{'texture_smoothness': 0.0},
+          'trend_status': <String, dynamic>{'texture_smoothness': 'stable'},
         };
 
         await tester.pumpWidget(

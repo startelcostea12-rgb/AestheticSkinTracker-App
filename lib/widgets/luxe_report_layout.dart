@@ -971,6 +971,30 @@ enum _HonestyStatus {
   noVerdict,
 }
 
+bool _hideResultVerdictForRepeatNoise({
+  required String metricKey,
+  required double baseline,
+  required double current,
+  required bool hasRealBaseline,
+  required bool hasComparableCurrentValue,
+  String? lockReason,
+}) {
+  if (!hasComparableCurrentValue || (lockReason?.trim().isNotEmpty ?? false)) {
+    return false;
+  }
+
+  switch (metricKey.trim().toLowerCase()) {
+    case 'localized_redness':
+      return true;
+    case 'structural_firmness_elasticity':
+      return hasRealBaseline && (current - baseline).abs() < 4.0;
+    case 'pigment_load':
+      return hasRealBaseline && (current - baseline).abs() < 2.0;
+    default:
+      return false;
+  }
+}
+
 class _HonestyAssessment {
   const _HonestyAssessment({
     required this.status,
@@ -1612,6 +1636,17 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         requireBackendVerdict: widget.requireBackendVerdict,
       );
       final metricName = metric.name;
+      if (_hideResultVerdictForRepeatNoise(
+        metricKey: metric.key,
+        baseline: metric.baselineScore,
+        current: metric.currentScore,
+        hasRealBaseline: assessment.hasRealBaseline,
+        hasComparableCurrentValue: metric.hasComparableCurrentValue,
+        lockReason: assessment.lockReason,
+      )) {
+        statements.add('$metricName: No verdict for this metric.');
+        continue;
+      }
       if (assessment.status == _HonestyStatus.noVerdict) {
         statements.add('$metricName: No verdict for this metric.');
         continue;
@@ -1999,7 +2034,7 @@ class _MetricCard extends StatelessWidget {
 
     final baselineValue = metric.baselineScore;
     final currentValue = metric.currentScore;
-    final assessment = _assessMetricHonesty(
+    final resolvedAssessment = _assessMetricHonesty(
       metricKey: metric.key,
       current: currentValue,
       baseline: baselineValue,
@@ -2015,6 +2050,22 @@ class _MetricCard extends StatelessWidget {
       backendTrendLockReason: metric.backendTrendLockReason,
       requireBackendVerdict: requireBackendVerdict,
     );
+    final assessment =
+        _hideResultVerdictForRepeatNoise(
+          metricKey: metric.key,
+          baseline: baselineValue,
+          current: currentValue,
+          hasRealBaseline: resolvedAssessment.hasRealBaseline,
+          hasComparableCurrentValue: metric.hasComparableCurrentValue,
+          lockReason: resolvedAssessment.lockReason,
+        )
+        ? _HonestyAssessment(
+            status: _HonestyStatus.noVerdict,
+            reason: 'within repeat noise',
+            deltaPct: null,
+            hasRealBaseline: resolvedAssessment.hasRealBaseline,
+          )
+        : resolvedAssessment;
     final isBodyMetric = LuxeMetricParser._isBodyMetricKey(metric.key);
     final directionalStatus =
         assessment.status == _HonestyStatus.improved ||
