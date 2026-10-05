@@ -17,13 +17,21 @@ void main() {
     test('Bv 0.92 vs 3.77 locks every compared metric', () {
       final result = lockTrendsForLightingMismatch(
         trendStatus: const <String, String>{
+          'localized_redness': 'improved',
+          'texture_smoothness': 'improved',
           'pigment_load': 'improved',
+          'skin_tone_radiance_evenness': 'improved',
+          'structural_firmness_elasticity': 'stable',
           'rosacea_severity': 'improved',
           'wrinkle_load': 'worsened',
           'pore_visibility': 'stable',
         },
         trendDeltas: const <String, double>{
+          'localized_redness': 25.0,
+          'texture_smoothness': 12.0,
           'pigment_load': 51.4,
+          'skin_tone_radiance_evenness': 15.0,
+          'structural_firmness_elasticity': 0.0,
           'rosacea_severity': 93.1,
           'wrinkle_load': -20.7,
           'pore_visibility': 0.0,
@@ -34,7 +42,11 @@ void main() {
       );
 
       for (final metric in const <String>[
+        'localized_redness',
+        'texture_smoothness',
         'pigment_load',
+        'skin_tone_radiance_evenness',
+        'structural_firmness_elasticity',
         'rosacea_severity',
         'wrinkle_load',
         'pore_visibility',

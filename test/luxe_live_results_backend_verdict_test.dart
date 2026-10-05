@@ -562,12 +562,23 @@ void main() {
   });
 
   testWidgets(
-    'opposite cheeks lock five result verdicts but keep their scores',
+    'opposite cheeks lock redness but keep other result verdicts and scores',
     (tester) async {
       await tester.pumpWidget(
         harness(cheekPairPayload(currentSide: 'left', baselineSide: 'right')),
       );
       await tester.pumpAndSettle();
+
+      final rednessCard = find.byKey(
+        const ValueKey('result_metric_localized_redness'),
+      );
+      expect(
+        find.descendant(
+          of: rednessCard,
+          matching: find.textContaining('Not comparable:'),
+        ),
+        findsOneWidget,
+      );
 
       for (final key in _cheekSensitiveMetricKeys) {
         final card = find.byKey(ValueKey('result_metric_$key'));
@@ -576,16 +587,25 @@ void main() {
             of: card,
             matching: find.textContaining('Not comparable:'),
           ),
-          findsOneWidget,
+          findsNothing,
         );
         expect(
           find.descendant(of: card, matching: find.textContaining('42.0')),
           findsWidgets,
         );
-        for (final verdict in const ['Improved', 'Worsened', 'Stable']) {
+        if (key == 'texture_smoothness') {
           expect(
-            find.descendant(of: card, matching: find.textContaining(verdict)),
-            findsNothing,
+            find.descendant(
+              of: card,
+              matching: find.text('Stable - change within tracking noise'),
+            ),
+            findsOneWidget,
+          );
+        }
+        if (key == 'pigment_load') {
+          expect(
+            find.descendant(of: card, matching: find.text('Improved')),
+            findsOneWidget,
           );
         }
       }

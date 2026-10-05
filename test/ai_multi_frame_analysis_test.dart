@@ -196,8 +196,8 @@ void main() {
       expect(result.trendStatus['localized_redness'], 'improved');
     });
 
-    test('different physical cheeks still trigger cheek mismatch', () {
-      const cheekSensitiveMetrics = [
+    test('different physical cheeks lock redness only', () {
+      const otherMetrics = [
         'texture_smoothness',
         'pigment_load',
         'pore_visibility',
@@ -231,10 +231,11 @@ void main() {
       expect(result.rednessLockReasons, contains('cheek_mismatch'));
       expect(result.trendStatus.containsKey('localized_redness'), isFalse);
       expect(result.trendDeltas.containsKey('localized_redness'), isFalse);
-      for (final metric in cheekSensitiveMetrics) {
-        expect(result.trendStatus.containsKey(metric), isFalse);
-        expect(result.trendDeltas.containsKey(metric), isFalse);
-        expect(result.trendLockReasons[metric], 'cheek_mismatch');
+      expect(result.trendLockReasons['localized_redness'], 'cheek_mismatch');
+      for (final metric in otherMetrics) {
+        expect(result.trendStatus[metric], 'improved');
+        expect(result.trendDeltas[metric], 12.0);
+        expect(result.trendLockReasons.containsKey(metric), isFalse);
       }
     });
 

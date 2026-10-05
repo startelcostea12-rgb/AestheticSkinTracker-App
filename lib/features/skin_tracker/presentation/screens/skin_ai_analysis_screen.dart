@@ -911,24 +911,6 @@ bool aiScanHasCheekSideMismatch({
       currentSide != baselineSide;
 }
 
-void _applyCheekMismatchDisplayLocks({
-  required Map<String, String> trendStatus,
-  required Map<String, double> trendDeltas,
-  required Map<String, String> trendLockReasons,
-}) {
-  for (final metric in const [
-    'texture_smoothness',
-    'pigment_load',
-    'pore_visibility',
-    'skin_tone_radiance_evenness',
-    'structural_firmness_elasticity',
-  ]) {
-    trendStatus.remove(metric);
-    trendDeltas.remove(metric);
-    trendLockReasons[metric] = 'cheek_mismatch';
-  }
-}
-
 ({
   Map<String, String> trendStatus,
   Map<String, double> trendDeltas,
@@ -948,16 +930,6 @@ downgradeRednessTrendForCaptureMismatch({
     final updatedStatus = Map<String, String>.from(trendStatus);
     final updatedDeltas = Map<String, double>.from(trendDeltas);
     final updatedLockReasons = Map<String, String>.from(trendLockReasons);
-    if (aiScanHasCheekSideMismatch(
-      currentPayload: currentPayload,
-      baselinePayload: baselinePayload,
-    )) {
-      _applyCheekMismatchDisplayLocks(
-        trendStatus: updatedStatus,
-        trendDeltas: updatedDeltas,
-        trendLockReasons: updatedLockReasons,
-      );
-    }
     return (
       trendStatus: updatedStatus,
       trendDeltas: updatedDeltas,
@@ -1042,14 +1014,6 @@ downgradeRednessTrendForCaptureMismatch({
         ? 'cast_mismatch'
         : 'path_mismatch';
   }
-  if (reasons.contains('cheek_mismatch')) {
-    _applyCheekMismatchDisplayLocks(
-      trendStatus: updatedStatus,
-      trendDeltas: updatedDeltas,
-      trendLockReasons: updatedLockReasons,
-    );
-  }
-
   return (
     trendStatus: updatedStatus,
     trendDeltas: updatedDeltas,

@@ -456,36 +456,43 @@ void main() {
       },
     );
 
-    test('exports cheek_mismatch for all other affected metric rows', () {
-      const cheekSensitiveMetrics = [
-        'texture_smoothness',
-        'pigment_load',
-        'pore_visibility',
-        'skin_tone_radiance_evenness',
-        'structural_firmness_elasticity',
-      ];
-      final scan = _aiScan(
-        'scan-cheek-mismatch',
-        rawPayload: <String, dynamic>{
-          'metric_matrix': <String, dynamic>{
-            for (final metric in cheekSensitiveMetrics) metric: 42.0,
+    test(
+      'exports cheek mismatch for redness without locking other metrics',
+      () {
+        const otherMetrics = [
+          'texture_smoothness',
+          'pigment_load',
+          'pore_visibility',
+          'skin_tone_radiance_evenness',
+          'structural_firmness_elasticity',
+        ];
+        final scan = _aiScan(
+          'scan-cheek-mismatch',
+          rawPayload: <String, dynamic>{
+            'metric_matrix': <String, dynamic>{
+              'localized_redness': 42.0,
+              for (final metric in otherMetrics) metric: 42.0,
+            },
+            'trend_lock_reasons': <String, dynamic>{
+              'localized_redness': 'cheek_mismatch',
+            },
           },
-          'trend_lock_reasons': <String, dynamic>{
-            for (final metric in cheekSensitiveMetrics)
-              metric: 'cheek_mismatch',
-          },
-        },
-      );
+        );
 
-      final row = _parse(
-        AiScanDataCsvExporter.format([scan], registryBaselineScanIds: const {}),
-      ).single;
+        final row = _parse(
+          AiScanDataCsvExporter.format([
+            scan,
+          ], registryBaselineScanIds: const {}),
+        ).single;
 
-      for (final metric in cheekSensitiveMetrics) {
-        expect(row['${metric}_value'], '42.0');
-        expect(row['${metric}_trend_lock_reason'], 'cheek_mismatch');
-      }
-    });
+        expect(row['localized_redness_value'], '42.0');
+        expect(row['localized_redness_trend_lock_reason'], 'cheek_mismatch');
+        for (final metric in otherMetrics) {
+          expect(row['${metric}_value'], '42.0');
+          expect(row['${metric}_trend_lock_reason'], isEmpty);
+        }
+      },
+    );
 
     test(
       'old scans leave only the new color columns and comparison id empty',
