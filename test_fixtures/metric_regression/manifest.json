@@ -24,8 +24,8 @@
         "diffuse_flushing_erythema": {"confirmed": 9.6, "min": 4.6, "max": 14.6},
         "rosacea_severity": {"confirmed": 3.0, "min": 0.0, "max": 8.0},
         "sebum_excess_oil_gloss": {"confirmed": 3.4, "min": 0.0, "max": 8.4},
-        "under_eye_texture_density": {"confirmed": 21.0, "min": 16.0, "max": 26.0},
-        "under_eye_dark_circle_density": {"confirmed": 17.8, "min": 12.8, "max": 22.8},
+        "under_eye_texture_density": {"expected_missing": true, "omit_reason": "under_eye_roi_too_small", "note": "Shared under-eye mask is ~1036 px here, below MIN_USABLE_TZONE_PIXELS (1500). Previously confirmed 21.0."},
+        "under_eye_dark_circle_density": {"expected_missing": true, "omit_reason": "under_eye_roi_too_small", "note": "Shared under-eye mask is ~1036 px here, below MIN_USABLE_TZONE_PIXELS (1500). Previously confirmed 17.8."},
         "texture_smoothness": {"confirmed": 63.6, "min": 58.2, "max": 69.0},
         "glabellar_wrinkle_depth": {"confirmed": 15.1, "min": 8.7, "max": 21.5},
         "wrinkle_load": {"confirmed": 10.6, "min": 6.9, "max": 14.3}

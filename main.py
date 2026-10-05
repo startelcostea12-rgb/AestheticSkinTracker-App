@@ -3935,6 +3935,11 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     # GLABELLAR_WIDTH_QUANTIZATION_FIX comments in
     # _compute_structural_opencv_metrics.
     "glabellar_wrinkle_depth": 2,
+    # v2: both are omitted when their shared under-eye mask is below
+    # MIN_USABLE_TZONE_PIXELS, so a previously emitted value can be absent.
+    # Neither formula changed.
+    "under_eye_texture_density": 2,
+    "under_eye_dark_circle_density": 2,
 }
 
 
@@ -6502,6 +6507,11 @@ def analyze_skin_patch(
                 "medium",
             )
 
+    under_eye_mask_metrics = {
+        "under_eye_texture_density",
+        "under_eye_dark_circle_density",
+    }
+
     pore_visibility_detected = "pore_visibility" in canonical_metric_matrix
     metric_matrix: Dict[str, Any] = {}
     emitted_metric_keys: list[str] = []
@@ -6540,6 +6550,18 @@ def analyze_skin_patch(
             metric_status[metric_key] = "computed"
             omitted_metric_reasons.pop(metric_key, None)
             fallback_reason.setdefault(metric_key, forced_metric_paths.get(metric_key, "fallback"))
+            continue
+
+        # Both under-eye metrics read the same under-eye mask. Below the
+        # T-zone's usable-region floor it is a shadow pocket (~991 px on
+        # the clear-face fixture), not a measurement, so omit both.
+        if (
+            metric_key in under_eye_mask_metrics
+            and under_eye_pixels < MIN_USABLE_TZONE_PIXELS
+        ):
+            metric_status.setdefault(metric_key, "unavailable")
+            omitted_metric_reasons[metric_key] = "under_eye_roi_too_small"
+            fallback_reason.setdefault(metric_key, "under_eye_roi_too_small")
             continue
 
         raw_value = candidate_values.get(metric_key)
