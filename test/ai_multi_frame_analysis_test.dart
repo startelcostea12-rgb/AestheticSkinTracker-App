@@ -207,11 +207,11 @@ void main() {
       final result = downgradeRednessTrendForCaptureMismatch(
         trendStatus: <String, String>{
           'localized_redness': 'improved',
-          for (final metric in cheekSensitiveMetrics) metric: 'improved',
+          for (final metric in otherMetrics) metric: 'improved',
         },
         trendDeltas: <String, double>{
           'localized_redness': 12.0,
-          for (final metric in cheekSensitiveMetrics) metric: 12.0,
+          for (final metric in otherMetrics) metric: 12.0,
         },
         trendLockReasons: const {},
         baselinePayload: rednessPayload(
