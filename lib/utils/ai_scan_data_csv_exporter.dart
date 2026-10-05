@@ -36,6 +36,7 @@ class AiScanDataCsvExporter {
     'comparison_baseline_source',
     'image_width',
     'image_height',
+    'a_p95',
     'image_quality.lighting_mean_l',
     'image_quality.lighting_std_l',
     'image_quality.chroma_cast',
@@ -56,6 +57,7 @@ class AiScanDataCsvExporter {
     'image_quality.wb_a_adjustment_post_clip',
     'image_quality.wb_b_adjustment_post_clip',
     'image_quality.redness_branch',
+    'image_quality.redness_reference_source',
     'image_quality.redness_cheek_side',
     'image_quality.cheek_side_convention',
     'image_quality.redness_both_cheeks_in_dead_zone',
@@ -206,7 +208,12 @@ class AiScanDataCsvExporter {
           scan.sourceImageHeight ??
           _storedValue(payload, const ['source_image_height']),
       ...flattenedQuality,
+      'a_p95': _payloadMap(payload, 'metric_matrix')['a_p95'],
     };
+    values.putIfAbsent(
+      'image_quality.redness_reference_source',
+      () => _storedValue(payload, const ['redness_reference_source']),
+    );
 
     final matrix = _payloadMap(payload, 'metric_matrix');
     final ranges = _nestedPayloadMap(

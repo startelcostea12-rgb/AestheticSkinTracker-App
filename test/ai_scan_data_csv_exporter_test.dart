@@ -65,6 +65,55 @@ void main() {
       expect(row['rosacea_severity_value'], '3.0');
     });
 
+    test('exports a_p95 verbatim and leaves missing values empty', () {
+      final scans = [
+        _aiScan(
+          'scan-with-a-p95',
+          rawPayload: const <String, dynamic>{
+            'metric_matrix': <String, dynamic>{'a_p95': 128.25},
+          },
+        ),
+        _aiScan(
+          'scan-without-a-p95',
+          rawPayload: const <String, dynamic>{
+            'metric_matrix': <String, dynamic>{'localized_redness': 14.0},
+          },
+        ),
+      ];
+
+      final csv = AiScanDataCsvExporter.format(
+        scans,
+        registryBaselineScanIds: const {},
+      );
+      final header = csv.split('\r\n').first.split(',');
+      final rows = _parse(csv);
+      final byId = {for (final row in rows) row['scan_id']: row};
+
+      expect(header.where((column) => column == 'a_p95'), hasLength(1));
+      expect(byId['scan-with-a-p95']!['a_p95'], '128.25');
+      expect(byId['scan-without-a-p95']!['a_p95'], isEmpty);
+    });
+
+    test('exports a saved redness reference source when present', () {
+      final scan = _aiScan(
+        'scan-reference-source',
+        rawPayload: const <String, dynamic>{
+          'metric_matrix': <String, dynamic>{},
+          'image_quality': <String, dynamic>{
+            'redness_branch': 'baseline_p95_anchor',
+            'redness_reference_source': 'personal_p95',
+          },
+        },
+      );
+
+      final row = _parse(
+        AiScanDataCsvExporter.format([scan], registryBaselineScanIds: const {}),
+      ).single;
+
+      expect(row['image_quality.redness_branch'], 'baseline_p95_anchor');
+      expect(row['image_quality.redness_reference_source'], 'personal_p95');
+    });
+
     test('exports real extraction paths verbatim', () {
       final scan = _aiScan(
         'scan-paths',
