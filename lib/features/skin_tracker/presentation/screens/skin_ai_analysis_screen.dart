@@ -829,42 +829,80 @@ List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
       'frame_number': index + 1,
       'cheek_side': imageQuality['redness_cheek_side'],
       'cheek_side_convention': imageQuality['cheek_side_convention'],
-        'redness_both_cheeks_in_dead_zone':
+      'redness_both_cheeks_in_dead_zone':
           imageQuality['redness_both_cheeks_in_dead_zone'],
       'mask_pixel_count': imageQuality['redness_cheek_roi_pixels'],
       'cheek_p95_a_after_wb': imageQuality['redness_cheek_p95_a_after_wb'],
       'cheek_p10_a_after_wb': imageQuality['redness_cheek_p10_a_after_wb'],
       'cheek_p10_a_before_wb': imageQuality['redness_cheek_p10_a_before_wb'],
       'localized_redness': metricMatrix['localized_redness'],
-        'face_skin_pixels': imageQuality['face_skin_pixels'],
-        'pore_roi_pixels': imageQuality['pore_roi_pixels'],
-        'u_zone_pixels': imageQuality['u_zone_pixels'],
-        'localized_redness_mask_kind':
+      'face_skin_pixels': imageQuality['face_skin_pixels'],
+      'pore_roi_pixels': imageQuality['pore_roi_pixels'],
+      'u_zone_pixels': imageQuality['u_zone_pixels'],
+      'localized_redness_mask_kind':
           imageQuality['localized_redness_mask_kind'],
-        'localized_redness_mask_pixels':
+      'localized_redness_mask_pixels':
           imageQuality['localized_redness_mask_pixels'],
-        'texture_smoothness_mask_kind':
+      'texture_smoothness_mask_kind':
           imageQuality['texture_smoothness_mask_kind'],
-        'texture_smoothness_mask_pixels':
+      'texture_smoothness_mask_pixels':
           imageQuality['texture_smoothness_mask_pixels'],
-        'pigment_load_mask_kind': imageQuality['pigment_load_mask_kind'],
-        'pigment_load_mask_pixels': imageQuality['pigment_load_mask_pixels'],
-        'pore_visibility_mask_kind': imageQuality['pore_visibility_mask_kind'],
-        'pore_visibility_mask_pixels':
+      'pigment_load_mask_kind': imageQuality['pigment_load_mask_kind'],
+      'pigment_load_mask_pixels': imageQuality['pigment_load_mask_pixels'],
+      'pore_visibility_mask_kind': imageQuality['pore_visibility_mask_kind'],
+      'pore_visibility_mask_pixels':
           imageQuality['pore_visibility_mask_pixels'],
-        'pore_visibility_extraction_path':
+      'pore_visibility_extraction_path':
           metricExtractionPaths['pore_visibility'],
-        'chin_pore_visibility_mask_kind':
+      'chin_pore_visibility_mask_kind':
           imageQuality['chin_pore_visibility_mask_kind'],
-        'chin_pore_visibility_mask_pixels':
+      'chin_pore_visibility_mask_pixels':
           imageQuality['chin_pore_visibility_mask_pixels'],
-        'diffuse_flushing_erythema_mask_kind':
+      'diffuse_flushing_erythema_mask_kind':
           imageQuality['diffuse_flushing_erythema_mask_kind'],
-        'diffuse_flushing_erythema_mask_pixels':
+      'diffuse_flushing_erythema_mask_pixels':
           imageQuality['diffuse_flushing_erythema_mask_pixels'],
       ...exposure.toJson(),
     };
   }, growable: false);
+}
+
+bool aiScanHasCheekSideMismatch({
+  required Map<String, dynamic> currentPayload,
+  required Map<String, dynamic> baselinePayload,
+}) {
+  Map<String, dynamic> imageQuality(Map<String, dynamic> payload) {
+    final direct = _dynamicMap(payload['image_quality']);
+    if (direct.isNotEmpty) return direct;
+    return _dynamicMap(_dynamicMap(payload['metrics'])['image_quality']);
+  }
+
+  final currentQuality = imageQuality(currentPayload);
+  final baselineQuality = imageQuality(baselinePayload);
+  final currentSide = currentQuality['redness_cheek_side']?.toString().trim();
+  final storedBaselineSide = baselineQuality['redness_cheek_side']
+      ?.toString()
+      .trim();
+  final baselineConvention = baselineQuality['cheek_side_convention']
+      ?.toString()
+      .trim();
+  final baselineSide =
+      baselineConvention == cheekSideConventionSubjectAnatomical
+      ? storedBaselineSide
+      : switch (storedBaselineSide) {
+          'left' => 'right',
+          'right' => 'left',
+          _ => storedBaselineSide,
+        };
+  final sideIndependent =
+      currentQuality['redness_both_cheeks_in_dead_zone'] == true ||
+      baselineQuality['redness_both_cheeks_in_dead_zone'] == true;
+  return !sideIndependent &&
+      currentSide != null &&
+      currentSide.isNotEmpty &&
+      baselineSide != null &&
+      baselineSide.isNotEmpty &&
+      currentSide != baselineSide;
 }
 
 ({
@@ -901,40 +939,24 @@ downgradeRednessTrendForCaptureMismatch({
     final raw = payload[aiScanPerFrameDiagnosticsKey];
     if (raw is! List) return const <double>[];
     return raw
-        .map((frame) => _parseFiniteDouble(_dynamicMap(frame)['cheek_p95_a_after_wb']))
+        .map(
+          (frame) =>
+              _parseFiniteDouble(_dynamicMap(frame)['cheek_p95_a_after_wb']),
+        )
         .whereType<double>()
         .toList(growable: false);
   }
 
   final currentQuality = imageQuality(currentPayload);
   final baselineQuality = imageQuality(baselinePayload);
-  final currentSide = currentQuality['redness_cheek_side']?.toString().trim();
-    final storedBaselineSide = baselineQuality['redness_cheek_side']
-      ?.toString()
-      .trim();
-    final baselineConvention = baselineQuality['cheek_side_convention']
-      ?.toString()
-      .trim();
-    final baselineSide = baselineConvention == cheekSideConventionSubjectAnatomical
-      ? storedBaselineSide
-      : switch (storedBaselineSide) {
-        'left' => 'right',
-        'right' => 'left',
-        _ => storedBaselineSide,
-      };
-  final sideIndependent =
-      currentQuality['redness_both_cheeks_in_dead_zone'] == true ||
-      baselineQuality['redness_both_cheeks_in_dead_zone'] == true;
   final reasons = <String>{};
   if (existingRednessLockReason == 'path_mismatch') {
     reasons.add('path_mismatch');
   }
-  if (!sideIndependent &&
-      currentSide != null &&
-      currentSide.isNotEmpty &&
-      baselineSide != null &&
-      baselineSide.isNotEmpty &&
-      currentSide != baselineSide) {
+  if (aiScanHasCheekSideMismatch(
+    currentPayload: currentPayload,
+    baselinePayload: baselinePayload,
+  )) {
     reasons.add('cheek_mismatch');
   }
 
@@ -2319,33 +2341,50 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           backendResponse['trend_noise_floor_excluded_multiplier'],
         ),
       );
-        final rednessAdjustedTrend = downgradeRednessTrendForCaptureMismatch(
+      final rednessAdjustedTrend = downgradeRednessTrendForCaptureMismatch(
         trendStatus: noiseFloorAdjustedTrend.trendStatus,
         trendDeltas: noiseFloorAdjustedTrend.trendDeltas,
         trendLockReasons: noiseFloorAdjustedTrend.trendLockReasons,
         currentPayload: backendResponse,
         baselinePayload:
-          _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
-        );
-        final lightingAdjustedTrend = lockTrendsForLightingMismatch(
-          trendStatus: rednessAdjustedTrend.trendStatus,
-          trendDeltas: rednessAdjustedTrend.trendDeltas,
-          trendLockReasons: rednessAdjustedTrend.trendLockReasons,
-          currentPayload: backendResponse,
-          baselinePayload:
             _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
-        );
-        final unlockedVerdictsOnly = clearLockedTrendVerdicts(
-          trendStatus: lightingAdjustedTrend.trendStatus,
-          trendDeltas: lightingAdjustedTrend.trendDeltas,
-          trendLockReasons: lightingAdjustedTrend.trendLockReasons,
-        );
-        final Map<String, double> serverTrendDeltas =
+      );
+      final lightingAdjustedTrend = lockTrendsForLightingMismatch(
+        trendStatus: rednessAdjustedTrend.trendStatus,
+        trendDeltas: rednessAdjustedTrend.trendDeltas,
+        trendLockReasons: rednessAdjustedTrend.trendLockReasons,
+        currentPayload: backendResponse,
+        baselinePayload:
+            _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
+      );
+      final unlockedVerdictsOnly = clearLockedTrendVerdicts(
+        trendStatus: lightingAdjustedTrend.trendStatus,
+        trendDeltas: lightingAdjustedTrend.trendDeltas,
+        trendLockReasons: lightingAdjustedTrend.trendLockReasons,
+      );
+      final Map<String, double> serverTrendDeltas =
           unlockedVerdictsOnly.trendDeltas;
-        final Map<String, String> serverTrendStatus =
+      final Map<String, String> serverTrendStatus =
           unlockedVerdictsOnly.trendStatus;
-        final Map<String, String> serverTrendLockReasons =
+      final Map<String, String> serverTrendLockReasons =
           unlockedVerdictsOnly.trendLockReasons;
+      if (aiScanHasCheekSideMismatch(
+        currentPayload: backendResponse,
+        baselinePayload:
+            _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
+      )) {
+        for (final metric in const [
+          'texture_smoothness',
+          'pigment_load',
+          'pore_visibility',
+          'skin_tone_radiance_evenness',
+          'structural_firmness_elasticity',
+        ]) {
+          serverTrendStatus.remove(metric);
+          serverTrendDeltas.remove(metric);
+          serverTrendLockReasons[metric] = 'cheek_mismatch';
+        }
+      }
       // Write the (possibly downgraded) trend fields back into
       // backendResponse -- both locations _mergePayloadForPersistence reads
       // from -- so what gets persisted to ScanHistoryEntry.rawPayload

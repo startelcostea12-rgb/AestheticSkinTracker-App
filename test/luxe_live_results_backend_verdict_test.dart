@@ -1,7 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
+
+const _cheekSensitiveMetricKeys = <String>[
+  'texture_smoothness',
+  'pigment_load',
+  'pore_visibility',
+  'skin_tone_radiance_evenness',
+  'structural_firmness_elasticity',
+];
 
 /// Covers the fix for the live AI Skin Analysis results screen ignoring the
 /// backend's own trend verdict: _buildLuxeResultsPayload used to include
@@ -53,6 +62,63 @@ void main() {
       if (trendDeltas != null) 'trend_deltas': trendDeltas,
       if (trendStatus != null) 'trend_status': trendStatus,
       if (trendLockReasons != null) 'trend_lock_reasons': trendLockReasons,
+    };
+  }
+
+  Map<String, dynamic> cheekPairPayload({
+    required String currentSide,
+    required String baselineSide,
+  }) {
+    final metricMatrix = <String, dynamic>{
+      'localized_redness': 24.0,
+      for (final key in _cheekSensitiveMetricKeys) key: 42.0,
+    };
+    final baselineMetricMatrix = <String, dynamic>{
+      'localized_redness': 30.0,
+      for (final key in _cheekSensitiveMetricKeys) key: 40.0,
+    };
+    final trendStatus = <String, String>{
+      'localized_redness': 'improved',
+      for (final key in _cheekSensitiveMetricKeys) key: 'improved',
+      'texture_smoothness': 'stable',
+    };
+    final trendDeltas = <String, double>{
+      'localized_redness': -20.0,
+      for (final key in _cheekSensitiveMetricKeys) key: 5.0,
+      'texture_smoothness': 0.0,
+    };
+    Map<String, dynamic> imagePayload(String side) => <String, dynamic>{
+      'image_quality': <String, dynamic>{
+        'redness_cheek_side': side,
+        'cheek_side_convention': cheekSideConventionSubjectAnatomical,
+        'redness_cheek_p10_a_after_wb': 5.0,
+        'redness_cheek_p95_a_after_wb': 10.0,
+      },
+      aiScanPerFrameDiagnosticsKey: <Map<String, dynamic>>[
+        for (var frame = 0; frame < 3; frame++) {'cheek_p95_a_after_wb': 10.0},
+      ],
+    };
+    final trends = downgradeRednessTrendForCaptureMismatch(
+      trendStatus: trendStatus,
+      trendDeltas: trendDeltas,
+      trendLockReasons: const {},
+      currentPayload: imagePayload(currentSide),
+      baselinePayload: imagePayload(baselineSide),
+    );
+    return <String, dynamic>{
+      'is_follow_up': true,
+      'local_history_count': 2,
+      'metric_matrix': metricMatrix,
+      'baseline_metric_matrix': baselineMetricMatrix,
+      'metric_extraction_paths': <String, dynamic>{
+        for (final key in metricMatrix.keys) key: 'primary_roi',
+      },
+      'baseline_metric_extraction_paths': <String, dynamic>{
+        for (final key in metricMatrix.keys) key: 'primary_roi',
+      },
+      'trend_status': trends.trendStatus,
+      'trend_deltas': trends.trendDeltas,
+      'trend_lock_reasons': trends.trendLockReasons,
     };
   }
 
@@ -332,6 +398,55 @@ void main() {
         matching: find.text('No verdict for this metric'),
       ),
       findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'opposite cheeks lock five result verdicts but keep their scores',
+    (tester) async {
+      await tester.pumpWidget(
+        harness(cheekPairPayload(currentSide: 'left', baselineSide: 'right')),
+      );
+      await tester.pumpAndSettle();
+
+      for (final key in _cheekSensitiveMetricKeys) {
+        final card = find.byKey(ValueKey('result_metric_$key'));
+        expect(
+          find.descendant(
+            of: card,
+            matching: find.textContaining('Not comparable:'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: card, matching: find.textContaining('42.0')),
+          findsWidgets,
+        );
+        for (final verdict in const ['Improved', 'Worsened', 'Stable']) {
+          expect(
+            find.descendant(of: card, matching: find.textContaining(verdict)),
+            findsNothing,
+          );
+        }
+      }
+    },
+  );
+
+  testWidgets('same cheeks retain the Stable texture verdict', (tester) async {
+    await tester.pumpWidget(
+      harness(cheekPairPayload(currentSide: 'left', baselineSide: 'left')),
+    );
+    await tester.pumpAndSettle();
+
+    final textureCard = find.byKey(
+      const ValueKey('result_metric_texture_smoothness'),
+    );
+    expect(
+      find.descendant(
+        of: textureCard,
+        matching: find.text('Stable - change within tracking noise'),
+      ),
+      findsWidgets,
     );
   });
 

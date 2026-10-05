@@ -35,6 +35,59 @@ void main() {
   };
 
   group('redness capture mismatch trend lock', () {
+    test(
+      'cheek-side matcher requires two known, different physical cheeks',
+      () {
+        final baseline = rednessPayload(
+          cheekSide: 'right',
+          frameP95: const [10.0, 10.0],
+          p10: 4.0,
+          p95: 10.0,
+        );
+        expect(
+          aiScanHasCheekSideMismatch(
+            currentPayload: rednessPayload(
+              cheekSide: 'left',
+              frameP95: const [10.0, 10.0],
+              p10: 4.0,
+              p95: 10.0,
+            ),
+            baselinePayload: baseline,
+          ),
+          isTrue,
+        );
+        expect(
+          aiScanHasCheekSideMismatch(
+            currentPayload: rednessPayload(
+              cheekSide: 'left',
+              frameP95: const [10.0, 10.0],
+              p10: 4.0,
+              p95: 10.0,
+            ),
+            baselinePayload: rednessPayload(
+              cheekSide: 'left',
+              frameP95: const [10.0, 10.0],
+              p10: 4.0,
+              p95: 10.0,
+            ),
+          ),
+          isFalse,
+        );
+        expect(
+          aiScanHasCheekSideMismatch(
+            currentPayload: rednessPayload(
+              cheekSide: '',
+              frameP95: const [10.0, 10.0],
+              p10: 4.0,
+              p95: 10.0,
+            ),
+            baselinePayload: baseline,
+          ),
+          isFalse,
+        );
+      },
+    );
+
     test('does not create a lock when no redness trend verdict exists', () {
       final result = downgradeRednessTrendForCaptureMismatch(
         trendStatus: const {},
@@ -89,8 +142,14 @@ void main() {
     test('same cheek and deltas inside the larger p95 range may trend', () {
       expect(preservedAiExtractionPath('cheek_primary'), 'cheek_primary');
       final result = downgradeRednessTrendForCaptureMismatch(
-        trendStatus: const {'localized_redness': 'improved'},
-        trendDeltas: const {'localized_redness': 12.0},
+        trendStatus: const {
+          'localized_redness': 'improved',
+          'texture_smoothness': 'stable',
+        },
+        trendDeltas: const {
+          'localized_redness': 12.0,
+          'texture_smoothness': 0.0,
+        },
         trendLockReasons: const {},
         baselinePayload: rednessPayload(
           cheekSide: 'left',
@@ -108,6 +167,7 @@ void main() {
 
       expect(result.rednessLockReasons, isEmpty);
       expect(result.trendStatus['localized_redness'], 'improved');
+      expect(result.trendStatus['texture_smoothness'], 'stable');
       expect(result.trendDeltas['localized_redness'], 12.0);
       expect(result.trendLockReasons, isEmpty);
     });
@@ -137,13 +197,25 @@ void main() {
     });
 
     test('different physical cheeks still trigger cheek mismatch', () {
+      const cheekSensitiveMetrics = [
+        'texture_smoothness',
+        'pigment_load',
+        'pore_visibility',
+        'skin_tone_radiance_evenness',
+        'structural_firmness_elasticity',
+      ];
       final result = downgradeRednessTrendForCaptureMismatch(
-        trendStatus: const {'localized_redness': 'improved'},
-        trendDeltas: const {'localized_redness': 12.0},
+        trendStatus: <String, String>{
+          'localized_redness': 'improved',
+          for (final metric in cheekSensitiveMetrics) metric: 'improved',
+        },
+        trendDeltas: <String, double>{
+          'localized_redness': 12.0,
+          for (final metric in cheekSensitiveMetrics) metric: 12.0,
+        },
         trendLockReasons: const {},
         baselinePayload: rednessPayload(
-          cheekSide: 'left',
-          cheekSideConvention: null,
+          cheekSide: 'right',
           frameP95: const [10.0, 12.0, 11.0],
           p10: 4.0,
           p95: 11.0,
@@ -158,6 +230,12 @@ void main() {
 
       expect(result.rednessLockReasons, contains('cheek_mismatch'));
       expect(result.trendStatus.containsKey('localized_redness'), isFalse);
+      expect(result.trendDeltas.containsKey('localized_redness'), isFalse);
+      for (final metric in cheekSensitiveMetrics) {
+        expect(result.trendStatus.containsKey(metric), isFalse);
+        expect(result.trendDeltas.containsKey(metric), isFalse);
+        expect(result.trendLockReasons[metric], 'cheek_mismatch');
+      }
     });
 
     test('side-independent redness skips cheek mismatch', () {

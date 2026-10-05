@@ -11,9 +11,7 @@ List<Map<String, String>> _parse(String csv) {
   final columns = rows.first.split(',');
   return [
     for (final row in rows.skip(1))
-      {
-        for (var i = 0; i < columns.length; i++) columns[i]: row.split(',')[i],
-      },
+      {for (var i = 0; i < columns.length; i++) columns[i]: row.split(',')[i]},
   ];
 }
 
@@ -189,10 +187,9 @@ void main() {
         metrics: const <String, double>{'localized_redness': 12},
       );
 
-      final rows = AiScanDataCsvExporter.format(
-        [scan],
-        registryBaselineScanIds: const {},
-      ).split('\r\n');
+      final rows = AiScanDataCsvExporter.format([
+        scan,
+      ], registryBaselineScanIds: const {}).split('\r\n');
 
       expect(rows, hasLength(1));
       expect(rows.single, contains('scan_id'));
@@ -234,10 +231,9 @@ void main() {
         },
       );
 
-      final csv = AiScanDataCsvExporter.format(
-        [scan],
-        registryBaselineScanIds: const {},
-      );
+      final csv = AiScanDataCsvExporter.format([
+        scan,
+      ], registryBaselineScanIds: const {});
       final header = csv.split('\r\n').first.split(',');
       for (final column in AiScanDataCsvExporter.colorDiagnosticColumns) {
         expect(
@@ -254,14 +250,8 @@ void main() {
       expect(row['image_quality.whole_image_mean_b_after_wb'], '10.5');
       expect(row['image_quality.redness_branch'], 'within_cheek_spread');
       expect(row['image_quality.redness_cheek_side'], 'right');
-      expect(
-        row['image_quality.cheek_side_convention'],
-        'subject_anatomical',
-      );
-      expect(
-        row['image_quality.redness_both_cheeks_in_dead_zone'],
-        'true',
-      );
+      expect(row['image_quality.cheek_side_convention'], 'subject_anatomical');
+      expect(row['image_quality.redness_both_cheeks_in_dead_zone'], 'true');
       expect(row['image_quality.redness_cheek_roi_pixels'], '2833');
       expect(row['image_quality.redness_cheek_mean_a_after_wb'], '26.9');
       expect(row['image_quality.redness_cheek_mean_b_after_wb'], '8.18');
@@ -340,10 +330,9 @@ void main() {
         },
       );
 
-      final csv = AiScanDataCsvExporter.format(
-        [scan],
-        registryBaselineScanIds: const {},
-      );
+      final csv = AiScanDataCsvExporter.format([
+        scan,
+      ], registryBaselineScanIds: const {});
       final header = csv.split('\r\n').first.split(',');
       final row = _parse(csv).single;
 
@@ -378,10 +367,7 @@ void main() {
       expect(row['frame1_chin_pore_visibility_mask_kind'], 'chin_pore');
       expect(row['frame1_chin_pore_visibility_mask_pixels'], '7100');
       expect(header, contains('chin_pore_visibility_value'));
-      expect(
-        row['frame1_diffuse_flushing_erythema_mask_pixels'],
-        '10200',
-      );
+      expect(row['frame1_diffuse_flushing_erythema_mask_pixels'], '10200');
       expect(row['frame2_localized_redness'], isEmpty);
       expect(row['frame2_brightness_value'], isEmpty);
       expect(row['frame3_iso'], isEmpty);
@@ -420,6 +406,37 @@ void main() {
         }
       },
     );
+
+    test('exports cheek_mismatch for all other affected metric rows', () {
+      const cheekSensitiveMetrics = [
+        'texture_smoothness',
+        'pigment_load',
+        'pore_visibility',
+        'skin_tone_radiance_evenness',
+        'structural_firmness_elasticity',
+      ];
+      final scan = _aiScan(
+        'scan-cheek-mismatch',
+        rawPayload: <String, dynamic>{
+          'metric_matrix': <String, dynamic>{
+            for (final metric in cheekSensitiveMetrics) metric: 42.0,
+          },
+          'trend_lock_reasons': <String, dynamic>{
+            for (final metric in cheekSensitiveMetrics)
+              metric: 'cheek_mismatch',
+          },
+        },
+      );
+
+      final row = _parse(
+        AiScanDataCsvExporter.format([scan], registryBaselineScanIds: const {}),
+      ).single;
+
+      for (final metric in cheekSensitiveMetrics) {
+        expect(row['${metric}_value'], '42.0');
+        expect(row['${metric}_trend_lock_reason'], 'cheek_mismatch');
+      }
+    });
 
     test(
       'old scans leave only the new color columns and comparison id empty',
@@ -489,10 +506,10 @@ void main() {
       );
 
       final rows = _parse(
-        AiScanDataCsvExporter.format(
-          [legacy, recorded],
-          registryBaselineScanIds: const {},
-        ),
+        AiScanDataCsvExporter.format([
+          legacy,
+          recorded,
+        ], registryBaselineScanIds: const {}),
       );
       final byId = {for (final row in rows) row['scan_id']: row};
 
