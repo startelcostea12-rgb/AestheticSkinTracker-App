@@ -8,6 +8,7 @@ import 'package:aesthetic_skin_tracker/features/procedures/presentation/procedur
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/widgets/before_after_split_slider.dart';
 import 'package:aesthetic_skin_tracker/widgets/image_crop_dialog.dart';
+import 'package:aesthetic_skin_tracker/widgets/skin_heatmap_overlay.dart';
 
 ScanHistoryEntry _scan({
   required Map<String, dynamic> rawPayload,
@@ -40,10 +41,7 @@ Map<String, dynamic> _zonePayload({
     'zone_analysis': {
       'left_cheek': {
         'crop': crop,
-        'metrics': {
-          'localized_redness': 44.0,
-          'pigment_load': 31.0,
-        },
+        'metrics': {'localized_redness': 44.0, 'pigment_load': 31.0},
       },
       if (includeUnsupported)
         'whole_face': {
@@ -55,39 +53,85 @@ Map<String, dynamic> _zonePayload({
 }
 
 void main() {
-  test('supported zones and supported metrics render from persisted payload', () {
-    final zones = procedureZoneComparisons(
-      baselinePayload: _zonePayload(),
-      latestPayload: _zonePayload(),
+  test(
+    'face-anchored chin zone follows a face high in the square viewport',
+    () {
+      const sourceSize = Size(100, 100);
+      const sourceFaceRect = Rect.fromLTRB(20, 3, 80, 50);
+      final faceRect = faceRectInCoverViewport(
+        sourceFaceRect: sourceFaceRect,
+        sourceSize: sourceSize,
+        viewportSize: sourceSize,
+      );
+      final spots = faceAnchoredLaserSpots(
+        faceRect: faceRect,
+        redness: 1,
+        wrinkles: 1,
+        improvement: 1,
+      );
+      final chin = spots.singleWhere(
+        (spot) => spot.tone == SkinHeatmapTone.improvement,
+      );
+      final chinY = (chin.alignment.y + 1) / 2;
+
+      expect((0.25 + 1) / 2, greaterThan(faceRect!.bottom));
+      expect(chinY, lessThan(faceRect.bottom));
+    },
+  );
+
+  test('no detected face means no laser stencil spots', () {
+    expect(
+      faceAnchoredLaserSpots(
+        faceRect: null,
+        redness: 1,
+        wrinkles: 1,
+        improvement: 1,
+      ),
+      isEmpty,
     );
-
-    expect(zones, hasLength(1));
-    expect(zones.single.key, 'left_cheek');
-    expect(zones.single.baselineMetrics.keys,
-        containsAll(<String>['localized_redness', 'pigment_load']));
-    expect(zones.single.crop.left, 0.25);
-    expect(zones.single.crop.size, 0.40);
   });
 
-  test('zone parser reads zone metrics and crop rather than top-level decoys', () {
-    final baseline = _zonePayload()
-      ..['metrics'] = {'localized_redness': 1.0, 'pigment_load': 2.0}
-      ..['crop'] = {'left': 0.99, 'top': 0.99, 'size': 0.01};
-    final latest = _zonePayload()
-      ..['metrics'] = {'localized_redness': 98.0, 'pigment_load': 99.0}
-      ..['crop'] = {'left': 0.99, 'top': 0.99, 'size': 0.01};
+  test(
+    'supported zones and supported metrics render from persisted payload',
+    () {
+      final zones = procedureZoneComparisons(
+        baselinePayload: _zonePayload(),
+        latestPayload: _zonePayload(),
+      );
 
-    final zone = procedureZoneComparisons(
-      baselinePayload: baseline,
-      latestPayload: latest,
-    ).single;
+      expect(zones, hasLength(1));
+      expect(zones.single.key, 'left_cheek');
+      expect(
+        zones.single.baselineMetrics.keys,
+        containsAll(<String>['localized_redness', 'pigment_load']),
+      );
+      expect(zones.single.crop.left, 0.25);
+      expect(zones.single.crop.size, 0.40);
+    },
+  );
 
-    expect(zone.baselineMetrics['localized_redness'], 44.0);
-    expect(zone.latestMetrics['pigment_load'], 31.0);
-    expect(zone.crop.left, 0.25);
-    expect(zone.crop.top, 0.20);
-    expect(zone.crop.size, 0.40);
-  });
+  test(
+    'zone parser reads zone metrics and crop rather than top-level decoys',
+    () {
+      final baseline = _zonePayload()
+        ..['metrics'] = {'localized_redness': 1.0, 'pigment_load': 2.0}
+        ..['crop'] = {'left': 0.99, 'top': 0.99, 'size': 0.01};
+      final latest = _zonePayload()
+        ..['metrics'] = {'localized_redness': 98.0, 'pigment_load': 99.0}
+        ..['crop'] = {'left': 0.99, 'top': 0.99, 'size': 0.01};
+
+      final zone = procedureZoneComparisons(
+        baselinePayload: baseline,
+        latestPayload: latest,
+      ).single;
+
+      expect(zone.baselineMetrics['localized_redness'], 44.0);
+      expect(zone.latestMetrics['pigment_load'], 31.0);
+      expect(zone.crop.left, 0.25);
+      expect(zone.crop.top, 0.20);
+      expect(zone.crop.size, 0.40);
+    },
+  );
 
   test('unsupported whole-face measures are omitted', () {
     final zones = procedureZoneComparisons(
@@ -96,18 +140,23 @@ void main() {
     );
 
     expect(zones.map((zone) => zone.key), isNot(contains('whole_face')));
-    expect(zones.single.latestMetrics.keys,
-        isNot(contains('skin_tone_radiance_evenness')));
-  });
-
-  test('invalid fallback ROI metadata is omitted rather than displayed as a zone', () {
-    final zones = procedureZoneComparisons(
-      baselinePayload: _zonePayload(validCrop: false),
-      latestPayload: _zonePayload(validCrop: false),
+    expect(
+      zones.single.latestMetrics.keys,
+      isNot(contains('skin_tone_radiance_evenness')),
     );
-
-    expect(zones, isEmpty);
   });
+
+  test(
+    'invalid fallback ROI metadata is omitted rather than displayed as a zone',
+    () {
+      final zones = procedureZoneComparisons(
+        baselinePayload: _zonePayload(validCrop: false),
+        latestPayload: _zonePayload(validCrop: false),
+      );
+
+      expect(zones, isEmpty);
+    },
+  );
 
   test('non-comparable whole scan suppresses every zone result', () {
     final baseline = _scan(rawPayload: _zonePayload());

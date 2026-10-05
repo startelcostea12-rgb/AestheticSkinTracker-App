@@ -29,6 +29,11 @@ detectPrimaryFaceBoxOnDecodedImage(img.Image decoded) async {
   return null;
 }
 
+Future<({double left, double top, double width, double height})?>
+detectPrimaryFaceBoxForDisplayOnDecodedImage(img.Image decoded) async {
+  return null;
+}
+
 Future<void> closeLandmarkAnalyzers() async {}
 
 // Web/unsupported-platform counterparts to the mlkit implementation's

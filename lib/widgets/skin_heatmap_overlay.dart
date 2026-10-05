@@ -23,6 +23,87 @@ class SkinHeatmapSpot {
   final SkinHeatmapTone tone;
 }
 
+/// Maps a face box in source-image pixels into normalized BoxFit.cover space.
+Rect? faceRectInCoverViewport({
+  required Rect sourceFaceRect,
+  required Size sourceSize,
+  required Size viewportSize,
+}) {
+  if (sourceFaceRect.isEmpty ||
+      !sourceFaceRect.left.isFinite ||
+      !sourceFaceRect.top.isFinite ||
+      !sourceFaceRect.right.isFinite ||
+      !sourceFaceRect.bottom.isFinite ||
+      sourceSize.width <= 0 ||
+      sourceSize.height <= 0 ||
+      viewportSize.width <= 0 ||
+      viewportSize.height <= 0) {
+    return null;
+  }
+
+  final scale = math.max(
+    viewportSize.width / sourceSize.width,
+    viewportSize.height / sourceSize.height,
+  );
+  final offsetX = (viewportSize.width - sourceSize.width * scale) / 2;
+  final offsetY = (viewportSize.height - sourceSize.height * scale) / 2;
+  final mapped = Rect.fromLTRB(
+    (sourceFaceRect.left * scale + offsetX) / viewportSize.width,
+    (sourceFaceRect.top * scale + offsetY) / viewportSize.height,
+    (sourceFaceRect.right * scale + offsetX) / viewportSize.width,
+    (sourceFaceRect.bottom * scale + offsetY) / viewportSize.height,
+  );
+  final visible = mapped.intersect(const Rect.fromLTWH(0, 0, 1, 1));
+  return visible.isEmpty ? null : visible;
+}
+
+List<SkinHeatmapSpot> faceAnchoredLaserSpots({
+  required Rect? faceRect,
+  required double redness,
+  required double wrinkles,
+  required double improvement,
+}) {
+  if (faceRect == null || faceRect.isEmpty) return const [];
+
+  Alignment anchor(double x, double y) => Alignment(
+    2 * (faceRect.left + faceRect.width * x) - 1,
+    2 * (faceRect.top + faceRect.height * y) - 1,
+  );
+
+  return <SkinHeatmapSpot>[
+    SkinHeatmapSpot(
+      alignment: anchor(0.30, 0.57),
+      intensity: redness,
+      radius: 0.22,
+      tone: SkinHeatmapTone.redness,
+    ),
+    SkinHeatmapSpot(
+      alignment: anchor(0.70, 0.57),
+      intensity: redness * 0.94,
+      radius: 0.22,
+      tone: SkinHeatmapTone.redness,
+    ),
+    SkinHeatmapSpot(
+      alignment: anchor(0.30, 0.24),
+      intensity: wrinkles,
+      radius: 0.20,
+      tone: SkinHeatmapTone.wrinkles,
+    ),
+    SkinHeatmapSpot(
+      alignment: anchor(0.70, 0.24),
+      intensity: wrinkles * 0.92,
+      radius: 0.20,
+      tone: SkinHeatmapTone.wrinkles,
+    ),
+    SkinHeatmapSpot(
+      alignment: anchor(0.50, 0.86),
+      intensity: improvement,
+      radius: 0.30,
+      tone: SkinHeatmapTone.improvement,
+    ),
+  ];
+}
+
 /// Reusable overlay that renders a photo plus semi-transparent heatmap glows.
 ///
 /// This widget is intentionally generic: pass any [spots] layout for any
@@ -44,6 +125,7 @@ class SkinHeatmapOverlay extends StatelessWidget {
     required double redness,
     required double wrinkles,
     required double improvement,
+    Rect? faceRect,
     BoxFit fit = BoxFit.cover,
     BorderRadius borderRadius = BorderRadius.zero,
     bool showPhoto = true,
@@ -60,38 +142,12 @@ class SkinHeatmapOverlay extends StatelessWidget {
       borderRadius: borderRadius,
       showPhoto: showPhoto,
       imageOpacity: imageOpacity,
-      spots: <SkinHeatmapSpot>[
-        SkinHeatmapSpot(
-          alignment: const Alignment(-0.34, -0.05),
-          intensity: rednessN,
-          radius: 0.22,
-          tone: SkinHeatmapTone.redness,
-        ),
-        SkinHeatmapSpot(
-          alignment: const Alignment(0.34, -0.05),
-          intensity: rednessN * 0.94,
-          radius: 0.22,
-          tone: SkinHeatmapTone.redness,
-        ),
-        SkinHeatmapSpot(
-          alignment: const Alignment(-0.22, -0.40),
-          intensity: wrinkleN,
-          radius: 0.20,
-          tone: SkinHeatmapTone.wrinkles,
-        ),
-        SkinHeatmapSpot(
-          alignment: const Alignment(0.22, -0.40),
-          intensity: wrinkleN * 0.92,
-          radius: 0.20,
-          tone: SkinHeatmapTone.wrinkles,
-        ),
-        SkinHeatmapSpot(
-          alignment: const Alignment(0.0, 0.25),
-          intensity: improvedN,
-          radius: 0.30,
-          tone: SkinHeatmapTone.improvement,
-        ),
-      ],
+      spots: faceAnchoredLaserSpots(
+        faceRect: faceRect,
+        redness: rednessN,
+        wrinkles: wrinkleN,
+        improvement: improvedN,
+      ),
     );
   }
 
@@ -148,9 +204,7 @@ class SkinHeatmapOverlay extends StatelessWidget {
             ),
           Positioned.fill(
             child: IgnorePointer(
-              child: CustomPaint(
-                painter: _SkinHeatmapPainter(spots),
-              ),
+              child: CustomPaint(painter: _SkinHeatmapPainter(spots)),
             ),
           ),
           Positioned.fill(

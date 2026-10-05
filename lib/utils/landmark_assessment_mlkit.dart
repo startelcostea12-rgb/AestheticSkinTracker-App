@@ -216,41 +216,71 @@ Future<({double left, double top, double width, double height})?>
 detectPrimaryFaceBoxOnDecodedImage(img.Image decoded) async {
   if (!Platform.isAndroid && !Platform.isIOS) return null;
   try {
-    final rgbaBytes = Uint8List(decoded.width * decoded.height * 4);
-    var offset = 0;
-    for (var y = 0; y < decoded.height; y++) {
-      for (var x = 0; x < decoded.width; x++) {
-        final pixel = decoded.getPixel(x, y);
-        rgbaBytes[offset++] = pixel.r.toInt();
-        rgbaBytes[offset++] = pixel.g.toInt();
-        rgbaBytes[offset++] = pixel.b.toInt();
-        rgbaBytes[offset++] = pixel.a.toInt();
-      }
-    }
-    final inputImage = InputImage.fromBitmap(
-      bitmap: rgbaBytes,
-      width: decoded.width,
-      height: decoded.height,
-    );
-    final faces = await _singleFaceDetector.processImage(inputImage);
-    if (faces.isEmpty) return null;
-
-    faces.sort((a, b) {
-      final aArea = a.boundingBox.width * a.boundingBox.height;
-      final bArea = b.boundingBox.width * b.boundingBox.height;
-      return bArea.compareTo(aArea);
-    });
-    final box = faces.first.boundingBox;
-    return (
-      left: box.left.toDouble(),
-      top: box.top.toDouble(),
-      width: box.width.toDouble(),
-      height: box.height.toDouble(),
-    );
+    return await _detectPrimaryFaceBox(decoded, _singleFaceDetector);
   } catch (e) {
-    debugPrint('[AiScanCropPreset] face detection on captured still failed: $e');
+    debugPrint(
+      '[AiScanCropPreset] face detection on captured still failed: $e',
+    );
     return null;
   }
+}
+
+/// Detects a face for a displayed photo with a temporary detector, so this
+/// remains available after the camera route closes the shared analyzers.
+Future<({double left, double top, double width, double height})?>
+detectPrimaryFaceBoxForDisplayOnDecodedImage(img.Image decoded) async {
+  if (!Platform.isAndroid && !Platform.isIOS) return null;
+  final detector = FaceDetector(
+    options: FaceDetectorOptions(
+      enableLandmarks: false,
+      performanceMode: FaceDetectorMode.fast,
+    ),
+  );
+  try {
+    return await _detectPrimaryFaceBox(decoded, detector);
+  } catch (e) {
+    debugPrint('[ProcedurePhotoOverlay] face detection failed: $e');
+    return null;
+  } finally {
+    try {
+      await detector.close();
+    } catch (_) {}
+  }
+}
+
+Future<({double left, double top, double width, double height})?>
+_detectPrimaryFaceBox(img.Image decoded, FaceDetector detector) async {
+  final rgbaBytes = Uint8List(decoded.width * decoded.height * 4);
+  var offset = 0;
+  for (var y = 0; y < decoded.height; y++) {
+    for (var x = 0; x < decoded.width; x++) {
+      final pixel = decoded.getPixel(x, y);
+      rgbaBytes[offset++] = pixel.r.toInt();
+      rgbaBytes[offset++] = pixel.g.toInt();
+      rgbaBytes[offset++] = pixel.b.toInt();
+      rgbaBytes[offset++] = pixel.a.toInt();
+    }
+  }
+  final inputImage = InputImage.fromBitmap(
+    bitmap: rgbaBytes,
+    width: decoded.width,
+    height: decoded.height,
+  );
+  final faces = await detector.processImage(inputImage);
+  if (faces.isEmpty) return null;
+
+  faces.sort((a, b) {
+    final aArea = a.boundingBox.width * a.boundingBox.height;
+    final bArea = b.boundingBox.width * b.boundingBox.height;
+    return bArea.compareTo(aArea);
+  });
+  final box = faces.first.boundingBox;
+  return (
+    left: box.left.toDouble(),
+    top: box.top.toDouble(),
+    width: box.width.toDouble(),
+    height: box.height.toDouble(),
+  );
 }
 
 Future<void> closeLandmarkAnalyzers() async {
@@ -468,8 +498,10 @@ Future<LandmarkAssessment> _assessFace(
   // direction is right for the running platform. Re-verify against the
   // debug overlay's raw bounding-box-center/normalize-dimensions readout
   // before changing this again.
-  final rotation = inputImage.metadata?.rotation ?? InputImageRotation.rotation0deg;
-  final requiresSwapOnAndroid = Platform.isAndroid &&
+  final rotation =
+      inputImage.metadata?.rotation ?? InputImageRotation.rotation0deg;
+  final requiresSwapOnAndroid =
+      Platform.isAndroid &&
       (rotation == InputImageRotation.rotation90deg ||
           rotation == InputImageRotation.rotation270deg);
   double imageWidth = imageSize?.width ?? face.boundingBox.width;
@@ -533,10 +565,12 @@ Future<LandmarkAssessment> _assessFace(
   );
   final faceFillRatio = (faceArea / guideArea).clamp(0.0, 1.0).toDouble();
 
-  final centerOffsetX =
-      (converted.centerX - guideCenterX).clamp(-1.0, 1.0).toDouble();
-  final centerOffsetY =
-      (converted.centerY - guideCenterY).clamp(-1.0, 1.0).toDouble();
+  final centerOffsetX = (converted.centerX - guideCenterX)
+      .clamp(-1.0, 1.0)
+      .toDouble();
+  final centerOffsetY = (converted.centerY - guideCenterY)
+      .clamp(-1.0, 1.0)
+      .toDouble();
   final yaw = face.headEulerAngleY ?? 0;
   final pitch = face.headEulerAngleX ?? 0;
   final roll = face.headEulerAngleZ ?? 0;
@@ -577,13 +611,13 @@ Future<LandmarkAssessment> _assessFace(
       (roll.abs() * 0.8) +
       (eyeTilt.abs() * 0.6);
   final quality = (100 - centerPenalty - posePenalty).clamp(0, 100).toDouble();
-    final faceWidthNorm = (face.boundingBox.width / imageWidth)
+  final faceWidthNorm = (face.boundingBox.width / imageWidth)
       .clamp(0.0, 1.0)
       .toDouble();
-    final faceHeightNorm = (face.boundingBox.height / imageHeight)
+  final faceHeightNorm = (face.boundingBox.height / imageHeight)
       .clamp(0.0, 1.0)
       .toDouble();
-    final faceAspectRatio = face.boundingBox.height > 0
+  final faceAspectRatio = face.boundingBox.height > 0
       ? face.boundingBox.width / face.boundingBox.height
       : 0.0;
 
@@ -712,8 +746,10 @@ Future<LandmarkAssessment> _assessBody(
   // in the raw, pre-rotation metadata.size coordinate space at
   // 90/270deg; Android's are already upright, so the raw dimensions must
   // be swapped to normalize them correctly.
-  final rotation = inputImage.metadata?.rotation ?? InputImageRotation.rotation0deg;
-  final requiresSwapOnAndroid = Platform.isAndroid &&
+  final rotation =
+      inputImage.metadata?.rotation ?? InputImageRotation.rotation0deg;
+  final requiresSwapOnAndroid =
+      Platform.isAndroid &&
       (rotation == InputImageRotation.rotation90deg ||
           rotation == InputImageRotation.rotation270deg);
   double imageWidth = inputImage.metadata?.size.width ?? 1.0;
@@ -750,20 +786,29 @@ Future<LandmarkAssessment> _assessBody(
   final hipMidY = ((leftHip.y + rightHip.y) / 2.0) / imageHeight;
   final shoulderWidthNorm = (shoulderWidth / imageWidth).clamp(0.0, 1.0);
   final hipWidthNorm = (hipWidth / imageWidth).clamp(0.0, 1.0);
-  final shoulderToHipRatio = hipWidthNorm > 0 ? shoulderWidthNorm / hipWidthNorm : 0.0;
+  final shoulderToHipRatio = hipWidthNorm > 0
+      ? shoulderWidthNorm / hipWidthNorm
+      : 0.0;
   final dx = (shoulderMidX - hipMidX) * imageWidth;
   final dy = (shoulderMidY - hipMidY) * imageHeight;
   final shoulderToHipDistance = math.sqrt((dx * dx) + (dy * dy));
-  final scaleNorm = (shoulderToHipDistance * 1.25 / math.max(imageWidth, imageHeight))
-      .clamp(0.0, 1.0);
-  final roiX0Norm = ((math.min(leftHip.x, rightHip.x) / imageWidth) - (0.5 * scaleNorm))
-      .clamp(0.0, 1.0);
-  final roiX1Norm = ((math.max(leftHip.x, rightHip.x) / imageWidth) + (0.5 * scaleNorm))
-      .clamp(0.0, 1.0);
-  final roiY0Norm = ((math.min(leftHip.y, rightHip.y) / imageHeight) - (0.35 * scaleNorm))
-      .clamp(0.0, 1.0);
-  final roiY1Norm = ((math.max(leftHip.y, rightHip.y) / imageHeight) + (0.85 * scaleNorm))
-      .clamp(0.0, 1.0);
+  final scaleNorm =
+      (shoulderToHipDistance * 1.25 / math.max(imageWidth, imageHeight)).clamp(
+        0.0,
+        1.0,
+      );
+  final roiX0Norm =
+      ((math.min(leftHip.x, rightHip.x) / imageWidth) - (0.5 * scaleNorm))
+          .clamp(0.0, 1.0);
+  final roiX1Norm =
+      ((math.max(leftHip.x, rightHip.x) / imageWidth) + (0.5 * scaleNorm))
+          .clamp(0.0, 1.0);
+  final roiY0Norm =
+      ((math.min(leftHip.y, rightHip.y) / imageHeight) - (0.35 * scaleNorm))
+          .clamp(0.0, 1.0);
+  final roiY1Norm =
+      ((math.max(leftHip.y, rightHip.y) / imageHeight) + (0.85 * scaleNorm))
+          .clamp(0.0, 1.0);
 
   final targetRatio = switch (poseTemplate) {
     'Front' => 1.0,

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:convert';
 import 'dart:typed_data';
@@ -24,6 +25,7 @@ import 'package:aesthetic_skin_tracker/services/recovery_plan_service.dart';
 import 'package:aesthetic_skin_tracker/utils/trend_lock_reason.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_product_recommendation_engine.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_recovery_plan.dart';
+import 'package:aesthetic_skin_tracker/utils/landmark_assessment.dart';
 import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:aesthetic_skin_tracker/utils/capture_consistency.dart';
@@ -1499,6 +1501,8 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
   String? _latestImagePath;
   Uint8List? _baselineHydratedBytes;
   Uint8List? _latestHydratedBytes;
+  Rect? _baselineDisplayFaceRect;
+  Rect? _latestDisplayFaceRect;
   List<ProgressPhotoInsight> _progressInsights = const [];
   List<CustomRecoveryPlan> _customPlans = const [];
   bool _loadingPremiumData = false;
@@ -1597,12 +1601,15 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       _baselineImagePath = comparison['baselineImagePath'];
       _latestScanId = comparison['latestScanId'];
       _latestImagePath = comparison['latestImagePath'];
+      _baselineDisplayFaceRect = null;
+      _latestDisplayFaceRect = null;
       _peptideDisplay = pepDisplay;
       _selectedRecoveryCurveMetric = resolvedRecoveryCurveMetric;
       _showHeatmapDebugRow = showHeatmapDebugRow;
     });
 
     await _hydrateLocalProcedureDeltaPayload(procedureLog);
+    unawaited(_refreshDisplayedFaceRects());
     final activePlan = await RecoveryPlanService.planById(
       _procedure.recoveryPlanId,
     );
@@ -2061,6 +2068,46 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
 
     final latestEntry = _findScanById(_latestScanId) ?? _scans.first;
     return _decodeStoredImagePath(latestEntry.imagePath);
+  }
+
+  Future<void> _refreshDisplayedFaceRects() async {
+    final baselineScanId = _baselineScanId;
+    final latestScanId = _latestScanId;
+
+    Future<Rect?> detectFaceRect(Uint8List? bytes) async {
+      if (bytes == null || bytes.isEmpty) return null;
+      final decoded = img.decodeImage(bytes);
+      if (decoded == null) return null;
+
+      final faceBox = await detectPrimaryFaceBoxForDisplayOnDecodedImage(
+        decoded,
+      );
+      if (faceBox == null) return null;
+      return faceRectInCoverViewport(
+        sourceFaceRect: Rect.fromLTWH(
+          faceBox.left,
+          faceBox.top,
+          faceBox.width,
+          faceBox.height,
+        ),
+        sourceSize: Size(decoded.width.toDouble(), decoded.height.toDouble()),
+        viewportSize: const Size.square(1),
+      );
+    }
+
+    final faceRects = await Future.wait<Rect?>([
+      detectFaceRect(_baselinePhotoBytes),
+      detectFaceRect(_latestPhotoBytes),
+    ]);
+    if (!mounted ||
+        baselineScanId != _baselineScanId ||
+        latestScanId != _latestScanId) {
+      return;
+    }
+    setState(() {
+      _baselineDisplayFaceRect = faceRects[0];
+      _latestDisplayFaceRect = faceRects[1];
+    });
   }
 
   bool get _hasDistinctComparisonPair {
@@ -6566,6 +6613,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                   redness: baselineMetrics.redness,
                   wrinkles: baselineMetrics.wrinkle,
                   improvement: 0.08,
+                  faceRect: _baselineDisplayFaceRect,
                 );
               }
               if (useBodyOverlay) {
@@ -6591,6 +6639,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                     baseline: baselineMetrics,
                     latest: latestMetrics,
                   ),
+                  faceRect: _latestDisplayFaceRect,
                 );
               }
               if (useBodyOverlay) {

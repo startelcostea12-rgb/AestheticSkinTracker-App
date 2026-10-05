@@ -115,6 +115,11 @@ detectPrimaryFaceBoxOnDecodedImage(img.Image decoded) {
   return impl.detectPrimaryFaceBoxOnDecodedImage(decoded);
 }
 
+Future<({double left, double top, double width, double height})?>
+detectPrimaryFaceBoxForDisplayOnDecodedImage(img.Image decoded) {
+  return impl.detectPrimaryFaceBoxForDisplayOnDecodedImage(decoded);
+}
+
 // ── Debug-only pipeline outcome counters (kDebugMode) ───────────────────
 // Forwards to the platform implementation's running totals (always 0 on
 // the stub/web build). Purely observational — see the doc comment on
