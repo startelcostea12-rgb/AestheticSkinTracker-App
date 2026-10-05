@@ -360,6 +360,14 @@ void main() {
               'chin_pore_visibility_mask_pixels': 7100,
               'diffuse_flushing_erythema_mask_kind': 'face_skin',
               'diffuse_flushing_erythema_mask_pixels': 10200,
+              'under_eye_dark_circle_density_mask_kind': 'under_eye',
+              'under_eye_dark_circle_density_mask_pixels': 991,
+              'under_eye_dark_circle_density_omit_reason':
+                  'under_eye_roi_too_small',
+              'under_eye_texture_density_mask_kind': 'under_eye',
+              'under_eye_texture_density_mask_pixels': 991,
+              'under_eye_texture_density_omit_reason':
+                  'under_eye_roi_too_small',
             },
             <String, dynamic>{
               'frame_number': 2,
@@ -417,6 +425,15 @@ void main() {
       expect(row['frame1_chin_pore_visibility_mask_pixels'], '7100');
       expect(header, contains('chin_pore_visibility_value'));
       expect(row['frame1_diffuse_flushing_erythema_mask_pixels'], '10200');
+      for (final metric in const [
+        'under_eye_dark_circle_density',
+        'under_eye_texture_density',
+      ]) {
+        expect(row['frame1_${metric}_mask_kind'], 'under_eye');
+        expect(row['frame1_${metric}_mask_pixels'], '991');
+        expect(row['frame1_${metric}_omit_reason'], 'under_eye_roi_too_small');
+        expect(row['frame2_${metric}_mask_pixels'], isEmpty);
+      }
       expect(row['frame2_localized_redness'], isEmpty);
       expect(row['frame2_brightness_value'], isEmpty);
       expect(row['frame3_iso'], isEmpty);

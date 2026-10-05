@@ -7151,6 +7151,18 @@ def analyze_skin_patch(
         "diffuse_flushing_erythema_mask_pixels": additional_mask_diagnostics.get(
             "diffuse_flushing_erythema_mask_pixels"
         ),
+        # Logging only. Both under-eye metrics read the same mask; its count
+        # and any omit reason are exported on every scan, emitted or not.
+        "under_eye_dark_circle_density_mask_kind": "under_eye",
+        "under_eye_dark_circle_density_mask_pixels": under_eye_pixels,
+        "under_eye_dark_circle_density_omit_reason": omitted_metric_reasons.get(
+            "under_eye_dark_circle_density"
+        ),
+        "under_eye_texture_density_mask_kind": "under_eye",
+        "under_eye_texture_density_mask_pixels": under_eye_pixels,
+        "under_eye_texture_density_omit_reason": omitted_metric_reasons.get(
+            "under_eye_texture_density"
+        ),
     }
 
     response_payload = {

@@ -117,6 +117,12 @@ class AiScanDataCsvExporter {
     'chin_pore_visibility_mask_pixels',
     'diffuse_flushing_erythema_mask_kind',
     'diffuse_flushing_erythema_mask_pixels',
+    'under_eye_dark_circle_density_mask_kind',
+    'under_eye_dark_circle_density_mask_pixels',
+    'under_eye_dark_circle_density_omit_reason',
+    'under_eye_texture_density_mask_kind',
+    'under_eye_texture_density_mask_pixels',
+    'under_eye_texture_density_omit_reason',
   ];
 
   static List<ScanHistoryEntry> exportableScans(

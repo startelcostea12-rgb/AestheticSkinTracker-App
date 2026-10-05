@@ -716,6 +716,20 @@ void main() {
               'pore_visibility_mask_pixels': 6200,
               'diffuse_flushing_erythema_mask_kind': 'face_skin',
               'diffuse_flushing_erythema_mask_pixels': 10200,
+              'under_eye_dark_circle_density_mask_kind': 'under_eye',
+              'under_eye_dark_circle_density_mask_pixels': frameNumber == 1
+                  ? 991
+                  : 1606,
+              'under_eye_dark_circle_density_omit_reason': frameNumber == 1
+                  ? 'under_eye_roi_too_small'
+                  : null,
+              'under_eye_texture_density_mask_kind': 'under_eye',
+              'under_eye_texture_density_mask_pixels': frameNumber == 1
+                  ? 991
+                  : 1606,
+              'under_eye_texture_density_omit_reason': frameNumber == 1
+                  ? 'under_eye_roi_too_small'
+                  : null,
             },
             'metric_extraction_paths': {
               'pore_visibility': frameNumber == 1 ? 'pose' : 'dog_spread',
@@ -771,6 +785,23 @@ void main() {
         diagnostics[0],
         containsPair('pore_visibility_extraction_path', 'pose'),
       );
+      for (final metric in const [
+        'under_eye_dark_circle_density',
+        'under_eye_texture_density',
+      ]) {
+        // Omitted on frame 1, emitted on frame 3: the count is kept either way.
+        expect(
+          diagnostics[0],
+          containsPair('${metric}_mask_kind', 'under_eye'),
+        );
+        expect(diagnostics[0], containsPair('${metric}_mask_pixels', 991));
+        expect(
+          diagnostics[0],
+          containsPair('${metric}_omit_reason', 'under_eye_roi_too_small'),
+        );
+        expect(diagnostics[2], containsPair('${metric}_mask_pixels', 1606));
+        expect(diagnostics[2], containsPair('${metric}_omit_reason', isNull));
+      }
       expect(diagnostics[1], containsPair('cheek_side', isNull));
       expect(diagnostics[1], containsPair('localized_redness', isNull));
       expect(diagnostics[1], containsPair('iso', 125));

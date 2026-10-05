@@ -98,3 +98,35 @@ def test_under_eye_emitted_above_existing_minimum(clear_face_input, caplog):
 def test_under_eye_formula_versions_bumped():
     for key in UNDER_EYE_KEYS:
         assert main._metric_formula_version(key) == 2
+
+
+def test_under_eye_mask_count_and_reason_exported_when_omitted(clear_face_input, caplog):
+    caplog.set_level(logging.INFO, logger=main.logger.name)
+    result, _ = _analyze(clear_face_input)
+    pixels = _logged_under_eye_pixels(caplog)
+    image_quality = result["image_quality"]
+
+    for key in UNDER_EYE_KEYS:
+        assert key not in result["metric_matrix"]
+        assert image_quality[f"{key}_mask_kind"] == "under_eye"
+        assert image_quality[f"{key}_mask_pixels"] == pixels
+        assert image_quality[f"{key}_omit_reason"] == "under_eye_roi_too_small"
+
+
+def test_under_eye_mask_count_exported_when_emitted(clear_face_input, caplog):
+    real_mask = main._under_eye_region_mask
+
+    def widened_mask(shape, points, skin_mask, *, side):
+        mask = real_mask(shape, points, np.full(shape, 255, dtype=np.uint8), side=side)
+        return cv2.dilate(mask, np.ones((9, 9), dtype=np.uint8))
+
+    caplog.set_level(logging.INFO, logger=main.logger.name)
+    result, _ = _analyze(clear_face_input, widened_mask)
+    pixels = _logged_under_eye_pixels(caplog)
+    image_quality = result["image_quality"]
+
+    assert pixels >= main.MIN_USABLE_TZONE_PIXELS
+    for key in UNDER_EYE_KEYS:
+        assert key in result["metric_matrix"]
+        assert image_quality[f"{key}_mask_pixels"] == pixels
+        assert image_quality[f"{key}_omit_reason"] is None

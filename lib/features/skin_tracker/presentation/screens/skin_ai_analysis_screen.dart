@@ -915,6 +915,18 @@ List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
           imageQuality['diffuse_flushing_erythema_mask_kind'],
       'diffuse_flushing_erythema_mask_pixels':
           imageQuality['diffuse_flushing_erythema_mask_pixels'],
+      'under_eye_dark_circle_density_mask_kind':
+          imageQuality['under_eye_dark_circle_density_mask_kind'],
+      'under_eye_dark_circle_density_mask_pixels':
+          imageQuality['under_eye_dark_circle_density_mask_pixels'],
+      'under_eye_dark_circle_density_omit_reason':
+          imageQuality['under_eye_dark_circle_density_omit_reason'],
+      'under_eye_texture_density_mask_kind':
+          imageQuality['under_eye_texture_density_mask_kind'],
+      'under_eye_texture_density_mask_pixels':
+          imageQuality['under_eye_texture_density_mask_pixels'],
+      'under_eye_texture_density_omit_reason':
+          imageQuality['under_eye_texture_density_omit_reason'],
       ...exposure.toJson(),
     };
   }, growable: false);
