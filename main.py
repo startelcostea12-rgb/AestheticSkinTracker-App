@@ -2409,6 +2409,8 @@ def _compute_zone_based_metrics(
     else:
         median_a = 128.0
         p95_a = 128.0
+    if redness_diagnostics is not None and np.any(u_zone_pixels):
+        redness_diagnostics["u_zone_p95_a_after_wb"] = p95_a
 
     diffuse_threshold = max(138.0, median_a + 5.0)
     diffuse_mask = np.logical_and(u_zone_pixels, a_blur >= diffuse_threshold)
@@ -3911,7 +3913,7 @@ TREND_NOISE_FLOOR_EXCLUDED_MULTIPLIER = 3.0
 # NOT itself change any formula; it only lets the trend gate react once a
 # future change bumps an entry.
 METRIC_FORMULA_VERSION: Dict[str, int] = {
-    "localized_redness": 2,
+    "localized_redness": 3,
     "texture_smoothness": 2,
     "pigment_load": 2,
     "wrinkle_load": 2,
@@ -4094,6 +4096,22 @@ def _normalize_baseline_metric_formula_versions(
         except (TypeError, ValueError):
             continue
 
+    return normalized
+
+
+def _baseline_formula_versions_for_redness_reference(
+    formula_versions: Dict[str, int],
+    baseline_matrix: Dict[str, Any],
+) -> Dict[str, int]:
+    normalized = dict(formula_versions)
+    canonical_baseline = _coalesce_metric_aliases(baseline_matrix)
+    has_redness_score = safe_float(canonical_baseline.get("localized_redness")) is not None
+    has_personal_p95 = (
+        safe_float(_coalesce_personal_lab_baseline(baseline_matrix).get("a_p95"))
+        is not None
+    )
+    if has_redness_score and not has_personal_p95:
+        normalized["localized_redness"] = 2
     return normalized
 
 
@@ -5658,6 +5676,15 @@ def _redness_color_diagnostics(
     }
 
 
+def _attach_localized_redness_baseline_p95(
+    metric_matrix: Dict[str, Any],
+    redness_diagnostics: Dict[str, Any],
+) -> None:
+    u_zone_p95 = safe_float(redness_diagnostics.get("u_zone_p95_a_after_wb"))
+    if u_zone_p95 is not None:
+        metric_matrix["a_p95"] = u_zone_p95
+
+
 def analyze_skin_patch(
     bgr_image: np.ndarray,
     baseline_matrix: Dict[str, float] | None = None,
@@ -6620,6 +6647,7 @@ def analyze_skin_patch(
         if "rosacea_severity" in metric_matrix and rosacea_emit_value > 0.0:
             metric_matrix["rosacea_severity"] = rosacea_emit_value
             logger.info("ROSACEA_EMIT_FINAL value=%s source=calibrated", rosacea_emit_value)
+    _attach_localized_redness_baseline_p95(metric_matrix, redness_diagnostics)
     trend_metric_matrix = {
         key: value
         for key, value in metric_matrix.items()
@@ -6706,6 +6734,10 @@ def analyze_skin_patch(
     normalized_baseline_formula_versions = _normalize_baseline_metric_formula_versions(
         baseline_formula_versions,
         canonical_metric_order,
+    )
+    normalized_baseline_formula_versions = _baseline_formula_versions_for_redness_reference(
+        normalized_baseline_formula_versions,
+        baseline_matrix or {},
     )
     normalized_capture_quality = _normalize_capture_quality(capture_quality)
     normalized_baseline_capture_quality = _normalize_capture_quality(

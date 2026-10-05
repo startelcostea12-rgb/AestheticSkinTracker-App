@@ -41,8 +41,10 @@ import 'package:aesthetic_skin_tracker/utils/ai/skin_detections.dart';
 import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:aesthetic_skin_tracker/utils/backend_config.dart';
-import 'package:aesthetic_skin_tracker/utils/skin_analysis_service.dart' as remote_analysis;
-import 'package:aesthetic_skin_tracker/utils/procedure_intelligence.dart' as procedure_intel;
+import 'package:aesthetic_skin_tracker/utils/skin_analysis_service.dart'
+    as remote_analysis;
+import 'package:aesthetic_skin_tracker/utils/procedure_intelligence.dart'
+    as procedure_intel;
 import 'package:aesthetic_skin_tracker/utils/procedure_metric_set.dart';
 import 'package:aesthetic_skin_tracker/utils/trend_label_resolver.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_product_recommendation_engine.dart';
@@ -339,14 +341,12 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     final frameIndex = successfulResponses.length - 1;
     for (final entry in frameMetrics.entries) {
       samples.putIfAbsent(entry.key, () => <double>[]).add(entry.value);
-      sampleFrameIndices
-          .putIfAbsent(entry.key, () => <int>[])
-          .add(frameIndex);
+      sampleFrameIndices.putIfAbsent(entry.key, () => <int>[]).add(frameIndex);
       final confidence = confidenceForMetric(response, metricsNode, entry.key);
       if (confidence != null) {
-        confidenceSamples.putIfAbsent(entry.key, () => <Object>[]).add(
-          confidence,
-        );
+        confidenceSamples
+            .putIfAbsent(entry.key, () => <Object>[])
+            .add(confidence);
       }
     }
   }
@@ -400,11 +400,17 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     }
     final nearestResponse = successfulResponses[nearestIndex];
     final nearestMetricsNode = _dynamicMap(nearestResponse['metrics']);
-    final status =
-        _perFrameTrendNode(nearestResponse, nearestMetricsNode, 'trend_status')[key];
+    final status = _perFrameTrendNode(
+      nearestResponse,
+      nearestMetricsNode,
+      'trend_status',
+    )[key];
     if (status != null) resolvedTrendStatus[key] = status;
-    final delta =
-        _perFrameTrendNode(nearestResponse, nearestMetricsNode, 'trend_deltas')[key];
+    final delta = _perFrameTrendNode(
+      nearestResponse,
+      nearestMetricsNode,
+      'trend_deltas',
+    )[key];
     if (delta != null) resolvedTrendDeltas[key] = delta;
     final lockReason = _perFrameTrendNode(
       nearestResponse,
@@ -1058,7 +1064,8 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
   required Future<Map<String, dynamic>> Function(
     Uint8List frame,
     int frameNumber,
-  ) uploadFrame,
+  )
+  uploadFrame,
   List<AiScanFrameExposure> frameExposureMetadata =
       const <AiScanFrameExposure>[],
 }) async {
@@ -1326,9 +1333,10 @@ Map<String, double> timelineMetricsFromBackend(
 
   double? firmness;
   if (textureFinal != null && wrinkleFinal != null && swelling != null) {
-    firmness = (10 - (textureFinal * 0.45 + wrinkleFinal * 0.20 + swelling * 0.15))
-        .clamp(0, 10)
-        .toDouble();
+    firmness =
+        (10 - (textureFinal * 0.45 + wrinkleFinal * 0.20 + swelling * 0.15))
+            .clamp(0, 10)
+            .toDouble();
   }
   put('firmness', firmness);
   put('bodyFirmness', firmness);
@@ -1370,14 +1378,15 @@ Map<String, double> timelineMetricsFromBackend(
       scarringBruising != null &&
       pigmentFinal != null &&
       fatRetention != null) {
-    overallHealing = ((10 - swelling) * 0.22 +
-            firmness * 0.18 +
-            smoothness * 0.16 +
-            (10 - scarringBruising) * 0.18 +
-            (10 - pigmentFinal) * 0.12 +
-            fatRetention * 0.14)
-        .clamp(0, 10)
-        .toDouble();
+    overallHealing =
+        ((10 - swelling) * 0.22 +
+                firmness * 0.18 +
+                smoothness * 0.16 +
+                (10 - scarringBruising) * 0.18 +
+                (10 - pigmentFinal) * 0.12 +
+                fatRetention * 0.14)
+            .clamp(0, 10)
+            .toDouble();
   }
   put('overallHealingScore', overallHealing);
   put('overall_healing_score', overallHealing);
@@ -1516,7 +1525,9 @@ AiBaselineResolution resolveAiBaseline({
   return AiBaselineResolution(
     key: key,
     baselineScan: resolvedBaseline,
-    eligibleScansForKey: resolvedBaseline == null ? const [] : [resolvedBaseline],
+    eligibleScansForKey: resolvedBaseline == null
+        ? const []
+        : [resolvedBaseline],
     isFirstForKey: resolvedBaseline == null,
   );
 }
@@ -1555,9 +1566,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to export burst log: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to export burst log: $e')),
+        );
       }
     }
   }
@@ -1707,6 +1718,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   Map<String, int> _metricContributorCounts = const {};
   int _successfulAnalysisFrameCount = 0;
   int _requestedAnalysisFrameCount = 0;
+
   /// The resolved AI Skin Analysis baseline for the current capture's
   /// (procedureId, focusArea, poseTemplate, guideType) key -- see
   /// AiBaselineResolution. Replaces the old device-global
@@ -1747,7 +1759,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     return pose == null
         ? 'This scan is now your baseline for future comparisons.'
         : 'This is your first $pose scan of $focusLabel; it\'s now your '
-            'baseline.';
+              'baseline.';
   }
 
   /// Debug-only: the deployed backend's git commit (see GET /health and
@@ -2029,9 +2041,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       await _runAnalysis();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Camera unavailable: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Camera unavailable: $e')));
     }
   }
 
@@ -2276,7 +2288,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         features: features,
       );
 
-        final Map<String, double> previousMetrics = await _getPreviousMetrics();
+      final Map<String, double> previousMetrics = await _getPreviousMetrics();
 
       // Server-first execution: route this scan through the backend multipart
       // endpoint and parse canonical metrics + trend deltas from the payload.
@@ -2301,9 +2313,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       // no more device-global manual-matrix branch that could describe a
       // different scan than the one whose provenance fields were sent.
       final resolvedBaselineMatrix = _buildLuxeBaselineMetricMatrix();
-      final baselineMetricMatrixForTrend =
-          resolvedBaselineMatrix.isEmpty ? null : resolvedBaselineMatrix;
-        final storedBaselineFormulaVersions = _previousFocusAreaScan == null
+      final baselineMetricMatrixForTrend = resolvedBaselineMatrix.isEmpty
+          ? null
+          : resolvedBaselineMatrix;
+      final storedBaselineFormulaVersions = _previousFocusAreaScan == null
           ? const <String, int>{}
           : aiScanFormulaVersions(_previousFocusAreaScan!);
       final aggregate = await analyzeBackendFrames(
@@ -2320,7 +2333,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               fields: backendFields,
               baselineMetricMatrix: baselineMetricMatrixForTrend,
               baselineExtractionPaths: _buildLuxeBaselineExtractionPaths(),
-                baselineFormulaVersions: storedBaselineFormulaVersions.isEmpty
+              baselineFormulaVersions: storedBaselineFormulaVersions.isEmpty
                   ? null
                   : storedBaselineFormulaVersions,
               allowBackend: true,
@@ -2412,8 +2425,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       backendResponse['trend_status'] = serverTrendStatus;
       backendResponse['trend_deltas'] = serverTrendDeltas;
       backendResponse['trend_lock_reasons'] = serverTrendLockReasons;
-        backendResponse[rednessTrendLockReasonsKey] =
-          rednessAdjustedTrend.rednessLockReasons.toList(growable: false);
+      backendResponse[rednessTrendLockReasonsKey] = rednessAdjustedTrend
+          .rednessLockReasons
+          .toList(growable: false);
       final backendResponseMetricsNode = _asDynamicMap(
         backendResponse['metrics'],
       );
@@ -2441,13 +2455,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             : _previousFocusAreaScan?.id,
         registryScanId: _aiBaselineRegistryScanId,
       );
-      final Map<String, double> rawMetricScores =
-          _rawMetricScoresForStorage(persistencePayload);
+      final Map<String, double> rawMetricScores = _rawMetricScoresForStorage(
+        persistencePayload,
+      );
       final persistedMetricsNode =
           _asDynamicMap(persistencePayload['metrics']) ?? <String, dynamic>{};
-      persistencePayload['metrics'] = {
-        ...persistedMetricsNode,
-      };
+      persistencePayload['metrics'] = {...persistedMetricsNode};
 
       // Capture the most recent PREVIOUS scan's metrics BEFORE we
       // persist the current one, so the results card can show trend
@@ -2693,6 +2706,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       source.forEach((k, v) {
         final key = k.toString();
         final lower = key.toLowerCase();
+        if (lower == 'a_p95') return;
         if (lower.endsWith('_detected')) return;
         final parsed = _safeToDouble(v);
         if (parsed == null || parsed.isNaN || parsed.isInfinite) return;
@@ -2703,10 +2717,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     }
 
     final metricsNode = _asDynamicMap(responseMap['metrics']) ?? const {};
-    final metricMatrixNode = _asDynamicMap(responseMap['metric_matrix']) ?? const {};
-    final nestedMetricMatrixNode = _asDynamicMap(metricsNode['metric_matrix']) ?? const {};
+    final metricMatrixNode =
+        _asDynamicMap(responseMap['metric_matrix']) ?? const {};
+    final nestedMetricMatrixNode =
+        _asDynamicMap(metricsNode['metric_matrix']) ?? const {};
     final luxeNode = _asDynamicMap(responseMap['luxePayload']) ?? const {};
-    final luxeMetricMatrixNode = _asDynamicMap(luxeNode['metric_matrix']) ?? const {};
+    final luxeMetricMatrixNode =
+        _asDynamicMap(luxeNode['metric_matrix']) ?? const {};
 
     collectNumerics(metricsNode);
     collectNumerics(metricMatrixNode);
@@ -2736,8 +2753,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         final parsed = _safeToDouble(entry.value);
         if (parsed == null || parsed.isNaN || parsed.isInfinite) continue;
         if (parsed < 0.0) continue;
-        final clamped = parsed.clamp(0.0, 100.0).toDouble();
-        out[key] = clamped;
+        out[key] = key == 'a_p95'
+            ? parsed
+            : parsed.clamp(0.0, 100.0).toDouble();
       }
       return out;
     }
@@ -2747,9 +2765,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       'luxePayload': luxePayload,
     };
 
-    final backendMetrics = _asDynamicMap(backendResponse['metrics']) ?? const {};
+    final backendMetrics =
+        _asDynamicMap(backendResponse['metrics']) ?? const {};
     final luxeMetrics = _asDynamicMap(luxePayload['metrics']) ?? const {};
     const backendFirstCoreKeys = <String>{
+      'a_p95',
       'localized_redness',
       'texture_smoothness',
       'pigment_load',
@@ -2758,10 +2778,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       'breakout_activity',
     };
 
-    final mergedMetrics = <String, dynamic>{
-      ...backendMetrics,
-      ...luxeMetrics,
-    };
+    final mergedMetrics = <String, dynamic>{...backendMetrics, ...luxeMetrics};
     for (final key in backendFirstCoreKeys) {
       if (backendMetrics.containsKey(key)) {
         // Preserve backend canonical value, including explicit nulls.
@@ -2773,10 +2790,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final backendMatrix =
         _asDynamicMap(backendResponse['metric_matrix']) ?? const {};
     final luxeMatrix = _asDynamicMap(luxePayload['metric_matrix']) ?? const {};
-    final mergedMatrix = <String, dynamic>{
-      ...backendMatrix,
-      ...luxeMatrix,
-    };
+    final mergedMatrix = <String, dynamic>{...backendMatrix, ...luxeMatrix};
     for (final key in backendFirstCoreKeys) {
       if (backendMatrix.containsKey(key)) {
         // Preserve backend canonical value, including explicit nulls.
@@ -2788,10 +2802,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final backendTrend =
         _asDynamicMap(backendResponse['trend_deltas']) ?? const {};
     final luxeTrend = _asDynamicMap(luxePayload['trend_deltas']) ?? const {};
-    merged['trend_deltas'] = {
-      ...backendTrend,
-      ...luxeTrend,
-    };
+    merged['trend_deltas'] = {...backendTrend, ...luxeTrend};
 
     Map<String, dynamic> normalizePathMap(dynamic source) {
       const canonicalKeys = <String>{
@@ -4498,7 +4509,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     // backendResponse, never from the local AcneRosaceaPhotoAnalyzer
     // heuristic or the on-device TFLite model).
     final backendMetricMatrix =
-        _asDynamicMap(luxePayload['metric_matrix']) ?? const <String, dynamic>{};
+        _asDynamicMap(luxePayload['metric_matrix']) ??
+        const <String, dynamic>{};
     final coachInsight = _coachInsightForPhase(
       metricMatrix: backendMetricMatrix,
       isFollowUp: isFollowUpPhase,
@@ -4528,7 +4540,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               const SizedBox(height: 18),
               ClinicalSectionHeader(
                 icon: Icons.analytics_rounded,
-                eyebrow: isFollowUpPhase ? 'PROGRESS METRICS' : 'STARTING METRICS',
+                eyebrow: isFollowUpPhase
+                    ? 'PROGRESS METRICS'
+                    : 'STARTING METRICS',
                 title: _isBodyProcedure
                     ? 'Body recovery report'
                     : _showCoreFaceMetricSetOnly
@@ -4541,7 +4555,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 baselineImageProvider: _resultsBaselineImageProvider(r),
                 currentImageProvider: _imageProviderForPath(_imagePath),
                 baselineLabel: 'Baseline',
-                currentLabel: isFollowUpPhase ? 'Current Follow-Up' : 'Current Scan',
+                currentLabel: isFollowUpPhase
+                    ? 'Current Follow-Up'
+                    : 'Current Scan',
                 localHistoryCount: _localHistoryCountForFocusArea,
                 isFollowUp: isFollowUpPhase,
                 gateReason: gateReason,
@@ -4591,8 +4607,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     if (metrics.isEmpty) return null;
 
     String formatProbability(dynamic value) {
-      final numeric = value is num ? value.toDouble() : double.tryParse('$value');
-      return numeric == null ? 'Unavailable' : '${(numeric * 100).toStringAsFixed(0)}%';
+      final numeric = value is num
+          ? value.toDouble()
+          : double.tryParse('$value');
+      return numeric == null
+          ? 'Unavailable'
+          : '${(numeric * 100).toStringAsFixed(0)}%';
     }
 
     return Container(
@@ -4603,7 +4623,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         children: [
           Row(
             children: [
-              const Icon(Icons.science_outlined, size: 18, color: AppColors.champagneGold),
+              const Icon(
+                Icons.science_outlined,
+                size: 18,
+                color: AppColors.champagneGold,
+              ),
               const SizedBox(width: 8),
               Text(
                 'EXPERIMENTAL MODEL OUTPUT',
@@ -4703,8 +4727,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     // real redness/rosacea formula metrics instead of adding an invented
     // backend proxy for a signal the backend doesn't measure.
     final barrierStressed =
-      _meetsConcernCutoff(scores['redness'] ?? 0, 4.0) ||
-      _meetsConcernCutoff(scores['rosacea_intensity'] ?? 0, 4.0);
+        _meetsConcernCutoff(scores['redness'] ?? 0, 4.0) ||
+        _meetsConcernCutoff(scores['rosacea_intensity'] ?? 0, 4.0);
     final sentences = <String>[];
 
     if (topConcerns.isEmpty) {
@@ -4715,10 +4739,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       );
     } else {
       final leadPhrase = _joinWithCommasAndAnd(
-        topConcerns
-            .take(3)
-          .map((entry) => entry.label)
-            .toList(),
+        topConcerns.take(3).map((entry) => entry.label).toList(),
       );
       sentences.add(
         isFollowUp
@@ -4727,7 +4748,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       );
     }
 
-    final concernValues = topConcerns.take(3).map((entry) => entry.value).toList();
+    final concernValues = topConcerns
+        .take(3)
+        .map((entry) => entry.value)
+        .toList();
     if (concernValues.isNotEmpty) {
       final highest = concernValues.reduce((a, b) => a > b ? a : b);
       if (_meetsConcernCutoff(highest, 4.0)) {
@@ -4777,7 +4801,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       final visibleTargets = <String>[
         if (_meetsConcernCutoff(pigmentSignal, 3.5)) 'tone support for pigment',
         if (_meetsConcernCutoff(textureSignal, 3.5)) 'texture support',
-        if (_meetsConcernCutoff(wrinkleSignal, 3.5)) 'firmness and line support',
+        if (_meetsConcernCutoff(wrinkleSignal, 3.5))
+          'firmness and line support',
       ];
       if (visibleTargets.isNotEmpty) {
         sentences.add(
@@ -4786,7 +4811,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       }
     }
 
-    return sentences.where((sentence) => sentence.trim().isNotEmpty).take(6).join(' ');
+    return sentences
+        .where((sentence) => sentence.trim().isNotEmpty)
+        .take(6)
+        .join(' ');
   }
 
   List<({String key, String label, double value})> _coachTopConcerns(
@@ -4825,7 +4853,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       ),
     ]..sort((a, b) => b.value.compareTo(a.value));
 
-    return concerns.where((entry) => _meetsConcernCutoff(entry.value, 0.5)).take(3).toList();
+    return concerns
+        .where((entry) => _meetsConcernCutoff(entry.value, 0.5))
+        .take(3)
+        .toList();
   }
 
   List<String> _coachTrendSentences(Map<String, double> scores) {
@@ -4835,7 +4866,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       (key: 'pigment', label: 'Pigment', lowerIsBetter: true),
       (key: 'wrinkle', label: 'Wrinkles', lowerIsBetter: true),
       (key: 'acne_severity', label: 'Breakouts', lowerIsBetter: true),
-      (key: 'rosacea_intensity', label: 'Rosacea reactivity', lowerIsBetter: true),
+      (
+        key: 'rosacea_intensity',
+        label: 'Rosacea reactivity',
+        lowerIsBetter: true,
+      ),
     ];
 
     final sentences = <String>[];
@@ -4855,9 +4890,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         final qualifier = (percentDelta != null && percentDelta.abs() >= 5.0)
             ? 'meaningfully'
             : 'slightly';
-        sentences.add('${spec.label} has $direction $qualifier versus baseline.');
+        sentences.add(
+          '${spec.label} has $direction $qualifier versus baseline.',
+        );
       } else if (trend.label == 'Stable') {
-        sentences.add('${spec.label} is stable versus baseline, so there is no need to chase a bigger change right now.');
+        sentences.add(
+          '${spec.label} is stable versus baseline, so there is no need to chase a bigger change right now.',
+        );
       }
       // Any other backend verdict (a standalone-entry lock, or insufficient
       // signal) intentionally produces no sentence here rather than guessing.
@@ -4884,7 +4923,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       decoration: _cardDecoration(),
       child: Row(
         children: [
-          const Icon(Icons.camera_alt_rounded, size: 16, color: AppColors.champagneGold),
+          const Icon(
+            Icons.camera_alt_rounded,
+            size: 16,
+            color: AppColors.champagneGold,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -5215,9 +5258,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     if (!mounted) return;
     if (!ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Unable to save baseline for this scan.'),
-        ),
+        const SnackBar(content: Text('Unable to save baseline for this scan.')),
       );
     }
   }
@@ -5334,9 +5375,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     }
   }
 
-  String? _confidenceForMetricFromScan(ScanHistoryEntry scan, List<String> keys) {
+  String? _confidenceForMetricFromScan(
+    ScanHistoryEntry scan,
+    List<String> keys,
+  ) {
     final payload = scan.rawPayload ?? const <String, dynamic>{};
-    final metrics = _asDynamicMap(payload['metrics']) ?? const <String, dynamic>{};
+    final metrics =
+        _asDynamicMap(payload['metrics']) ?? const <String, dynamic>{};
     final luxePayload =
         _asDynamicMap(payload['luxePayload']) ?? const <String, dynamic>{};
     final luxeMetrics =
@@ -5345,8 +5390,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final confidenceMaps = <Map<String, dynamic>>[
       _asDynamicMap(payload['metric_confidence']) ?? const <String, dynamic>{},
       _asDynamicMap(metrics['metric_confidence']) ?? const <String, dynamic>{},
-      _asDynamicMap(luxePayload['metric_confidence']) ?? const <String, dynamic>{},
-      _asDynamicMap(luxeMetrics['metric_confidence']) ?? const <String, dynamic>{},
+      _asDynamicMap(luxePayload['metric_confidence']) ??
+          const <String, dynamic>{},
+      _asDynamicMap(luxeMetrics['metric_confidence']) ??
+          const <String, dynamic>{},
     ];
 
     for (final map in confidenceMaps) {
@@ -5373,10 +5420,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           : double.tryParse(raw?.toString() ?? '');
       if (numeric == null || !numeric.isFinite) continue;
       if (_isUsableBaselineCandidate(numeric)) {
-        return (
-          value: numeric,
-          sourceKey: '$sourceLabel.$key',
-        );
+        return (value: numeric, sourceKey: '$sourceLabel.$key');
       }
       final reason = _baselineRejectReason(numeric);
       if (reason != null) {
@@ -5396,13 +5440,15 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     String sourceKey,
     String confidenceLabel,
     int confidenceRank,
-  })? _firstUsableMetricFromScan(
+  })?
+  _firstUsableMetricFromScan(
     ScanHistoryEntry scan,
     String metricKey,
     List<String> orderedKeys,
   ) {
     final payload = scan.rawPayload ?? const <String, dynamic>{};
-    final metrics = _asDynamicMap(payload['metrics']) ?? const <String, dynamic>{};
+    final metrics =
+        _asDynamicMap(payload['metrics']) ?? const <String, dynamic>{};
     final luxePayload =
         _asDynamicMap(payload['luxePayload']) ?? const <String, dynamic>{};
     final luxeMetrics =
@@ -5412,11 +5458,14 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       (label: 'scan.metrics', map: Map<String, dynamic>.from(scan.metrics)),
       (
         label: 'rawPayload.metric_matrix',
-        map: _asDynamicMap(payload['metric_matrix']) ?? const <String, dynamic>{},
+        map:
+            _asDynamicMap(payload['metric_matrix']) ??
+            const <String, dynamic>{},
       ),
       (
         label: 'rawPayload.baseline_metric_matrix',
-        map: _asDynamicMap(payload['baseline_metric_matrix']) ??
+        map:
+            _asDynamicMap(payload['baseline_metric_matrix']) ??
             const <String, dynamic>{},
       ),
       (
@@ -5425,16 +5474,21 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       ),
       (
         label: 'rawPayload.opencv_metrics',
-        map: _asDynamicMap(payload['opencv_metrics']) ?? const <String, dynamic>{},
+        map:
+            _asDynamicMap(payload['opencv_metrics']) ??
+            const <String, dynamic>{},
       ),
       (label: 'rawPayload.metrics', map: metrics),
       (
         label: 'rawPayload.metrics.metric_matrix',
-        map: _asDynamicMap(metrics['metric_matrix']) ?? const <String, dynamic>{},
+        map:
+            _asDynamicMap(metrics['metric_matrix']) ??
+            const <String, dynamic>{},
       ),
       (
         label: 'rawPayload.metrics.baseline_metric_matrix',
-        map: _asDynamicMap(metrics['baseline_metric_matrix']) ??
+        map:
+            _asDynamicMap(metrics['baseline_metric_matrix']) ??
             const <String, dynamic>{},
       ),
       (
@@ -5444,32 +5498,38 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       (label: 'rawPayload.luxePayload', map: luxePayload),
       (
         label: 'rawPayload.luxePayload.metric_matrix',
-        map: _asDynamicMap(luxePayload['metric_matrix']) ??
+        map:
+            _asDynamicMap(luxePayload['metric_matrix']) ??
             const <String, dynamic>{},
       ),
       (
         label: 'rawPayload.luxePayload.baseline_metric_matrix',
-        map: _asDynamicMap(luxePayload['baseline_metric_matrix']) ??
+        map:
+            _asDynamicMap(luxePayload['baseline_metric_matrix']) ??
             const <String, dynamic>{},
       ),
       (
         label: 'rawPayload.luxePayload.baseline',
-        map: _asDynamicMap(luxePayload['baseline']) ?? const <String, dynamic>{},
+        map:
+            _asDynamicMap(luxePayload['baseline']) ?? const <String, dynamic>{},
       ),
       (label: 'rawPayload.luxePayload.metrics', map: luxeMetrics),
       (
         label: 'rawPayload.luxePayload.metrics.metric_matrix',
-        map: _asDynamicMap(luxeMetrics['metric_matrix']) ??
+        map:
+            _asDynamicMap(luxeMetrics['metric_matrix']) ??
             const <String, dynamic>{},
       ),
       (
         label: 'rawPayload.luxePayload.metrics.baseline_metric_matrix',
-        map: _asDynamicMap(luxeMetrics['baseline_metric_matrix']) ??
+        map:
+            _asDynamicMap(luxeMetrics['baseline_metric_matrix']) ??
             const <String, dynamic>{},
       ),
       (
         label: 'rawPayload.luxePayload.metrics.baseline',
-        map: _asDynamicMap(luxeMetrics['baseline']) ?? const <String, dynamic>{},
+        map:
+            _asDynamicMap(luxeMetrics['baseline']) ?? const <String, dynamic>{},
       ),
     ];
 
@@ -5482,7 +5542,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         metricKey,
       );
       if (hit == null) continue;
-      final confLabel = _confidenceForMetricFromScan(scan, orderedKeys) ?? 'unknown';
+      final confLabel =
+          _confidenceForMetricFromScan(scan, orderedKeys) ?? 'unknown';
       return (
         value: hit.value,
         sourceKey: hit.sourceKey,
@@ -5502,10 +5563,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     String confidenceLabel,
     int confidenceRank,
   })?
-  _resolvePriorBaselineForMetric(
-    String metricKey,
-    List<String> aliases,
-  ) {
+  _resolvePriorBaselineForMetric(String metricKey, List<String> aliases) {
     if (_priorFocusAreaScans.isEmpty) return null;
     final orderedKeys = <String>[metricKey, ...aliases];
     ({
@@ -5515,7 +5573,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       int priorIndex,
       String confidenceLabel,
       int confidenceRank,
-    })? best;
+    })?
+    best;
 
     for (var i = 0; i < _priorFocusAreaScans.length; i++) {
       final scan = _priorFocusAreaScans[i];
@@ -5558,6 +5617,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
     // Backend-first baseline: only canonical keys from persisted history.
     const canonicalKeys = <String>{
+      'a_p95',
       'localized_redness',
       'texture_smoothness',
       'pigment_load',
@@ -5639,7 +5699,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           ? existing.toDouble()
           : double.tryParse(existing?.toString() ?? '');
       final hasUsableExisting = _isUsableBaselineCandidate(existingNumeric);
-      if (!hasUsableExisting && existingNumeric != null && existingNumeric.isFinite) {
+      if (!hasUsableExisting &&
+          existingNumeric != null &&
+          existingNumeric.isFinite) {
         final reason = _baselineRejectReason(existingNumeric);
         if (reason != null) {
           _logBaselineReject(
@@ -5733,8 +5795,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final isFollowUp =
         _explicitLocalFollowUpFlag || _localHistoryCountForFocusArea >= 2;
 
-    final backendMetricsNode = _asDynamicMap(backendResponse?['metrics']) ??
-        const <String, dynamic>{};
+    final backendMetricsNode =
+        _asDynamicMap(backendResponse?['metrics']) ?? const <String, dynamic>{};
     final backendMetricMatrix =
         _asDynamicMap(backendResponse?['metric_matrix']) ??
         _asDynamicMap(backendMetricsNode['metric_matrix']) ??
@@ -5745,8 +5807,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       final parsed = _safeToDouble(entry.value);
       if (parsed == null || parsed.isNaN || parsed.isInfinite) continue;
       if (parsed < 0.0) continue;
-      final clamped = parsed.clamp(0.0, 100.0).toDouble();
-      cleanedMetricMatrix[entry.key] = clamped;
+      cleanedMetricMatrix[entry.key] = entry.key == 'a_p95'
+          ? parsed
+          : parsed.clamp(0.0, 100.0).toDouble();
     }
 
     final baselineMetricMatrix = _buildLuxeBaselineMetricMatrix();
@@ -5759,8 +5822,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     );
 
     final trendDeltas = isFollowUp
-      ? <String, dynamic>{..._serverTrendDeltas}
-      : <String, dynamic>{};
+        ? <String, dynamic>{..._serverTrendDeltas}
+        : <String, dynamic>{};
     // trend_status/trend_lock_reasons must travel alongside trend_deltas --
     // LuxeReportLayout's _assessMetricHonesty only trusts the backend trend
     // for a metric when trend_deltas AND trend_status are both present.
@@ -5769,11 +5832,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     // / 2.0pt bands, no per-metric noise floor) even when the backend had
     // already computed an honest, gated verdict.
     final trendStatusForPayload = isFollowUp
-      ? <String, dynamic>{..._serverTrendStatus}
-      : <String, dynamic>{};
+        ? <String, dynamic>{..._serverTrendStatus}
+        : <String, dynamic>{};
     final trendLockReasonsForPayload = isFollowUp
-      ? <String, dynamic>{..._serverTrendLockReasons}
-      : <String, dynamic>{};
+        ? <String, dynamic>{..._serverTrendLockReasons}
+        : <String, dynamic>{};
 
     if (isFollowUp && trendDeltas.isEmpty && _previousMetrics.isNotEmpty) {
       // Legacy fallback deltas had no extraction-path provenance. Keep these
@@ -5794,9 +5857,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       // _buildLuxePayloadForAiScan must keep preferring the top-level
       // rawPayload.metric_extraction_paths (which stays authoritative) over
       // this nested copy when reconstructing an archived scan's payload.
-      'metric_extraction_paths': _asDynamicMap(
-            backendResponse?['metric_extraction_paths'],
-          ) ??
+      'metric_extraction_paths':
+          _asDynamicMap(backendResponse?['metric_extraction_paths']) ??
           const <String, dynamic>{},
       ...luxePrecisionMetadataFromBackend(backendResponse),
       'baseline_metric_extraction_paths': baselineExtractionPaths,
@@ -6435,8 +6497,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       final scans = await SkinHistoryRepository.instance.getAllScans();
       // getAllScans() is newest-first; sort oldest-first so "earliest" is
       // simply ".first".
-      final keyMatches = scans.where((scan) => scan.aiBaselineKey == key).toList()
-        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      final keyMatches =
+          scans.where((scan) => scan.aiBaselineKey == key).toList()
+            ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
       bool readFollowUpFlagFromPayload(ScanHistoryEntry scan) {
         final payload = scan.rawPayload ?? const <String, dynamic>{};
@@ -6490,7 +6553,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         // which is what the results UI actually shows as confirmation.
         _noComparableBaselineMessage = _capturedPoseTemplate == null
             ? 'This photo\'s angle is unknown, so it can\'t be compared '
-                'with earlier scans.'
+                  'with earlier scans.'
             : null;
         return const {};
       }
@@ -6525,7 +6588,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// actually derives the copy.
   Widget _resultHeroCard(Map<String, dynamic> metricMatrix) {
     final heroCopy = buildBackendHeroCopy(metricMatrix);
-    final captureQualityLabel = captureQualityBadgeLabel(_currentCaptureQuality);
+    final captureQualityLabel = captureQualityBadgeLabel(
+      _currentCaptureQuality,
+    );
     final image = _imageProviderForPath(_imagePath);
 
     return Container(
@@ -6938,8 +7003,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         return false;
       }
       return true;
-    }).toList()
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    }).toList()..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
     if (candidates.isNotEmpty) return candidates.first.id;
     return null;
@@ -7056,7 +7120,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     if (baselineProvider == null || currentProvider == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Need both baseline and current scan images to compare.'),
+          content: Text(
+            'Need both baseline and current scan images to compare.',
+          ),
         ),
       );
       return;
@@ -7087,9 +7153,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       (_latestScan?.imagePath ?? '').trim(),
     ];
 
-    return candidatePaths.any(
-      (path) => path.isNotEmpty && path != currentPath,
-    );
+    return candidatePaths.any((path) => path.isNotEmpty && path != currentPath);
   }
 
   void _showComparisonUnavailableToast() {
@@ -7107,9 +7171,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   }
 
   void _openAiRecoveryCoach() {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const AIRecoveryCoachScreen()),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const AIRecoveryCoachScreen()));
   }
 
   void _goHome() {
@@ -7346,7 +7410,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       return _buildBodyRecoveryRecommendationsSection(scores);
     }
 
-    final isFollowUp = _explicitLocalFollowUpFlag || _localHistoryCountForFocusArea >= 2;
+    final isFollowUp =
+        _explicitLocalFollowUpFlag || _localHistoryCountForFocusArea >= 2;
     // No backend equivalent exists for the old local-heuristic "skin
     // sensitivity" proxy (see _coachInsightForPhase's identical note) —
     // kept as an explicit 0.0 rather than removed from
@@ -7354,8 +7419,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     const sensitivitySignal = 0.0;
     final barrierStressed =
         sensitivitySignal >= 4.0 ||
-      _meetsConcernCutoff(scores['redness'] ?? 0, 4.0) ||
-      _meetsConcernCutoff(scores['rosacea_intensity'] ?? 0, 4.0);
+        _meetsConcernCutoff(scores['redness'] ?? 0, 4.0) ||
+        _meetsConcernCutoff(scores['rosacea_intensity'] ?? 0, 4.0);
 
     final redness = scores['redness'] ?? 0;
     final rosacea = scores['rosacea_intensity'] ?? 0;
@@ -7365,7 +7430,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       rosacea,
       acne,
     ].reduce((a, b) => a > b ? a : b);
-    final treatInflammationFirst = _meetsConcernCutoff(inflammation, 4.0) || barrierStressed;
+    final treatInflammationFirst =
+        _meetsConcernCutoff(inflammation, 4.0) || barrierStressed;
 
     final recommendations = _productRecommendationsForScores(scores);
     final routine = _routineForScores(
@@ -7712,7 +7778,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       );
     }
 
-    if (_meetsConcernCutoff(rosacea, 3.5) || _meetsConcernCutoff(redness, 3.5)) {
+    if (_meetsConcernCutoff(rosacea, 3.5) ||
+        _meetsConcernCutoff(redness, 3.5)) {
       add(
         'SKIN1004 Centella Probio-Cica Intensive Ampoule',
         'A richer cica option for redness/rosacea-prone days; pairs well with a simple moisturizer and SPF.',
@@ -7722,7 +7789,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     }
 
     if (_meetsConcernCutoff(pigment, 3.5) ||
-      !_meetsConcernCutoff(redness, 4) && !_meetsConcernCutoff(acne, 4)) {
+        !_meetsConcernCutoff(redness, 4) && !_meetsConcernCutoff(acne, 4)) {
       add(
         'COSRX The Niacinamide 15 Serum',
         'Niacinamide is a good bridge active for pigment and visible redness, but start slowly if skin is reactive.',
@@ -7731,8 +7798,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       );
     }
 
-    if ((_meetsConcernCutoff(texture, 3.5) || _meetsConcernCutoff(wrinkle, 3.5)) &&
-      !_meetsConcernCutoff(inflammation, 6)) {
+    if ((_meetsConcernCutoff(texture, 3.5) ||
+            _meetsConcernCutoff(wrinkle, 3.5)) &&
+        !_meetsConcernCutoff(inflammation, 6)) {
       add(
         'Copper peptide serum / GHK-Cu peptide serum',
         'A barrier-friendly PM option for texture and wrinkle support without jumping straight to harsh actives.',
@@ -7855,7 +7923,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       rosacea,
       acne,
     ].reduce((a, b) => a > b ? a : b);
-    final calmFirst = _meetsConcernCutoff(inflammation, 4) || barrierStressed || sensitivitySignal >= 4;
+    final calmFirst =
+        _meetsConcernCutoff(inflammation, 4) ||
+        barrierStressed ||
+        sensitivitySignal >= 4;
     final allowActives = !calmFirst && isFollowUp;
 
     final am = <String>[
@@ -7866,7 +7937,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           ? 'Centella or heartleaf toner / essence, because that is the calmest way to support a reactive barrier before any active treatment.'
           : _meetsConcernCutoff(pigment, 3.5)
           ? 'Hydrating toner or essence, because the scan shows tone support is useful and hydration keeps brightening steps better tolerated.'
-          : _meetsConcernCutoff(texture, 3.5) || _meetsConcernCutoff(wrinkle, 3.5)
+          : _meetsConcernCutoff(texture, 3.5) ||
+                _meetsConcernCutoff(wrinkle, 3.5)
           ? 'Peptide-friendly hydrating essence, because texture and firmness work best when the skin is comfortable first.'
           : 'Simple hydrating essence, because the skin does not need extra noise in the morning.',
       calmFirst
@@ -7883,7 +7955,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       'Gentle cleanse, and if you wore sunscreen or makeup, double cleanse first so the evening routine starts from a clean surface.',
       calmFirst
           ? 'Centella, snail mucin, or a bland hydrating serum tonight, because the scan says calming the barrier should come before any stronger treatment.'
-          : allowActives && (_meetsConcernCutoff(texture, 3.5) || _meetsConcernCutoff(wrinkle, 3.5))
+          : allowActives &&
+                (_meetsConcernCutoff(texture, 3.5) ||
+                    _meetsConcernCutoff(wrinkle, 3.5))
           ? 'GHK-Cu Copper Tripeptide-1 at night, because texture and firmness concerns respond best when the barrier is calm and the routine stays consistent.'
           : allowActives && _meetsConcernCutoff(pigment, 3.5)
           ? 'GHK-Cu Copper Tripeptide-1 or another gentle peptide serum, because the scan favors quiet repair more than aggressive exfoliation.'
@@ -7895,7 +7969,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           : 'Barrier cream, because this scan still benefits more from steady repair than from piling on more treatment steps.',
       calmFirst
           ? 'Skip acids, retinoids, and scrubs for now; if you want a weekly active later, wait until the skin is calm for several nights in a row.'
-          : allowActives && (_meetsConcernCutoff(texture, 3.5) || _meetsConcernCutoff(wrinkle, 3.5) || _meetsConcernCutoff(pigment, 3.5))
+          : allowActives &&
+                (_meetsConcernCutoff(texture, 3.5) ||
+                    _meetsConcernCutoff(wrinkle, 3.5) ||
+                    _meetsConcernCutoff(pigment, 3.5))
           ? 'If you add an exfoliant later, keep it to one calm night a week and do not stack it with GHK-Cu or spot acne care.'
           : 'If the skin feels stable, keep any extra treatment step optional rather than mandatory so you do not crowd the routine.',
     ];
@@ -7975,15 +8052,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                     child: _routineColumn('AM', amSteps, MyApp.clinicalTeal),
                   ),
                   const SizedBox(width: 10),
-                  Expanded(
-                    child: _routineColumn('PM', pmSteps, pmAccent),
-                  ),
+                  Expanded(child: _routineColumn('PM', pmSteps, pmAccent)),
                 ],
               )
             else
-              _framingNote(
-                'Routine tips unlock from your scores.',
-              ),
+              _framingNote('Routine tips unlock from your scores.'),
           ],
         ),
       ),
@@ -8604,7 +8677,9 @@ class _SkinAiSplitComparisonScreen extends StatelessWidget {
                 ),
               ),
             ),
-            Expanded(child: Image(image: image, fit: BoxFit.cover)),
+            Expanded(
+              child: Image(image: image, fit: BoxFit.cover),
+            ),
           ],
         ),
       ),
@@ -8752,7 +8827,8 @@ class SkinAiAnalysisResultsScreen extends StatelessWidget {
     // this a baseline value is never available at all (a different symptom
     // than the trend_status gap below, but the same missing-merge bug).
     final rootBaselineMatrix = readMap(
-      _body['baseline_metric_matrix'] ?? analysisResult['baseline_metric_matrix'],
+      _body['baseline_metric_matrix'] ??
+          analysisResult['baseline_metric_matrix'],
     );
     final nestedBaselineMatrix = readMap(metrics['baseline_metric_matrix']);
 
@@ -8769,7 +8845,8 @@ class SkinAiAnalysisResultsScreen extends StatelessWidget {
     // Same dropped-field pattern as trend_deltas/metric_matrix above, for the
     // extraction-path fields the honesty/path-mismatch guard depends on.
     final rootExtractionPaths = readMap(
-      _body['metric_extraction_paths'] ?? analysisResult['metric_extraction_paths'],
+      _body['metric_extraction_paths'] ??
+          analysisResult['metric_extraction_paths'],
     );
     final nestedExtractionPaths = readMap(metrics['metric_extraction_paths']);
     final rootBaselineExtractionPaths = readMap(

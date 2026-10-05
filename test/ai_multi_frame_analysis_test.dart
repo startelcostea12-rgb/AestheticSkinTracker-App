@@ -546,6 +546,23 @@ void main() {
     },
   );
 
+  test('averages raw LAB a_p95 without applying the 0-100 score clamp', () {
+    final aggregate = averageBackendAnalysisFrames([
+      {
+        'status': 'success',
+        'metric_matrix': {'localized_redness': 20.0, 'a_p95': 128.25},
+      },
+      {
+        'status': 'success',
+        'metric_matrix': {'localized_redness': 22.0, 'a_p95': 130.25},
+      },
+    ], requestedFrames: 2);
+
+    final matrix = aggregate.response['metric_matrix'] as Map<String, double>;
+    expect(matrix['a_p95'], 129.25);
+    expect(aggregate.metricContributorCounts['a_p95'], 2);
+  });
+
   test('scored pore visibility remains primary_roi through aggregation', () {
     final aggregate = averageBackendAnalysisFrames([
       {

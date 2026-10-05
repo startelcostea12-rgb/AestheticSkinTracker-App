@@ -10,6 +10,7 @@ edit to these formulas can't silently regress it.
 
 import math
 
+import numpy as np
 import pytest
 
 from main import (
@@ -24,6 +25,10 @@ from main import (
     PIGMENT_LOAD_SCORE_SLOPE,
     UNDER_EYE_DARK_CIRCLE_DEAD_ZONE_L_UNITS,
     UNDER_EYE_DARK_CIRCLE_SCORE_MULTIPLIER,
+    _attach_localized_redness_baseline_p95,
+    _compute_zone_based_metrics,
+    _coalesce_personal_lab_baseline,
+    _parse_baseline_metric_matrix,
     compute_localized_redness_and_rosacea,
     compute_pigment_load,
     compute_under_eye_dark_circle_density,
@@ -118,6 +123,75 @@ class TestLocalizedRednessAndRosacea:
         )
         assert result["localized_redness"] == 100.0
         assert 0.0 <= result["rosacea_severity"] <= 100.0
+
+
+class TestLocalizedRednessPersonalBaselineTransport:
+    @staticmethod
+    def _score(baseline_matrix):
+        image = np.full((48, 48, 3), 100, dtype=np.uint8)
+        skin_mask = np.full((48, 48), 255, dtype=np.uint8)
+        left_cheek = np.zeros((48, 48), dtype=np.uint8)
+        right_cheek = np.zeros((48, 48), dtype=np.uint8)
+        left_cheek[10:38, 5:23] = 255
+        right_cheek[10:38, 25:43] = 255
+        diagnostics = {}
+        metrics = _compute_zone_based_metrics(
+            image,
+            skin_mask,
+            {"left_cheek": left_cheek, "right_cheek": right_cheek},
+            np.empty((0, 2), dtype=np.float32),
+            baseline_matrix=baseline_matrix,
+            redness_diagnostics=diagnostics,
+        )
+        return metrics, diagnostics
+
+    def test_selected_cheek_diagnostic_does_not_select_personal_p95_branch(self):
+        metrics, diagnostics = self._score(
+            {
+                "localized_redness": 20.0,
+                "redness_cheek_p95_a_after_wb": 0.0,
+            }
+        )
+
+        assert diagnostics["branch"] == "within_cheek_spread"
+        assert _coalesce_personal_lab_baseline(
+            {"redness_cheek_p95_a_after_wb": 0.0}
+        ).get("a_p95") is None
+        assert metrics["localized_redness"] == 0.0
+
+    def test_stored_a_p95_uses_the_existing_followup_multiplier(self):
+        metrics, diagnostics = self._score(
+            {"localized_redness": 20.0, "a_p95": 126.0}
+        )
+
+        assert diagnostics["branch"] == "baseline_p95_anchor"
+        assert diagnostics["cheek_side"] == "both"
+        assert metrics["localized_redness"] == pytest.approx(22.6)
+        assert diagnostics["u_zone_p95_a_after_wb"] == 128.0
+
+    def test_only_the_raw_u_zone_p95_is_added_to_the_metric_matrix(self):
+        metric_matrix = {"localized_redness": 20.0}
+        _attach_localized_redness_baseline_p95(
+            metric_matrix,
+            {
+                "p95_a_after_wb": 5.0,
+                "u_zone_p95_a_after_wb": 128.25,
+            },
+        )
+
+        assert metric_matrix["a_p95"] == 128.25
+        no_u_zone = {"localized_redness": 20.0}
+        _attach_localized_redness_baseline_p95(
+            no_u_zone,
+            {"p95_a_after_wb": 5.0},
+        )
+        assert "a_p95" not in no_u_zone
+
+    def test_baseline_matrix_parser_preserves_raw_lab_a_p95(self):
+        parsed = _parse_baseline_metric_matrix({"a_p95": 128.25})
+
+        assert parsed["a_p95"] == 128.25
+        assert _coalesce_personal_lab_baseline(parsed)["a_p95"] == 128.25
 
 
 # ── 2. pigment_load (dead_zone=4.0, center=13.5, slope=3.6) ─────────────

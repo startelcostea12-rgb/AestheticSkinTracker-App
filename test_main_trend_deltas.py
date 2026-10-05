@@ -11,6 +11,7 @@ from main import (
     _body_consistent_scan_count,
     _body_trend_delta_and_status,
     _body_trend_lock_reason,
+    _baseline_formula_versions_for_redness_reference,
     _compute_body_silhouette_trend,
     _coalesce_personal_lab_baseline,
     _compute_redness_from_personal_baseline,
@@ -1160,17 +1161,47 @@ class BaselineFormulaVersionComparisonTests(unittest.TestCase):
         stored_baseline_versions = {"glabellar_wrinkle_depth": 2}
         self.assertIsNone(self._reason(stored_baseline_versions))
 
+    def test_legacy_redness_v2_baseline_locks_against_current_v3(self) -> None:
+        baseline_versions = _baseline_formula_versions_for_redness_reference(
+            {"localized_redness": 3},
+            {"localized_redness": 20.0},
+        )
+        self.assertEqual(baseline_versions["localized_redness"], 2)
+        reason = _compute_trend_lock_reasons(
+            {"localized_redness": 30.0},
+            {"localized_redness": 20.0},
+            current_paths={"localized_redness": "cheek_primary"},
+            baseline_paths={"localized_redness": "cheek_primary"},
+            current_capture_quality="normal",
+            baseline_capture_quality="normal",
+            current_formula_versions={"localized_redness": 3},
+            baseline_formula_versions=baseline_versions,
+            current_pose_template="Front",
+            baseline_pose_template="Front",
+            current_guide_type="facial",
+            baseline_guide_type="facial",
+        )["localized_redness"]
+
+        self.assertEqual(reason, "formula_version_mismatch")
+
+    def test_redness_baseline_with_p95_keeps_v3(self) -> None:
+        baseline_versions = _baseline_formula_versions_for_redness_reference(
+            {"localized_redness": 3},
+            {"localized_redness": 20.0, "a_p95": 128.0},
+        )
+
+        self.assertEqual(baseline_versions["localized_redness"], 3)
+
 
 class MetricFormulaVersionRegistryTests(unittest.TestCase):
     def test_registry_only_contains_deliberately_bumped_metrics(self) -> None:
-        # glabellar_wrinkle_depth is the only existing metric whose formula
-        # has changed so far. chin_pore_visibility is a newly introduced,
-        # independent metric at its initial version, not a change to
-        # pore_visibility's formula.
+        # localized_redness now anchors follow-ups to a stored U-zone p95;
+        # old v2 self-spread baselines are intentionally incomparable.
+        # chin_pore_visibility remains independently at its initial version.
         self.assertEqual(
             METRIC_FORMULA_VERSION,
             {
-                "localized_redness": 2,
+                "localized_redness": 3,
                 "texture_smoothness": 2,
                 "pigment_load": 2,
                 "wrinkle_load": 2,
