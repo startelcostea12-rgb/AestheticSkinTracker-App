@@ -1207,7 +1207,7 @@ class MetricFormulaVersionRegistryTests(unittest.TestCase):
                 "wrinkle_load": 2,
                 "sebum_excess_oil_gloss": 2,
                 "diffuse_flushing_erythema": 2,
-                "rosacea_severity": 2,
+                "rosacea_severity": 3,
                 "pore_visibility": 3,
                 "chin_pore_visibility": 1,
                 "pore_contraction_index": 2,

@@ -3921,7 +3921,10 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     "wrinkle_load": 2,
     "sebum_excess_oil_gloss": 2,
     "diffuse_flushing_erythema": 2,
-    "rosacea_severity": 2,
+    # v3: the U-zone formula is the only producer. The post-emission
+    # recomputation from emitted redness + diffuse flushing is gone, so a
+    # scan whose zone formula did not emit now omits rosacea instead.
+    "rosacea_severity": 3,
     "pore_visibility": 3,
     "chin_pore_visibility": 1,
     "pore_contraction_index": 2,
@@ -6625,57 +6628,6 @@ def analyze_skin_patch(
         emitted_metric_keys.append(metric_key)
         metric_status[metric_key] = "computed"
         fallback_reason.setdefault(metric_key, f"confidence_{confidence_level}")
-
-    localized_redness_emit = safe_float(metric_matrix.get("localized_redness"))
-    rosacea_emit_current = safe_float(metric_matrix.get("rosacea_severity"))
-    if (
-        localized_redness_emit is not None
-        and math.isfinite(localized_redness_emit)
-        and localized_redness_emit > 0.0
-        and (
-            rosacea_emit_current is None
-            or not math.isfinite(rosacea_emit_current)
-            or rosacea_emit_current <= 0.0
-        )
-    ):
-        diffuse_for_rosacea = safe_float(candidate_values.get("diffuse_flushing_erythema"))
-        diffuse_for_rosacea = (
-            float(np.clip(diffuse_for_rosacea, 0.0, 100.0))
-            if diffuse_for_rosacea is not None and math.isfinite(diffuse_for_rosacea)
-            else 0.0
-        )
-        rosacea_before_post = float(
-            np.clip(
-                (0.65 * diffuse_for_rosacea) + (0.35 * localized_redness_emit),
-                0.0,
-                100.0,
-            )
-        )
-        rosacea_post = rosacea_before_post
-        rosacea_post_reason = "unchanged"
-        rosacea_post_cap = max(
-            localized_redness_emit + 20.0,
-            localized_redness_emit * 2.5,
-            diffuse_for_rosacea * 0.45,
-        )
-        if localized_redness_emit <= 25.0 and rosacea_before_post > rosacea_post_cap:
-            rosacea_post = float(np.clip(rosacea_post_cap, 0.0, 100.0))
-            rosacea_post_reason = "cap_low_redness_divergence"
-        rosacea_post_rounded = round(float(np.clip(rosacea_post, 0.0, 100.0)), 1)
-        if rosacea_post_rounded > 0.0:
-            metric_matrix["rosacea_severity"] = rosacea_post_rounded
-            if "rosacea_severity" not in emitted_metric_keys:
-                emitted_metric_keys.append("rosacea_severity")
-            metric_status["rosacea_severity"] = "computed"
-            fallback_reason.setdefault("rosacea_severity", "post_force_calibration")
-            rosacea_calibrated = rosacea_post_rounded
-            logger.info(
-                "ROSACEA_CALIB_POST_FORCE redness=%.1f rosacea_before=%.1f rosacea_after=%.1f reason=%s",
-                localized_redness_emit,
-                rosacea_before_post,
-                rosacea_post_rounded,
-                rosacea_post_reason,
-            )
 
     metric_matrix = _normalize_metric_payload_values(metric_matrix)
     if rosacea_calibrated is not None and math.isfinite(rosacea_calibrated):
