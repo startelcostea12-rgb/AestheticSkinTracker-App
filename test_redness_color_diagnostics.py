@@ -306,6 +306,38 @@ def test_non_zone_branch_reports_its_name_and_null_cheek_fields():
             assert value is None, key
 
 
+def test_texture_fallback_below_existing_roi_minimum_omits_metric():
+    metric_matrix = {"texture_smoothness": 25.2}
+    metric_confidence = {"texture_smoothness": "high"}
+    metric_status = {}
+    fallback_reason = {}
+    forced_metric_values = {"texture_smoothness": 25.2}
+    forced_metric_paths = {"texture_smoothness": "primary_roi"}
+
+    emitted = main._set_laplacian_fallback_texture_metric(
+        metric_matrix,
+        metric_confidence,
+        metric_status,
+        fallback_reason,
+        forced_metric_values,
+        forced_metric_paths,
+        fallback_roi_pixels=499,
+        fallback_value=57.5,
+    )
+
+    assert emitted is False
+    assert "texture_smoothness" not in metric_matrix
+    assert "texture_smoothness" not in metric_confidence
+    assert "texture_smoothness" not in forced_metric_values
+    assert "texture_smoothness" not in forced_metric_paths
+    assert metric_status["texture_smoothness"] == "unavailable"
+    assert main._compute_metric_extraction_paths(
+        metric_status,
+        {"texture_primary_used": 1.0},
+        ["texture_smoothness"],
+    )["texture_smoothness"] == "skipped"
+
+
 def test_full_pipeline_emits_fields_without_changing_any_score():
     image_bytes = CLEAR_FACE_PHOTO.read_bytes()
     normalized, profile, pre_wb = main._assess_and_normalize_image_with_pre_white_balance(
@@ -336,7 +368,11 @@ def test_full_pipeline_emits_fields_without_changing_any_score():
     assert iq_with["localized_redness_mask_pixels"] > 0
     assert iq_with["texture_smoothness_mask_kind"] == "forehead_skin"
     assert iq_with["texture_smoothness_mask_pixels"] > 0
+    assert iq_with["texture_smoothness_mask_pixels"] < 10000
     assert iq_with["texture_smoothness_mask_pixels"] < iq_with["face_skin_pixels"]
+    assert with_pre["metric_extraction_paths"]["texture_smoothness"] == "laplacian_fallback"
+    assert with_pre["metric_extraction_paths"]["texture_smoothness"] != "primary_roi"
+    assert "texture_smoothness" in with_pre["metric_matrix"]
     assert iq_with["pigment_load_mask_kind"] == "u_zone"
     assert iq_with["pigment_load_mask_pixels"] > 0
     assert iq_with["pigment_load_mask_pixels"] == iq_with["u_zone_pixels"]

@@ -3914,7 +3914,9 @@ TREND_NOISE_FLOOR_EXCLUDED_MULTIPLIER = 3.0
 # future change bumps an entry.
 METRIC_FORMULA_VERSION: Dict[str, int] = {
     "localized_redness": 3,
-    "texture_smoothness": 2,
+    # v3 uses the Laplacian fallback path exclusively; v2 primary-ROI values
+    # are not comparable with the single-path metric.
+    "texture_smoothness": 3,
     "pigment_load": 2,
     "wrinkle_load": 2,
     "sebum_excess_oil_gloss": 2,
@@ -5685,6 +5687,44 @@ def _attach_localized_redness_baseline_p95(
         metric_matrix["a_p95"] = u_zone_p95
 
 
+def _set_laplacian_fallback_texture_metric(
+    metric_matrix: Dict[str, Any],
+    metric_confidence: Dict[str, str],
+    metric_status: Dict[str, str],
+    fallback_reason: Dict[str, str],
+    forced_metric_values: Dict[str, float],
+    forced_metric_paths: Dict[str, str],
+    *,
+    fallback_roi_pixels: int,
+    fallback_value: float | None,
+) -> bool:
+    metric_key = "texture_smoothness"
+    if (
+        fallback_roi_pixels < 500
+        or fallback_value is None
+        or not math.isfinite(fallback_value)
+    ):
+        metric_matrix.pop(metric_key, None)
+        metric_confidence.pop(metric_key, None)
+        forced_metric_values.pop(metric_key, None)
+        forced_metric_paths.pop(metric_key, None)
+        metric_status[metric_key] = "unavailable"
+        fallback_reason[metric_key] = (
+            "fallback_roi_too_small"
+            if fallback_roi_pixels < 500
+            else "non_usable_value"
+        )
+        return False
+
+    value = round(float(np.clip(fallback_value, 0.0, 100.0)), 1)
+    metric_matrix[metric_key] = value
+    forced_metric_values[metric_key] = value
+    forced_metric_paths[metric_key] = "laplacian_fallback"
+    metric_status[metric_key] = "computed"
+    fallback_reason[metric_key] = "laplacian_fallback"
+    return True
+
+
 def analyze_skin_patch(
     bgr_image: np.ndarray,
     baseline_matrix: Dict[str, float] | None = None,
@@ -6156,20 +6196,8 @@ def analyze_skin_patch(
         large_fallback_path = "large_roi_fallback" if fallback_skin_pixels >= 50000 else "approximate_face_bbox"
         large_fallback_pixels = int(cv2.countNonZero(large_fallback_roi))
 
-    texture_roi_support_pixels = max(
-        int(raw_components.get("texture_roi_pixels", 0.0)),
-        int(raw_components.get("fallback_texture_roi_pixels", 0.0)),
-        roi_after_fallback_pixels,
-    )
-    primary_cheek_pixels = int(raw_components.get("primary_cheek_roi_pixels", 0.0))
-    texture_needs_force = (
-        texture_current is None
-        or not math.isfinite(texture_current)
-        or texture_current <= 0.0
-        or texture_roi_support_pixels < 10000
-        or primary_cheek_pixels < 10000
-    )
-    if texture_needs_force and large_fallback_pixels >= 500:
+    fallback_smoothness = None
+    if large_fallback_pixels >= 500:
         local_mean = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), 1.4)
         local_mean_sq = cv2.GaussianBlur((gray.astype(np.float32) ** 2), (0, 0), 1.4)
         local_var_map = np.clip(local_mean_sq - (local_mean ** 2), 0.0, None)
@@ -6190,12 +6218,20 @@ def analyze_skin_patch(
         ]
         roughness = sum(roughness_terms) / len(roughness_terms)
         smoothness = float(np.clip(95.0 - (90.0 * roughness), 0.0, 100.0))
-        forced_metric_values["texture_smoothness"] = round(smoothness, 1)
-        forced_metric_paths["texture_smoothness"] = "laplacian_fallback"
-        metric_status["texture_smoothness"] = "computed"
-        fallback_reason["texture_smoothness"] = "laplacian_fallback"
-        texture_force_write = True
-        canonical_metric_matrix["texture_smoothness"] = forced_metric_values["texture_smoothness"]
+
+        fallback_smoothness = smoothness
+
+    texture_force_write = _set_laplacian_fallback_texture_metric(
+        canonical_metric_matrix,
+        metric_confidence,
+        metric_status,
+        fallback_reason,
+        forced_metric_values,
+        forced_metric_paths,
+        fallback_roi_pixels=large_fallback_pixels,
+        fallback_value=fallback_smoothness,
+    )
+    if texture_force_write:
         metric_confidence["texture_smoothness"] = _merge_confidence(
             metric_confidence.get("texture_smoothness", "low"),
             "medium",

@@ -1202,7 +1202,7 @@ class MetricFormulaVersionRegistryTests(unittest.TestCase):
             METRIC_FORMULA_VERSION,
             {
                 "localized_redness": 3,
-                "texture_smoothness": 2,
+                "texture_smoothness": 3,
                 "pigment_load": 2,
                 "wrinkle_load": 2,
                 "sebum_excess_oil_gloss": 2,
@@ -1216,9 +1216,33 @@ class MetricFormulaVersionRegistryTests(unittest.TestCase):
         )
 
     def test_every_metric_defaults_to_version_1(self) -> None:
-        self.assertEqual(_metric_formula_version("texture_smoothness"), 2)
+        self.assertEqual(_metric_formula_version("texture_smoothness"), 3)
         self.assertEqual(_metric_formula_version("wrinkle_load"), 2)
         self.assertEqual(_metric_formula_version("anything_unknown"), 1)
+
+    def test_texture_v2_baseline_is_refused_by_formula_version_gate(self) -> None:
+        self.assertEqual(_metric_formula_version("texture_smoothness"), 3)
+        self.assertEqual(
+            _trend_lock_reason(
+                "laplacian_fallback",
+                "laplacian_fallback",
+                "normal",
+                "normal",
+                1000,
+                750,
+                1000,
+                750,
+                current_formula_version=_metric_formula_version(
+                    "texture_smoothness"
+                ),
+                baseline_formula_version=2,
+                current_pose_template="Front",
+                baseline_pose_template="Front",
+                current_guide_type="facial",
+                baseline_guide_type="facial",
+            ),
+            "formula_version_mismatch",
+        )
 
     def test_glabellar_wrinkle_depth_is_pinned_to_version_2(self) -> None:
         self.assertEqual(_metric_formula_version("glabellar_wrinkle_depth"), 2)
