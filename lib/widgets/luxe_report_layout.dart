@@ -44,6 +44,7 @@ class LuxeMetric {
     this.backendTrendLockReason,
     this.currentRangeMin,
     this.currentRangeMax,
+    this.currentNoiseFloor2sd,
     this.contributorCount,
     this.requestedFrameCount,
   });
@@ -73,6 +74,7 @@ class LuxeMetric {
   final String? backendTrendLockReason;
   final double? currentRangeMin;
   final double? currentRangeMax;
+  final double? currentNoiseFloor2sd;
   final int? contributorCount;
   final int? requestedFrameCount;
 }
@@ -382,6 +384,9 @@ class LuxeMetricParser {
     final trendLockReasons = _canonicalizeMetricMap(
       payload['trend_lock_reasons'],
     );
+    final metricNoiseFloor2sd = _canonicalizeMetricMap(
+      payload['metric_noise_floor_2sd'],
+    );
     final multiFrameAnalysis = _asMap(payload['multi_frame_analysis']);
     final metricRanges = _canonicalizeMetricMap(
       multiFrameAnalysis['metric_ranges'],
@@ -602,6 +607,9 @@ class LuxeMetricParser {
           backendTrendLockReason: backendTrendLockReason,
           currentRangeMin: rangeMin,
           currentRangeMax: rangeMax,
+          currentNoiseFloor2sd: _asDoubleOrNull(
+            metricNoiseFloor2sd[spec.deltaKey],
+          ),
           contributorCount: contributorCount,
           requestedFrameCount: requestedFrameCount,
         ),
@@ -993,6 +1001,18 @@ bool _hideResultVerdictForRepeatNoise({
     default:
       return false;
   }
+}
+
+bool _hasFrameSpreadAboveNoiseBand(LuxeMetric metric) {
+  final min = metric.currentRangeMin;
+  final max = metric.currentRangeMax;
+  final noiseFloor = metric.currentNoiseFloor2sd;
+  if (metric.contributorCount == null || metric.contributorCount! < 2) {
+    return false;
+  }
+  if (min == null || max == null || noiseFloor == null) return false;
+  if (!min.isFinite || !max.isFinite || !noiseFloor.isFinite) return false;
+  return max - min > noiseFloor;
 }
 
 class _HonestyAssessment {
@@ -1636,6 +1656,11 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         requireBackendVerdict: widget.requireBackendVerdict,
       );
       final metricName = metric.name;
+      if (assessment.lockReason == null &&
+          _hasFrameSpreadAboveNoiseBand(metric)) {
+        statements.add('$metricName: No verdict for this metric.');
+        continue;
+      }
       if (_hideResultVerdictForRepeatNoise(
         metricKey: metric.key,
         baseline: metric.baselineScore,
@@ -2051,14 +2076,22 @@ class _MetricCard extends StatelessWidget {
       requireBackendVerdict: requireBackendVerdict,
     );
     final assessment =
-        _hideResultVerdictForRepeatNoise(
-          metricKey: metric.key,
-          baseline: baselineValue,
-          current: currentValue,
-          hasRealBaseline: resolvedAssessment.hasRealBaseline,
-          hasComparableCurrentValue: metric.hasComparableCurrentValue,
-          lockReason: resolvedAssessment.lockReason,
-        )
+        resolvedAssessment.lockReason == null &&
+            _hasFrameSpreadAboveNoiseBand(metric)
+        ? _HonestyAssessment(
+            status: _HonestyStatus.noVerdict,
+            reason: 'frame spread exceeds the existing noise floor',
+            deltaPct: null,
+            hasRealBaseline: resolvedAssessment.hasRealBaseline,
+          )
+        : _hideResultVerdictForRepeatNoise(
+            metricKey: metric.key,
+            baseline: baselineValue,
+            current: currentValue,
+            hasRealBaseline: resolvedAssessment.hasRealBaseline,
+            hasComparableCurrentValue: metric.hasComparableCurrentValue,
+            lockReason: resolvedAssessment.lockReason,
+          )
         ? _HonestyAssessment(
             status: _HonestyStatus.noVerdict,
             reason: 'within repeat noise',
@@ -2147,11 +2180,15 @@ class _MetricCard extends StatelessWidget {
         : 'Not compared';
     final comparisonSubtitle = !metric.showTrendVerdict
         ? currentDisplayText
+        : row.trendLocked
+        ? 'Current $currentDisplayText${precision.rangeSuffix}'
         : row.hasRealBaseline
         ? 'Current $currentDisplayText${precision.rangeSuffix} · Baseline ${row.baselineValue.toStringAsFixed(1)}'
         : 'Current $currentDisplayText${precision.rangeSuffix}';
     final progressionLine = !row.hasComparableCurrentValue
         ? '${metric.name}: Not compared (${row.subtext})'
+        : row.trendLocked
+        ? '${metric.name}: ${row.subtext}'
         : row.hasRealBaseline
         ? '${metric.name}: ${row.baselineValue.toStringAsFixed(1)} -> ${row.currentValue.toStringAsFixed(1)} '
               '(${row.subtext})'

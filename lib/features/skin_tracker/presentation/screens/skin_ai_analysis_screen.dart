@@ -905,6 +905,24 @@ bool aiScanHasCheekSideMismatch({
       currentSide != baselineSide;
 }
 
+void _applyCheekMismatchDisplayLocks({
+  required Map<String, String> trendStatus,
+  required Map<String, double> trendDeltas,
+  required Map<String, String> trendLockReasons,
+}) {
+  for (final metric in const [
+    'texture_smoothness',
+    'pigment_load',
+    'pore_visibility',
+    'skin_tone_radiance_evenness',
+    'structural_firmness_elasticity',
+  ]) {
+    trendStatus.remove(metric);
+    trendDeltas.remove(metric);
+    trendLockReasons[metric] = 'cheek_mismatch';
+  }
+}
+
 ({
   Map<String, String> trendStatus,
   Map<String, double> trendDeltas,
@@ -921,10 +939,23 @@ downgradeRednessTrendForCaptureMismatch({
   final existingRednessLockReason = trendLockReasons['localized_redness'];
   if (!trendStatus.containsKey('localized_redness') &&
       existingRednessLockReason != 'path_mismatch') {
+    final updatedStatus = Map<String, String>.from(trendStatus);
+    final updatedDeltas = Map<String, double>.from(trendDeltas);
+    final updatedLockReasons = Map<String, String>.from(trendLockReasons);
+    if (aiScanHasCheekSideMismatch(
+      currentPayload: currentPayload,
+      baselinePayload: baselinePayload,
+    )) {
+      _applyCheekMismatchDisplayLocks(
+        trendStatus: updatedStatus,
+        trendDeltas: updatedDeltas,
+        trendLockReasons: updatedLockReasons,
+      );
+    }
     return (
-      trendStatus: Map<String, String>.from(trendStatus),
-      trendDeltas: Map<String, double>.from(trendDeltas),
-      trendLockReasons: Map<String, String>.from(trendLockReasons),
+      trendStatus: updatedStatus,
+      trendDeltas: updatedDeltas,
+      trendLockReasons: updatedLockReasons,
       rednessLockReasons: const <String>{},
     );
   }
@@ -1004,6 +1035,13 @@ downgradeRednessTrendForCaptureMismatch({
         : reasons.contains('cast_mismatch')
         ? 'cast_mismatch'
         : 'path_mismatch';
+  }
+  if (reasons.contains('cheek_mismatch')) {
+    _applyCheekMismatchDisplayLocks(
+      trendStatus: updatedStatus,
+      trendDeltas: updatedDeltas,
+      trendLockReasons: updatedLockReasons,
+    );
   }
 
   return (
@@ -1090,15 +1128,13 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
 
 Map<String, dynamic> luxePrecisionMetadataFromBackend(
   Map<String, dynamic>? backendResponse,
-) =>
-    <String, dynamic>{
-      'metric_confidence': _dynamicMap(
-        backendResponse?['metric_confidence'],
-      ),
-      'multi_frame_analysis': _dynamicMap(
-        backendResponse?['multi_frame_analysis'],
-      ),
-    };
+) => <String, dynamic>{
+  'metric_confidence': _dynamicMap(backendResponse?['metric_confidence']),
+  'multi_frame_analysis': _dynamicMap(backendResponse?['multi_frame_analysis']),
+  'metric_noise_floor_2sd': _dynamicMap(
+    backendResponse?['metric_noise_floor_2sd'],
+  ),
+};
 
 /// Friendly capture-quality tag for the results hero badge — replaces the
 /// old "N% confidence" figure, which was never a confidence in the
@@ -2368,23 +2404,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           unlockedVerdictsOnly.trendStatus;
       final Map<String, String> serverTrendLockReasons =
           unlockedVerdictsOnly.trendLockReasons;
-      if (aiScanHasCheekSideMismatch(
-        currentPayload: backendResponse,
-        baselinePayload:
-            _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
-      )) {
-        for (final metric in const [
-          'texture_smoothness',
-          'pigment_load',
-          'pore_visibility',
-          'skin_tone_radiance_evenness',
-          'structural_firmness_elasticity',
-        ]) {
-          serverTrendStatus.remove(metric);
-          serverTrendDeltas.remove(metric);
-          serverTrendLockReasons[metric] = 'cheek_mismatch';
-        }
-      }
       // Write the (possibly downgraded) trend fields back into
       // backendResponse -- both locations _mergePayloadForPersistence reads
       // from -- so what gets persisted to ScanHistoryEntry.rawPayload

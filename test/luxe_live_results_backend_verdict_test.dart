@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:aesthetic_skin_tracker/models/scan_history.dart';
+import 'package:aesthetic_skin_tracker/utils/ai_scan_data_csv_exporter.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 
@@ -49,6 +51,8 @@ void main() {
     Map<String, dynamic>? trendDeltas,
     Map<String, dynamic>? trendStatus,
     Map<String, dynamic>? trendLockReasons,
+    Map<String, dynamic>? metricRanges,
+    Map<String, dynamic>? metricNoiseFloors,
   }) {
     return <String, dynamic>{
       'is_follow_up': true,
@@ -62,6 +66,12 @@ void main() {
       if (trendDeltas != null) 'trend_deltas': trendDeltas,
       if (trendStatus != null) 'trend_status': trendStatus,
       if (trendLockReasons != null) 'trend_lock_reasons': trendLockReasons,
+      if (metricRanges != null)
+        'multi_frame_analysis': <String, dynamic>{
+          'metric_ranges': metricRanges,
+        },
+      if (metricNoiseFloors != null)
+        'metric_noise_floor_2sd': metricNoiseFloors,
     };
   }
 
@@ -285,6 +295,156 @@ void main() {
       find.descendant(of: card, matching: find.textContaining('%')),
       findsNothing,
     );
+  });
+
+  testWidgets('texture spread wider than the noise floor has no verdict', (
+    tester,
+  ) async {
+    final payload = basePayload(
+      baseline: 59.6,
+      current: 43.1,
+      metricKey: 'texture_smoothness',
+      trendStatus: {'texture_smoothness': 'stable'},
+      trendDeltas: {'texture_smoothness': 0.0},
+      metricRanges: {
+        'texture_smoothness': {'min': 13.6, 'max': 58.3, 'count': 3},
+      },
+      metricNoiseFloors: {'texture_smoothness': 5.4},
+    );
+    await tester.pumpWidget(harness(payload));
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(const ValueKey('result_metric_texture_smoothness'));
+    expect(
+      find.descendant(of: card, matching: find.textContaining('43.1')),
+      findsWidgets,
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.text('No verdict for this metric'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: card, matching: find.textContaining('Stable')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('tight texture spread keeps the Stable verdict', (tester) async {
+    final payload = basePayload(
+      baseline: 59.6,
+      current: 43.1,
+      metricKey: 'texture_smoothness',
+      trendStatus: {'texture_smoothness': 'stable'},
+      trendDeltas: {'texture_smoothness': 0.0},
+      metricRanges: {
+        'texture_smoothness': {'min': 42.5, 'max': 43.7, 'count': 3},
+      },
+      metricNoiseFloors: {'texture_smoothness': 5.4},
+    );
+    await tester.pumpWidget(harness(payload));
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(const ValueKey('result_metric_texture_smoothness'));
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.text('Stable - change within tracking noise'),
+      ),
+      findsWidgets,
+    );
+  });
+
+  testWidgets('locked redness omits baseline-to-current progression arrow', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      harness(
+        basePayload(
+          baseline: 16.5,
+          current: 28.4,
+          metricKey: 'localized_redness',
+          trendLockReasons: {'localized_redness': 'cheek_mismatch'},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(const ValueKey('result_metric_localized_redness'));
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.textContaining('Not comparable:'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: card, matching: find.textContaining('28.4')),
+      findsWidgets,
+    );
+    expect(
+      find.descendant(of: card, matching: find.textContaining('16.5 -> 28.4')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('card and CSV use the same scan-level metric values', (
+    tester,
+  ) async {
+    final payload = <String, dynamic>{
+      'is_follow_up': true,
+      'local_history_count': 2,
+      'metric_matrix': <String, dynamic>{
+        'texture_smoothness': 43.1,
+        'localized_redness': 28.4,
+      },
+      'baseline_metric_matrix': <String, dynamic>{
+        'texture_smoothness': 59.6,
+        'localized_redness': 16.5,
+      },
+      'metric_extraction_paths': <String, dynamic>{
+        'texture_smoothness': 'primary_roi',
+        'localized_redness': 'primary_roi',
+      },
+      'baseline_metric_extraction_paths': <String, dynamic>{
+        'texture_smoothness': 'primary_roi',
+        'localized_redness': 'primary_roi',
+      },
+      'trend_status': <String, dynamic>{'texture_smoothness': 'stable'},
+      'trend_lock_reasons': <String, dynamic>{
+        'localized_redness': 'cheek_mismatch',
+      },
+    };
+    await tester.pumpWidget(harness(payload));
+    await tester.pumpAndSettle();
+
+    final scan = ScanHistoryEntry(
+      id: 'same-result-scan',
+      timestamp: DateTime.utc(2026, 10, 4),
+      scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+      estimatedSkinAge: 0,
+      metrics: const <String, double>{},
+      rawPayload: payload,
+    );
+    final rows = AiScanDataCsvExporter.format([
+      scan,
+    ], registryBaselineScanIds: const {}).split('\r\n');
+    final header = rows.first.split(',');
+    final values = rows[1].split(',');
+
+    for (final entry in const {
+      'texture_smoothness': '43.1',
+      'localized_redness': '28.4',
+    }.entries) {
+      final card = find.byKey(ValueKey('result_metric_${entry.key}'));
+      expect(
+        find.descendant(of: card, matching: find.textContaining(entry.value)),
+        findsWidgets,
+      );
+      expect(values[header.indexOf('${entry.key}_value')], entry.value);
+    }
   });
 
   testWidgets('localized redness never renders a verdict', (tester) async {
