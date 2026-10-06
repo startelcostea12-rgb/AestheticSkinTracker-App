@@ -366,7 +366,7 @@ void main() {
     );
   });
 
-  testWidgets('texture spread wider than the noise floor has no verdict', (
+  testWidgets('wide texture spread keeps the backend Stable verdict', (
     tester,
   ) async {
     final payload = basePayload(
@@ -391,12 +391,153 @@ void main() {
     expect(
       find.descendant(
         of: card,
+        matching: find.text('Stable - change within tracking noise'),
+      ),
+      findsWidgets,
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.text('No verdict for this metric'),
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
+    'trusted metric with a backend worsened verdict keeps it above its '
+    'noise floor',
+    (tester) async {
+      final payload = basePayload(
+        baseline: 8.0,
+        current: 10.0,
+        metricKey: 'pore_visibility',
+        trendStatus: {'pore_visibility': 'worsened'},
+        trendDeltas: {'pore_visibility': 25.0},
+        metricRanges: {
+          'pore_visibility': {'min': 8.5, 'max': 11.5, 'count': 3},
+        },
+        metricNoiseFloors: {'pore_visibility': 1.0},
+      );
+      await tester.pumpWidget(harness(payload));
+      await tester.pumpAndSettle();
+
+      final card = find.byKey(const ValueKey('result_metric_pore_visibility'));
+      expect(
+        find.descendant(of: card, matching: find.text('Worsened')),
+        findsWidgets,
+      );
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.text('No verdict for this metric'),
+        ),
+        findsNothing,
+      );
+      expect(find.textContaining('Pore Visibility: No verdict'), findsNothing);
+    },
+  );
+
+  testWidgets('locked trusted metric above its noise floor is not comparable', (
+    tester,
+  ) async {
+    final payload = basePayload(
+      baseline: 8.0,
+      current: 10.0,
+      metricKey: 'pore_visibility',
+      trendStatus: {'pore_visibility': 'stable'},
+      trendDeltas: {'pore_visibility': 0.0},
+      trendLockReasons: {'pore_visibility': 'lighting_mismatch'},
+      metricRanges: {
+        'pore_visibility': {'min': 8.5, 'max': 11.5, 'count': 3},
+      },
+      metricNoiseFloors: {'pore_visibility': 1.0},
+    );
+    await tester.pumpWidget(harness(payload));
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(const ValueKey('result_metric_pore_visibility'));
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.textContaining('Not comparable:'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.text('No verdict for this metric'),
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('hidden metric with a backend verdict still shows no verdict', (
+    tester,
+  ) async {
+    final payload = basePayload(
+      baseline: 30.0,
+      current: 40.0,
+      metricKey: 'wrinkle_load',
+      trendStatus: {'wrinkle_load': 'worsened'},
+      trendDeltas: {'wrinkle_load': 33.3},
+      metricRanges: {
+        'wrinkle_load': {'min': 35.0, 'max': 45.0, 'count': 3},
+      },
+      metricNoiseFloors: {'wrinkle_load': 3.7},
+    );
+    await tester.pumpWidget(harness(payload));
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(const ValueKey('result_metric_wrinkle_load'));
+    expect(
+      find.descendant(of: card, matching: find.textContaining('40.0')),
+      findsWidgets,
+    );
+    for (final label in const ['Improved', 'Worsened']) {
+      expect(
+        find.descendant(of: card, matching: find.text(label)),
+        findsNothing,
+      );
+    }
+    expect(
+      find.descendant(of: card, matching: find.textContaining('Stable')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('trusted metric without a backend verdict keeps the frame-spread '
+      'No verdict', (tester) async {
+    final payload = basePayload(
+      baseline: 22.3,
+      current: 27.9,
+      metricRanges: {
+        'pigment_load': {'min': 24.0, 'max': 31.0, 'count': 3},
+      },
+      metricNoiseFloors: {'pigment_load': 2.0},
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: LuxeReportLayout(rawPayload: payload),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(const ValueKey('result_metric_pigment_load'));
+    expect(
+      find.descendant(
+        of: card,
         matching: find.text('No verdict for this metric'),
       ),
       findsOneWidget,
     );
     expect(
-      find.descendant(of: card, matching: find.textContaining('Stable')),
+      find.descendant(of: card, matching: find.text('Worsened')),
       findsNothing,
     );
   });

@@ -1006,7 +1006,24 @@ bool _hideResultVerdictForRepeatNoise({
   }
 }
 
+// Metrics whose backend stable/improved/worsened verdict is shown as-is: the
+// frame-spread check below never replaces it with "No verdict".
+const Set<String> _metricsKeepingBackendVerdictOverFrameSpread = <String>{
+  'texture_smoothness',
+  'pigment_load',
+  'skin_tone_radiance_evenness',
+  'pore_visibility',
+  'localized_redness',
+  'structural_firmness_elasticity',
+};
+
 bool _hasFrameSpreadAboveNoiseBand(LuxeMetric metric) {
+  if (metric.usesBackendTrend &&
+      _metricsKeepingBackendVerdictOverFrameSpread.contains(
+        metric.key.trim().toLowerCase(),
+      )) {
+    return false;
+  }
   final min = metric.currentRangeMin;
   final max = metric.currentRangeMax;
   final noiseFloor = metric.currentNoiseFloor2sd;
