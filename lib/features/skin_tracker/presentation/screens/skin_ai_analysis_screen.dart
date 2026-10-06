@@ -8774,6 +8774,7 @@ class SkinAiAnalysisResultsScreen extends StatelessWidget {
                     currentImageProvider: currentImage,
                     baselineLabel: 'Baseline Image',
                     currentLabel: 'Current Scan',
+                    requireBackendVerdictForTrustedMetrics: true,
                   ),
                   if (recommendedProducts.isNotEmpty) ...[
                     const SizedBox(height: 18),

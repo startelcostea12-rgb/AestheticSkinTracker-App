@@ -1006,9 +1006,11 @@ bool _hideResultVerdictForRepeatNoise({
   }
 }
 
-// Metrics whose backend stable/improved/worsened verdict is shown as-is: the
-// frame-spread check below never replaces it with "No verdict".
-const Set<String> _metricsKeepingBackendVerdictOverFrameSpread = <String>{
+// Trusted metrics: a backend stable/improved/worsened verdict is shown as-is
+// (the frame-spread check below never replaces it with "No verdict"), and
+// with LuxeReportLayout.requireBackendVerdictForTrustedMetrics they never get
+// a locally recomputed verdict either.
+const Set<String> _trustedVerdictMetricKeys = <String>{
   'texture_smoothness',
   'pigment_load',
   'skin_tone_radiance_evenness',
@@ -1019,9 +1021,7 @@ const Set<String> _metricsKeepingBackendVerdictOverFrameSpread = <String>{
 
 bool _hasFrameSpreadAboveNoiseBand(LuxeMetric metric) {
   if (metric.usesBackendTrend &&
-      _metricsKeepingBackendVerdictOverFrameSpread.contains(
-        metric.key.trim().toLowerCase(),
-      )) {
+      _trustedVerdictMetricKeys.contains(metric.key.trim().toLowerCase())) {
     return false;
   }
   final min = metric.currentRangeMin;
@@ -1382,6 +1382,7 @@ class LuxeReportLayout extends StatefulWidget {
     this.gateReason,
     this.baselineNotSavedReason,
     this.requireBackendVerdict = false,
+    this.requireBackendVerdictForTrustedMetrics = false,
   });
 
   final Map<String, dynamic> rawPayload;
@@ -1409,6 +1410,18 @@ class LuxeReportLayout extends StatefulWidget {
   /// including the legacy recompute fallback, unchanged. Only the live AI
   /// Skin Analysis results screen sets this to true.
   final bool requireBackendVerdict;
+
+  /// [requireBackendVerdict] for the trusted metrics only (texture, pigment,
+  /// radiance, pore visibility, redness, firmness): with no backend
+  /// trend_status they show the number and "No verdict for this metric"
+  /// instead of the legacy local recompute. Every other metric keeps the
+  /// caller's existing behavior. Ignored when [requireBackendVerdict] is set.
+  final bool requireBackendVerdictForTrustedMetrics;
+
+  bool _requiresBackendVerdictFor(String metricKey) =>
+      requireBackendVerdict ||
+      (requireBackendVerdictForTrustedMetrics &&
+          _trustedVerdictMetricKeys.contains(metricKey.trim().toLowerCase()));
 
   /// Non-null when the caller determined this scan was ELIGIBLE to become
   /// the baseline (no earlier one existed) but did NOT actually become one
@@ -1673,7 +1686,7 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         backendTrendStatus: metric.backendTrendStatus,
         usesBackendTrend: metric.usesBackendTrend,
         backendTrendLockReason: metric.backendTrendLockReason,
-        requireBackendVerdict: widget.requireBackendVerdict,
+        requireBackendVerdict: widget._requiresBackendVerdictFor(metric.key),
       );
       final metricName = metric.name;
       if (assessment.lockReason == null &&
@@ -1977,7 +1990,8 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
                         showProgressComparison: showProgressComparison,
                         selected: _selectedMetricKey == metric.key,
                         onTap: () => _handleMetricTap(metric),
-                        requireBackendVerdict: widget.requireBackendVerdict,
+                        requireBackendVerdict: widget
+                            ._requiresBackendVerdictFor(metric.key),
                       ),
                     ),
                 ],

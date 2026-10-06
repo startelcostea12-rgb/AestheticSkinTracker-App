@@ -960,4 +960,153 @@ void main() {
       expect(find.text('Worsened'), findsWidgets);
     },
   );
+
+  group(
+    'post-scan results screen (trusted metrics need a backend verdict)',
+    () {
+      Future<Finder> pumpResults(
+        WidgetTester tester,
+        Map<String, dynamic> payload,
+        String metricKey,
+      ) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: SkinAiAnalysisResultsScreen(
+              analysisResult: payload,
+              croppedImageBytes: null,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        return find.byKey(ValueKey('result_metric_$metricKey'));
+      }
+
+      testWidgets('trusted metric with no backend status shows No verdict', (
+        tester,
+      ) async {
+        // Without a backend verdict the legacy recompute would call
+        // 22.3 -> 27.9 Worsened (see the requireBackendVerdict=false test).
+        final card = await pumpResults(
+          tester,
+          basePayload(baseline: 22.3, current: 27.9),
+          'pigment_load',
+        );
+        expect(card, findsOneWidget);
+        expect(
+          find.descendant(of: card, matching: find.textContaining('27.9')),
+          findsWidgets,
+        );
+        expect(
+          find.descendant(
+            of: card,
+            matching: find.text('No verdict for this metric'),
+          ),
+          findsOneWidget,
+        );
+        for (final label in const ['Improved', 'Worsened']) {
+          expect(
+            find.descendant(of: card, matching: find.text(label)),
+            findsNothing,
+          );
+        }
+        expect(
+          find.descendant(of: card, matching: find.textContaining('Stable')),
+          findsNothing,
+        );
+      });
+
+      testWidgets(
+        'the same metric with a backend worsened verdict says Worsened',
+        (tester) async {
+          final card = await pumpResults(
+            tester,
+            basePayload(
+              baseline: 22.3,
+              current: 27.9,
+              trendStatus: {'pigment_load': 'worsened'},
+              trendDeltas: {'pigment_load': 25.1},
+            ),
+            'pigment_load',
+          );
+          expect(
+            find.descendant(of: card, matching: find.text('Worsened')),
+            findsWidgets,
+          );
+          expect(
+            find.descendant(
+              of: card,
+              matching: find.text('No verdict for this metric'),
+            ),
+            findsNothing,
+          );
+        },
+      );
+
+      testWidgets('a locked trusted metric still says Not comparable', (
+        tester,
+      ) async {
+        final card = await pumpResults(
+          tester,
+          basePayload(
+            baseline: 22.3,
+            current: 27.9,
+            trendStatus: {'pigment_load': 'stable'},
+            trendDeltas: {'pigment_load': 0.0},
+            trendLockReasons: {'pigment_load': 'lighting_mismatch'},
+          ),
+          'pigment_load',
+        );
+        expect(
+          find.descendant(
+            of: card,
+            matching: find.textContaining('Not comparable:'),
+          ),
+          findsOneWidget,
+        );
+      });
+
+      testWidgets('a 0.0 redness with no backend status shows No verdict', (
+        tester,
+      ) async {
+        final card = await pumpResults(
+          tester,
+          basePayload(
+            baseline: 12.0,
+            current: 0.0,
+            metricKey: 'localized_redness',
+          ),
+          'localized_redness',
+        );
+        expect(
+          find.descendant(
+            of: card,
+            matching: find.text('No verdict for this metric'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: card, matching: find.text('Improved')),
+          findsNothing,
+        );
+      });
+
+      testWidgets('a hidden metric stays number-only', (tester) async {
+        final card = await pumpResults(
+          tester,
+          basePayload(baseline: 30.0, current: 40.0, metricKey: 'wrinkle_load'),
+          'wrinkle_load',
+        );
+        expect(
+          find.descendant(of: card, matching: find.textContaining('40.0')),
+          findsWidgets,
+        );
+        for (final label in const ['Improved', 'Worsened']) {
+          expect(
+            find.descendant(of: card, matching: find.text(label)),
+            findsNothing,
+          );
+        }
+      });
+    },
+  );
 }
