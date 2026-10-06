@@ -985,6 +985,7 @@ bool _hideResultVerdictForRepeatNoise({
   required double current,
   required bool hasRealBaseline,
   required bool hasComparableCurrentValue,
+  required _HonestyStatus status,
   String? lockReason,
 }) {
   if (!hasComparableCurrentValue || (lockReason?.trim().isNotEmpty ?? false)) {
@@ -995,7 +996,9 @@ bool _hideResultVerdictForRepeatNoise({
     case 'localized_redness':
       return true;
     case 'structural_firmness_elasticity':
-      return hasRealBaseline && (current - baseline).abs() < 4.0;
+      return status != _HonestyStatus.stable &&
+          hasRealBaseline &&
+          (current - baseline).abs() < 4.0;
     case 'pigment_load':
       return hasRealBaseline && (current - baseline).abs() < 2.0;
     default:
@@ -1667,6 +1670,7 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         current: metric.currentScore,
         hasRealBaseline: assessment.hasRealBaseline,
         hasComparableCurrentValue: metric.hasComparableCurrentValue,
+        status: assessment.status,
         lockReason: assessment.lockReason,
       )) {
         statements.add('$metricName: No verdict for this metric.');
@@ -2090,6 +2094,7 @@ class _MetricCard extends StatelessWidget {
             current: currentValue,
             hasRealBaseline: resolvedAssessment.hasRealBaseline,
             hasComparableCurrentValue: metric.hasComparableCurrentValue,
+            status: resolvedAssessment.status,
             lockReason: resolvedAssessment.lockReason,
           )
         ? _HonestyAssessment(

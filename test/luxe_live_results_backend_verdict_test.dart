@@ -297,6 +297,75 @@ void main() {
     );
   });
 
+  testWidgets('stable firmness keeps backend stable label below 4 points', (
+    tester,
+  ) async {
+    final payload = basePayload(
+      baseline: 52.0,
+      current: 53.2,
+      metricKey: 'structural_firmness_elasticity',
+      trendStatus: {'structural_firmness_elasticity': 'stable'},
+      trendDeltas: {'structural_firmness_elasticity': 0.0},
+    );
+    await tester.pumpWidget(harness(payload));
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(
+      const ValueKey('result_metric_structural_firmness_elasticity'),
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.text('Stable - change within tracking noise'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.text('No verdict for this metric'),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.textContaining('Structural Firmness & Elasticity: Stable'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('stable locked firmness remains not comparable', (tester) async {
+    final payload = basePayload(
+      baseline: 52.0,
+      current: 53.2,
+      metricKey: 'structural_firmness_elasticity',
+      trendStatus: {'structural_firmness_elasticity': 'stable'},
+      trendDeltas: {'structural_firmness_elasticity': 0.0},
+      trendLockReasons: {
+        'structural_firmness_elasticity': 'capture_quality_mismatch',
+      },
+    );
+    await tester.pumpWidget(harness(payload));
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(
+      const ValueKey('result_metric_structural_firmness_elasticity'),
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.textContaining('Not comparable:'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.text('No verdict for this metric'),
+      ),
+      findsNothing,
+    );
+  });
+
   testWidgets('texture spread wider than the noise floor has no verdict', (
     tester,
   ) async {
