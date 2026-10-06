@@ -516,7 +516,46 @@ void main() {
     }
   });
 
-  testWidgets('localized redness never renders a verdict', (tester) async {
+  testWidgets('unlocked redness keeps the backend stable verdict', (
+    tester,
+  ) async {
+    final payload = basePayload(
+      baseline: 24.0,
+      current: 25.0,
+      metricKey: 'localized_redness',
+      trendStatus: {'localized_redness': 'stable'},
+      trendDeltas: {'localized_redness': 4.2},
+    );
+    await tester.pumpWidget(harness(payload));
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(const ValueKey('result_metric_localized_redness'));
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.text('Stable - change within tracking noise'),
+      ),
+      findsWidgets,
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.text('No verdict for this metric'),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.textContaining('Not comparable:'),
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('unlocked redness keeps the backend improved verdict', (
+    tester,
+  ) async {
     final payload = basePayload(
       baseline: 30.0,
       current: 25.0,
@@ -529,19 +568,74 @@ void main() {
 
     final card = find.byKey(const ValueKey('result_metric_localized_redness'));
     expect(
-      find.descendant(of: card, matching: find.textContaining('25.0')),
+      find.descendant(of: card, matching: find.text('Improved')),
       findsWidgets,
     );
     expect(
-      find.descendant(of: card, matching: find.text('Improved')),
+      find.descendant(
+        of: card,
+        matching: find.text('No verdict for this metric'),
+      ),
       findsNothing,
     );
+  });
+
+  testWidgets('a 0.0 redness reading gains no trend verdict', (tester) async {
+    final payload = basePayload(
+      baseline: 12.0,
+      current: 0.0,
+      metricKey: 'localized_redness',
+      trendStatus: {'localized_redness': 'improved'},
+      trendDeltas: {'localized_redness': -100.0},
+    );
+    await tester.pumpWidget(harness(payload));
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(const ValueKey('result_metric_localized_redness'));
     expect(
-      find.descendant(of: card, matching: find.text('Worsened')),
-      findsNothing,
+      find.descendant(of: card, matching: find.textContaining('0.0')),
+      findsWidgets,
+    );
+    for (final label in const ['Improved', 'Worsened']) {
+      expect(
+        find.descendant(of: card, matching: find.text(label)),
+        findsNothing,
+      );
+    }
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.text('No verdict for this metric'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('cheek-locked redness still says Not comparable', (tester) async {
+    final payload = basePayload(
+      baseline: 24.0,
+      current: 25.0,
+      metricKey: 'localized_redness',
+      trendStatus: {'localized_redness': 'stable'},
+      trendDeltas: {'localized_redness': 4.2},
+      trendLockReasons: {'localized_redness': 'cheek_mismatch'},
+    );
+    await tester.pumpWidget(harness(payload));
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(const ValueKey('result_metric_localized_redness'));
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.textContaining('Not comparable:'),
+      ),
+      findsOneWidget,
     );
     expect(
-      find.descendant(of: card, matching: find.textContaining('Stable')),
+      find.descendant(
+        of: card,
+        matching: find.text('Stable - change within tracking noise'),
+      ),
       findsNothing,
     );
   });
@@ -599,7 +693,7 @@ void main() {
     },
   );
 
-  testWidgets('pigment hides a one-point change verdict', (tester) async {
+  testWidgets('pigment under a 2-point move keeps its verdict', (tester) async {
     await tester.pumpWidget(
       harness(
         basePayload(
@@ -619,14 +713,14 @@ void main() {
     );
     expect(
       find.descendant(of: card, matching: find.text('Worsened')),
-      findsNothing,
+      findsWidgets,
     );
     expect(
       find.descendant(
         of: card,
         matching: find.text('No verdict for this metric'),
       ),
-      findsOneWidget,
+      findsNothing,
     );
   });
 

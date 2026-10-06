@@ -994,13 +994,13 @@ bool _hideResultVerdictForRepeatNoise({
 
   switch (metricKey.trim().toLowerCase()) {
     case 'localized_redness':
-      return true;
+      // A 0.0 reading sits at the formula's dead-zone floor; keep it
+      // verdict-free as before. Any other unlocked redness keeps its verdict.
+      return current <= 0.0;
     case 'structural_firmness_elasticity':
       return status != _HonestyStatus.stable &&
           hasRealBaseline &&
           (current - baseline).abs() < 4.0;
-    case 'pigment_load':
-      return hasRealBaseline && (current - baseline).abs() < 2.0;
     default:
       return false;
   }
