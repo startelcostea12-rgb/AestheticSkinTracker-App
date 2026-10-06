@@ -206,6 +206,66 @@ Map<String, String> aiScanExtractionPaths(ScanHistoryEntry scan) {
   return out;
 }
 
+/// The baseline extraction paths sent with a follow-up scan, read from the
+/// baseline scan's stored [rawPayload]. Older metrics default to 'unknown'
+/// when no path was stored. The under-eye metrics send only a path the
+/// baseline actually stored; a missing one stays missing.
+Map<String, String> aiBaselineExtractionPathsForRequest(
+  Map<String, dynamic>? rawPayload,
+) {
+  const canonicalKeys = <String>{
+    'localized_redness',
+    'texture_smoothness',
+    'pigment_load',
+    'wrinkle_load',
+    'pore_visibility',
+    'breakout_activity',
+    'sebum_excess_oil_gloss',
+    'diffuse_flushing_erythema',
+    'skin_tone_radiance_evenness',
+    'glabellar_wrinkle_depth',
+    'pore_contraction_index',
+    'structural_firmness_elasticity',
+    'rosacea_severity',
+    'skin_hydration',
+  };
+  const storedOnlyKeys = <String>{
+    'under_eye_texture_density',
+    'under_eye_dark_circle_density',
+  };
+
+  final out = <String, String>{for (final key in canonicalKeys) key: 'unknown'};
+
+  if (rawPayload == null || rawPayload.isEmpty) {
+    return out;
+  }
+
+  void mergePathSource(dynamic source) {
+    final map = _asPlainMap(source);
+    if (map == null || map.isEmpty) return;
+    for (final entry in map.entries) {
+      final key = entry.key.toString().trim().toLowerCase();
+      if (storedOnlyKeys.contains(key)) {
+        final path = preservedAiExtractionPath(entry.value);
+        if (path != null) out[key] = path;
+        continue;
+      }
+      if (!canonicalKeys.contains(key)) continue;
+      out[key] = preservedAiExtractionPath(entry.value) ?? 'unknown';
+    }
+  }
+
+  mergePathSource(rawPayload['metric_extraction_paths']);
+  final nestedMetrics = _asPlainMap(rawPayload['metrics']);
+  mergePathSource(nestedMetrics?['metric_extraction_paths']);
+  final nestedLuxe = _asPlainMap(rawPayload['luxePayload']);
+  mergePathSource(nestedLuxe?['metric_extraction_paths']);
+  final nestedLuxeMetrics = _asPlainMap(nestedLuxe?['metrics']);
+  mergePathSource(nestedLuxeMetrics?['metric_extraction_paths']);
+
+  return out;
+}
+
 /// Per-metric scoring-formula-version provenance a saved scan recorded
 /// (see main.py's METRIC_FORMULA_VERSION / _metric_formula_version, echoed
 /// back in the response as metric_formula_versions). Empty when the scan
@@ -498,6 +558,23 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
       }
     }
     resolvedExtractionPaths.putIfAbsent('pore_visibility', () => 'skipped');
+  }
+
+  // Any other metric no frame produced a value for keeps the backend's own
+  // 'skipped' path, as pore_visibility does above, instead of dropping out
+  // and being saved later as 'unknown'.
+  for (final response in responses) {
+    final metricsNode = _dynamicMap(response['metrics']);
+    final paths = _perFrameTrendNode(
+      response,
+      metricsNode,
+      'metric_extraction_paths',
+    );
+    for (final entry in paths.entries) {
+      if (averagedMatrix.containsKey(entry.key)) continue;
+      if (entry.value?.toString() != 'skipped') continue;
+      resolvedExtractionPaths.putIfAbsent(entry.key, () => 'skipped');
+    }
   }
 
   final first = successfulResponses.first;
@@ -5699,54 +5776,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     return canonicalBaseline;
   }
 
-  Map<String, String> _buildLuxeBaselineExtractionPaths() {
-    const canonicalKeys = <String>{
-      'localized_redness',
-      'texture_smoothness',
-      'pigment_load',
-      'wrinkle_load',
-      'pore_visibility',
-      'breakout_activity',
-      'sebum_excess_oil_gloss',
-      'diffuse_flushing_erythema',
-      'skin_tone_radiance_evenness',
-      'glabellar_wrinkle_depth',
-      'pore_contraction_index',
-      'structural_firmness_elasticity',
-      'rosacea_severity',
-      'skin_hydration',
-    };
-
-    final out = <String, String>{
-      for (final key in canonicalKeys) key: 'unknown',
-    };
-
-    final priorScan = _previousFocusAreaScan;
-    final rawPayload = priorScan?.rawPayload;
-    if (rawPayload == null || rawPayload.isEmpty) {
-      return out;
-    }
-
-    void mergePathSource(dynamic source) {
-      final map = _asDynamicMap(source);
-      if (map == null || map.isEmpty) return;
-      for (final entry in map.entries) {
-        final key = entry.key.toString().trim().toLowerCase();
-        if (!canonicalKeys.contains(key)) continue;
-        out[key] = preservedAiExtractionPath(entry.value) ?? 'unknown';
-      }
-    }
-
-    mergePathSource(rawPayload['metric_extraction_paths']);
-    final nestedMetrics = _asDynamicMap(rawPayload['metrics']);
-    mergePathSource(nestedMetrics?['metric_extraction_paths']);
-    final nestedLuxe = _asDynamicMap(rawPayload['luxePayload']);
-    mergePathSource(nestedLuxe?['metric_extraction_paths']);
-    final nestedLuxeMetrics = _asDynamicMap(nestedLuxe?['metrics']);
-    mergePathSource(nestedLuxeMetrics?['metric_extraction_paths']);
-
-    return out;
-  }
+  Map<String, String> _buildLuxeBaselineExtractionPaths() =>
+      aiBaselineExtractionPathsForRequest(_previousFocusAreaScan?.rawPayload);
 
   Map<String, dynamic> _buildLuxeResultsPayload(
     PhotoAnalysisResult r, {

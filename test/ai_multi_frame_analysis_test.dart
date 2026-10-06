@@ -5,6 +5,7 @@ import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screen
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import 'package:aesthetic_skin_tracker/models/ai_scan_frame_exposure.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
+import 'package:aesthetic_skin_tracker/utils/ai_scan_data_csv_exporter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -596,6 +597,109 @@ void main() {
       (aggregate.response['metric_extraction_paths'] as Map)['pore_visibility'],
       'primary_roi',
     );
+  });
+
+  test('an omitted under-eye metric keeps the backend skipped path and exports '
+      'skipped, not unknown', () {
+    Map<String, dynamic> frame() => {
+      'metric_matrix': {'pigment_load': 12.0},
+      'metric_extraction_paths': {
+        'pigment_load': 'cheek_primary',
+        'under_eye_texture_density': 'skipped',
+        'under_eye_dark_circle_density': 'skipped',
+      },
+    };
+    final aggregate = averageBackendAnalysisFrames([
+      frame(),
+      frame(),
+      frame(),
+    ], requestedFrames: 3);
+
+    final paths = aggregate.response['metric_extraction_paths'] as Map;
+    expect(paths['under_eye_texture_density'], 'skipped');
+    expect(paths['under_eye_dark_circle_density'], 'skipped');
+    expect(paths['pigment_load'], 'cheek_primary');
+    expect(
+      (aggregate.response['metrics'] as Map)['metric_extraction_paths'],
+      paths,
+    );
+
+    final saved = ScanHistoryEntry.fromJson(
+      ScanHistoryEntry(
+        id: 'omitted-under-eye-scan',
+        timestamp: DateTime.parse('2026-10-05T16:32:04Z'),
+        scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+        estimatedSkinAge: 0,
+        metrics: const <String, double>{},
+        rawPayload: aggregate.response,
+      ).toJson(),
+    );
+    final csv = AiScanDataCsvExporter.format([
+      saved,
+    ], registryBaselineScanIds: const {});
+    final lines = csv.split('\r\n');
+    final header = lines.first.split(',');
+    final row = lines[1].split(',');
+    String cell(String column) => row[header.indexOf(column)];
+    expect(cell('under_eye_texture_density_extraction_path'), 'skipped');
+    expect(cell('under_eye_dark_circle_density_extraction_path'), 'skipped');
+    expect(cell('under_eye_texture_density_value'), isEmpty);
+  });
+
+  test(
+    'a metric with a value never takes a skipped path from another frame',
+    () {
+      final aggregate = averageBackendAnalysisFrames([
+        {
+          'metric_matrix': {'under_eye_texture_density': 20.0},
+          'metric_extraction_paths': {
+            'under_eye_texture_density': 'primary_roi',
+          },
+        },
+        {
+          'metric_matrix': {'pigment_load': 12.0},
+          'metric_extraction_paths': {'under_eye_texture_density': 'skipped'},
+        },
+      ], requestedFrames: 2);
+
+      expect(
+        (aggregate.response['metric_extraction_paths']
+            as Map)['under_eye_texture_density'],
+        'primary_roi',
+      );
+    },
+  );
+
+  group('aiBaselineExtractionPathsForRequest', () {
+    test('sends the baseline scan\'s stored under-eye paths', () {
+      final paths = aiBaselineExtractionPathsForRequest({
+        'metric_extraction_paths': {
+          'pigment_load': 'cheek_primary',
+          'under_eye_texture_density': 'primary_roi',
+          'under_eye_dark_circle_density': 'primary_roi',
+        },
+      });
+      expect(paths['under_eye_texture_density'], 'primary_roi');
+      expect(paths['under_eye_dark_circle_density'], 'primary_roi');
+      expect(paths['pigment_load'], 'cheek_primary');
+    });
+
+    test('a missing stored under-eye path stays missing', () {
+      final paths = aiBaselineExtractionPathsForRequest({
+        'metric_extraction_paths': {
+          'pigment_load': 'cheek_primary',
+          'under_eye_texture_density': '',
+        },
+      });
+      expect(paths.containsKey('under_eye_texture_density'), isFalse);
+      expect(paths.containsKey('under_eye_dark_circle_density'), isFalse);
+      expect(
+        aiBaselineExtractionPathsForRequest(null).keys,
+        isNot(contains('under_eye_texture_density')),
+      );
+      // Older metrics keep their existing 'unknown' default.
+      expect(paths['localized_redness'], 'unknown');
+    });
   });
 
   test('trend fields read from a nested metrics node are honored the same as '
