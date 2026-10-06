@@ -43,7 +43,7 @@ import 'package:aesthetic_skin_tracker/widgets/product_recommendation_card.dart'
 import 'package:aesthetic_skin_tracker/widgets/recovery_timeline_card.dart';
 import 'package:aesthetic_skin_tracker/widgets/report_disclaimer_notice.dart';
 import 'package:aesthetic_skin_tracker/widgets/report_share_helper.dart'
-  as report_share;
+    as report_share;
 import 'package:aesthetic_skin_tracker/widgets/smart_narrative_container.dart';
 import 'package:aesthetic_skin_tracker/widgets/skin_heatmap_overlay.dart';
 import 'package:aesthetic_skin_tracker/utils/report_purchase.dart';
@@ -118,9 +118,7 @@ BodySilhouetteTrendSummary? bodySilhouetteTrendSummary({
   final trendDeltasMap = rawPayload['trend_deltas'];
   final trendLockReasonsMap = rawPayload['trend_lock_reasons'];
   final status =
-      (trendStatusMap is Map
-              ? trendStatusMap['normalized_area_index']
-              : null)
+      (trendStatusMap is Map ? trendStatusMap['normalized_area_index'] : null)
           ?.toString() ??
       'insufficient_signal';
   final delta = trendDeltasMap is Map
@@ -248,8 +246,10 @@ List<ProcedureZoneComparison> procedureZoneComparisons({
     final left = crop['left'];
     final top = crop['top'];
     final size = crop['size'];
-    if (currentValues.isEmpty || left is! num || top is! num || size is! num) continue;
-    if (!left.isFinite || !top.isFinite || !size.isFinite || size <= 0) continue;
+    if (currentValues.isEmpty || left is! num || top is! num || size is! num)
+      continue;
+    if (!left.isFinite || !top.isFinite || !size.isFinite || size <= 0)
+      continue;
     output.add(
       ProcedureZoneComparison(
         key: key,
@@ -293,7 +293,8 @@ ProcedurePhotoComparisonEligibility procedurePhotoComparisonEligibility({
   Map<String, String> extractionPaths(ScanHistoryEntry entry) {
     final raw = entry.rawPayload;
     final nested = raw?['metrics'];
-    final source = raw?['metric_extraction_paths'] ??
+    final source =
+        raw?['metric_extraction_paths'] ??
         (nested is Map ? nested['metric_extraction_paths'] : null);
     if (source is! Map) return const {};
     final paths = <String, String>{};
@@ -327,13 +328,15 @@ ProcedurePhotoComparisonEligibility procedurePhotoComparisonEligibility({
   if (baselineQuality == null || latestQuality == null) {
     return const ProcedurePhotoComparisonEligibility(
       isComparable: false,
-      caveat: 'Photos are shown separately because capture quality was not recorded for both scans.',
+      caveat:
+          'Photos are shown separately because capture quality was not recorded for both scans.',
     );
   }
   if (baselineQuality != latestQuality) {
     return const ProcedurePhotoComparisonEligibility(
       isComparable: false,
-      caveat: 'Photos are shown separately because capture conditions differed between scans.',
+      caveat:
+          'Photos are shown separately because capture conditions differed between scans.',
     );
   }
 
@@ -376,14 +379,18 @@ ProcedurePhotoComparisonEligibility procedurePhotoComparisonEligibility({
     if (baselinePaths.isEmpty || latestPaths.isEmpty) {
       return const ProcedurePhotoComparisonEligibility(
         isComparable: false,
-        caveat: 'Photos are shown separately because matching analysis paths were not recorded.',
+        caveat:
+            'Photos are shown separately because matching analysis paths were not recorded.',
       );
     }
     if (baselinePaths.length != latestPaths.length ||
-        baselinePaths.entries.any((item) => latestPaths[item.key] != item.value)) {
+        baselinePaths.entries.any(
+          (item) => latestPaths[item.key] != item.value,
+        )) {
       return const ProcedurePhotoComparisonEligibility(
         isComparable: false,
-        caveat: 'Photos are shown separately because analysis paths differed between scans.',
+        caveat:
+            'Photos are shown separately because analysis paths differed between scans.',
       );
     }
     return const ProcedurePhotoComparisonEligibility(isComparable: true);
@@ -391,10 +398,13 @@ ProcedurePhotoComparisonEligibility procedurePhotoComparisonEligibility({
 
   final baselineMode = normalizedText(baseline.captureMode);
   final latestMode = normalizedText(latest.captureMode);
-  if (baselineMode == null || latestMode == null || baselineMode != latestMode) {
+  if (baselineMode == null ||
+      latestMode == null ||
+      baselineMode != latestMode) {
     return const ProcedurePhotoComparisonEligibility(
       isComparable: false,
-      caveat: 'Photos are shown separately because body capture methods differed between scans.',
+      caveat:
+          'Photos are shown separately because body capture methods differed between scans.',
     );
   }
 
@@ -403,14 +413,16 @@ ProcedurePhotoComparisonEligibility procedurePhotoComparisonEligibility({
   if (baselineScale == null || latestScale == null || baselineScale <= 0) {
     return const ProcedurePhotoComparisonEligibility(
       isComparable: false,
-      caveat: 'Photos are shown separately because body scale references were not recorded.',
+      caveat:
+          'Photos are shown separately because body scale references were not recorded.',
     );
   }
   final scaleDelta = (latestScale - baselineScale).abs() / baselineScale;
   if (scaleDelta > 0.20) {
     return const ProcedurePhotoComparisonEligibility(
       isComparable: false,
-      caveat: 'Photos are shown separately because body framing scale differed between scans.',
+      caveat:
+          'Photos are shown separately because body framing scale differed between scans.',
     );
   }
   return const ProcedurePhotoComparisonEligibility(isComparable: true);
@@ -441,10 +453,11 @@ class _ProcedureProfilesScreenState extends State<ProcedureProfilesScreen> {
     setState(() => _loading = true);
     try {
       final raw = await AppPrefs.getProcedureEntries();
-      final list = raw
-          .map((e) => Procedure.fromJson(Map<String, dynamic>.from(e)))
-          .toList()
-        ..sort((a, b) => b.startDate.compareTo(a.startDate));
+      final list =
+          raw
+              .map((e) => Procedure.fromJson(Map<String, dynamic>.from(e)))
+              .toList()
+            ..sort((a, b) => b.startDate.compareTo(a.startDate));
       final displays = await resolvePeptideDisplaysFor(list);
       if (!mounted) return;
       setState(() {
@@ -516,9 +529,9 @@ class _ProcedureProfilesScreenState extends State<ProcedureProfilesScreen> {
   }
 
   Future<void> _openCreate() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const CreateProcedureScreen()),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const CreateProcedureScreen()));
     await _load();
   }
 
@@ -939,11 +952,10 @@ class ProcedureSafeDashboardScreen extends StatelessWidget {
                 await Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (_) => kIsWeb
-                      ? CameraScreen(
-                        procedure: procedure,
-                        capturePurpose:
-                          CameraCapturePurpose.trackProcedure,
-                        )
+                        ? CameraScreen(
+                            procedure: procedure,
+                            capturePurpose: CameraCapturePurpose.trackProcedure,
+                          )
                         : ProcedureCameraGuideScreen(procedure: procedure),
                   ),
                 );
@@ -977,7 +989,8 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     final baseline = _baselineMetrics;
     if (latest == null) return [];
     final latestScanEntry =
-        _findScanById(_latestScanId) ?? (_scans.isNotEmpty ? _scans.first : null);
+        _findScanById(_latestScanId) ??
+        (_scans.isNotEmpty ? _scans.first : null);
     final report = AiIntelligenceEngine.interpretScanMetrics(
       latest,
       baseline: baseline,
@@ -1636,7 +1649,8 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
   Future<void> _hydrateLocalProcedureDeltaPayload(
     ProcedureLog? procedureLog,
   ) async {
-    final photos = procedureLog?.labeledPhotos
+    final photos =
+        procedureLog?.labeledPhotos
             .where((photo) => photo.path.trim().isNotEmpty)
             .toList() ??
         const [];
@@ -1683,14 +1697,10 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       print(
         'DEBUG [Delta Engine]: Success! Payload keys found: ${payload.keys}',
       );
-      print(
-        "DEBUG [Delta Engine]: metric_matrix: ${payload['metric_matrix']}",
-      );
+      print("DEBUG [Delta Engine]: metric_matrix: ${payload['metric_matrix']}");
 
       if (!mounted) {
-        print(
-          'DEBUG [Delta Engine]: Widget unmounted, dropping state update.',
-        );
+        print('DEBUG [Delta Engine]: Widget unmounted, dropping state update.');
         return;
       }
 
@@ -1704,7 +1714,9 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       });
       setState(() {});
     } catch (e, stackTrace) {
-      print('DEBUG [Delta Engine]: CRITICAL FAILURE processing photo deltas: $e');
+      print(
+        'DEBUG [Delta Engine]: CRITICAL FAILURE processing photo deltas: $e',
+      );
       print('DEBUG [Delta Engine]: StackTrace: $stackTrace');
       if (!mounted) return;
       setState(() {
@@ -1887,7 +1899,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
         builder: (_) => kIsWeb
             ? CameraScreen(
                 procedure: _procedure,
-              capturePurpose: CameraCapturePurpose.trackProcedure,
+                capturePurpose: CameraCapturePurpose.trackProcedure,
                 initialTrackProcedureBaselineRecord: baselineRecord,
               )
             : ProcedureCameraGuideScreen(
@@ -2204,12 +2216,16 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
           final radius = 3;
           double localSum = 0;
           int localCount = 0;
-          for (var yy = (y - radius).clamp(0, height - 1);
-              yy <= (y + radius).clamp(0, height - 1);
-              yy++) {
-            for (var xx = (x - radius).clamp(0, width - 1);
-                xx <= (x + radius).clamp(0, width - 1);
-                xx++) {
+          for (
+            var yy = (y - radius).clamp(0, height - 1);
+            yy <= (y + radius).clamp(0, height - 1);
+            yy++
+          ) {
+            for (
+              var xx = (x - radius).clamp(0, width - 1);
+              xx <= (x + radius).clamp(0, width - 1);
+              xx++
+            ) {
               localSum += sample.getPixel(xx, yy).r.toDouble();
               localCount++;
             }
@@ -2264,21 +2280,23 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       final adaptiveDarkRatio = centralPixels == 0
           ? 0.0
           : (adaptiveDarkHits / centralPixels).clamp(0.0, 1.0);
-      final edgeDensity = ((edgeHits / ((width - 2) * (height - 2)))
-              .clamp(0.0, 1.0))
-          .toDouble();
+      final edgeDensity = ((edgeHits / ((width - 2) * (height - 2))).clamp(
+        0.0,
+        1.0,
+      )).toDouble();
       final edgeEnergy = (edgeMagnitudeSum / ((width - 2) * (height - 2)))
           .clamp(0.0, 1.0)
           .toDouble();
 
       return {
         'localized_redness': ((1.0 - brightness) * 100).clamp(0.0, 100.0),
-        'texture_smoothness':
-            ((1.0 - edgeDensity) * 100).clamp(0.0, 100.0),
+        'texture_smoothness': ((1.0 - edgeDensity) * 100).clamp(0.0, 100.0),
         'pore_visibility': (poreVisibility * 100).clamp(0.0, 100.0),
         'glabellar_wrinkle_depth': (edgeEnergy * 100).clamp(0.0, 100.0),
-        'structural_firmness_elasticity':
-            ((1.0 - contrast) * 100).clamp(0.0, 100.0),
+        'structural_firmness_elasticity': ((1.0 - contrast) * 100).clamp(
+          0.0,
+          100.0,
+        ),
         'adaptive_dark_ratio': (adaptiveDarkRatio * 100).clamp(0.0, 100.0),
       };
     }
@@ -2286,10 +2304,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     final baselineMetrics = summarize(baselineImage);
     final currentMetrics = summarize(afterImage);
 
-    double trendDelta(
-      String key, {
-      required bool lowerIsBetter,
-    }) {
+    double trendDelta(String key, {required bool lowerIsBetter}) {
       final baseline = baselineMetrics[key] ?? 0;
       final current = currentMetrics[key] ?? 0;
       if (baseline <= 0) return 0.0;
@@ -2303,18 +2318,12 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     };
 
     final trendDeltas = <String, dynamic>{
-      'localized_redness': trendDelta(
-        'localized_redness',
-        lowerIsBetter: true,
-      ),
+      'localized_redness': trendDelta('localized_redness', lowerIsBetter: true),
       'texture_smoothness': trendDelta(
         'texture_smoothness',
         lowerIsBetter: false,
       ),
-      'pore_visibility': trendDelta(
-        'pore_visibility',
-        lowerIsBetter: true,
-      ),
+      'pore_visibility': trendDelta('pore_visibility', lowerIsBetter: true),
       'glabellar_wrinkle_depth': trendDelta(
         'glabellar_wrinkle_depth',
         lowerIsBetter: true,
@@ -2325,10 +2334,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       ),
     };
 
-    return {
-      'metric_matrix': metricMatrix,
-      'trend_deltas': trendDeltas,
-    };
+    return {'metric_matrix': metricMatrix, 'trend_deltas': trendDeltas};
   }
 
   Future<void> _generateCustomPlanFromNotes() async {
@@ -2379,7 +2385,14 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     });
   }
 
-  static const List<int?> _appointmentRecurrenceOptions = [null, 1, 3, 4, 6, 12];
+  static const List<int?> _appointmentRecurrenceOptions = [
+    null,
+    1,
+    3,
+    4,
+    6,
+    12,
+  ];
 
   String _appointmentRecurrenceLabel(int? months) {
     if (months == null) return 'One-time';
@@ -2388,10 +2401,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     return 'Every $months months';
   }
 
-  Future<void> _saveAppointment({
-    DateTime? date,
-    int? recurrenceMonths,
-  }) async {
+  Future<void> _saveAppointment({DateTime? date, int? recurrenceMonths}) async {
     setState(() => _busy = true);
     final updated = _procedure.copyWith(
       nextAppointmentDate: date,
@@ -2444,9 +2454,12 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                       final picked = await showDatePicker(
                         context: context,
                         initialDate:
-                            pickedDate ?? DateTime.now().add(const Duration(days: 90)),
+                            pickedDate ??
+                            DateTime.now().add(const Duration(days: 90)),
                         firstDate: DateTime.now(),
-                        lastDate: DateTime.now().add(const Duration(days: 3650)),
+                        lastDate: DateTime.now().add(
+                          const Duration(days: 3650),
+                        ),
                       );
                       if (picked != null) {
                         setDialogState(() => pickedDate = picked);
@@ -2471,7 +2484,10 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                     const SizedBox(height: 14),
                     const Text(
                       'Repeat reminder',
-                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     Wrap(
@@ -2518,7 +2534,10 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     );
 
     if (result == true) {
-      await _saveAppointment(date: pickedDate, recurrenceMonths: pickedRecurrence);
+      await _saveAppointment(
+        date: pickedDate,
+        recurrenceMonths: pickedRecurrence,
+      );
     }
   }
 
@@ -2531,7 +2550,10 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: MyApp.roseGold.withValues(alpha: 0.18), width: 0.8),
+        side: BorderSide(
+          color: MyApp.roseGold.withValues(alpha: 0.18),
+          width: 0.8,
+        ),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
@@ -2577,7 +2599,9 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
               if (_procedure.appointmentRecurrenceMonths != null) ...[
                 const SizedBox(height: 4),
                 Text(
-                  _appointmentRecurrenceLabel(_procedure.appointmentRecurrenceMonths),
+                  _appointmentRecurrenceLabel(
+                    _procedure.appointmentRecurrenceMonths,
+                  ),
                   style: TextStyle(
                     fontSize: 12,
                     color: MyApp.textBrown.withValues(alpha: 0.65),
@@ -3419,7 +3443,8 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                                           style: TextStyle(
                                             fontSize: 12.5,
                                             fontWeight: FontWeight.w700,
-                                            color: AppColors.kMetricImprovedColor,
+                                            color:
+                                                AppColors.kMetricImprovedColor,
                                           ),
                                         ),
                                       ),
@@ -3479,7 +3504,8 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                                         ),
                                         label: const Text('Remove'),
                                         style: TextButton.styleFrom(
-                                          foregroundColor: AppColors.kMetricWorsenedColor,
+                                          foregroundColor:
+                                              AppColors.kMetricWorsenedColor,
                                           padding: const EdgeInsets.symmetric(
                                             horizontal: 6,
                                           ),
@@ -5574,7 +5600,6 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     );
   }
 
-
   Widget _buildProgressInsightSummaryCard(
     SkinMetrics? latest,
     SkinMetrics? baseline,
@@ -5600,8 +5625,8 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
 
     final cards = _buildDetailedProgressInsightCards(latest, baseline);
     final comparable = cards
-      .where((c) => (c['hasComparison'] as bool?) ?? true)
-      .toList();
+        .where((c) => (c['hasComparison'] as bool?) ?? true)
+        .toList();
     final improved = comparable.where((c) => c['trend'] == 'improving').length;
     final worsened = comparable.where((c) => c['trend'] == 'regressing').length;
     final stable = comparable.where((c) => c['trend'] == 'stable').length;
@@ -5695,11 +5720,17 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                 const SizedBox(width: 8),
                 _trendPill('Stable $stable', const Color(0xFFAD7C2B)),
                 const SizedBox(width: 8),
-                _trendPill('Needs attention $worsened', const Color(0xFFB13C52)),
+                _trendPill(
+                  'Needs attention $worsened',
+                  const Color(0xFFB13C52),
+                ),
               ],
               if (pendingBaseline > 0) ...[
                 const SizedBox(width: 8),
-                _trendPill('Pending baseline $pendingBaseline', const Color(0xFF5A6270)),
+                _trendPill(
+                  'Pending baseline $pendingBaseline',
+                  const Color(0xFF5A6270),
+                ),
               ],
             ],
           ),
@@ -5784,7 +5815,10 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
               ),
               if (showStatusBadge)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: color.withValues(alpha: 0.14),
                     borderRadius: BorderRadius.circular(999),
@@ -6169,26 +6203,25 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       required String worseningAdvice,
       required String function,
     }) {
-        final hasComparison =
-          !(latestValue == 0.0 && baselineValue == 0.0);
+      final hasComparison = !(latestValue == 0.0 && baselineValue == 0.0);
       final delta = latestValue - baselineValue;
       final improved = lowerIsBetter ? delta < 0 : delta > 0;
       final changed = delta.abs();
-        final trend = !hasComparison
+      final trend = !hasComparison
           ? 'pending'
           : changed < 0.2
           ? 'stable'
           : improved
           ? 'improving'
           : 'regressing';
-        final Color color = trend == 'pending'
+      final Color color = trend == 'pending'
           ? const Color(0xFF5A6270)
           : trend == 'improving'
           ? const Color(0xFF1E8C5F)
           : trend == 'stable'
           ? const Color(0xFFAD7C2B)
           : const Color(0xFFB13C52);
-        final status = trend == 'pending'
+      final status = trend == 'pending'
           ? 'Pending Baseline'
           : trend == 'improving'
           ? 'Improving'
@@ -6198,7 +6231,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       final changeText = unit == 'mm'
           ? '${delta.abs().toStringAsFixed(2)} mm'
           : '${changed.toStringAsFixed(1)} points';
-        final detail = trend == 'pending'
+      final detail = trend == 'pending'
           ? '$function is awaiting baseline capture before trend classification can be shown.'
           : trend == 'stable'
           ? '$function stayed relatively steady. Changes are small enough to read as direction, not a firm conclusion.'
@@ -6219,15 +6252,15 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
         'advice': advice,
         'color': color,
         'icon': trend == 'pending'
-          ? Icons.schedule_rounded
-          : trend == 'improving'
+            ? Icons.schedule_rounded
+            : trend == 'improving'
             ? Icons.trending_up
             : trend == 'stable'
             ? Icons.trending_flat
             : Icons.trending_down,
         'deltaText': !hasComparison
-          ? 'Pending Baseline'
-          : unit == 'mm'
+            ? 'Pending Baseline'
+            : unit == 'mm'
             ? '${improved ? '-' : '+'}${delta.abs().toStringAsFixed(2)} mm'
             : '${improved ? '-' : '+'}${changed.toStringAsFixed(1)}',
       });
@@ -6677,7 +6710,9 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     );
     if (zones.isEmpty) return const SizedBox.shrink();
 
-    final matchingZones = zones.where((zone) => zone.key == _selectedZoneKey).toList();
+    final matchingZones = zones
+        .where((zone) => zone.key == _selectedZoneKey)
+        .toList();
     final selected = matchingZones.isEmpty ? null : matchingZones.first;
     final metricLabel = <String, String>{
       'localized_redness': 'Redness',
@@ -6695,18 +6730,20 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
         ),
         const SizedBox(height: 8),
         ...zones.map((zone) {
-          final metricEntries = zone.latestMetrics.keys.map((metricKey) {
-            final before = zone.baselineMetrics[metricKey]!;
-            final after = zone.latestMetrics[metricKey]!;
-            final beforeText = metricLabel.containsKey(metricKey)
-              ? formatScoreWithSeverityBand(metricKey, before)
-              : before.toStringAsFixed(1);
-            final afterText = metricLabel.containsKey(metricKey)
-              ? formatScoreWithSeverityBand(metricKey, after)
-              : after.toStringAsFixed(1);
-            return '${metricLabel[metricKey] ?? metricKey}: '
-              '$beforeText -> $afterText';
-          }).join('  |  ');
+          final metricEntries = zone.latestMetrics.keys
+              .map((metricKey) {
+                final before = zone.baselineMetrics[metricKey]!;
+                final after = zone.latestMetrics[metricKey]!;
+                final beforeText = metricLabel.containsKey(metricKey)
+                    ? formatScoreWithSeverityBand(metricKey, before)
+                    : before.toStringAsFixed(1);
+                final afterText = metricLabel.containsKey(metricKey)
+                    ? formatScoreWithSeverityBand(metricKey, after)
+                    : after.toStringAsFixed(1);
+                return '${metricLabel[metricKey] ?? metricKey}: '
+                    '$beforeText -> $afterText';
+              })
+              .join('  |  ');
           return InkWell(
             onTap: () => setState(() => _selectedZoneKey = zone.key),
             child: Padding(
@@ -6732,7 +6769,8 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
           );
         }),
         if (selected != null &&
-            baselinePhoto.isNotEmpty && latestPhoto.isNotEmpty) ...[
+            baselinePhoto.isNotEmpty &&
+            latestPhoto.isNotEmpty) ...[
           const SizedBox(height: 8),
           Text(
             '${selected.label} proof',
@@ -6895,25 +6933,29 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     if (metrics.isEmpty) return const <BeforeAfterMetricTag>[];
 
     final procedureType = _procedure.type;
-    final relevant = metrics
-        .where(
-          (metric) => ProcedureIntelligence.isMetricRelevant(
-            metric.key,
-            procedureType,
-          ),
-        )
-        .toList()
-      ..sort((a, b) => LuxeMetricParser.displayDeltaMagnitude(
-            baseline: b.baselineScore,
-            current: b.currentScore,
-            deltaPct: b.improvementPercent,
-          ).compareTo(
-            LuxeMetricParser.displayDeltaMagnitude(
-              baseline: a.baselineScore,
-              current: a.currentScore,
-              deltaPct: a.improvementPercent,
-            ),
-          ));
+    final relevant =
+        metrics
+            .where(
+              (metric) => ProcedureIntelligence.isMetricRelevant(
+                metric.key,
+                procedureType,
+              ),
+            )
+            .toList()
+          ..sort(
+            (a, b) =>
+                LuxeMetricParser.displayDeltaMagnitude(
+                  baseline: b.baselineScore,
+                  current: b.currentScore,
+                  deltaPct: b.improvementPercent,
+                ).compareTo(
+                  LuxeMetricParser.displayDeltaMagnitude(
+                    baseline: a.baselineScore,
+                    current: a.currentScore,
+                    deltaPct: a.improvementPercent,
+                  ),
+                ),
+          );
 
     return relevant.take(4).map((metric) {
       return BeforeAfterMetricTag(
@@ -6931,9 +6973,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     }).toList();
   }
 
-  Widget _metricsComparisonWidgetFromPayload(
-    Map<String, dynamic> payload,
-  ) {
+  Widget _metricsComparisonWidgetFromPayload(Map<String, dynamic> payload) {
     final metrics = LuxeMetricParser.parseTimelinePayload(payload);
     if (metrics.isEmpty) {
       return const SizedBox.shrink();
@@ -6995,16 +7035,14 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     );
   }
 
-  Widget _localMetricCard({
-    required LuxeMetric metric,
-  }) {
+  Widget _localMetricCard({required LuxeMetric metric}) {
     const double threshold = 0.0001;
     final isUnchanged = metric.improvementPercent.abs() < threshold;
     final isImproved = isUnchanged
         ? false
         : (metric.lowerIsBetter
-            ? metric.currentScore < metric.baselineScore
-            : metric.currentScore > metric.baselineScore);
+              ? metric.currentScore < metric.baselineScore
+              : metric.currentScore > metric.baselineScore);
     final accent = isUnchanged
         ? const Color(0xFF6B7280)
         : (isImproved ? const Color(0xFF166534) : const Color(0xFF991B1B));
@@ -7085,7 +7123,10 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
               ),
               const SizedBox(height: 6),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: accent.withValues(alpha: 0.10),
                   borderRadius: BorderRadius.circular(999),
@@ -7322,7 +7363,10 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                   left: 6,
                   bottom: 6,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 3,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.65),
                       borderRadius: BorderRadius.circular(4),
@@ -7357,7 +7401,11 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.info_outline, size: 16, color: AppColors.softTerracotta),
+              Icon(
+                Icons.info_outline,
+                size: 16,
+                color: AppColors.softTerracotta,
+              ),
               const SizedBox(width: 7),
               Expanded(
                 child: Text(
@@ -7467,7 +7515,8 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                 nonComparablePhotoPair(
                   baselinePhoto: baselinePhoto,
                   latestPhoto: latestPhoto,
-                  caveat: comparisonEligibility.caveat ??
+                  caveat:
+                      comparisonEligibility.caveat ??
                       'Photos are shown separately because capture conditions differed.',
                 ),
               if (comparisonEligibility.isComparable &&
@@ -7857,12 +7906,16 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                           ),
                           decoration: BoxDecoration(
                             color: _procedure.isCompleted
-                                ? AppColors.kMetricImprovedColor.withValues(alpha: 0.10)
+                                ? AppColors.kMetricImprovedColor.withValues(
+                                    alpha: 0.10,
+                                  )
                                 : MyApp.clinicalTeal.withValues(alpha: 0.10),
                             borderRadius: BorderRadius.circular(999),
                             border: Border.all(
                               color: _procedure.isCompleted
-                                  ? AppColors.kMetricImprovedColor.withValues(alpha: 0.32)
+                                  ? AppColors.kMetricImprovedColor.withValues(
+                                      alpha: 0.32,
+                                    )
                                   : MyApp.clinicalTeal.withValues(alpha: 0.32),
                               width: 0.8,
                             ),

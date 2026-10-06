@@ -72,20 +72,21 @@ void main() {
     });
 
     test('missing ISO or Bv locks comparisons', () {
-      for (final pair in <({Map<String, dynamic> baseline, Map<String, dynamic> current})>[
-        (
-          baseline: exposurePayload(iso: null, brightnessValue: 3.5),
-          current: exposurePayload(iso: 100, brightnessValue: 3.6),
-        ),
-        (
-          baseline: exposurePayload(iso: 100, brightnessValue: null),
-          current: exposurePayload(iso: 100, brightnessValue: 3.6),
-        ),
-        (
-          baseline: exposurePayload(iso: 100, brightnessValue: 3.5),
-          current: exposurePayload(iso: null, brightnessValue: null),
-        ),
-      ]) {
+      for (final pair
+          in <({Map<String, dynamic> baseline, Map<String, dynamic> current})>[
+            (
+              baseline: exposurePayload(iso: null, brightnessValue: 3.5),
+              current: exposurePayload(iso: 100, brightnessValue: 3.6),
+            ),
+            (
+              baseline: exposurePayload(iso: 100, brightnessValue: null),
+              current: exposurePayload(iso: 100, brightnessValue: 3.6),
+            ),
+            (
+              baseline: exposurePayload(iso: 100, brightnessValue: 3.5),
+              current: exposurePayload(iso: null, brightnessValue: null),
+            ),
+          ]) {
         final result = lockTrendsForLightingMismatch(
           trendStatus: const {'texture_smoothness': 'improved'},
           trendDeltas: const {'texture_smoothness': 12.0},
@@ -112,9 +113,7 @@ void main() {
           'localized_redness': 0.0,
           'texture_smoothness': 12.0,
         },
-        trendLockReasons: const {
-          'localized_redness': 'cheek_mismatch',
-        },
+        trendLockReasons: const {'localized_redness': 'cheek_mismatch'},
       );
 
       expect(result.trendStatus.containsKey('localized_redness'), isFalse);
