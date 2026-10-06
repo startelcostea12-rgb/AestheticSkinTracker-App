@@ -1383,6 +1383,7 @@ class LuxeReportLayout extends StatefulWidget {
     this.baselineNotSavedReason,
     this.requireBackendVerdict = false,
     this.requireBackendVerdictForTrustedMetrics = false,
+    this.hiddenMetricKeys = const <String>{},
   });
 
   final Map<String, dynamic> rawPayload;
@@ -1417,6 +1418,12 @@ class LuxeReportLayout extends StatefulWidget {
   /// instead of the legacy local recompute. Every other metric keeps the
   /// caller's existing behavior. Ignored when [requireBackendVerdict] is set.
   final bool requireBackendVerdictForTrustedMetrics;
+
+  /// Metric keys this view does not render at all: no card, number,
+  /// verdict, "No verdict" row, or summary line. Display-only -- the
+  /// metric is still in [rawPayload] and wherever else it is saved or
+  /// exported. Empty (the default) keeps every caller's existing behavior.
+  final Set<String> hiddenMetricKeys;
 
   bool _requiresBackendVerdictFor(String metricKey) =>
       requireBackendVerdict ||
@@ -1807,7 +1814,9 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
     final initialBaseline = widget.rawPayload['initial_baseline'] == true;
     final showProgressComparison =
         (explicitFollowUp || localHistoryCount >= 2) && !initialBaseline;
-    final metrics = LuxeMetricParser.parseTimelinePayload(widget.rawPayload);
+    final metrics = LuxeMetricParser.parseTimelinePayload(
+      widget.rawPayload,
+    ).where((m) => !widget.hiddenMetricKeys.contains(m.key)).toList();
     final visibleMetrics = metrics.where((m) => !m.initialBaseline).toList();
     final willRenderCards = visibleMetrics.isNotEmpty;
     final showBaselinePendingFooter =

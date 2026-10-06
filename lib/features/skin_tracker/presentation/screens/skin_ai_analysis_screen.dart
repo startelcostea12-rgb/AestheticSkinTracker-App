@@ -166,6 +166,14 @@ Map<String, dynamic>? _asPlainMap(dynamic value) {
   return null;
 }
 
+/// Metrics the live results views (the main results card and
+/// SkinAiAnalysisResultsScreen) do not render. They are still computed,
+/// saved, and exported; Track Procedure, history, and the progress report
+/// are unaffected.
+const Set<String> liveResultsHiddenMetricKeys = <String>{
+  'pore_contraction_index',
+};
+
 String? preservedAiExtractionPath(dynamic value) {
   final path = value?.toString().trim();
   return path == null || path.isEmpty ? null : path;
@@ -4663,6 +4671,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 gateReason: gateReason,
                 baselineNotSavedReason: _baselineNotSavedReason,
                 requireBackendVerdict: true,
+                hiddenMetricKeys: liveResultsHiddenMetricKeys,
               ),
               const SizedBox(height: 18),
               const ClinicalSectionHeader(
@@ -8775,6 +8784,7 @@ class SkinAiAnalysisResultsScreen extends StatelessWidget {
                     baselineLabel: 'Baseline Image',
                     currentLabel: 'Current Scan',
                     requireBackendVerdictForTrustedMetrics: true,
+                    hiddenMetricKeys: liveResultsHiddenMetricKeys,
                   ),
                   if (recommendedProducts.isNotEmpty) ...[
                     const SizedBox(height: 18),

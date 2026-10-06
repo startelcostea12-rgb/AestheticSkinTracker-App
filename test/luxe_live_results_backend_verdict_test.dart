@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -1109,4 +1111,131 @@ void main() {
       });
     },
   );
+
+  group('pore_contraction_index is hidden on the live results views', () {
+    Map<String, dynamic> payload() => <String, dynamic>{
+      'is_follow_up': true,
+      'local_history_count': 2,
+      'metric_matrix': <String, dynamic>{
+        'pore_contraction_index': 72.0,
+        'pore_visibility': 10.0,
+      },
+      'baseline_metric_matrix': <String, dynamic>{
+        'pore_contraction_index': 60.0,
+        'pore_visibility': 8.0,
+      },
+      'metric_extraction_paths': <String, dynamic>{
+        'pore_contraction_index': 'primary_roi',
+        'pore_visibility': 'primary_roi',
+      },
+      'baseline_metric_extraction_paths': <String, dynamic>{
+        'pore_contraction_index': 'primary_roi',
+        'pore_visibility': 'primary_roi',
+      },
+      'trend_status': <String, dynamic>{
+        'pore_contraction_index': 'improved',
+        'pore_visibility': 'worsened',
+      },
+      'trend_deltas': <String, dynamic>{
+        'pore_contraction_index': 20.0,
+        'pore_visibility': 25.0,
+      },
+    };
+
+    void expectPoreContractionHidden() {
+      expect(
+        find.byKey(const ValueKey('result_metric_pore_contraction_index')),
+        findsNothing,
+      );
+      expect(find.textContaining('72.0'), findsNothing);
+      expect(find.textContaining('Pore Contraction'), findsNothing);
+      final poreCard = find.byKey(
+        const ValueKey('result_metric_pore_visibility'),
+      );
+      expect(poreCard, findsOneWidget);
+      expect(
+        find.descendant(of: poreCard, matching: find.text('Worsened')),
+        findsWidgets,
+      );
+    }
+
+    testWidgets('main live results card', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: LuxeReportLayout(
+                rawPayload: payload(),
+                requireBackendVerdict: true,
+                hiddenMetricKeys: liveResultsHiddenMetricKeys,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expectPoreContractionHidden();
+    });
+
+    testWidgets('SkinAiAnalysisResultsScreen', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SkinAiAnalysisResultsScreen(
+            analysisResult: payload(),
+            croppedImageBytes: null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expectPoreContractionHidden();
+    });
+
+    test('both live views in the screen pass the hidden-metric set', () {
+      final source = File(
+        'lib/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart',
+      ).readAsStringSync();
+      expect(
+        'hiddenMetricKeys: liveResultsHiddenMetricKeys'.allMatches(source),
+        hasLength(2),
+      );
+      expect(liveResultsHiddenMetricKeys, {'pore_contraction_index'});
+    });
+
+    testWidgets('other report callers still render pore_contraction_index', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: LuxeReportLayout(rawPayload: payload()),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('result_metric_pore_contraction_index')),
+        findsOneWidget,
+      );
+    });
+
+    test('the scan-data export still contains pore_contraction_index', () {
+      final scan = ScanHistoryEntry(
+        id: 'pore-contraction-export',
+        timestamp: DateTime.utc(2026, 10, 6),
+        scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+        estimatedSkinAge: 0,
+        metrics: const <String, double>{},
+        rawPayload: payload(),
+      );
+      final rows = AiScanDataCsvExporter.format([
+        scan,
+      ], registryBaselineScanIds: const {}).split('\r\n');
+      final header = rows.first.split(',');
+      final values = rows[1].split(',');
+      expect(header, contains('pore_contraction_index_value'));
+      expect(values[header.indexOf('pore_contraction_index_value')], '72.0');
+    });
+  });
 }
