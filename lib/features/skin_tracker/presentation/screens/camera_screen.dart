@@ -269,6 +269,106 @@ Future<T> captureAiScanFrameWithFlashOff<T>({
 /// Pulled out of the `_guideType` getter as a pure function so this
 /// resolution -- and its priority order -- is unit-testable without a
 /// camera, widget, or AppPrefs.
+/// Laplacian-variance sharpness of [bytes] (4-neighbour kernel over every
+/// 2nd pixel of the grayscale image, clamped to 0-5000; 0 when the bytes
+/// don't decode). The camera's capture-quality "blurry" tag compares this
+/// against [sharpnessVarianceFloorFor].
+double imageSharpnessVarianceFromBytes(Uint8List bytes) {
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null) return 0;
+
+  final gray = img.grayscale(decoded);
+  final width = gray.width;
+  final height = gray.height;
+  if (width < 6 || height < 6) return 0;
+
+  const step = 2;
+  var count = 0;
+  var sum = 0.0;
+  var sumSq = 0.0;
+
+  for (var y = 1; y < height - 1; y += step) {
+    for (var x = 1; x < width - 1; x += step) {
+      final center = gray.getPixel(x, y).r.toDouble();
+      final left = gray.getPixel(x - 1, y).r.toDouble();
+      final right = gray.getPixel(x + 1, y).r.toDouble();
+      final up = gray.getPixel(x, y - 1).r.toDouble();
+      final down = gray.getPixel(x, y + 1).r.toDouble();
+
+      final lap = (4 * center) - left - right - up - down;
+      sum += lap;
+      sumSq += lap * lap;
+      count++;
+    }
+  }
+
+  if (count == 0) return 0;
+  final mean = sum / count;
+  final variance = (sumSq / count) - (mean * mean);
+  return variance.isFinite ? variance.clamp(0.0, 5000.0) : 0.0;
+}
+
+/// Sharpness below which a captured frame is tagged "blurry".
+double sharpnessVarianceFloorFor(ProcedureCameraGuideType guideType) {
+  switch (guideType) {
+    case ProcedureCameraGuideType.facial:
+      // Slightly more forgiving for real-world smartphone / webcam captures
+      // while still warning when the frame is distractingly soft.
+      return 36.0;
+    case ProcedureCameraGuideType.body:
+      // Body surfaces have lower high-frequency detail than facial skin.
+      return 24.0;
+    case ProcedureCameraGuideType.general:
+      // Relaxed enough to avoid blocking routine captures without losing
+      // the useful blur cue.
+      return 28.0;
+  }
+}
+
+/// The capture_quality tag for one frame, in the existing priority order:
+/// poor_angle, blurry, low_light, uneven_lighting, normal.
+String captureQualityFromFrameSignals({
+  required double sharpness,
+  required double sharpnessFloor,
+  required bool poorAngle,
+  required bool lowLight,
+  required bool unevenLighting,
+}) {
+  if (poorAngle) return 'poor_angle';
+  if (sharpness > 0 && sharpness < sharpnessFloor) return 'blurry';
+  if (lowLight) return 'low_light';
+  if (unevenLighting) return 'uneven_lighting';
+  return 'normal';
+}
+
+/// AI Skin Analysis capture_quality, measured on the face crop that is
+/// actually uploaded ([uploadedCrop], croppedFrames.first) -- never on the
+/// uncropped still, whose background can read soft while the face is sharp.
+/// [fullStillSharpness] is measured for logging only and never affects
+/// [tag].
+({String tag, double cropSharpness, double fullStillSharpness})
+aiScanCaptureQualityFromUploadedCrop({
+  required Uint8List uploadedCrop,
+  required Uint8List fullStill,
+  required double sharpnessFloor,
+  required bool poorAngle,
+  required bool lowLight,
+  required bool unevenLighting,
+}) {
+  final cropSharpness = imageSharpnessVarianceFromBytes(uploadedCrop);
+  return (
+    tag: captureQualityFromFrameSignals(
+      sharpness: cropSharpness,
+      sharpnessFloor: sharpnessFloor,
+      poorAngle: poorAngle,
+      lowLight: lowLight,
+      unevenLighting: unevenLighting,
+    ),
+    cropSharpness: cropSharpness,
+    fullStillSharpness: imageSharpnessVarianceFromBytes(fullStill),
+  );
+}
+
 ProcedureCameraGuideType resolveCameraGuideType({
   required bool isSkincareScan,
   required CameraCapturePurpose capturePurpose,
@@ -4882,40 +4982,8 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
-  double _sharpnessFromImageBytes(Uint8List bytes) {
-    final decoded = img.decodeImage(bytes);
-    if (decoded == null) return 0;
-
-    final gray = img.grayscale(decoded);
-    final width = gray.width;
-    final height = gray.height;
-    if (width < 6 || height < 6) return 0;
-
-    const step = 2;
-    var count = 0;
-    var sum = 0.0;
-    var sumSq = 0.0;
-
-    for (var y = 1; y < height - 1; y += step) {
-      for (var x = 1; x < width - 1; x += step) {
-        final center = gray.getPixel(x, y).r.toDouble();
-        final left = gray.getPixel(x - 1, y).r.toDouble();
-        final right = gray.getPixel(x + 1, y).r.toDouble();
-        final up = gray.getPixel(x, y - 1).r.toDouble();
-        final down = gray.getPixel(x, y + 1).r.toDouble();
-
-        final lap = (4 * center) - left - right - up - down;
-        sum += lap;
-        sumSq += lap * lap;
-        count++;
-      }
-    }
-
-    if (count == 0) return 0;
-    final mean = sum / count;
-    final variance = (sumSq / count) - (mean * mean);
-    return variance.isFinite ? variance.clamp(0.0, 5000.0) : 0.0;
-  }
+  double _sharpnessFromImageBytes(Uint8List bytes) =>
+      imageSharpnessVarianceFromBytes(bytes);
 
   double _burstFrameScoreFromPreview({required double sharpness}) {
     final assessment = _liveLandmarkAssessment;
@@ -4940,24 +5008,26 @@ class _CameraScreenState extends State<CameraScreen>
         exposureScore;
   }
 
+  bool get _selectedFramePoorAngle {
+    final pitch = _liveLandmarkAssessment.pitch;
+    return pitch != null && pitch.abs() > _pitchWarnThresholdDegrees;
+  }
+
+  bool get _selectedFrameLowLight =>
+      _lightingGuidance.level == LightingLevel.tooDark ||
+      (_liveFaceRoiLuma > 0
+          ? _liveFaceRoiLuma < _lightingThresholds.darkMeanFloor
+          : _liveMeanBrightness < _lightingThresholds.darkMeanFloor);
+
   Future<String> _resolveSelectedFrameCaptureQuality(XFile file) async {
     final bytes = await file.readAsBytes();
-    final sharpness = _sharpnessFromImageBytes(bytes);
-    final pitch = _liveLandmarkAssessment.pitch;
-    if (pitch != null && pitch.abs() > _pitchWarnThresholdDegrees) {
-      return 'poor_angle';
-    }
-    if (sharpness > 0 && sharpness < _sharpnessVarianceFloor) {
-      return 'blurry';
-    }
-    final lowLight =
-        _lightingGuidance.level == LightingLevel.tooDark ||
-        (_liveFaceRoiLuma > 0
-            ? _liveFaceRoiLuma < _lightingThresholds.darkMeanFloor
-            : _liveMeanBrightness < _lightingThresholds.darkMeanFloor);
-    if (lowLight) return 'low_light';
-    if (_isLightDirectionUneven) return 'uneven_lighting';
-    return 'normal';
+    return captureQualityFromFrameSignals(
+      sharpness: _sharpnessFromImageBytes(bytes),
+      sharpnessFloor: _sharpnessVarianceFloor,
+      poorAngle: _selectedFramePoorAngle,
+      lowLight: _selectedFrameLowLight,
+      unevenLighting: _isLightDirectionUneven,
+    );
   }
 
   /// Takes a single picture, retrying once after a short delay if the
@@ -5275,6 +5345,30 @@ class _CameraScreenState extends State<CameraScreen>
         }
         burstSizeFields.add('${burstExifFields[i]} $sizeFields');
       }
+
+      // capture_quality is measured on the face crop that is uploaded
+      // (croppedFrames.first), not the uncropped still: a dark background
+      // can drag the full still under the floor while the face is sharp.
+      // The full still's sharpness is logged next to the tag on frame 1's
+      // burst line for comparison only.
+      final qualityTag = aiScanCaptureQualityFromUploadedCrop(
+        uploadedCrop: croppedFrames.first,
+        fullStill: firstBytes,
+        sharpnessFloor: _sharpnessVarianceFloor,
+        poorAngle: _selectedFramePoorAngle,
+        lowLight: _selectedFrameLowLight,
+        unevenLighting: _isLightDirectionUneven,
+      );
+      final captureQuality = qualityTag.tag;
+      _lastCaptureQualityTag = captureQuality;
+      if (burstSizeFields.isNotEmpty) {
+        burstSizeFields[0] =
+            '${burstSizeFields[0]} capture_quality=$captureQuality '
+            'quality_source=uploaded_crop '
+            'crop_sharpness=${qualityTag.cropSharpness.toStringAsFixed(2)} '
+            'full_still_sharpness=${qualityTag.fullStillSharpness.toStringAsFixed(2)} '
+            'sharpness_floor=$_sharpnessVarianceFloor';
+      }
       debugPrint(
         '[BURST_LUMINANCE] source=aiSkinAnalysis frames=$burstLuminances (logging only, selection unaffected)',
       );
@@ -5289,11 +5383,6 @@ class _CameraScreenState extends State<CameraScreen>
         sourcePath: capturedFiles.first.path,
         prefix: 'ai_skin_analysis_frame_1',
       );
-
-      final captureQuality = await _resolveSelectedFrameCaptureQuality(
-        capturedFiles.first,
-      );
-      _lastCaptureQualityTag = captureQuality;
 
       if (!mounted) return;
       Navigator.of(context).pop(
@@ -7338,21 +7427,7 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
-  double get _sharpnessVarianceFloor {
-    switch (_guideType) {
-      case ProcedureCameraGuideType.facial:
-        // Slightly more forgiving for real-world smartphone / webcam captures
-        // while still warning when the frame is distractingly soft.
-        return 36.0;
-      case ProcedureCameraGuideType.body:
-        // Body surfaces have lower high-frequency detail than facial skin.
-        return 24.0;
-      case ProcedureCameraGuideType.general:
-        // Relaxed enough to avoid blocking routine captures without losing
-        // the useful blur cue.
-        return 28.0;
-    }
-  }
+  double get _sharpnessVarianceFloor => sharpnessVarianceFloorFor(_guideType);
 
   double get _targetFaceFillFloor {
     switch (_guideType) {
