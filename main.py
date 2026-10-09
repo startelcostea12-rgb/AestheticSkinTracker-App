@@ -3824,6 +3824,13 @@ HIGHER_IS_BETTER_METRICS = {
 
 HONESTY_STABLE_BAND_PCT = 8.0
 
+# Metrics whose own measured noise floor alone decides "stable": once a
+# move reaches the floor, the shared relative band above is not applied.
+# structural_firmness_elasticity's 3.0 floor is ~5.4% of a typical ~56
+# baseline, so the 8% band (~4.5 points) labeled real floor-clearing moves
+# "stable". Every other metric still uses the band unchanged.
+TREND_FLOOR_ONLY_METRICS = {"structural_firmness_elasticity"}
+
 # PROVISIONAL, two-session calibration. Measured via
 # tool/analyze_repeatability.py from TWO separate 5-scan repeatability runs:
 # same person, same device (iPhone), back-to-back captures within each
@@ -4408,7 +4415,8 @@ def _trend_delta_and_status(
         elif absolute_delta < noise_floor:
             return 0.0, "stable"
 
-    if abs(directional_delta) < honesty_band_pct:
+    floor_only = noise_floor is not None and metric_key in TREND_FLOOR_ONLY_METRICS
+    if not floor_only and abs(directional_delta) < honesty_band_pct:
         return 0.0, "stable"
 
     rounded = round(directional_delta, 1)
