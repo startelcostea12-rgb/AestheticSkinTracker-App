@@ -6,6 +6,7 @@ import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screen
 import 'package:aesthetic_skin_tracker/models/ai_scan_frame_exposure.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_scan_data_csv_exporter.dart';
+import 'package:aesthetic_skin_tracker/utils/trend_lock_reason.dart';
 import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -37,8 +38,13 @@ void main() {
     required List<double> frameP95,
     String? cheekSideConvention = cheekSideConventionSubjectAnatomical,
     bool? bothCheeksInDeadZone,
+    String? region,
+    double? redness,
   }) => <String, dynamic>{
+    if (redness != null)
+      'metric_matrix': <String, dynamic>{'localized_redness': redness},
     'image_quality': <String, dynamic>{
+      if (region != null) 'localized_redness_mask_kind': region,
       'redness_cheek_side': cheekSide,
       if (cheekSideConvention != null)
         'cheek_side_convention': cheekSideConvention,
@@ -109,6 +115,149 @@ void main() {
         );
       },
     );
+
+    group('dead-zone zero and region changes', () {
+      const status = {'localized_redness': 'stable'};
+      const deltas = {'localized_redness': 0.0};
+
+      test('a 0.0 redness score never takes cast_mismatch', () {
+        final result = downgradeRednessTrendForCaptureMismatch(
+          trendStatus: status,
+          trendDeltas: deltas,
+          trendLockReasons: const {},
+          baselinePayload: rednessPayload(
+            cheekSide: 'both',
+            region: 'u_zone',
+            frameP95: const [15.778, 15.586, 16.963],
+            p10: 7.386,
+            p95: 15.778,
+          ),
+          currentPayload: rednessPayload(
+            cheekSide: 'both',
+            region: 'u_zone',
+            redness: 0.0,
+            frameP95: const [12.968, 13.076, 11.714],
+            p10: 5.173,
+            p95: 12.968,
+          ),
+        );
+
+        expect(result.rednessLockReasons, isNot(contains('cast_mismatch')));
+        expect(result.trendLockReasons, isEmpty);
+        expect(result.trendStatus['localized_redness'], 'stable');
+      });
+
+      test('a dead-zone flag on either scan skips the cast check', () {
+        final result = downgradeRednessTrendForCaptureMismatch(
+          trendStatus: const {'localized_redness': 'improved'},
+          trendDeltas: const {'localized_redness': 12.0},
+          trendLockReasons: const {},
+          baselinePayload: rednessPayload(
+            cheekSide: 'both',
+            region: 'u_zone',
+            bothCheeksInDeadZone: true,
+            frameP95: const [10.0, 10.5, 10.2],
+            p10: 4.0,
+            p95: 10.0,
+          ),
+          currentPayload: rednessPayload(
+            cheekSide: 'both',
+            region: 'u_zone',
+            redness: 6.0,
+            frameP95: const [16.0, 16.4, 16.2],
+            p10: 9.0,
+            p95: 16.0,
+          ),
+        );
+
+        expect(result.rednessLockReasons, isEmpty);
+        expect(result.trendStatus['localized_redness'], 'improved');
+      });
+
+      test('left_cheek vs u_zone locks as region_mismatch, not cast', () {
+        // The 12:41:03 scan against the 10:21:11 baseline.
+        final result = downgradeRednessTrendForCaptureMismatch(
+          trendStatus: status,
+          trendDeltas: deltas,
+          trendLockReasons: const {},
+          baselinePayload: rednessPayload(
+            cheekSide: 'left',
+            region: 'left_cheek',
+            bothCheeksInDeadZone: true,
+            frameP95: const [15.778, 15.586, 16.963],
+            p10: 7.386,
+            p95: 15.778,
+          ),
+          currentPayload: rednessPayload(
+            cheekSide: 'both',
+            region: 'u_zone',
+            bothCheeksInDeadZone: true,
+            redness: 0.0,
+            frameP95: const [12.968, 13.076, 11.714],
+            p10: 5.173,
+            p95: 12.968,
+          ),
+        );
+
+        expect(result.rednessLockReasons, contains('region_mismatch'));
+        expect(result.rednessLockReasons, isNot(contains('cast_mismatch')));
+        expect(result.trendLockReasons['localized_redness'], 'region_mismatch');
+        expect(result.trendStatus.containsKey('localized_redness'), isFalse);
+        expect(trendLockReasonShortLabel('region_mismatch'), isNotNull);
+        expect(knownTrendLockReasons, contains('region_mismatch'));
+      });
+
+      test('same region with a real redness value can still cast-lock', () {
+        final result = downgradeRednessTrendForCaptureMismatch(
+          trendStatus: const {'localized_redness': 'worsened'},
+          trendDeltas: const {'localized_redness': -40.0},
+          trendLockReasons: const {},
+          baselinePayload: rednessPayload(
+            cheekSide: 'both',
+            region: 'u_zone',
+            frameP95: const [10.0, 10.5, 10.2],
+            p10: 4.0,
+            p95: 10.0,
+          ),
+          currentPayload: rednessPayload(
+            cheekSide: 'both',
+            region: 'u_zone',
+            redness: 14.0,
+            frameP95: const [16.0, 16.4, 16.2],
+            p10: 9.0,
+            p95: 16.0,
+          ),
+        );
+
+        expect(result.rednessLockReasons, contains('cast_mismatch'));
+        expect(result.trendLockReasons['localized_redness'], 'cast_mismatch');
+        expect(result.trendStatus.containsKey('localized_redness'), isFalse);
+      });
+
+      test('a missing region on one scan keeps the existing cast check', () {
+        final result = downgradeRednessTrendForCaptureMismatch(
+          trendStatus: const {'localized_redness': 'worsened'},
+          trendDeltas: const {'localized_redness': -40.0},
+          trendLockReasons: const {},
+          baselinePayload: rednessPayload(
+            cheekSide: 'both',
+            frameP95: const [10.0, 10.5, 10.2],
+            p10: 4.0,
+            p95: 10.0,
+          ),
+          currentPayload: rednessPayload(
+            cheekSide: 'both',
+            region: 'u_zone',
+            redness: 14.0,
+            frameP95: const [16.0, 16.4, 16.2],
+            p10: 9.0,
+            p95: 16.0,
+          ),
+        );
+
+        expect(result.trendLockReasons['localized_redness'], 'cast_mismatch');
+      });
+    });
 
     test('does not create a lock when no redness trend verdict exists', () {
       final result = downgradeRednessTrendForCaptureMismatch(

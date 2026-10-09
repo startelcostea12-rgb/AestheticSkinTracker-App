@@ -1143,36 +1143,70 @@ downgradeRednessTrendForCaptureMismatch({
     reasons.add('cheek_mismatch');
   }
 
-  final currentFrameP95 = frameP95Values(currentPayload);
-  final baselineFrameP95 = frameP95Values(baselinePayload);
-  if (currentFrameP95.length < 2 || baselineFrameP95.length < 2) {
-    reasons.add('cast_mismatch');
-  } else {
-    double range(List<double> values) =>
-        values.reduce(math.max) - values.reduce(math.min);
-    final allowedDelta = math.max(
-      range(currentFrameP95),
-      range(baselineFrameP95),
-    );
-    final currentP10 = _parseFiniteDouble(
-      currentQuality['redness_cheek_p10_a_after_wb'],
-    );
-    final baselineP10 = _parseFiniteDouble(
-      baselineQuality['redness_cheek_p10_a_after_wb'],
-    );
-    final currentP95 = _parseFiniteDouble(
-      currentQuality['redness_cheek_p95_a_after_wb'],
-    );
-    final baselineP95 = _parseFiniteDouble(
-      baselineQuality['redness_cheek_p95_a_after_wb'],
-    );
-    if ((currentP10 != null &&
-            baselineP10 != null &&
-            (currentP10 - baselineP10).abs() > allowedDelta) ||
-        (currentP95 != null &&
-            baselineP95 != null &&
-            (currentP95 - baselineP95).abs() > allowedDelta)) {
+  // A changed redness region (e.g. left_cheek vs u_zone) reads its p10/p95
+  // from different pixels, so comparing those percentiles would report a
+  // "cast" that is really the region change: lock as region_mismatch and
+  // skip the cast check. A dead-zone 0.0 score, or a scan whose cheeks are
+  // both in the dead zone, has no redness to protect from a cast, so it
+  // never takes cast_mismatch. Neither changes the redness value.
+  final currentRegion = currentQuality['localized_redness_mask_kind']
+      ?.toString()
+      .trim();
+  final baselineRegion = baselineQuality['localized_redness_mask_kind']
+      ?.toString()
+      .trim();
+  final regionChanged =
+      currentRegion != null &&
+      currentRegion.isNotEmpty &&
+      baselineRegion != null &&
+      baselineRegion.isNotEmpty &&
+      currentRegion != baselineRegion;
+  final currentRedness = _parseFiniteDouble(
+    _dynamicMap(currentPayload['metric_matrix'])['localized_redness'] ??
+        _dynamicMap(
+          _dynamicMap(currentPayload['metrics'])['metric_matrix'],
+        )['localized_redness'],
+  );
+  final eitherInDeadZone =
+      currentQuality['redness_both_cheeks_in_dead_zone'] == true ||
+      baselineQuality['redness_both_cheeks_in_dead_zone'] == true;
+  final skipCastCheck =
+      (currentRedness != null && currentRedness <= 0.0) || eitherInDeadZone;
+
+  if (regionChanged) {
+    reasons.add('region_mismatch');
+  } else if (!skipCastCheck) {
+    final currentFrameP95 = frameP95Values(currentPayload);
+    final baselineFrameP95 = frameP95Values(baselinePayload);
+    if (currentFrameP95.length < 2 || baselineFrameP95.length < 2) {
       reasons.add('cast_mismatch');
+    } else {
+      double range(List<double> values) =>
+          values.reduce(math.max) - values.reduce(math.min);
+      final allowedDelta = math.max(
+        range(currentFrameP95),
+        range(baselineFrameP95),
+      );
+      final currentP10 = _parseFiniteDouble(
+        currentQuality['redness_cheek_p10_a_after_wb'],
+      );
+      final baselineP10 = _parseFiniteDouble(
+        baselineQuality['redness_cheek_p10_a_after_wb'],
+      );
+      final currentP95 = _parseFiniteDouble(
+        currentQuality['redness_cheek_p95_a_after_wb'],
+      );
+      final baselineP95 = _parseFiniteDouble(
+        baselineQuality['redness_cheek_p95_a_after_wb'],
+      );
+      if ((currentP10 != null &&
+              baselineP10 != null &&
+              (currentP10 - baselineP10).abs() > allowedDelta) ||
+          (currentP95 != null &&
+              baselineP95 != null &&
+              (currentP95 - baselineP95).abs() > allowedDelta)) {
+        reasons.add('cast_mismatch');
+      }
     }
   }
 
@@ -1184,6 +1218,8 @@ downgradeRednessTrendForCaptureMismatch({
     updatedDeltas.remove('localized_redness');
     updatedLockReasons['localized_redness'] = reasons.contains('cheek_mismatch')
         ? 'cheek_mismatch'
+        : reasons.contains('region_mismatch')
+        ? 'region_mismatch'
         : reasons.contains('cast_mismatch')
         ? 'cast_mismatch'
         : 'path_mismatch';
