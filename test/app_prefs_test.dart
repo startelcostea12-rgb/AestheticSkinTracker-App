@@ -882,7 +882,7 @@ void main() {
 
     test('pinned baseline survives scan and image retention limits', () async {
       final scans = <Map<String, dynamic>>[];
-      for (var index = 0; index < 55; index++) {
+      for (var index = 0; index < AppPrefs.maxStoredScans + 5; index++) {
         scans.add(
           ScanHistoryEntry(
             id: index == 0 ? 'pinned-oldest' : 'scan-$index',

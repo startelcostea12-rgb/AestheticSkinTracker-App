@@ -70,7 +70,10 @@ class AppPrefs {
   static const String verboseDiagnosticsKey = 'verbose_diagnostics_enabled';
   static const String notificationsEnabledKey = 'notifications_enabled';
   static const String aiCoachConsentKey = 'ai_coach_consent_granted';
-  static const int maxStoredScans = 50;
+  // Newest unpinned scans kept on the device. Pinned baselines (every AI
+  // baseline registry id, including the current Front baseline, and any
+  // scan flagged isBaseline) are always kept on top of this cap.
+  static const int maxStoredScans = 200;
   static const int minStoredScansOnQuotaRetry = 30;
   static const int maxStoredScanImages = 12;
   static const int scanHistoryWarningBytes = 3000000;
@@ -1837,12 +1840,10 @@ class AppPrefs {
   }) {
     final sorted = List<ScanHistoryEntry>.from(history)
       ..sort(_compareScansByTimestampDescThenId);
-    final pinned = sorted
-        .where((scan) => pinnedBaselineScanIds.contains(scan.id))
-        .toList();
-    final unpinned = sorted
-        .where((scan) => !pinnedBaselineScanIds.contains(scan.id))
-        .toList();
+    bool isPinned(ScanHistoryEntry scan) =>
+        scan.isBaseline || pinnedBaselineScanIds.contains(scan.id);
+    final pinned = sorted.where(isPinned).toList();
+    final unpinned = sorted.where((scan) => !isPinned(scan)).toList();
     final unpinnedLimit = math.max(0, maxScans - pinned.length);
     final retained = <ScanHistoryEntry>[
       ...pinned,
