@@ -6,6 +6,8 @@ import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screen
 import 'package:aesthetic_skin_tracker/models/ai_scan_frame_exposure.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_scan_data_csv_exporter.dart';
+import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -475,8 +477,8 @@ void main() {
     });
   });
 
-  test('trend verdict for a metric is taken from the frame whose own value is '
-      'closest to the displayed average, not always frame 1', () {
+  test('frames that disagree on trend status show no verdict, while paths '
+      'still come from the frame closest to the displayed average', () {
     // texture_smoothness values 28.7, 39.5, 50.2 average to 39.466..., so
     // frame 2 (39.5) is the nearest contributor -- its own backend-computed
     // trend fields for texture_smoothness must be the ones surfaced,
@@ -515,10 +517,10 @@ void main() {
       },
     ], requestedFrames: 3);
 
-    expect(aggregate.response['trend_status'], {
-      'texture_smoothness': 'stable',
-    });
-    expect(aggregate.response['trend_deltas'], {'texture_smoothness': 5.0});
+    // improved / stable / improved: the frames disagree, so neither the
+    // nearest frame's "stable" nor anyone's delta is surfaced.
+    expect(aggregate.response['trend_status'], isEmpty);
+    expect(aggregate.response['trend_deltas'], isEmpty);
     expect(aggregate.response['metric_extraction_paths'], {
       'texture_smoothness': 'laplacian_fallback',
       'pore_visibility': 'skipped',
@@ -527,8 +529,8 @@ void main() {
       'texture_smoothness': 'primary_roi',
     });
     final nestedMetrics = aggregate.response['metrics'] as Map<String, dynamic>;
-    expect(nestedMetrics['trend_status'], {'texture_smoothness': 'stable'});
-    expect(nestedMetrics['trend_deltas'], {'texture_smoothness': 5.0});
+    expect(nestedMetrics['trend_status'], isEmpty);
+    expect(nestedMetrics['trend_deltas'], isEmpty);
     expect(nestedMetrics['metric_extraction_paths'], {
       'texture_smoothness': 'laplacian_fallback',
       'pore_visibility': 'skipped',
@@ -702,6 +704,174 @@ void main() {
     });
   });
 
+  group('verdict only when every contributing frame agrees', () {
+    Map<String, dynamic> frame(
+      String key,
+      double value,
+      String status,
+      double delta, {
+      String? lockReason,
+    }) => {
+      'metric_matrix': {key: value},
+      'metric_extraction_paths': {key: 'cheek_primary'},
+      'trend_status': {key: status},
+      'trend_deltas': {key: delta},
+      'trend_lock_reasons': {if (lockReason != null) key: lockReason},
+    };
+
+    test('three agreeing frames keep that status and the nearest delta', () {
+      final aggregate = averageBackendAnalysisFrames([
+        frame('pigment_load', 10.4, 'worsened', 35.6),
+        frame('pigment_load', 10.4, 'worsened', 35.6),
+        frame('pigment_load', 10.5, 'worsened', 37.0),
+      ], requestedFrames: 3);
+
+      expect(aggregate.response['trend_status'], {'pigment_load': 'worsened'});
+      expect(aggregate.response['trend_deltas'], {'pigment_load': 35.6});
+    });
+
+    test('8.5 / 9.9 / 10.3 with mixed statuses does not get worsened', () {
+      // The 12:49:15 scan: frame 9.9 is nearest the 9.57 mean and cleared
+      // the 2.0 floor, but frame 8.5 did not.
+      final aggregate = averageBackendAnalysisFrames([
+        frame('pigment_load', 8.5, 'stable', 0.0),
+        frame('pigment_load', 9.9, 'worsened', -29.1),
+        frame('pigment_load', 10.3, 'worsened', -34.3),
+      ], requestedFrames: 3);
+
+      expect(
+        aggregate.response['metric_matrix']['pigment_load'],
+        closeTo(9.567, 0.001),
+      );
+      expect(aggregate.response['trend_status'], isEmpty);
+      expect(aggregate.response['trend_deltas'], isEmpty);
+      final nested = aggregate.response['metrics'] as Map<String, dynamic>;
+      expect(nested['trend_status'], isEmpty);
+      expect(nested['trend_deltas'], isEmpty);
+    });
+
+    testWidgets(
+      'disagreeing frames show the number with no verdict or percent',
+      (tester) async {
+        final aggregate = averageBackendAnalysisFrames([
+          frame('pigment_load', 8.5, 'stable', 0.0),
+          frame('pigment_load', 9.9, 'worsened', -29.1),
+          frame('pigment_load', 10.3, 'worsened', -34.3),
+        ], requestedFrames: 3);
+        final payload = <String, dynamic>{
+          ...aggregate.response,
+          'is_follow_up': true,
+          'local_history_count': 2,
+          'baseline_metric_matrix': {'pigment_load': 7.67},
+          'baseline_metric_extraction_paths': {'pigment_load': 'cheek_primary'},
+        };
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: LuxeReportLayout(
+                  rawPayload: payload,
+                  requireBackendVerdict: true,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final card = find.byKey(const ValueKey('result_metric_pigment_load'));
+        expect(
+          find.descendant(of: card, matching: find.textContaining('9.6')),
+          findsWidgets,
+        );
+        expect(
+          find.descendant(
+            of: card,
+            matching: find.text('No verdict for this metric'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: card, matching: find.text('Worsened')),
+          findsNothing,
+        );
+        expect(
+          find.descendant(of: card, matching: find.textContaining('%')),
+          findsNothing,
+        );
+
+        final scan = ScanHistoryEntry(
+          id: 'disagreeing-frames',
+          timestamp: DateTime.utc(2026, 10, 9, 12, 49, 15),
+          scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+          estimatedSkinAge: 0,
+          metrics: const <String, double>{},
+          rawPayload: payload,
+        );
+        final rows = AiScanDataCsvExporter.format([
+          scan,
+        ], registryBaselineScanIds: const {}).split('\r\n');
+        final header = rows.first.split(',');
+        final values = rows[1].split(',');
+        expect(values[header.indexOf('pigment_load_trend_status')], isEmpty);
+        expect(values[header.indexOf('pigment_load_value')], startsWith('9.5'));
+      },
+    );
+
+    test('a metric locked on every frame stays locked', () {
+      final aggregate = averageBackendAnalysisFrames([
+        frame(
+          'texture_smoothness',
+          56.0,
+          'stable',
+          0.0,
+          lockReason: 'capture_quality_mismatch',
+        ),
+        frame(
+          'texture_smoothness',
+          57.0,
+          'stable',
+          0.0,
+          lockReason: 'capture_quality_mismatch',
+        ),
+        frame(
+          'texture_smoothness',
+          58.0,
+          'stable',
+          0.0,
+          lockReason: 'capture_quality_mismatch',
+        ),
+      ], requestedFrames: 3);
+
+      expect(aggregate.response['trend_status'], {
+        'texture_smoothness': 'stable',
+      });
+      expect(aggregate.response['trend_lock_reasons'], {
+        'texture_smoothness': 'capture_quality_mismatch',
+      });
+    });
+
+    test('a locked metric whose frames disagree keeps its lock', () {
+      final aggregate = averageBackendAnalysisFrames([
+        frame('texture_smoothness', 56.0, 'improved', 9.0),
+        frame(
+          'texture_smoothness',
+          57.0,
+          'stable',
+          0.0,
+          lockReason: 'path_mismatch',
+        ),
+        frame('texture_smoothness', 58.0, 'improved', 11.0),
+      ], requestedFrames: 3);
+
+      expect(aggregate.response['trend_status'], isEmpty);
+      expect(aggregate.response['trend_lock_reasons'], {
+        'texture_smoothness': 'path_mismatch',
+      });
+    });
+  });
+
   test('trend fields read from a nested metrics node are honored the same as '
       'top-level ones when picking the nearest frame', () {
     final aggregate = averageBackendAnalysisFrames([
@@ -716,19 +886,21 @@ void main() {
       {
         'metrics': {
           'metric_matrix': {'localized_redness': 30.0},
-          'trend_status': {'localized_redness': 'stable'},
-          'trend_deltas': {'localized_redness': 2.0},
+          'trend_status': {'localized_redness': 'worsened'},
+          'trend_deltas': {'localized_redness': -2.0},
         },
       },
     ], requestedFrames: 2);
 
     // Average is 20.0, exactly between the two frames' own values (10.0
     // and 30.0) -- both are equally close, so the tie-break (first
-    // strictly-smaller distance wins) keeps frame 1's worsened verdict.
+    // strictly-smaller distance wins) keeps frame 1's worsened verdict and
+    // delta. Both frames agree on "worsened", so the verdict is kept.
     expect(aggregate.response['metric_matrix'], {'localized_redness': 20.0});
     expect(aggregate.response['trend_status'], {
       'localized_redness': 'worsened',
     });
+    expect(aggregate.response['trend_deltas'], {'localized_redness': -40.0});
     expect(aggregate.response['trend_lock_reasons'], {
       'localized_redness': 'some_reason',
     });

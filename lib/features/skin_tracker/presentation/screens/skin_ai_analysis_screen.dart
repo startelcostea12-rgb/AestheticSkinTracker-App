@@ -515,18 +515,31 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     }
     final nearestResponse = successfulResponses[nearestIndex];
     final nearestMetricsNode = _dynamicMap(nearestResponse['metrics']);
+    // A verdict is kept only when every frame that contributed a value for
+    // this metric reports the same trend status. If they disagree, the
+    // averaged number is still shown, with no status and no percent -- the
+    // status is never recomputed from the mean.
+    final frameStatuses = <String?>{
+      for (final index in indices)
+        _perFrameTrendNode(
+          successfulResponses[index],
+          _dynamicMap(successfulResponses[index]['metrics']),
+          'trend_status',
+        )[key]?.toString().trim().toLowerCase(),
+    };
+    final framesAgree = frameStatuses.length == 1;
     final status = _perFrameTrendNode(
       nearestResponse,
       nearestMetricsNode,
       'trend_status',
     )[key];
-    if (status != null) resolvedTrendStatus[key] = status;
+    if (status != null && framesAgree) resolvedTrendStatus[key] = status;
     final delta = _perFrameTrendNode(
       nearestResponse,
       nearestMetricsNode,
       'trend_deltas',
     )[key];
-    if (delta != null) resolvedTrendDeltas[key] = delta;
+    if (delta != null && framesAgree) resolvedTrendDeltas[key] = delta;
     final lockReason = _perFrameTrendNode(
       nearestResponse,
       nearestMetricsNode,
