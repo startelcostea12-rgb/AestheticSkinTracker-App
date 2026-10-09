@@ -704,6 +704,158 @@ void main() {
     });
   });
 
+  group('untrusted metrics never keep a verdict', () {
+    test(
+      'agreeing improved pore_contraction_index frames export no status',
+      () {
+        Map<String, dynamic> frame(double value) => {
+          'metric_matrix': {
+            'pore_contraction_index': value,
+            'pigment_load': 9.0,
+          },
+          'trend_status': {
+            'pore_contraction_index': 'improved',
+            'pigment_load': 'stable',
+          },
+          'trend_deltas': {'pore_contraction_index': 9.0, 'pigment_load': 0.0},
+        };
+        final aggregate = averageBackendAnalysisFrames([
+          frame(59.7),
+          frame(65.1),
+          frame(62.0),
+        ], requestedFrames: 3);
+
+        final status = aggregate.response['trend_status'] as Map;
+        final deltas = aggregate.response['trend_deltas'] as Map;
+        expect(status.containsKey('pore_contraction_index'), isFalse);
+        expect(deltas.containsKey('pore_contraction_index'), isFalse);
+        // A trusted metric with agreeing frames is untouched.
+        expect(status['pigment_load'], 'stable');
+        expect(
+          aggregate.response['metric_matrix']['pore_contraction_index'],
+          closeTo(62.267, 0.001),
+        );
+
+        final scan = ScanHistoryEntry(
+          id: 'untrusted-verdicts',
+          timestamp: DateTime.utc(2026, 10, 9, 13),
+          scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+          estimatedSkinAge: 0,
+          metrics: const <String, double>{},
+          rawPayload: aggregate.response,
+        );
+        final rows = AiScanDataCsvExporter.format([
+          scan,
+        ], registryBaselineScanIds: const {}).split('\r\n');
+        final header = rows.first.split(',');
+        final values = rows[1].split(',');
+        String cell(String column) => values[header.indexOf(column)];
+        expect(cell('pore_contraction_index_trend_status'), isEmpty);
+        expect(cell('pore_contraction_index_value'), startsWith('62.2'));
+        expect(cell('pigment_load_trend_status'), 'stable');
+      },
+    );
+
+    test('every untrusted metric drops status and delta but keeps a lock', () {
+      for (final key in untrustedTrendVerdictMetricKeys) {
+        final aggregate = averageBackendAnalysisFrames([
+          {
+            'metric_matrix': {key: 40.0},
+            'trend_status': {key: 'worsened'},
+            'trend_deltas': {key: -12.0},
+            'trend_lock_reasons': {key: 'capture_quality_mismatch'},
+          },
+        ], requestedFrames: 1);
+        expect(aggregate.response['trend_status'], isEmpty, reason: key);
+        expect(aggregate.response['trend_deltas'], isEmpty, reason: key);
+        expect(aggregate.response['trend_lock_reasons'], {
+          key: 'capture_quality_mismatch',
+        }, reason: key);
+      }
+      expect(untrustedTrendVerdictMetricKeys, {
+        'pore_contraction_index',
+        'under_eye_dark_circle_density',
+        'under_eye_texture_density',
+        'wrinkle_load',
+        'rosacea_severity',
+        'diffuse_flushing_erythema',
+      });
+    });
+
+    testWidgets('a locked untrusted metric keeps its lock in the export and '
+        'shows only its number on the card', (tester) async {
+      final aggregate = averageBackendAnalysisFrames([
+        {
+          'metric_matrix': {'wrinkle_load': 46.2},
+          'trend_status': {'wrinkle_load': 'stable'},
+          'trend_deltas': {'wrinkle_load': 0.0},
+          'trend_lock_reasons': {'wrinkle_load': 'capture_quality_mismatch'},
+        },
+      ], requestedFrames: 1);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: LuxeReportLayout(
+                rawPayload: {
+                  ...aggregate.response,
+                  'is_follow_up': true,
+                  'local_history_count': 2,
+                  'baseline_metric_matrix': {'wrinkle_load': 44.0},
+                  'metric_extraction_paths': {'wrinkle_load': 'primary_roi'},
+                  'baseline_metric_extraction_paths': {
+                    'wrinkle_load': 'primary_roi',
+                  },
+                },
+                requireBackendVerdict: true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final card = find.byKey(const ValueKey('result_metric_wrinkle_load'));
+      expect(
+        find.descendant(of: card, matching: find.textContaining('46.2')),
+        findsWidgets,
+      );
+      for (final label in const ['Improved', 'Worsened']) {
+        expect(
+          find.descendant(of: card, matching: find.text(label)),
+          findsNothing,
+        );
+      }
+      expect(
+        find.descendant(of: card, matching: find.textContaining('Stable')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(of: card, matching: find.textContaining('%')),
+        findsNothing,
+      );
+
+      final scan = ScanHistoryEntry(
+        id: 'locked-untrusted',
+        timestamp: DateTime.utc(2026, 10, 9, 13, 5),
+        scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+        estimatedSkinAge: 0,
+        metrics: const <String, double>{},
+        rawPayload: aggregate.response,
+      );
+      final rows = AiScanDataCsvExporter.format([
+        scan,
+      ], registryBaselineScanIds: const {}).split('\r\n');
+      final header = rows.first.split(',');
+      final values = rows[1].split(',');
+      expect(values[header.indexOf('wrinkle_load_trend_status')], isEmpty);
+      expect(
+        values[header.indexOf('wrinkle_load_trend_lock_reason')],
+        'capture_quality_mismatch',
+      );
+    });
+  });
+
   group('verdict only when every contributing frame agrees', () {
     Map<String, dynamic> frame(
       String key,

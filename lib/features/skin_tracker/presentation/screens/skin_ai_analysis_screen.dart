@@ -406,6 +406,20 @@ Map<String, dynamic> _perFrameTrendNode(
   return _dynamicMap(metricsNode[key]);
 }
 
+/// Metrics whose trend verdict is never kept: the number is saved and
+/// exported, but trend_status and trend_deltas are dropped, so neither the
+/// card nor the scan-data export shows improved/worsened/stable or a
+/// percent. A lock reason is still kept, so a locked one shows "Not
+/// comparable".
+const Set<String> untrustedTrendVerdictMetricKeys = <String>{
+  'pore_contraction_index',
+  'under_eye_dark_circle_density',
+  'under_eye_texture_density',
+  'wrinkle_load',
+  'rosacea_severity',
+  'diffuse_flushing_erythema',
+};
+
 MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
   List<Map<String, dynamic>> responses, {
   required int requestedFrames,
@@ -518,7 +532,8 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     // A verdict is kept only when every frame that contributed a value for
     // this metric reports the same trend status. If they disagree, the
     // averaged number is still shown, with no status and no percent -- the
-    // status is never recomputed from the mean.
+    // status is never recomputed from the mean. Untrusted metrics never
+    // keep a verdict at all (see untrustedTrendVerdictMetricKeys).
     final frameStatuses = <String?>{
       for (final index in indices)
         _perFrameTrendNode(
@@ -527,19 +542,21 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
           'trend_status',
         )[key]?.toString().trim().toLowerCase(),
     };
-    final framesAgree = frameStatuses.length == 1;
+    final keepVerdict =
+        frameStatuses.length == 1 &&
+        !untrustedTrendVerdictMetricKeys.contains(key);
     final status = _perFrameTrendNode(
       nearestResponse,
       nearestMetricsNode,
       'trend_status',
     )[key];
-    if (status != null && framesAgree) resolvedTrendStatus[key] = status;
+    if (status != null && keepVerdict) resolvedTrendStatus[key] = status;
     final delta = _perFrameTrendNode(
       nearestResponse,
       nearestMetricsNode,
       'trend_deltas',
     )[key];
-    if (delta != null && framesAgree) resolvedTrendDeltas[key] = delta;
+    if (delta != null && keepVerdict) resolvedTrendDeltas[key] = delta;
     final lockReason = _perFrameTrendNode(
       nearestResponse,
       nearestMetricsNode,
