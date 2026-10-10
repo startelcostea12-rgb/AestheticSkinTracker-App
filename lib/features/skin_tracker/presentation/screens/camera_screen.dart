@@ -1006,11 +1006,24 @@ class AiSkinAnalysisCaptureResult {
     required this.poseTemplate,
     required this.guideType,
     this.frameExposureMetadata = const <AiScanFrameExposure>[],
+    this.cropSharpness,
+    this.fullStillSharpness,
+    this.sharpnessFloor,
   });
 
   final String primaryImagePath;
   final List<Uint8List> croppedFrames;
   final String captureQuality;
+
+  /// Sharpness of the uploaded face crop -- the value [captureQuality]'s
+  /// blur check compared against [sharpnessFloor].
+  final double? cropSharpness;
+
+  /// Sharpness of the uncropped full still, recorded for comparison only.
+  final double? fullStillSharpness;
+
+  /// The sharpness floor used for [captureQuality].
+  final double? sharpnessFloor;
   final List<AiScanFrameExposure> frameExposureMetadata;
 
   /// The view angle chip selected during this capture (see
@@ -5395,6 +5408,9 @@ class _CameraScreenState extends State<CameraScreen>
           frameExposureMetadata: List<AiScanFrameExposure>.unmodifiable(
             burstExposureMetadata,
           ),
+          cropSharpness: qualityTag.cropSharpness,
+          fullStillSharpness: qualityTag.fullStillSharpness,
+          sharpnessFloor: _sharpnessVarianceFloor,
         ),
       );
     } catch (e) {

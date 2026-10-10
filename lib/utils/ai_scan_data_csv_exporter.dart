@@ -1,4 +1,5 @@
 import '../models/scan_history.dart';
+import 'ai_capture_sharpness.dart';
 import 'ai_comparison_baseline.dart';
 
 const List<String> aiScanDataCanonicalMetricKeys = <String>[
@@ -34,6 +35,9 @@ class AiScanDataCsvExporter {
     'is_baseline',
     'comparison_baseline_scan_id',
     'comparison_baseline_source',
+    aiCaptureCropSharpnessKey,
+    aiCaptureFullStillSharpnessKey,
+    aiCaptureSharpnessFloorKey,
     'image_width',
     'image_height',
     'a_p95',
@@ -207,6 +211,10 @@ class AiScanDataCsvExporter {
       // Only the id recorded at comparison time; empty on older scans.
       'comparison_baseline_scan_id': payload[aiComparisonBaselineScanIdKey],
       'comparison_baseline_source': payload[aiComparisonBaselineSourceKey],
+      // Sharpness that decided captureQuality; empty on older scans.
+      aiCaptureCropSharpnessKey: payload[aiCaptureCropSharpnessKey],
+      aiCaptureFullStillSharpnessKey: payload[aiCaptureFullStillSharpnessKey],
+      aiCaptureSharpnessFloorKey: payload[aiCaptureSharpnessFloorKey],
       'image_width':
           scan.sourceImageWidth ??
           _storedValue(payload, const ['source_image_width']),

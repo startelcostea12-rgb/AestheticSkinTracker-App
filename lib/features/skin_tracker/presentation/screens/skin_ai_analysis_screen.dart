@@ -35,6 +35,7 @@ import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/services/skin_history_repository.dart';
 import 'package:aesthetic_skin_tracker/utils/acne_rosacea_photo_analysis.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_comparison_baseline.dart';
+import 'package:aesthetic_skin_tracker/utils/ai_capture_sharpness.dart';
 import 'package:aesthetic_skin_tracker/utils/ai/skin_analysis_model.dart';
 import 'package:aesthetic_skin_tracker/utils/ai/skin_analysis_runner.dart';
 import 'package:aesthetic_skin_tracker/utils/ai/skin_detections.dart';
@@ -1864,6 +1865,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   ScanHistoryEntry? _previousFocusAreaScan;
   ScanHistoryEntry? _baselineFocusAreaScan;
   String? _currentCaptureQuality;
+  ({double? crop, double? fullStill, double? floor}) _currentCaptureSharpness =
+      (crop: null, fullStill: null, floor: null);
 
   /// The view angle and camera guide type from the CameraScreen capture
   /// that produced [_imagePath] (see AiSkinAnalysisCaptureResult). Null
@@ -2190,6 +2193,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _analysisFrameExposureMetadata = captured.frameExposureMetadata;
           _croppedBytes = captured.croppedFrames.first;
           _currentCaptureQuality = captured.captureQuality;
+          _currentCaptureSharpness = (
+            crop: captured.cropSharpness,
+            fullStill: captured.fullStillSharpness,
+            floor: captured.sharpnessFloor,
+          );
           _capturedPoseTemplate = captured.poseTemplate;
           _capturedGuideType = captured.guideType;
         } else {
@@ -2197,6 +2205,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _analysisFrameExposureMetadata = const [];
           _croppedBytes = null;
           _currentCaptureQuality = null;
+          _currentCaptureSharpness = (crop: null, fullStill: null, floor: null);
           _capturedPoseTemplate = null;
           _capturedGuideType = null;
         }
@@ -2628,6 +2637,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             ? null
             : _previousFocusAreaScan?.id,
         registryScanId: _aiBaselineRegistryScanId,
+      );
+      recordAiCaptureSharpness(
+        persistencePayload,
+        cropSharpness: _currentCaptureSharpness.crop,
+        fullStillSharpness: _currentCaptureSharpness.fullStill,
+        sharpnessFloor: _currentCaptureSharpness.floor,
       );
       final Map<String, double> rawMetricScores = _rawMetricScoresForStorage(
         persistencePayload,
