@@ -871,6 +871,17 @@ String _describeUploadFailure(Object error) {
 
 const String aiScanPerFrameDiagnosticsKey = 'per_frame_diagnostics';
 const String rednessTrendLockReasonsKey = 'redness_trend_lock_reasons';
+
+/// rawPayload flag: true when the redness cheek_mismatch lock was skipped
+/// because one scan read a single cheek ("left"/"right"), the other read
+/// "both", and both localized_redness values were at or below
+/// [rednessCheekLockLowValueCeiling]. False otherwise.
+const String rednessCheekLockSkippedLowValuesKey =
+    'redness_cheek_lock_skipped_low_values';
+
+/// Redness values at or below this are treated as low enough that a
+/// single-cheek vs both-cheeks reading difference is not a cheek_mismatch.
+const double rednessCheekLockLowValueCeiling = 5.0;
 const String cheekSideConventionSubjectAnatomical = 'subject_anatomical';
 const double provisionalBrightnessValueMismatchLimit = 1.0;
 
@@ -1091,6 +1102,7 @@ bool aiScanHasCheekSideMismatch({
   Map<String, double> trendDeltas,
   Map<String, String> trendLockReasons,
   Set<String> rednessLockReasons,
+  bool cheekLockSkippedLowValues,
 })
 downgradeRednessTrendForCaptureMismatch({
   required Map<String, String> trendStatus,
@@ -1110,6 +1122,7 @@ downgradeRednessTrendForCaptureMismatch({
       trendDeltas: updatedDeltas,
       trendLockReasons: updatedLockReasons,
       rednessLockReasons: const <String>{},
+      cheekLockSkippedLowValues: false,
     );
   }
 
@@ -1137,11 +1150,41 @@ downgradeRednessTrendForCaptureMismatch({
   if (existingRednessLockReason == 'path_mismatch') {
     reasons.add('path_mismatch');
   }
+  // A single-cheek reading on one scan and a both-cheeks reading on the
+  // other is not treated as a cheek mismatch when both redness values are
+  // low (at or below rednessCheekLockLowValueCeiling): at that level the
+  // difference is noise. Any missing or higher value keeps the lock.
+  double? rednessValue(Map<String, dynamic> payload) => _parseFiniteDouble(
+    _dynamicMap(payload['metric_matrix'])['localized_redness'] ??
+        _dynamicMap(
+          _dynamicMap(payload['metrics'])['metric_matrix'],
+        )['localized_redness'],
+  );
+  var cheekLockSkippedLowValues = false;
   if (aiScanHasCheekSideMismatch(
     currentPayload: currentPayload,
     baselinePayload: baselinePayload,
   )) {
-    reasons.add('cheek_mismatch');
+    const singleCheeks = {'left', 'right'};
+    final currentSide = currentQuality['redness_cheek_side']?.toString().trim();
+    final baselineSide = baselineQuality['redness_cheek_side']
+        ?.toString()
+        .trim();
+    final singleVsBoth =
+        (singleCheeks.contains(currentSide) && baselineSide == 'both') ||
+        (currentSide == 'both' && singleCheeks.contains(baselineSide));
+    final currentValue = rednessValue(currentPayload);
+    final baselineValue = rednessValue(baselinePayload);
+    final bothLow =
+        currentValue != null &&
+        baselineValue != null &&
+        currentValue <= rednessCheekLockLowValueCeiling &&
+        baselineValue <= rednessCheekLockLowValueCeiling;
+    if (singleVsBoth && bothLow) {
+      cheekLockSkippedLowValues = true;
+    } else {
+      reasons.add('cheek_mismatch');
+    }
   }
 
   // A changed redness region (e.g. left_cheek vs u_zone) reads its p10/p95
@@ -1230,6 +1273,7 @@ downgradeRednessTrendForCaptureMismatch({
     trendDeltas: updatedDeltas,
     trendLockReasons: updatedLockReasons,
     rednessLockReasons: Set<String>.unmodifiable(reasons),
+    cheekLockSkippedLowValues: cheekLockSkippedLowValues,
   );
 }
 
@@ -2611,6 +2655,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       backendResponse[rednessTrendLockReasonsKey] = rednessAdjustedTrend
           .rednessLockReasons
           .toList(growable: false);
+      backendResponse[rednessCheekLockSkippedLowValuesKey] =
+          rednessAdjustedTrend.cheekLockSkippedLowValues;
       final backendResponseMetricsNode = _asDynamicMap(
         backendResponse['metrics'],
       );
