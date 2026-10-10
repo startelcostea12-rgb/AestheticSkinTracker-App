@@ -879,6 +879,13 @@ const String rednessTrendLockReasonsKey = 'redness_trend_lock_reasons';
 const String rednessCheekLockSkippedLowValuesKey =
     'redness_cheek_lock_skipped_low_values';
 
+/// rawPayload flag: true when the redness region_mismatch lock was skipped
+/// because one scan read a single-cheek region (left_cheek/right_cheek),
+/// the other read u_zone, and both localized_redness values were at or
+/// below [rednessCheekLockLowValueCeiling]. False otherwise.
+const String rednessRegionLockSkippedLowValuesKey =
+    'redness_region_lock_skipped_low_values';
+
 /// Redness values at or below this are treated as low enough that a
 /// single-cheek vs both-cheeks reading difference is not a cheek_mismatch.
 const double rednessCheekLockLowValueCeiling = 5.0;
@@ -1103,6 +1110,7 @@ bool aiScanHasCheekSideMismatch({
   Map<String, String> trendLockReasons,
   Set<String> rednessLockReasons,
   bool cheekLockSkippedLowValues,
+  bool regionLockSkippedLowValues,
 })
 downgradeRednessTrendForCaptureMismatch({
   required Map<String, String> trendStatus,
@@ -1123,6 +1131,7 @@ downgradeRednessTrendForCaptureMismatch({
       trendLockReasons: updatedLockReasons,
       rednessLockReasons: const <String>{},
       cheekLockSkippedLowValues: false,
+      regionLockSkippedLowValues: false,
     );
   }
 
@@ -1217,8 +1226,29 @@ downgradeRednessTrendForCaptureMismatch({
   final skipCastCheck =
       (currentRedness != null && currentRedness <= 0.0) || eitherInDeadZone;
 
+  // A single-cheek region against u_zone is not a region mismatch when both
+  // redness values are low (at or below rednessCheekLockLowValueCeiling).
+  // The percentiles are still not compared across different regions.
+  var regionLockSkippedLowValues = false;
   if (regionChanged) {
-    reasons.add('region_mismatch');
+    const singleCheekRegions = {'left_cheek', 'right_cheek'};
+    final singleCheekVsUZone =
+        (singleCheekRegions.contains(currentRegion) &&
+            baselineRegion == 'u_zone') ||
+        (currentRegion == 'u_zone' &&
+            singleCheekRegions.contains(baselineRegion));
+    final currentValue = rednessValue(currentPayload);
+    final baselineValue = rednessValue(baselinePayload);
+    final bothLow =
+        currentValue != null &&
+        baselineValue != null &&
+        currentValue <= rednessCheekLockLowValueCeiling &&
+        baselineValue <= rednessCheekLockLowValueCeiling;
+    if (singleCheekVsUZone && bothLow) {
+      regionLockSkippedLowValues = true;
+    } else {
+      reasons.add('region_mismatch');
+    }
   } else if (!skipCastCheck) {
     final currentFrameP95 = frameP95Values(currentPayload);
     final baselineFrameP95 = frameP95Values(baselinePayload);
@@ -1274,6 +1304,7 @@ downgradeRednessTrendForCaptureMismatch({
     trendLockReasons: updatedLockReasons,
     rednessLockReasons: Set<String>.unmodifiable(reasons),
     cheekLockSkippedLowValues: cheekLockSkippedLowValues,
+    regionLockSkippedLowValues: regionLockSkippedLowValues,
   );
 }
 
@@ -2657,6 +2688,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           .toList(growable: false);
       backendResponse[rednessCheekLockSkippedLowValuesKey] =
           rednessAdjustedTrend.cheekLockSkippedLowValues;
+      backendResponse[rednessRegionLockSkippedLowValuesKey] =
+          rednessAdjustedTrend.regionLockSkippedLowValues;
       final backendResponseMetricsNode = _asDynamicMap(
         backendResponse['metrics'],
       );

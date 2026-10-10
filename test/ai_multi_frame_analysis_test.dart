@@ -123,6 +123,7 @@ void main() {
         Map<String, String> trendLockReasons,
         Set<String> rednessLockReasons,
         bool cheekLockSkippedLowValues,
+        bool regionLockSkippedLowValues,
       })
       compare({
         required String baselineSide,
@@ -220,9 +221,9 @@ void main() {
         expect(result.cheekLockSkippedLowValues, isFalse);
       });
 
-      test('with real regions, region_mismatch still locks the pair', () {
-        // left is always read from left_cheek and both from u_zone, so the
-        // region lock from ecdc88e still applies after the cheek skip.
+      test('with real regions at low values, redness now compares', () {
+        // left is read from left_cheek and both from u_zone: the cheek and
+        // region locks are both skipped at these low values.
         final result = compare(
           baselineSide: 'left',
           currentSide: 'both',
@@ -232,8 +233,102 @@ void main() {
           currentRedness: 3.13,
         );
         expect(result.cheekLockSkippedLowValues, isTrue);
-        expect(result.rednessLockReasons, isNot(contains('cheek_mismatch')));
-        expect(result.trendLockReasons['localized_redness'], 'region_mismatch');
+        expect(result.regionLockSkippedLowValues, isTrue);
+        expect(result.rednessLockReasons, isEmpty);
+        expect(result.trendStatus['localized_redness'], 'stable');
+      });
+
+      group('region lock at low values', () {
+        test('left_cheek vs u_zone, both <= 5.0: no region_mismatch', () {
+          final result = compare(
+            baselineSide: 'both',
+            currentSide: 'both',
+            baselineRegion: 'left_cheek',
+            currentRegion: 'u_zone',
+            baselineRedness: 0.0,
+            currentRedness: 1.97,
+          );
+          expect(result.rednessLockReasons, isNot(contains('region_mismatch')));
+          expect(result.regionLockSkippedLowValues, isTrue);
+          expect(result.trendLockReasons, isEmpty);
+        });
+
+        test('u_zone vs right_cheek, both <= 5.0: no region_mismatch', () {
+          final result = compare(
+            baselineSide: 'both',
+            currentSide: 'both',
+            baselineRegion: 'u_zone',
+            currentRegion: 'right_cheek',
+            baselineRedness: 5.0,
+            currentRedness: 4.2,
+          );
+          expect(result.rednessLockReasons, isNot(contains('region_mismatch')));
+          expect(result.regionLockSkippedLowValues, isTrue);
+        });
+
+        test('one value above 5.0 still locks as region_mismatch', () {
+          final result = compare(
+            baselineSide: 'both',
+            currentSide: 'both',
+            baselineRegion: 'left_cheek',
+            currentRegion: 'u_zone',
+            baselineRedness: 1.0,
+            currentRedness: 6.0,
+          );
+          expect(
+            result.trendLockReasons['localized_redness'],
+            'region_mismatch',
+          );
+          expect(result.regionLockSkippedLowValues, isFalse);
+        });
+
+        test('a missing value still locks as region_mismatch', () {
+          final result = compare(
+            baselineSide: 'both',
+            currentSide: 'both',
+            baselineRegion: 'u_zone',
+            currentRegion: 'left_cheek',
+            currentRedness: 2.0,
+          );
+          expect(
+            result.trendLockReasons['localized_redness'],
+            'region_mismatch',
+          );
+          expect(result.regionLockSkippedLowValues, isFalse);
+        });
+
+        test(
+          'left_cheek vs right_cheek is not a single-cheek vs U-zone skip',
+          () {
+            final result = compare(
+              baselineSide: 'both',
+              currentSide: 'both',
+              baselineRegion: 'left_cheek',
+              currentRegion: 'right_cheek',
+              baselineRedness: 1.0,
+              currentRedness: 2.0,
+            );
+            expect(
+              result.trendLockReasons['localized_redness'],
+              'region_mismatch',
+            );
+            expect(result.regionLockSkippedLowValues, isFalse);
+          },
+        );
+
+        test('same regions still compare, with no skip flag', () {
+          final result = compare(
+            baselineSide: 'both',
+            currentSide: 'both',
+            baselineRegion: 'u_zone',
+            currentRegion: 'u_zone',
+            baselineRedness: 2.0,
+            currentRedness: 3.0,
+          );
+          expect(result.rednessLockReasons, isEmpty);
+          expect(result.regionLockSkippedLowValues, isFalse);
+          expect(result.trendStatus['localized_redness'], 'stable');
+        });
       });
 
       test('the skip flag is exported', () {
@@ -246,6 +341,7 @@ void main() {
           rawPayload: const <String, dynamic>{
             'metric_matrix': <String, dynamic>{'localized_redness': 3.13},
             rednessCheekLockSkippedLowValuesKey: true,
+            rednessRegionLockSkippedLowValuesKey: true,
           },
         );
         final rows = AiScanDataCsvExporter.format([
@@ -255,6 +351,10 @@ void main() {
         final values = rows[1].split(',');
         expect(
           values[header.indexOf('redness_cheek_lock_skipped_low_values')],
+          'true',
+        );
+        expect(
+          values[header.indexOf('redness_region_lock_skipped_low_values')],
           'true',
         );
       });

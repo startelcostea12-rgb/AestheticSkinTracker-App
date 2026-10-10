@@ -39,6 +39,7 @@ class AiScanDataCsvExporter {
     aiCaptureFullStillSharpnessKey,
     aiCaptureSharpnessFloorKey,
     'redness_cheek_lock_skipped_low_values',
+    'redness_region_lock_skipped_low_values',
     'image_width',
     'image_height',
     'a_p95',
@@ -220,6 +221,10 @@ class AiScanDataCsvExporter {
       // reading because both values were low; empty on older scans.
       'redness_cheek_lock_skipped_low_values':
           payload['redness_cheek_lock_skipped_low_values'],
+      // True when redness compared despite a single-cheek vs U-zone region
+      // because both values were low; empty on older scans.
+      'redness_region_lock_skipped_low_values':
+          payload['redness_region_lock_skipped_low_values'],
       'image_width':
           scan.sourceImageWidth ??
           _storedValue(payload, const ['source_image_width']),
