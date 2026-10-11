@@ -61,10 +61,12 @@ def _analyze(clear_face_input, under_eye_mask_factory=None):
 
 
 def _phone_sized_mask(shape, points, skin_mask, *, side):
-    # The real mask grown by one pixel: ~1200 px on the clear-face fixture,
-    # the size the phone scan measured (1194, 1254, 1282).
-    real_mask = _REAL_UNDER_EYE_MASK(shape, points, skin_mask, side=side)
-    return cv2.dilate(real_mask, np.ones((2, 2), dtype=np.uint8))
+    # One eye's real lash-free band only: ~1,100-1,300 px on the clear-face
+    # fixture, under the old 1500 px gate (the phone scans measured 1194,
+    # 1254, 1282 on the old geometry).
+    if side != "left":
+        return np.zeros(shape, dtype=np.uint8)
+    return _REAL_UNDER_EYE_MASK(shape, points, skin_mask, side=side)
 
 
 def _empty_mask(shape, points, skin_mask, *, side):
@@ -79,11 +81,11 @@ def test_phone_sized_mask_emits_both_metrics_at_their_own_values(clear_face_inpu
     result, zone = _analyze(clear_face_input, _phone_sized_mask)
     pixels = _logged_under_eye_pixels(caplog)
 
-    assert 1150 <= pixels <= 1300
+    assert 0 < pixels < 1500
     for key in UNDER_EYE_KEYS:
         assert result["metric_matrix"][key] == zone[key]
         assert key not in result["omitted_metric_reasons"]
-        assert result["image_quality"][f"{key}_mask_kind"] == "under_eye"
+        assert result["image_quality"][f"{key}_mask_kind"] == main.UNDER_EYE_MASK_KIND
         assert result["image_quality"][f"{key}_mask_pixels"] == pixels
         assert result["image_quality"][f"{key}_omit_reason"] is None
 
@@ -115,4 +117,4 @@ def test_under_eye_roi_too_small_gate_is_gone():
 
 def test_under_eye_formula_versions_bumped():
     for key in UNDER_EYE_KEYS:
-        assert main._metric_formula_version(key) == 3
+        assert main._metric_formula_version(key) == 4

@@ -1782,6 +1782,52 @@ def _glabella_region_mask(shape: Tuple[int, int], points: np.ndarray, skin_mask:
     return cv2.bitwise_and(glabella, skin_mask)
 
 
+# Lash-free under-eye band geometry, in units of that eye's own width
+# (outer to inner corner, roughly 30 mm on an adult face), so the band sits
+# at the same physical place on the face at any capture distance. The band
+# starts UNDER_EYE_BAND_START_EYE_WIDTHS (~4.5 mm) below the lower-lid
+# landmarks -- below the lash line and the lower-lid crease -- and is
+# UNDER_EYE_BAND_HEIGHT_EYE_WIDTHS (~9 mm) tall, ending above the cheekbone.
+# The cheek reference patch is the same strip directly below the band, so
+# lamp fall-off from the eye to the cheek mostly cancels.
+UNDER_EYE_BAND_START_EYE_WIDTHS = 0.15
+UNDER_EYE_BAND_HEIGHT_EYE_WIDTHS = 0.30
+UNDER_EYE_MASK_KIND = "under_eye_lash_free_band"
+
+# Lower-lid landmarks per eye, ordered corner to corner along the lid.
+_UNDER_EYE_LOWER_LID_IDS = {
+    "left": [33, 7, 163, 144, 145, 153, 154, 155, 133],
+    "right": [263, 249, 390, 373, 374, 380, 381, 382, 362],
+}
+
+
+def _under_eye_strip_mask(
+    shape: Tuple[int, int],
+    points: np.ndarray,
+    skin_mask: np.ndarray,
+    *,
+    side: str,
+    start_eye_widths: float,
+    height_eye_widths: float,
+) -> np.ndarray:
+    """A strip following the lower-lid curve, [start_eye_widths] to
+    [start_eye_widths + height_eye_widths] eye widths below it, within the
+    skin mask. Empty when the lid landmarks are missing."""
+    ids = _UNDER_EYE_LOWER_LID_IDS["left" if side == "left" else "right"]
+    if any(idx < 0 or idx >= points.shape[0] for idx in ids):
+        return np.zeros(shape, dtype=np.uint8)
+    lid = points[ids].astype(np.float32)
+    eye_width = float(np.linalg.norm(lid[0] - lid[-1]))
+    if not math.isfinite(eye_width) or eye_width < 1.0:
+        return np.zeros(shape, dtype=np.uint8)
+    top = lid.copy()
+    top[:, 1] += start_eye_widths * eye_width
+    bottom = lid[::-1].copy()
+    bottom[:, 1] += (start_eye_widths + height_eye_widths) * eye_width
+    mask = _polygon_mask(shape, np.vstack([top, bottom]))
+    return cv2.bitwise_and(mask, skin_mask)
+
+
 def _under_eye_region_mask(
     shape: Tuple[int, int],
     points: np.ndarray,
@@ -1789,21 +1835,39 @@ def _under_eye_region_mask(
     *,
     side: str,
 ) -> np.ndarray:
-    if side == "left":
-        ids = [33, 133, 155, 154, 153, 145, 144, 163, 7]
-    else:
-        ids = [362, 263, 382, 381, 380, 374, 373, 390, 249]
+    """Lash-free under-eye band shared by under_eye_dark_circle_density and
+    under_eye_texture_density (see UNDER_EYE_BAND_*)."""
+    return _under_eye_strip_mask(
+        shape,
+        points,
+        skin_mask,
+        side=side,
+        start_eye_widths=UNDER_EYE_BAND_START_EYE_WIDTHS,
+        height_eye_widths=UNDER_EYE_BAND_HEIGHT_EYE_WIDTHS,
+    )
 
-    valid_ids = [idx for idx in ids if 0 <= idx < points.shape[0]]
-    if len(valid_ids) < 3:
-        return np.zeros(shape, dtype=np.uint8)
 
-    eye_poly = points[valid_ids]
-    center = np.mean(eye_poly, axis=0)
-    expanded = eye_poly + ((eye_poly - center) * 0.12)
-    expanded[:, 1] = expanded[:, 1] + (shape[0] * 0.028)
-    mask = _polygon_mask(shape, expanded)
-    return cv2.bitwise_and(mask, skin_mask)
+def _under_eye_reference_mask(
+    shape: Tuple[int, int],
+    points: np.ndarray,
+    skin_mask: np.ndarray,
+    *,
+    side: str,
+) -> np.ndarray:
+    """Same-height cheek reference patch: the strip directly below the
+    under-eye band, the same height as the band. The shared boundary row is
+    left to the band so the two never count the same pixel."""
+    reference = _under_eye_strip_mask(
+        shape,
+        points,
+        skin_mask,
+        side=side,
+        start_eye_widths=UNDER_EYE_BAND_START_EYE_WIDTHS
+        + UNDER_EYE_BAND_HEIGHT_EYE_WIDTHS,
+        height_eye_widths=UNDER_EYE_BAND_HEIGHT_EYE_WIDTHS,
+    )
+    band = _under_eye_region_mask(shape, points, skin_mask, side=side)
+    return cv2.bitwise_and(reference, cv2.bitwise_not(band))
 
 
 def _compute_pose_pitch_yaw_from_landmarks(points: np.ndarray) -> tuple[float, float]:
@@ -2191,6 +2255,18 @@ UNDER_EYE_DARK_CIRCLE_DEAD_ZONE_L_UNITS = 8.0
 # maxing out at 100.
 UNDER_EYE_DARK_CIRCLE_SCORE_MULTIPLIER = 1.2
 
+# under_eye_texture_density (v4): band-pass (difference-of-Gaussians) energy
+# at fine-line scale on the lash-free band, divided by the same energy on
+# the same-height cheek reference patch from the same frame, so focus, ISO
+# noise reduction, and sharpening (which affect both patches) cancel. The
+# fine sigma is UNDER_EYE_TEXTURE_DOG_SIGMA_EYE_WIDTHS of the eye width
+# (floored at 0.8 px); the coarse sigma is twice it. The ratio is scored as
+# UNDER_EYE_TEXTURE_RATIO_SCALE x ratio, so 50 means "same fine texture as
+# the cheek below it" and 100 means twice as much. Provisional scale, like
+# the dark-circle constants above.
+UNDER_EYE_TEXTURE_DOG_SIGMA_EYE_WIDTHS = 0.012
+UNDER_EYE_TEXTURE_RATIO_SCALE = 50.0
+
 # PROVISIONAL pigment-load calibration (second pass).
 #
 # The previous constants (dead_zone=12.0, center=35.0, slope=10.0) were tuned
@@ -2541,39 +2617,79 @@ def _compute_zone_based_metrics(
     else:
         glabellar_11_lines_depth = 0.0
 
-    # Periorbital zone: under-eye texture + dark circle density.
+    # Periorbital zone (v4): lash-free band + same-height cheek reference.
     left_under_eye = _under_eye_region_mask((h, w), points, skin_mask, side="left")
     right_under_eye = _under_eye_region_mask((h, w), points, skin_mask, side="right")
-    peri_mask = cv2.bitwise_or(left_under_eye, right_under_eye)
-    peri_pixels = peri_mask > 0
+    peri_pixels = cv2.bitwise_or(left_under_eye, right_under_eye) > 0
+    reference_pixels = (
+        cv2.bitwise_or(
+            _under_eye_reference_mask((h, w), points, skin_mask, side="left"),
+            _under_eye_reference_mask((h, w), points, skin_mask, side="right"),
+        )
+        > 0
+    )
 
-    if np.any(peri_pixels):
-        peri_texture = float(np.percentile(lap_abs[peri_pixels], 88))
-        under_eye_texture_density = float(np.clip(peri_texture / 2.0, 0.0, 100.0))
-
+    under_eye_texture_density: float | None
+    under_eye_dark_circle_density: float | None
+    if np.any(peri_pixels) and np.any(reference_pixels):
+        # Dark circles: median L of the band against the median L of the
+        # cheek strip directly below it (not the whole-cheek mean). The
+        # dead zone and multiplier are unchanged.
         l_channel = lab[:, :, 0].astype(np.float32)
-        cheek_mask = cv2.bitwise_or(left_cheek, right_cheek) > 0
-        cheek_l_mean = float(np.mean(l_channel[cheek_mask])) if np.any(cheek_mask) else 150.0
-        peri_l_mean = float(np.mean(l_channel[peri_pixels]))
-        darkness_delta = max(0.0, cheek_l_mean - peri_l_mean)
-        # FIRST-PASS FIX, NOT A FINISHED SCALE: the dead zone + multiplier
-        # below are reasoned starting points (see the constants' comments
-        # above _compute_zone_based_metrics), not a clinically-validated
-        # mapping from L-channel delta to dark-circle severity. Revisit
-        # both once real paired scans with known visible severity exist —
-        # use the UNDER_EYE_DARK_CIRCLE log line below to gather that data
-        # instead of re-deriving the formula from scratch.
+        reference_l_median = float(np.median(l_channel[reference_pixels]))
+        band_l_median = float(np.median(l_channel[peri_pixels]))
+        darkness_delta = max(0.0, reference_l_median - band_l_median)
         effective_delta = max(
             0.0, darkness_delta - UNDER_EYE_DARK_CIRCLE_DEAD_ZONE_L_UNITS
         )
         under_eye_dark_circle_density = compute_under_eye_dark_circle_density(darkness_delta)
         logger.info(
-            "UNDER_EYE_DARK_CIRCLE raw_delta=%.2f dead_zone=%.1f effective_delta=%.2f score=%.1f",
+            "UNDER_EYE_DARK_CIRCLE band_l_median=%.2f reference_l_median=%.2f raw_delta=%.2f dead_zone=%.1f effective_delta=%.2f score=%.1f",
+            band_l_median,
+            reference_l_median,
             darkness_delta,
             UNDER_EYE_DARK_CIRCLE_DEAD_ZONE_L_UNITS,
             effective_delta,
             under_eye_dark_circle_density,
         )
+
+        # Texture: fine-scale DoG energy on the band over the same energy on
+        # the reference strip.
+        eye_widths = [
+            float(np.linalg.norm(points[a] - points[b]))
+            for a, b in ((33, 133), (263, 362))
+            if max(a, b) < points.shape[0]
+        ]
+        eye_width = float(np.mean(eye_widths)) if eye_widths else 0.0
+        sigma = max(0.8, UNDER_EYE_TEXTURE_DOG_SIGMA_EYE_WIDTHS * eye_width)
+        gray_f = gray.astype(np.float32)
+        dog = np.abs(
+            cv2.GaussianBlur(gray_f, (0, 0), sigma)
+            - cv2.GaussianBlur(gray_f, (0, 0), 2.0 * sigma)
+        )
+        band_energy = float(np.mean(dog[peri_pixels]))
+        reference_energy = float(np.mean(dog[reference_pixels]))
+        if reference_energy > 0.0 and math.isfinite(band_energy):
+            texture_ratio = band_energy / reference_energy
+            under_eye_texture_density = float(
+                np.clip(UNDER_EYE_TEXTURE_RATIO_SCALE * texture_ratio, 0.0, 100.0)
+            )
+        else:
+            texture_ratio = float("nan")
+            under_eye_texture_density = None
+        logger.info(
+            "UNDER_EYE_TEXTURE dog_sigma=%.2f band_energy=%.3f reference_energy=%.3f ratio=%.3f score=%s",
+            sigma,
+            band_energy,
+            reference_energy,
+            texture_ratio,
+            under_eye_texture_density,
+        )
+    elif np.any(peri_pixels):
+        # A band with no usable reference strip has nothing to compare
+        # against: not measured, rather than a fabricated 0.
+        under_eye_texture_density = None
+        under_eye_dark_circle_density = None
     else:
         under_eye_texture_density = 0.0
         under_eye_dark_circle_density = 0.0
@@ -2581,8 +2697,16 @@ def _compute_zone_based_metrics(
     return {
         "localized_redness": round(localized_redness, 1),
         "rosacea_severity": round(rosacea_severity, 1),
-        "under_eye_texture_density": round(under_eye_texture_density, 1),
-        "under_eye_dark_circle_density": round(under_eye_dark_circle_density, 1),
+        "under_eye_texture_density": (
+            None
+            if under_eye_texture_density is None
+            else round(under_eye_texture_density, 1)
+        ),
+        "under_eye_dark_circle_density": (
+            None
+            if under_eye_dark_circle_density is None
+            else round(under_eye_dark_circle_density, 1)
+        ),
     }
 
 
@@ -3950,11 +4074,13 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     # GLABELLAR_WIDTH_QUANTIZATION_FIX comments in
     # _compute_structural_opencv_metrics.
     "glabellar_wrinkle_depth": 2,
-    # v2 omitted both below a 1500 px under-eye mask; v3 removes that gate
-    # (real phone masks are ~1200 px), so scans emit again. Neither
-    # formula changed.
-    "under_eye_texture_density": 3,
-    "under_eye_dark_circle_density": 3,
+    # v2 omitted both below a 1500 px under-eye mask; v3 removed that gate.
+    # v4: both read a lash-free band (0.15-0.45 eye widths below the lower
+    # lid) instead of the lid-hugging polygon. Dark circles compare the
+    # band's median L to a same-height cheek strip directly below it;
+    # texture is fine-scale DoG energy on the band over the same strip.
+    "under_eye_texture_density": 4,
+    "under_eye_dark_circle_density": 4,
     # v2: only boxes kept at YOLO_CONF_THRESHOLD contribute. v1 also added
     # 22 x the strongest rejected box, so zero kept boxes still scored
     # 0.7-3.6 on the regression fixtures; v1 and v2 are not comparable.
@@ -6047,6 +6173,14 @@ def analyze_skin_patch(
     left_under_eye = _under_eye_region_mask(norm.shape[:2], norm_points, mask, side="left")
     right_under_eye = _under_eye_region_mask(norm.shape[:2], norm_points, mask, side="right")
     under_eye_pixels = int(cv2.countNonZero(cv2.bitwise_or(left_under_eye, right_under_eye)))
+    under_eye_reference_pixels = int(
+        cv2.countNonZero(
+            cv2.bitwise_or(
+                _under_eye_reference_mask(norm.shape[:2], norm_points, mask, side="left"),
+                _under_eye_reference_mask(norm.shape[:2], norm_points, mask, side="right"),
+            )
+        )
+    )
     # A zero reading here is ambiguous (genuinely flawless vs. detector floor),
     # so it is passed through as-is rather than substituted with a synthetic
     # non-zero value; the emission loop below marks adequate-ROI zeros as an
@@ -7154,16 +7288,18 @@ def analyze_skin_patch(
         ),
         # Logging only. Both under-eye metrics read the same mask; its count
         # and any omit reason are exported on every scan, emitted or not.
-        "under_eye_dark_circle_density_mask_kind": "under_eye",
+        "under_eye_dark_circle_density_mask_kind": UNDER_EYE_MASK_KIND,
         "under_eye_dark_circle_density_mask_pixels": under_eye_pixels,
         "under_eye_dark_circle_density_omit_reason": omitted_metric_reasons.get(
             "under_eye_dark_circle_density"
         ),
-        "under_eye_texture_density_mask_kind": "under_eye",
+        "under_eye_texture_density_mask_kind": UNDER_EYE_MASK_KIND,
         "under_eye_texture_density_mask_pixels": under_eye_pixels,
         "under_eye_texture_density_omit_reason": omitted_metric_reasons.get(
             "under_eye_texture_density"
         ),
+        # Same-height cheek strip both under-eye metrics compare against.
+        "under_eye_reference_mask_pixels": under_eye_reference_pixels,
     }
 
     response_payload = {

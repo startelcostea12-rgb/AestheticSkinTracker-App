@@ -1212,8 +1212,8 @@ class MetricFormulaVersionRegistryTests(unittest.TestCase):
                 "chin_pore_visibility": 1,
                 "pore_contraction_index": 2,
                 "glabellar_wrinkle_depth": 2,
-                "under_eye_texture_density": 3,
-                "under_eye_dark_circle_density": 3,
+                "under_eye_texture_density": 4,
+                "under_eye_dark_circle_density": 4,
                 "breakout_activity": 2,
             },
         )

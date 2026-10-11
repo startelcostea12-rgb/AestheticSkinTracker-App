@@ -1097,6 +1097,56 @@ void main() {
     });
   });
 
+  test(
+    'the lash-free under-eye band kind and pixel counts reach the export',
+    () {
+      final aggregate = averageBackendAnalysisFrames([
+        {
+          'metric_matrix': {'under_eye_dark_circle_density': 16.8},
+          'image_quality': {
+            'under_eye_dark_circle_density_mask_kind':
+                'under_eye_lash_free_band',
+            'under_eye_dark_circle_density_mask_pixels': 2474,
+            'under_eye_texture_density_mask_kind': 'under_eye_lash_free_band',
+            'under_eye_texture_density_mask_pixels': 2474,
+            'under_eye_reference_mask_pixels': 2569,
+          },
+        },
+      ], requestedFrames: 1);
+      final scan = ScanHistoryEntry(
+        id: 'lash-free-band',
+        timestamp: DateTime.utc(2026, 10, 11),
+        scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+        estimatedSkinAge: 0,
+        metrics: const <String, double>{},
+        rawPayload: {
+          ...aggregate.response,
+          aiScanPerFrameDiagnosticsKey: buildAiScanPerFrameDiagnostics(
+            frameResponses: [aggregate.response],
+            frameExposureMetadata: const <AiScanFrameExposure>[],
+            frameCount: 1,
+          ),
+        },
+      );
+      final rows = AiScanDataCsvExporter.format([
+        scan,
+      ], registryBaselineScanIds: const {}).split('\r\n');
+      final header = rows.first.split(',');
+      final values = rows[1].split(',');
+      String cell(String column) => values[header.indexOf(column)];
+      expect(
+        cell('image_quality.under_eye_dark_circle_density_mask_kind'),
+        'under_eye_lash_free_band',
+      );
+      expect(cell('image_quality.under_eye_reference_mask_pixels'), '2569');
+      expect(
+        cell('frame1_under_eye_dark_circle_density_mask_kind'),
+        'under_eye_lash_free_band',
+      );
+      expect(cell('frame1_under_eye_dark_circle_density_mask_pixels'), '2474');
+    },
+  );
+
   group('untrusted metrics never keep a verdict', () {
     test(
       'agreeing improved pore_contraction_index frames export no status',
