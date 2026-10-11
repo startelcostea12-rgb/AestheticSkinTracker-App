@@ -1,6 +1,7 @@
 import '../models/scan_history.dart';
 import 'ai_capture_sharpness.dart';
 import 'ai_comparison_baseline.dart';
+import 'display_noise_floors.dart';
 
 const List<String> aiScanDataCanonicalMetricKeys = <String>[
   'localized_redness',
@@ -85,6 +86,7 @@ class AiScanDataCsvExporter {
     'trend_lock_reason',
     'extraction_path',
     'formula_version',
+    'noise_floor',
   ];
 
   static const List<String> perFrameFields = <String>[
@@ -262,6 +264,9 @@ class AiScanDataCsvExporter {
       values['${metric}_trend_lock_reason'] = lockReasons[metric];
       values['${metric}_extraction_path'] = extractionPaths[metric];
       values['${metric}_formula_version'] = formulaVersions[metric];
+      // The display noise floor the live results card applies to this
+      // metric's verdict; empty for metrics without one.
+      values['${metric}_noise_floor'] = displayVerdictNoiseFloors[metric];
     }
 
     for (var index = 0; index < 3; index++) {

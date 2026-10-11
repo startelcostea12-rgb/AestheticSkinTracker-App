@@ -1122,7 +1122,9 @@ void main() {
       },
       'baseline_metric_matrix': <String, dynamic>{
         'pore_contraction_index': 60.0,
-        'pore_visibility': 8.0,
+        // A 3-point move, above pore_visibility's 2.0 display floor, so the
+        // control card keeps its verdict on the live views.
+        'pore_visibility': 7.0,
       },
       'metric_extraction_paths': <String, dynamic>{
         'pore_contraction_index': 'primary_roi',
@@ -1236,6 +1238,287 @@ void main() {
       final values = rows[1].split(',');
       expect(header, contains('pore_contraction_index_value'));
       expect(values[header.indexOf('pore_contraction_index_value')], '72.0');
+    });
+  });
+
+  group('measured display noise floors on the live results views', () {
+    Widget liveHarness(Map<String, dynamic> payload) => MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: LuxeReportLayout(
+            rawPayload: payload,
+            requireBackendVerdict: true,
+            applyDisplayNoiseFloors: true,
+          ),
+        ),
+      ),
+    );
+
+    Finder card(String key) => find.byKey(ValueKey('result_metric_$key'));
+    Finder inCard(String key, Finder matching) =>
+        find.descendant(of: card(key), matching: matching);
+
+    testWidgets('a 2-point texture move shows no verdict and no percent', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        liveHarness(
+          basePayload(
+            baseline: 57.5,
+            current: 59.5,
+            metricKey: 'texture_smoothness',
+            trendStatus: {'texture_smoothness': 'improved'},
+            trendDeltas: {'texture_smoothness': 3.5},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        inCard('texture_smoothness', find.text('No verdict for this metric')),
+        findsOneWidget,
+      );
+      expect(inCard('texture_smoothness', find.text('Improved')), findsNothing);
+      expect(
+        inCard('texture_smoothness', find.textContaining('Stable')),
+        findsNothing,
+      );
+      expect(
+        inCard('texture_smoothness', find.textContaining('%')),
+        findsNothing,
+      );
+      expect(
+        inCard('texture_smoothness', find.textContaining('59.5')),
+        findsWidgets,
+      );
+    });
+
+    testWidgets('a move exactly at the floor shows no verdict', (tester) async {
+      await tester.pumpWidget(
+        liveHarness(
+          basePayload(
+            baseline: 57.0,
+            current: 60.0,
+            metricKey: 'texture_smoothness',
+            trendStatus: {'texture_smoothness': 'stable'},
+            trendDeltas: {'texture_smoothness': 0.0},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        inCard('texture_smoothness', find.text('No verdict for this metric')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a 4-point texture move can show stable or improved', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        liveHarness(
+          basePayload(
+            baseline: 57.5,
+            current: 61.5,
+            metricKey: 'texture_smoothness',
+            trendStatus: {'texture_smoothness': 'stable'},
+            trendDeltas: {'texture_smoothness': 0.0},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        inCard(
+          'texture_smoothness',
+          find.text('Stable - change within tracking noise'),
+        ),
+        findsWidgets,
+      );
+
+      await tester.pumpWidget(
+        liveHarness(
+          basePayload(
+            baseline: 50.0,
+            current: 54.0,
+            metricKey: 'texture_smoothness',
+            trendStatus: {'texture_smoothness': 'improved'},
+            trendDeltas: {'texture_smoothness': 8.0},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(inCard('texture_smoothness', find.text('Improved')), findsWidgets);
+      expect(
+        inCard('texture_smoothness', find.text('No verdict for this metric')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('firmness uses its 4-point floor', (tester) async {
+      await tester.pumpWidget(
+        liveHarness(
+          basePayload(
+            baseline: 55.8,
+            current: 52.2,
+            metricKey: 'structural_firmness_elasticity',
+            trendStatus: {'structural_firmness_elasticity': 'worsened'},
+            trendDeltas: {'structural_firmness_elasticity': -6.5},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        inCard(
+          'structural_firmness_elasticity',
+          find.text('No verdict for this metric'),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.pumpWidget(
+        liveHarness(
+          basePayload(
+            baseline: 55.8,
+            current: 51.0,
+            metricKey: 'structural_firmness_elasticity',
+            trendStatus: {'structural_firmness_elasticity': 'worsened'},
+            trendDeltas: {'structural_firmness_elasticity': -8.6},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        inCard('structural_firmness_elasticity', find.text('Worsened')),
+        findsWidgets,
+      );
+    });
+
+    testWidgets('the six hidden metrics never show a verdict', (tester) async {
+      const hidden = [
+        'wrinkle_load',
+        'rosacea_severity',
+        'diffuse_flushing_erythema',
+        'pore_contraction_index',
+        'under_eye_dark_circle_density',
+        'under_eye_texture_density',
+      ];
+      for (final key in hidden) {
+        await tester.pumpWidget(
+          liveHarness(
+            basePayload(
+              baseline: 20.0,
+              current: 45.0,
+              metricKey: key,
+              trendStatus: {key: 'worsened'},
+              trendDeltas: {key: 125.0},
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          inCard(key, find.textContaining('45.0')),
+          findsWidgets,
+          reason: key,
+        );
+        for (final label in const ['Improved', 'Worsened']) {
+          expect(inCard(key, find.text(label)), findsNothing, reason: key);
+        }
+        expect(
+          inCard(key, find.textContaining('Stable')),
+          findsNothing,
+          reason: key,
+        );
+        expect(
+          inCard(key, find.textContaining('%')),
+          findsNothing,
+          reason: key,
+        );
+      }
+    });
+
+    testWidgets('a locked metric inside its floor still says Not comparable', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        liveHarness(
+          basePayload(
+            baseline: 57.5,
+            current: 59.5,
+            metricKey: 'texture_smoothness',
+            trendStatus: {'texture_smoothness': 'stable'},
+            trendDeltas: {'texture_smoothness': 0.0},
+            trendLockReasons: {'texture_smoothness': 'lighting_mismatch'},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        inCard('texture_smoothness', find.textContaining('Not comparable:')),
+        findsOneWidget,
+      );
+      expect(
+        inCard('texture_smoothness', find.text('No verdict for this metric')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('callers without the floors keep the existing verdict', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        harness(
+          basePayload(
+            baseline: 57.5,
+            current: 59.5,
+            metricKey: 'texture_smoothness',
+            trendStatus: {'texture_smoothness': 'stable'},
+            trendDeltas: {'texture_smoothness': 0.0},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        inCard(
+          'texture_smoothness',
+          find.text('Stable - change within tracking noise'),
+        ),
+        findsWidgets,
+      );
+    });
+
+    test('the export carries each metric\'s display floor', () {
+      final scan = ScanHistoryEntry(
+        id: 'noise-floor-export',
+        timestamp: DateTime.utc(2026, 10, 10, 20),
+        scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+        estimatedSkinAge: 0,
+        metrics: const <String, double>{},
+        rawPayload: const <String, dynamic>{
+          'metric_matrix': <String, dynamic>{'texture_smoothness': 57.0},
+        },
+      );
+      final rows = AiScanDataCsvExporter.format([
+        scan,
+      ], registryBaselineScanIds: const {}).split('\r\n');
+      final header = rows.first.split(',');
+      final values = rows[1].split(',');
+      String cell(String column) => values[header.indexOf(column)];
+
+      expect(cell('texture_smoothness_noise_floor'), '3.0');
+      expect(cell('pigment_load_noise_floor'), '3.0');
+      expect(cell('skin_tone_radiance_evenness_noise_floor'), '3.0');
+      expect(cell('structural_firmness_elasticity_noise_floor'), '4.0');
+      expect(cell('pore_visibility_noise_floor'), '2.0');
+      expect(cell('sebum_excess_oil_gloss_noise_floor'), '3.0');
+      expect(cell('localized_redness_noise_floor'), '5.0');
+      expect(cell('wrinkle_load_noise_floor'), isEmpty);
+    });
+
+    test('both live views turn the floors on', () {
+      final source = File(
+        'lib/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart',
+      ).readAsStringSync();
+      expect('applyDisplayNoiseFloors: true'.allMatches(source), hasLength(2));
     });
   });
 }

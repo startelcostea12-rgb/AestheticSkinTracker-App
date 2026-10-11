@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
 import '../utils/capture_consistency.dart';
+import '../utils/display_noise_floors.dart';
 import '../utils/severity_band.dart';
 import '../utils/trend_label_resolver.dart';
 import '../utils/trend_lock_reason.dart';
@@ -987,9 +988,21 @@ bool _hideResultVerdictForRepeatNoise({
   required bool hasComparableCurrentValue,
   required _HonestyStatus status,
   String? lockReason,
+  bool applyDisplayNoiseFloors = false,
 }) {
   if (!hasComparableCurrentValue || (lockReason?.trim().isNotEmpty ?? false)) {
     return false;
+  }
+
+  // Live results views: an absolute move at or below the metric's measured
+  // display floor shows no verdict (see displayVerdictNoiseFloors).
+  final displayFloor = applyDisplayNoiseFloors
+      ? displayVerdictNoiseFloors[metricKey.trim().toLowerCase()]
+      : null;
+  if (displayFloor != null &&
+      hasRealBaseline &&
+      (current - baseline).abs() <= displayFloor) {
+    return true;
   }
 
   switch (metricKey.trim().toLowerCase()) {
@@ -1385,6 +1398,7 @@ class LuxeReportLayout extends StatefulWidget {
     this.baselineNotSavedReason,
     this.requireBackendVerdict = false,
     this.requireBackendVerdictForTrustedMetrics = false,
+    this.applyDisplayNoiseFloors = false,
     this.hiddenMetricKeys = const <String>{},
   });
 
@@ -1420,6 +1434,13 @@ class LuxeReportLayout extends StatefulWidget {
   /// instead of the legacy local recompute. Every other metric keeps the
   /// caller's existing behavior. Ignored when [requireBackendVerdict] is set.
   final bool requireBackendVerdictForTrustedMetrics;
+
+  /// When true (the live results views), an unlocked metric whose absolute
+  /// change from baseline is at or below its displayVerdictNoiseFloors
+  /// entry shows its number with no verdict and no percent. Locks still
+  /// show "Not comparable". Defaults to false so Track Procedure, history,
+  /// and the progress report are unchanged.
+  final bool applyDisplayNoiseFloors;
 
   /// Metric keys this view does not render at all: no card, number,
   /// verdict, "No verdict" row, or summary line. Display-only -- the
@@ -1711,6 +1732,7 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         hasComparableCurrentValue: metric.hasComparableCurrentValue,
         status: assessment.status,
         lockReason: assessment.lockReason,
+        applyDisplayNoiseFloors: widget.applyDisplayNoiseFloors,
       )) {
         statements.add('$metricName: No verdict for this metric.');
         continue;
@@ -2003,6 +2025,7 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
                         onTap: () => _handleMetricTap(metric),
                         requireBackendVerdict: widget
                             ._requiresBackendVerdictFor(metric.key),
+                        applyDisplayNoiseFloors: widget.applyDisplayNoiseFloors,
                       ),
                     ),
                 ],
@@ -2053,6 +2076,7 @@ class _MetricCard extends StatelessWidget {
     required this.selected,
     required this.onTap,
     this.requireBackendVerdict = false,
+    this.applyDisplayNoiseFloors = false,
   });
 
   final LuxeMetric metric;
@@ -2060,6 +2084,7 @@ class _MetricCard extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
   final bool requireBackendVerdict;
+  final bool applyDisplayNoiseFloors;
 
   _MetricRowData _buildMetricRowData() {
     final hasComparisonContext =
@@ -2138,6 +2163,7 @@ class _MetricCard extends StatelessWidget {
             hasComparableCurrentValue: metric.hasComparableCurrentValue,
             status: resolvedAssessment.status,
             lockReason: resolvedAssessment.lockReason,
+            applyDisplayNoiseFloors: applyDisplayNoiseFloors,
           )
         ? _HonestyAssessment(
             status: _HonestyStatus.noVerdict,

@@ -4832,6 +4832,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 baselineNotSavedReason: _baselineNotSavedReason,
                 requireBackendVerdict: true,
                 hiddenMetricKeys: liveResultsHiddenMetricKeys,
+                applyDisplayNoiseFloors: true,
               ),
               const SizedBox(height: 18),
               const ClinicalSectionHeader(
@@ -8945,6 +8946,7 @@ class SkinAiAnalysisResultsScreen extends StatelessWidget {
                     currentLabel: 'Current Scan',
                     requireBackendVerdictForTrustedMetrics: true,
                     hiddenMetricKeys: liveResultsHiddenMetricKeys,
+                    applyDisplayNoiseFloors: true,
                   ),
                   if (recommendedProducts.isNotEmpty) ...[
                     const SizedBox(height: 18),
