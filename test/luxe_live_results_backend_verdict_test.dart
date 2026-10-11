@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_scan_data_csv_exporter.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
+import 'package:aesthetic_skin_tracker/utils/display_aggregation.dart';
 import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 
 const _cheekSensitiveMetricKeys = <String>[
@@ -1519,6 +1520,190 @@ void main() {
         'lib/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart',
       ).readAsStringSync();
       expect('applyDisplayNoiseFloors: true'.allMatches(source), hasLength(2));
+    });
+  });
+
+  group('median of frames for untrusted metrics on the live results views', () {
+    const six = [
+      'wrinkle_load',
+      'pore_contraction_index',
+      'under_eye_dark_circle_density',
+      'under_eye_texture_density',
+      'diffuse_flushing_erythema',
+      'rosacea_severity',
+    ];
+
+    // Frames 44 / 45 / 75: the mean is 54.7, the median is 45.0.
+    Map<String, dynamic> outlierPayload(String key, {String? lockReason}) =>
+        <String, dynamic>{
+          'is_follow_up': true,
+          'local_history_count': 2,
+          'metric_matrix': <String, dynamic>{
+            key: (44.0 + 45.0 + 75.0) / 3.0,
+            'texture_smoothness': (56.0 + 57.0 + 75.0) / 3.0,
+          },
+          'baseline_metric_matrix': <String, dynamic>{
+            key: 44.0,
+            'texture_smoothness': 56.0,
+          },
+          'metric_extraction_paths': <String, dynamic>{
+            key: 'primary_roi',
+            'texture_smoothness': 'laplacian_fallback',
+          },
+          'baseline_metric_extraction_paths': <String, dynamic>{
+            key: 'primary_roi',
+            'texture_smoothness': 'laplacian_fallback',
+          },
+          // A locked metric arrives as backend "stable" plus its lock.
+          'trend_status': <String, dynamic>{
+            'texture_smoothness': lockReason == null ? 'improved' : 'stable',
+          },
+          'trend_deltas': <String, dynamic>{
+            'texture_smoothness': lockReason == null ? 11.9 : 0.0,
+          },
+          if (lockReason != null)
+            'trend_lock_reasons': <String, dynamic>{
+              'texture_smoothness': lockReason,
+            },
+          'multi_frame_analysis': <String, dynamic>{
+            'metric_frame_values': <String, dynamic>{
+              key: [44.0, 45.0, 75.0],
+              'texture_smoothness': [56.0, 57.0, 75.0],
+            },
+          },
+        };
+
+    Widget live(Map<String, dynamic> payload) => MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: LuxeReportLayout(
+            rawPayload: payload,
+            requireBackendVerdict: true,
+            hiddenMetricKeys: liveResultsHiddenMetricKeys,
+            applyDisplayNoiseFloors: true,
+            medianDisplayMetricKeys: medianDisplayMetricKeys,
+          ),
+        ),
+      ),
+    );
+
+    Finder card(String key) => find.byKey(ValueKey('result_metric_$key'));
+
+    testWidgets('a single-frame outlier is ignored for the six metrics', (
+      tester,
+    ) async {
+      // pore_contraction_index is hidden on the live views entirely, so it
+      // is checked through the parser below rather than a card.
+      for (final key in six.where(
+        (key) => !liveResultsHiddenMetricKeys.contains(key),
+      )) {
+        await tester.pumpWidget(live(outlierPayload(key)));
+        await tester.pumpAndSettle();
+        expect(
+          find.descendant(of: card(key), matching: find.textContaining('45.0')),
+          findsWidgets,
+          reason: key,
+        );
+        expect(
+          find.descendant(of: card(key), matching: find.textContaining('54.7')),
+          findsNothing,
+          reason: key,
+        );
+        for (final label in const ['Improved', 'Worsened']) {
+          expect(
+            find.descendant(of: card(key), matching: find.text(label)),
+            findsNothing,
+            reason: key,
+          );
+        }
+      }
+    });
+
+    test('the parser uses the median for all six, the mean otherwise', () {
+      for (final key in six) {
+        final metrics = LuxeMetricParser.parseTimelinePayload(
+          outlierPayload(key),
+          medianDisplayMetricKeys: medianDisplayMetricKeys,
+        );
+        final six_ = metrics.singleWhere((m) => m.key == key);
+        final texture = metrics.singleWhere(
+          (m) => m.key == 'texture_smoothness',
+        );
+        expect(six_.currentScore, closeTo(45.0, 1e-9), reason: key);
+        expect(texture.currentScore, closeTo(62.667, 0.001), reason: key);
+      }
+      // Without the option (history, Track Procedure, progress report) the
+      // saved mean is used.
+      final defaults = LuxeMetricParser.parseTimelinePayload(
+        outlierPayload('wrinkle_load'),
+      );
+      expect(
+        defaults.singleWhere((m) => m.key == 'wrinkle_load').currentScore,
+        closeTo(54.667, 0.001),
+      );
+    });
+
+    testWidgets('other metrics still show the mean on the live card', (
+      tester,
+    ) async {
+      await tester.pumpWidget(live(outlierPayload('wrinkle_load')));
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(
+          of: card('texture_smoothness'),
+          matching: find.textContaining('62.7'),
+        ),
+        findsWidgets,
+      );
+    });
+
+    testWidgets('a locked metric still says Not comparable', (tester) async {
+      await tester.pumpWidget(
+        live(outlierPayload('wrinkle_load', lockReason: 'lighting_mismatch')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(
+          of: card('texture_smoothness'),
+          matching: find.textContaining('Not comparable:'),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    test('the export keeps the mean and flags the display aggregation', () {
+      final scan = ScanHistoryEntry(
+        id: 'median-display',
+        timestamp: DateTime.utc(2026, 10, 10, 21),
+        scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+        estimatedSkinAge: 0,
+        metrics: const <String, double>{},
+        rawPayload: outlierPayload('wrinkle_load'),
+      );
+      final rows = AiScanDataCsvExporter.format([
+        scan,
+      ], registryBaselineScanIds: const {}).split('\r\n');
+      final header = rows.first.split(',');
+      final values = rows[1].split(',');
+      String cell(String column) => values[header.indexOf(column)];
+
+      expect(cell('wrinkle_load_value'), startsWith('54.6'));
+      for (final key in six) {
+        expect(cell('${key}_display_aggregation'), 'median', reason: key);
+      }
+      expect(cell('texture_smoothness_display_aggregation'), 'mean');
+      expect(cell('pigment_load_display_aggregation'), 'mean');
+    });
+
+    test('both live views pass the median set', () {
+      final source = File(
+        'lib/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart',
+      ).readAsStringSync();
+      expect(
+        'medianDisplayMetricKeys: medianDisplayMetricKeys'.allMatches(source),
+        hasLength(2),
+      );
+      expect(medianDisplayMetricKeys, six.toSet());
     });
   });
 }

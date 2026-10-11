@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
 import '../utils/capture_consistency.dart';
+import '../utils/display_aggregation.dart';
 import '../utils/display_noise_floors.dart';
 import '../utils/severity_band.dart';
 import '../utils/trend_label_resolver.dart';
@@ -319,7 +320,13 @@ class LuxeMetricParser {
         normalized.contains('contour');
   }
 
-  static List<LuxeMetric> parseTimelinePayload(Map<String, dynamic> payload) {
+  /// [medianDisplayMetricKeys]: metrics whose current value is the median
+  /// of multi_frame_analysis.metric_frame_values instead of the saved
+  /// mean, when frame values are present. Empty by default.
+  static List<LuxeMetric> parseTimelinePayload(
+    Map<String, dynamic> payload, {
+    Set<String> medianDisplayMetricKeys = const <String>{},
+  }) {
     final nestedLuxePayload = _asMap(payload['luxePayload']);
     final mergedPayload = nestedLuxePayload.isEmpty
         ? payload
@@ -351,12 +358,14 @@ class LuxeMetricParser {
     return _extractServerDeltaMetrics(
       mergedPayload,
       initialBaseline: mergedPayload['initial_baseline'] == true,
+      medianDisplayMetricKeys: medianDisplayMetricKeys,
     );
   }
 
   static List<LuxeMetric> _extractServerDeltaMetrics(
     Map<String, dynamic> payload, {
     required bool initialBaseline,
+    Set<String> medianDisplayMetricKeys = const <String>{},
   }) {
     final metricsNode = _canonicalizeMetricMap(payload['metrics']);
 
@@ -394,6 +403,9 @@ class LuxeMetricParser {
     );
     final metricContributorCounts = _canonicalizeMetricMap(
       multiFrameAnalysis['metric_contributor_counts'],
+    );
+    final metricFrameValues = _canonicalizeMetricMap(
+      multiFrameAnalysis['metric_frame_values'],
     );
     final requestedFrameCount = _asIntOrNull(
       multiFrameAnalysis['requested_frames'],
@@ -545,6 +557,20 @@ class LuxeMetricParser {
           _asIntOrNull(rangeNode['count']);
 
       var resolvedCurrent = current;
+      if (medianDisplayMetricKeys.contains(spec.deltaKey)) {
+        final frameValues = metricFrameValues[spec.deltaKey];
+        final median = frameValues is List
+            ? medianOf(
+                frameValues
+                    .map(_asDoubleOrNull)
+                    .whereType<double>()
+                    .where((value) => value.isFinite),
+              )
+            : null;
+        if (median != null) {
+          resolvedCurrent = normalizeToHundred(raw: median);
+        }
+      }
 
       double improvementPercent;
       final backendTrendDelta = _asDoubleOrNull(trendDeltas[spec.deltaKey]);
@@ -1400,6 +1426,7 @@ class LuxeReportLayout extends StatefulWidget {
     this.requireBackendVerdictForTrustedMetrics = false,
     this.applyDisplayNoiseFloors = false,
     this.hiddenMetricKeys = const <String>{},
+    this.medianDisplayMetricKeys = const <String>{},
   });
 
   final Map<String, dynamic> rawPayload;
@@ -1441,6 +1468,12 @@ class LuxeReportLayout extends StatefulWidget {
   /// show "Not comparable". Defaults to false so Track Procedure, history,
   /// and the progress report are unchanged.
   final bool applyDisplayNoiseFloors;
+
+  /// Metrics whose displayed current value is the median of the scan's
+  /// frame values rather than the saved mean (see display_aggregation.dart).
+  /// Empty by default so every caller but the live results views is
+  /// unchanged.
+  final Set<String> medianDisplayMetricKeys;
 
   /// Metric keys this view does not render at all: no card, number,
   /// verdict, "No verdict" row, or summary line. Display-only -- the
@@ -1840,6 +1873,7 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         (explicitFollowUp || localHistoryCount >= 2) && !initialBaseline;
     final metrics = LuxeMetricParser.parseTimelinePayload(
       widget.rawPayload,
+      medianDisplayMetricKeys: widget.medianDisplayMetricKeys,
     ).where((m) => !widget.hiddenMetricKeys.contains(m.key)).toList();
     final visibleMetrics = metrics.where((m) => !m.initialBaseline).toList();
     final willRenderCards = visibleMetrics.isNotEmpty;

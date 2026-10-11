@@ -36,6 +36,7 @@ import 'package:aesthetic_skin_tracker/services/skin_history_repository.dart';
 import 'package:aesthetic_skin_tracker/utils/acne_rosacea_photo_analysis.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_comparison_baseline.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_capture_sharpness.dart';
+import 'package:aesthetic_skin_tracker/utils/display_aggregation.dart';
 import 'package:aesthetic_skin_tracker/utils/ai/skin_analysis_model.dart';
 import 'package:aesthetic_skin_tracker/utils/ai/skin_analysis_runner.dart';
 import 'package:aesthetic_skin_tracker/utils/ai/skin_detections.dart';
@@ -4833,6 +4834,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 requireBackendVerdict: true,
                 hiddenMetricKeys: liveResultsHiddenMetricKeys,
                 applyDisplayNoiseFloors: true,
+                medianDisplayMetricKeys: medianDisplayMetricKeys,
               ),
               const SizedBox(height: 18),
               const ClinicalSectionHeader(
@@ -8947,6 +8949,7 @@ class SkinAiAnalysisResultsScreen extends StatelessWidget {
                     requireBackendVerdictForTrustedMetrics: true,
                     hiddenMetricKeys: liveResultsHiddenMetricKeys,
                     applyDisplayNoiseFloors: true,
+                    medianDisplayMetricKeys: medianDisplayMetricKeys,
                   ),
                   if (recommendedProducts.isNotEmpty) ...[
                     const SizedBox(height: 18),
