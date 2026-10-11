@@ -966,6 +966,62 @@ lockTrendsForLightingMismatch({
   );
 }
 
+/// Pre-upload check: would this capture's frames be locked as
+/// lighting_mismatch against [baselinePayload] by the same rule the
+/// results use ([lockTrendsForLightingMismatch])? [wouldLock] is true only
+/// for a measured brightness mismatch -- both scans have ISO and Bv and
+/// |delta Bv| exceeds provisionalBrightnessValueMismatchLimit -- since a
+/// retake under the lamp can fix that. Missing exposure metadata, which the
+/// same rule also locks on, is reported separately as [missingExposure]
+/// because retaking cannot add it to an older baseline.
+({
+  bool wouldLock,
+  bool missingExposure,
+  double? currentBrightnessValue,
+  double? baselineBrightnessValue,
+})
+aiScanPreUploadLightingCheck({
+  required List<AiScanFrameExposure> frameExposure,
+  required Map<String, dynamic>? baselinePayload,
+}) {
+  if (baselinePayload == null || baselinePayload.isEmpty) {
+    return (
+      wouldLock: false,
+      missingExposure: false,
+      currentBrightnessValue: null,
+      baselineBrightnessValue: null,
+    );
+  }
+  final currentPayload = <String, dynamic>{
+    aiScanPerFrameDiagnosticsKey: [
+      for (final frame in frameExposure) frame.toJson(),
+    ],
+  };
+  const probeKey = '_pre_upload_probe';
+  final locked =
+      lockTrendsForLightingMismatch(
+        trendStatus: const {probeKey: 'stable'},
+        trendDeltas: const {probeKey: 0.0},
+        trendLockReasons: const {},
+        currentPayload: currentPayload,
+        baselinePayload: baselinePayload,
+      ).trendLockReasons[probeKey] ==
+      'lighting_mismatch';
+  final current = _representativeScanExposure(currentPayload);
+  final baseline = _representativeScanExposure(baselinePayload);
+  final missingExposure =
+      current.iso == null ||
+      current.brightnessValue == null ||
+      baseline.iso == null ||
+      baseline.brightnessValue == null;
+  return (
+    wouldLock: locked && !missingExposure,
+    missingExposure: locked && missingExposure,
+    currentBrightnessValue: current.brightnessValue,
+    baselineBrightnessValue: baseline.brightnessValue,
+  );
+}
+
 ({
   Map<String, String> trendStatus,
   Map<String, double> trendDeltas,
@@ -2473,6 +2529,45 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     _runAnalysis();
   }
 
+  /// Asks whether to retake before analyzing a capture whose brightness
+  /// would lock it against the baseline. True = retake.
+  Future<bool> _confirmRetakeForLighting(
+    ({
+      bool wouldLock,
+      bool missingExposure,
+      double? currentBrightnessValue,
+      double? baselineBrightnessValue,
+    })
+    check,
+  ) async {
+    String bv(double? value) => value == null ? '—' : value.toStringAsFixed(2);
+    final retake = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        key: const ValueKey('pre_upload_lighting_dialog'),
+        title: const Text('Light differs from your baseline'),
+        content: Text(
+          'This photo\'s brightness (Bv ${bv(check.currentBrightnessValue)}) '
+          'differs from your baseline (Bv ${bv(check.baselineBrightnessValue)}) '
+          'by more than the lighting check allows, so it would not be '
+          'compared. Retake under your lamp to compare.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Analyze anyway'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Retake under your lamp'),
+          ),
+        ],
+      ),
+    );
+    return retake ?? false;
+  }
+
   Future<void> _runAnalysis() async {
     final path = _imagePath;
     if (path == null || path.isEmpty) return;
@@ -2548,6 +2643,23 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       );
 
       final Map<String, double> previousMetrics = await _getPreviousMetrics();
+
+      // Pre-upload light check: if these frames would be locked as
+      // lighting_mismatch against the baseline (same rule as the results),
+      // offer a retake before spending an analysis on a locked scan.
+      final lightingCheck = aiScanPreUploadLightingCheck(
+        frameExposure: _analysisFrameExposureMetadata,
+        baselinePayload: _previousFocusAreaScan?.rawPayload,
+      );
+      if (lightingCheck.wouldLock && mounted) {
+        final retake = await _confirmRetakeForLighting(lightingCheck);
+        if (!mounted) return;
+        if (retake) {
+          setState(() => _stage = _Stage.capture);
+          await _pickFromCamera();
+          return;
+        }
+      }
 
       // Server-first execution: route this scan through the backend multipart
       // endpoint and parse canonical metrics + trend deltas from the payload.
