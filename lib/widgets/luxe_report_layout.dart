@@ -1430,6 +1430,36 @@ String _shortLockReasonPhrase(String reason) {
 /// change Track Procedure's, progress report's, or history's existing
 /// wording (including the "Standalone entry" lock headline those screens
 /// already show and already have passing tests for).
+/// Lock reasons that, when every compared metric shares them, are shown
+/// once as a scan-wide banner instead of on each card.
+const Set<String> scanWideLockReasons = <String>{
+  'lighting_mismatch',
+  'formula_version_mismatch',
+};
+
+/// The lock reason shared by every compared metric -- each metric that
+/// shows a verdict, has a comparable current value, and has a baseline --
+/// when there are at least two of them and the reason is one of
+/// [scanWideLockReasons]. Null when locks differ, any compared metric is
+/// unlocked, or fewer than two metrics were compared.
+String? scanWideLockReason(List<LuxeMetric> metrics) {
+  final compared = metrics
+      .where(
+        (metric) =>
+            metric.showTrendVerdict &&
+            metric.hasComparableCurrentValue &&
+            metric.hasBaselineValue,
+      )
+      .toList(growable: false);
+  if (compared.length < 2) return null;
+  final reasons = compared
+      .map((metric) => metric.backendTrendLockReason?.trim())
+      .toSet();
+  if (reasons.length != 1) return null;
+  final reason = reasons.single;
+  return reason != null && scanWideLockReasons.contains(reason) ? reason : null;
+}
+
 String _liveHonestyLabel(
   _HonestyAssessment assessment, {
   required bool isBodyMetric,
@@ -1471,6 +1501,8 @@ class LuxeReportLayout extends StatefulWidget {
     this.applyDisplayNoiseFloors = false,
     this.hiddenMetricKeys = const <String>{},
     this.medianDisplayMetricKeys = const <String>{},
+    this.onRetakeForLighting,
+    this.onSetNewBaseline,
   });
 
   final Map<String, dynamic> rawPayload;
@@ -1518,6 +1550,14 @@ class LuxeReportLayout extends StatefulWidget {
   /// Empty by default so every caller but the live results views is
   /// unchanged.
   final Set<String> medianDisplayMetricKeys;
+
+  /// Action for the scan-wide banner when every compared metric is locked
+  /// as lighting_mismatch. The banner shows no button when null.
+  final VoidCallback? onRetakeForLighting;
+
+  /// Action for the scan-wide banner when every compared metric is locked
+  /// as formula_version_mismatch. The banner shows no button when null.
+  final VoidCallback? onSetNewBaseline;
 
   /// Metric keys this view does not render at all: no card, number,
   /// verdict, "No verdict" row, or summary line. Display-only -- the
@@ -1771,6 +1811,60 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
     );
   }
 
+  Widget _buildScanWideLockBanner(String reason) {
+    final isLighting = reason == 'lighting_mismatch';
+    final title = isLighting
+        ? 'Not comparable: lighting differed from your baseline'
+        : 'Not comparable: scoring was updated since your baseline';
+    final body = isLighting
+        ? 'None of this scan\'s metrics can be compared. Retake under your '
+              'lamp to compare with your baseline.'
+        : 'None of this scan\'s metrics can be compared with your baseline. '
+              'Set a new baseline to compare from here.';
+    final action = isLighting
+        ? widget.onRetakeForLighting
+        : widget.onSetNewBaseline;
+    final actionLabel = isLighting
+        ? 'Retake under your lamp'
+        : 'Set new baseline';
+    return Container(
+      key: const ValueKey('scan_wide_lock_banner'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.cardBackground,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF8E7F6D)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              color: AppColors.textStructure,
+              fontSize: 13.5,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            body,
+            style: TextStyle(
+              color: AppColors.textStructure.withValues(alpha: 0.78),
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              height: 1.35,
+            ),
+          ),
+          if (action != null) ...[
+            const SizedBox(height: 10),
+            OutlinedButton(onPressed: action, child: Text(actionLabel)),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildClinicalProgressSummary(List<LuxeMetric> metrics) {
     if (metrics.isEmpty || metrics.every((m) => m.initialBaseline)) {
       return const SizedBox.shrink();
@@ -1973,6 +2067,9 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
             )
           : const SizedBox.shrink();
     }
+    final scanLockReason = showProgressComparison
+        ? scanWideLockReason(visibleMetrics)
+        : null;
     final showComparisonFrames =
         showProgressComparison &&
         widget.baselineImageProvider != null &&
@@ -2095,6 +2192,10 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
             ),
             const SizedBox(height: 16),
           ],
+          if (scanLockReason != null) ...[
+            _buildScanWideLockBanner(scanLockReason),
+            const SizedBox(height: 14),
+          ],
           LayoutBuilder(
             builder: (context, constraints) {
               final width = constraints.maxWidth;
@@ -2114,13 +2215,16 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
                         requireBackendVerdict: widget
                             ._requiresBackendVerdictFor(metric.key),
                         applyDisplayNoiseFloors: widget.applyDisplayNoiseFloors,
+                        scanWideLockShown: scanLockReason != null,
                       ),
                     ),
                 ],
               );
             },
           ),
-          if (visibleMetrics.isNotEmpty && showProgressComparison) ...[
+          if (visibleMetrics.isNotEmpty &&
+              showProgressComparison &&
+              scanLockReason == null) ...[
             const SizedBox(height: 16),
             _buildClinicalProgressSummary(visibleMetrics),
             const SizedBox(height: 16),
@@ -2165,6 +2269,7 @@ class _MetricCard extends StatelessWidget {
     required this.onTap,
     this.requireBackendVerdict = false,
     this.applyDisplayNoiseFloors = false,
+    this.scanWideLockShown = false,
   });
 
   final LuxeMetric metric;
@@ -2173,6 +2278,10 @@ class _MetricCard extends StatelessWidget {
   final VoidCallback onTap;
   final bool requireBackendVerdict;
   final bool applyDisplayNoiseFloors;
+
+  /// True when the scan-wide lock banner already explains this scan's
+  /// shared lock, so the card says only "Not comparable".
+  final bool scanWideLockShown;
 
   _MetricRowData _buildMetricRowData() {
     final hasComparisonContext =
@@ -2307,8 +2416,10 @@ class _MetricCard extends StatelessWidget {
                   isBodyMetric
               ? 'Body tracking'
               : assessment.stableLockHeadline ?? assessment.label);
-    final finalSubtext =
-        assessment.status == _HonestyStatus.insufficientSignal && isBodyMetric
+    final sharedLockOnCard = scanWideLockShown && assessment.lockReason != null;
+    final finalSubtext = sharedLockOnCard
+        ? 'See the note above'
+        : assessment.status == _HonestyStatus.insufficientSignal && isBodyMetric
         ? bodyEarlyAccessMessage
         : subtext;
 
@@ -2321,7 +2432,7 @@ class _MetricCard extends StatelessWidget {
       subtext: finalSubtext,
       initialBaseline: initialBaseline,
       honestyStatus: assessment.status,
-      honestyLabel: honestyLabel,
+      honestyLabel: sharedLockOnCard ? 'Not comparable' : honestyLabel,
       trendLocked: assessment.lockReason != null,
       hasRealBaseline: assessment.hasRealBaseline,
       hasComparableCurrentValue: metric.hasComparableCurrentValue,

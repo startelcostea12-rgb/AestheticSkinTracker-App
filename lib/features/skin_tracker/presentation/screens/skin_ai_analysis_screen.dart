@@ -4956,6 +4956,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 hiddenMetricKeys: liveResultsHiddenMetricKeys,
                 applyDisplayNoiseFloors: true,
                 medianDisplayMetricKeys: medianDisplayMetricKeys,
+                onRetakeForLighting: () {
+                  _pickFromCamera();
+                },
+                onSetNewBaseline: () {
+                  _confirmUpdateBaselinePressed();
+                },
               ),
               const SizedBox(height: 18),
               const ClinicalSectionHeader(

@@ -1873,4 +1873,173 @@ void main() {
       );
     });
   });
+
+  group('one banner for a fully locked scan', () {
+    const keys = [
+      'texture_smoothness',
+      'pigment_load',
+      'pore_visibility',
+      'skin_tone_radiance_evenness',
+    ];
+
+    Map<String, dynamic> lockedPayload(Map<String, String?> locks) =>
+        <String, dynamic>{
+          'is_follow_up': true,
+          'local_history_count': 2,
+          'metric_matrix': {for (final k in keys) k: 40.0},
+          'baseline_metric_matrix': {for (final k in keys) k: 30.0},
+          'metric_extraction_paths': {for (final k in keys) k: 'primary_roi'},
+          'baseline_metric_extraction_paths': {
+            for (final k in keys) k: 'primary_roi',
+          },
+          'trend_status': {
+            for (final k in keys) k: locks[k] == null ? 'worsened' : 'stable',
+          },
+          'trend_deltas': {for (final k in keys) k: 0.0},
+          'trend_lock_reasons': {
+            for (final k in keys)
+              if (locks[k] != null) k: locks[k],
+          },
+        };
+
+    Widget live(
+      Map<String, dynamic> payload, {
+      VoidCallback? onRetake,
+      VoidCallback? onNewBaseline,
+    }) => MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: LuxeReportLayout(
+            rawPayload: payload,
+            requireBackendVerdict: true,
+            onRetakeForLighting: onRetake,
+            onSetNewBaseline: onNewBaseline,
+          ),
+        ),
+      ),
+    );
+
+    final banner = find.byKey(const ValueKey('scan_wide_lock_banner'));
+
+    testWidgets('every metric locked for lighting shows one banner', (
+      tester,
+    ) async {
+      var retakes = 0;
+      await tester.pumpWidget(
+        live(
+          lockedPayload({for (final k in keys) k: 'lighting_mismatch'}),
+          onRetake: () => retakes++,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(banner, findsOneWidget);
+      expect(
+        find.text('Not comparable: lighting differed from your baseline'),
+        findsOneWidget,
+      );
+      // Cards keep their numbers but no longer repeat the full reason.
+      expect(
+        find.textContaining('Not comparable: capture brightness'),
+        findsNothing,
+      );
+      for (final k in keys) {
+        final card = find.byKey(ValueKey('result_metric_$k'));
+        expect(
+          find.descendant(of: card, matching: find.text('Not comparable')),
+          findsOneWidget,
+          reason: k,
+        );
+        expect(
+          find.descendant(of: card, matching: find.textContaining('40.0')),
+          findsWidgets,
+          reason: k,
+        );
+      }
+
+      await tester.ensureVisible(find.text('Retake under your lamp'));
+      await tester.tap(find.text('Retake under your lamp'));
+      expect(retakes, 1);
+    });
+
+    testWidgets(
+      'every metric locked on formula version offers a new baseline',
+      (tester) async {
+        var newBaselines = 0;
+        await tester.pumpWidget(
+          live(
+            lockedPayload({
+              for (final k in keys) k: 'formula_version_mismatch',
+            }),
+            onNewBaseline: () => newBaselines++,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(banner, findsOneWidget);
+        expect(
+          find.text('Not comparable: scoring was updated since your baseline'),
+          findsOneWidget,
+        );
+        await tester.ensureVisible(find.text('Set new baseline'));
+        await tester.tap(find.text('Set new baseline'));
+        expect(newBaselines, 1);
+      },
+    );
+
+    testWidgets('different locks keep the individual cards', (tester) async {
+      await tester.pumpWidget(
+        live(
+          lockedPayload({
+            'texture_smoothness': 'lighting_mismatch',
+            'pigment_load': 'lighting_mismatch',
+            'pore_visibility': 'formula_version_mismatch',
+            'skin_tone_radiance_evenness': 'lighting_mismatch',
+          }),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(banner, findsNothing);
+      expect(find.textContaining('Not comparable: '), findsNWidgets(4));
+    });
+
+    testWidgets('one unlocked metric keeps the individual cards', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        live(
+          lockedPayload({
+            'texture_smoothness': 'lighting_mismatch',
+            'pigment_load': 'lighting_mismatch',
+            'pore_visibility': 'lighting_mismatch',
+            'skin_tone_radiance_evenness': null,
+          }),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(banner, findsNothing);
+      expect(find.text('Worsened'), findsWidgets);
+    });
+
+    test('scanWideLockReason only collapses lighting and formula version', () {
+      List<LuxeMetric> parse(Map<String, String?> locks) =>
+          LuxeMetricParser.parseTimelinePayload(lockedPayload(locks));
+      expect(
+        scanWideLockReason(
+          parse({for (final k in keys) k: 'lighting_mismatch'}),
+        ),
+        'lighting_mismatch',
+      );
+      expect(
+        scanWideLockReason(
+          parse({for (final k in keys) k: 'formula_version_mismatch'}),
+        ),
+        'formula_version_mismatch',
+      );
+      expect(
+        scanWideLockReason(parse({for (final k in keys) k: 'path_mismatch'})),
+        isNull,
+      );
+    });
+  });
 }
