@@ -1706,4 +1706,171 @@ void main() {
       expect(medianDisplayMetricKeys, six.toSet());
     });
   });
+
+  group('the card says why there is no verdict', () {
+    Widget live(Map<String, dynamic> payload) => MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: LuxeReportLayout(
+            rawPayload: payload,
+            requireBackendVerdict: true,
+            applyDisplayNoiseFloors: true,
+          ),
+        ),
+      ),
+    );
+
+    Finder inCard(String key, Finder matching) => find.descendant(
+      of: find.byKey(ValueKey('result_metric_$key')),
+      matching: matching,
+    );
+
+    testWidgets('within the display floor', (tester) async {
+      await tester.pumpWidget(
+        live(
+          basePayload(
+            baseline: 57.5,
+            current: 59.5,
+            metricKey: 'texture_smoothness',
+            trendStatus: {'texture_smoothness': 'improved'},
+            trendDeltas: {'texture_smoothness': 3.5},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        inCard('texture_smoothness', find.text('No verdict for this metric')),
+        findsOneWidget,
+      );
+      expect(
+        inCard(
+          'texture_smoothness',
+          find.textContaining('Within ±3 measurement noise'),
+        ),
+        findsWidgets,
+      );
+      expect(
+        find.textContaining(
+          'Texture Smoothness: No verdict for this metric '
+          '(Within ±3 measurement noise)',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('redness at 0', (tester) async {
+      await tester.pumpWidget(
+        live(
+          basePayload(
+            baseline: 12.0,
+            current: 0.0,
+            metricKey: 'localized_redness',
+            trendStatus: {'localized_redness': 'improved'},
+            trendDeltas: {'localized_redness': -100.0},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        inCard('localized_redness', find.textContaining('Redness at 0')),
+        findsWidgets,
+      );
+    });
+
+    testWidgets('frames disagreed', (tester) async {
+      final aggregate = averageBackendAnalysisFrames([
+        for (final (value, status) in const [
+          (8.5, 'stable'),
+          (9.9, 'worsened'),
+          (10.3, 'worsened'),
+        ])
+          {
+            'metric_matrix': {'pigment_load': value},
+            'metric_extraction_paths': {'pigment_load': 'cheek_primary'},
+            'trend_status': {'pigment_load': status},
+            'trend_deltas': {'pigment_load': 0.0},
+          },
+      ], requestedFrames: 3);
+      expect(
+        (aggregate.response['multi_frame_analysis']
+            as Map)['trend_status_disagreements'],
+        ['pigment_load'],
+      );
+      await tester.pumpWidget(
+        live({
+          ...aggregate.response,
+          'is_follow_up': true,
+          'local_history_count': 2,
+          'baseline_metric_matrix': {'pigment_load': 4.0},
+          'baseline_metric_extraction_paths': {'pigment_load': 'cheek_primary'},
+        }),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        inCard('pigment_load', find.textContaining('Frames disagreed')),
+        findsWidgets,
+      );
+    });
+
+    testWidgets('frames varied more than the noise floor', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: LuxeReportLayout(
+                rawPayload: basePayload(
+                  baseline: 22.3,
+                  current: 27.9,
+                  metricRanges: {
+                    'pigment_load': {'min': 24.0, 'max': 31.0, 'count': 3},
+                  },
+                  metricNoiseFloors: {'pigment_load': 2.0},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        inCard(
+          'pigment_load',
+          find.textContaining("Frames varied more than this metric's"),
+        ),
+        findsWidgets,
+      );
+    });
+
+    testWidgets('no trend from the backend', (tester) async {
+      await tester.pumpWidget(live(basePayload(baseline: 22.3, current: 27.9)));
+      await tester.pumpAndSettle();
+      expect(
+        inCard(
+          'pigment_load',
+          find.textContaining('No trend was computed for this scan'),
+        ),
+        findsWidgets,
+      );
+    });
+
+    testWidgets('a verdict is still shown when there is one', (tester) async {
+      await tester.pumpWidget(
+        live(
+          basePayload(
+            baseline: 50.0,
+            current: 54.0,
+            metricKey: 'texture_smoothness',
+            trendStatus: {'texture_smoothness': 'improved'},
+            trendDeltas: {'texture_smoothness': 8.0},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(inCard('texture_smoothness', find.text('Improved')), findsWidgets);
+      expect(
+        inCard('texture_smoothness', find.textContaining('measurement noise')),
+        findsNothing,
+      );
+    });
+  });
 }

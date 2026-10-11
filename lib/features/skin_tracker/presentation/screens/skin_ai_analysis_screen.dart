@@ -512,6 +512,9 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
   // shown verdict describing a different number than the one on screen.
   final resolvedTrendStatus = <String, dynamic>{};
   final resolvedTrendDeltas = <String, dynamic>{};
+  // Metrics whose contributing frames reported different trend statuses,
+  // so no verdict was kept -- recorded so the card can say why.
+  final trendStatusDisagreements = <String>[];
   final resolvedTrendLockReasons = <String, dynamic>{};
   final resolvedExtractionPaths = <String, dynamic>{};
   final resolvedBaselineExtractionPaths = <String, dynamic>{};
@@ -547,6 +550,10 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     final keepVerdict =
         frameStatuses.length == 1 &&
         !untrustedTrendVerdictMetricKeys.contains(key);
+    if (frameStatuses.length > 1 &&
+        !untrustedTrendVerdictMetricKeys.contains(key)) {
+      trendStatusDisagreements.add(key);
+    }
     final status = _perFrameTrendNode(
       nearestResponse,
       nearestMetricsNode,
@@ -643,6 +650,8 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     'requested_frames': requestedFrames,
     'successful_frames': successfulResponses.length,
     'metric_contributor_counts': contributorCounts,
+    if (trendStatusDisagreements.isNotEmpty)
+      'trend_status_disagreements': trendStatusDisagreements,
     'metric_frame_values': <String, List<double>>{
       for (final entry in samples.entries)
         entry.key: List<double>.unmodifiable(entry.value),

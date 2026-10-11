@@ -49,6 +49,7 @@ class LuxeMetric {
     this.currentNoiseFloor2sd,
     this.contributorCount,
     this.requestedFrameCount,
+    this.framesDisagreed = false,
   });
 
   final String key;
@@ -79,6 +80,11 @@ class LuxeMetric {
   final double? currentNoiseFloor2sd;
   final int? contributorCount;
   final int? requestedFrameCount;
+
+  /// True when this scan's frames reported different trend statuses for
+  /// this metric, so the scan kept no verdict for it
+  /// (multi_frame_analysis.trend_status_disagreements).
+  final bool framesDisagreed;
 }
 
 class MetricPrecisionPresentation {
@@ -407,6 +413,10 @@ class LuxeMetricParser {
     final metricFrameValues = _canonicalizeMetricMap(
       multiFrameAnalysis['metric_frame_values'],
     );
+    final rawDisagreements = multiFrameAnalysis['trend_status_disagreements'];
+    final trendStatusDisagreements = rawDisagreements is List
+        ? rawDisagreements.map((key) => key.toString()).toSet()
+        : const <String>{};
     final requestedFrameCount = _asIntOrNull(
       multiFrameAnalysis['requested_frames'],
     );
@@ -639,6 +649,7 @@ class LuxeMetricParser {
           ),
           contributorCount: contributorCount,
           requestedFrameCount: requestedFrameCount,
+          framesDisagreed: trendStatusDisagreements.contains(spec.deltaKey),
         ),
       );
     }
@@ -1006,7 +1017,14 @@ enum _HonestyStatus {
   noVerdict,
 }
 
-bool _hideResultVerdictForRepeatNoise({
+/// Why [_repeatNoiseHideReason] hid a verdict.
+const String _hideReasonDisplayFloor = 'display_floor';
+const String _hideReasonRednessZero = 'redness_zero';
+const String _hideReasonFirmnessSmallMove = 'firmness_small_move';
+
+/// The repeat-noise rule that hides this metric's verdict, or null to keep
+/// it. See the reason constants above.
+String? _repeatNoiseHideReason({
   required String metricKey,
   required double baseline,
   required double current,
@@ -1017,7 +1035,7 @@ bool _hideResultVerdictForRepeatNoise({
   bool applyDisplayNoiseFloors = false,
 }) {
   if (!hasComparableCurrentValue || (lockReason?.trim().isNotEmpty ?? false)) {
-    return false;
+    return null;
   }
 
   // Live results views: an absolute move at or below the metric's measured
@@ -1028,21 +1046,47 @@ bool _hideResultVerdictForRepeatNoise({
   if (displayFloor != null &&
       hasRealBaseline &&
       (current - baseline).abs() <= displayFloor) {
-    return true;
+    return _hideReasonDisplayFloor;
   }
 
   switch (metricKey.trim().toLowerCase()) {
     case 'localized_redness':
       // A 0.0 reading sits at the formula's dead-zone floor; keep it
       // verdict-free as before. Any other unlocked redness keeps its verdict.
-      return current <= 0.0;
+      return current <= 0.0 ? _hideReasonRednessZero : null;
     case 'structural_firmness_elasticity':
       return status != _HonestyStatus.stable &&
-          hasRealBaseline &&
-          (current - baseline).abs() < 4.0;
+              hasRealBaseline &&
+              (current - baseline).abs() < 4.0
+          ? _hideReasonFirmnessSmallMove
+          : null;
     default:
-      return false;
+      return null;
   }
+}
+
+/// Assessment reason recorded when the frame-spread check hides a verdict.
+const String _noVerdictReasonFrameSpread =
+    'frame spread exceeds the existing noise floor';
+
+/// User-facing explanation for a metric shown with no verdict, from the
+/// reason its assessment already carries. Display only.
+String _noVerdictReasonText(LuxeMetric metric, String reason) {
+  switch (reason) {
+    case _hideReasonDisplayFloor:
+      final floor = displayVerdictNoiseFloors[metric.key];
+      return floor == null
+          ? 'Within measurement noise'
+          : 'Within ±${floor.toStringAsFixed(0)} measurement noise';
+    case _hideReasonRednessZero:
+      return 'Redness at 0';
+    case _hideReasonFirmnessSmallMove:
+      return 'Within ±4 measurement noise';
+    case _noVerdictReasonFrameSpread:
+      return "Frames varied more than this metric's measurement noise";
+  }
+  if (metric.framesDisagreed) return 'Frames disagreed';
+  return 'No trend was computed for this scan';
 }
 
 // Trusted metrics: a backend stable/improved/worsened verdict is shown as-is
@@ -1754,10 +1798,13 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
       final metricName = metric.name;
       if (assessment.lockReason == null &&
           _hasFrameSpreadAboveNoiseBand(metric)) {
-        statements.add('$metricName: No verdict for this metric.');
+        statements.add(
+          '$metricName: No verdict for this metric '
+          '(${_noVerdictReasonText(metric, _noVerdictReasonFrameSpread)}).',
+        );
         continue;
       }
-      if (_hideResultVerdictForRepeatNoise(
+      final repeatNoiseReason = _repeatNoiseHideReason(
         metricKey: metric.key,
         baseline: metric.baselineScore,
         current: metric.currentScore,
@@ -1766,12 +1813,19 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         status: assessment.status,
         lockReason: assessment.lockReason,
         applyDisplayNoiseFloors: widget.applyDisplayNoiseFloors,
-      )) {
-        statements.add('$metricName: No verdict for this metric.');
+      );
+      if (repeatNoiseReason != null) {
+        statements.add(
+          '$metricName: No verdict for this metric '
+          '(${_noVerdictReasonText(metric, repeatNoiseReason)}).',
+        );
         continue;
       }
       if (assessment.status == _HonestyStatus.noVerdict) {
-        statements.add('$metricName: No verdict for this metric.');
+        statements.add(
+          '$metricName: No verdict for this metric '
+          '(${_noVerdictReasonText(metric, assessment.reason)}).',
+        );
         continue;
       }
       if (assessment.status == _HonestyStatus.insufficientSignal) {
@@ -2180,28 +2234,29 @@ class _MetricCard extends StatelessWidget {
       backendTrendLockReason: metric.backendTrendLockReason,
       requireBackendVerdict: requireBackendVerdict,
     );
+    final repeatNoiseReason = _repeatNoiseHideReason(
+      metricKey: metric.key,
+      baseline: baselineValue,
+      current: currentValue,
+      hasRealBaseline: resolvedAssessment.hasRealBaseline,
+      hasComparableCurrentValue: metric.hasComparableCurrentValue,
+      status: resolvedAssessment.status,
+      lockReason: resolvedAssessment.lockReason,
+      applyDisplayNoiseFloors: applyDisplayNoiseFloors,
+    );
     final assessment =
         resolvedAssessment.lockReason == null &&
             _hasFrameSpreadAboveNoiseBand(metric)
         ? _HonestyAssessment(
             status: _HonestyStatus.noVerdict,
-            reason: 'frame spread exceeds the existing noise floor',
+            reason: _noVerdictReasonFrameSpread,
             deltaPct: null,
             hasRealBaseline: resolvedAssessment.hasRealBaseline,
           )
-        : _hideResultVerdictForRepeatNoise(
-            metricKey: metric.key,
-            baseline: baselineValue,
-            current: currentValue,
-            hasRealBaseline: resolvedAssessment.hasRealBaseline,
-            hasComparableCurrentValue: metric.hasComparableCurrentValue,
-            status: resolvedAssessment.status,
-            lockReason: resolvedAssessment.lockReason,
-            applyDisplayNoiseFloors: applyDisplayNoiseFloors,
-          )
+        : repeatNoiseReason != null
         ? _HonestyAssessment(
             status: _HonestyStatus.noVerdict,
-            reason: 'within repeat noise',
+            reason: repeatNoiseReason,
             deltaPct: null,
             hasRealBaseline: resolvedAssessment.hasRealBaseline,
           )
@@ -2236,7 +2291,10 @@ class _MetricCard extends StatelessWidget {
     // subtext uses the fuller one-sentence explanation.
     final stableLockDetail = assessment.stableLockDetail;
     final subtext = assessment.hasRealBaseline
-        ? (assessment.reason == 'Re-scan recommended (Lighting/Angle variance)'
+        ? (assessment.status == _HonestyStatus.noVerdict
+              ? _noVerdictReasonText(metric, assessment.reason)
+              : assessment.reason ==
+                    'Re-scan recommended (Lighting/Angle variance)'
               ? assessment.reason
               : stableLockDetail ?? assessment.label)
         : 'Tracks visible appearance in key zones';
