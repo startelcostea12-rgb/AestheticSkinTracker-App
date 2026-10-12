@@ -31,6 +31,7 @@ import 'screens/welcome_tour_screen.dart';
 import 'utils/app_prefs.dart';
 import 'utils/premium_access.dart';
 import 'utils/report_service.dart';
+import 'utils/startup_guard.dart';
 import 'services/notification_service.dart';
 import 'widgets/paywall_screen.dart';
 import 'widgets/premium_feature_sheet.dart';
@@ -90,7 +91,11 @@ Future<void> main() async {
   await runZonedGuarded<Future<void>>(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
-      await Hive.initFlutter();
+      // Every step before runApp runs on the native launch screen, so each
+      // one is bounded by runStartupStep: a step that throws or never
+      // completes is logged and skipped instead of leaving the app stuck on
+      // the splash screen.
+      await runStartupStep('Hive.initFlutter', Hive.initFlutter);
       if (!Hive.isAdapterRegistered(5)) {
         Hive.registerAdapter(ProcedureLogAdapter());
       }
@@ -136,32 +141,20 @@ Future<void> main() async {
       };
 
       // Warm scan history on startup so trend/delta UI always reads normalized data.
-      await AppPrefs.getScanEntries();
-      await AppPrefs.getProcedureEntries();
-      await AppPrefs.resolveActiveProcedureId();
-      await AppPrefs.getUserProfilePictureOrNull();
-      await AppPrefs.loadVerboseDiagnosticsSetting();
-
-      // Initialize notification service for opt-in reminders.
-      if (!kIsWeb) {
-        try {
-          await NotificationService().initialize();
-          if (await AppPrefs.getNotificationsEnabled()) {
-            final granted = await NotificationService().requestPermissions();
-            if (granted) {
-              await NotificationService().resyncScheduledReminders();
-            } else {
-              await AppPrefs.setNotificationsEnabled(false);
-            }
-          }
-        } catch (_) {
-          // Notifications are optional; app should still boot if unavailable.
-        }
-      }
+      await runStartupStep('scan history warm-up', () async {
+        await AppPrefs.getScanEntries();
+        await AppPrefs.getProcedureEntries();
+        await AppPrefs.resolveActiveProcedureId();
+        await AppPrefs.getUserProfilePictureOrNull();
+        await AppPrefs.loadVerboseDiagnosticsSetting();
+      });
 
       // Evict legacy oversized PDF blobs from localStorage to avoid
       // QuotaExceededError on subsequent report generation.
-      await ReportService.cleanupLegacyStorage();
+      await runStartupStep(
+        'legacy report storage cleanup',
+        ReportService.cleanupLegacyStorage,
+      );
 
       // RevenueCat only works on mobile platforms, not on web.
       if (!kIsWeb) {
@@ -182,11 +175,15 @@ Future<void> main() async {
               'or --dart-define=REVENUECAT_ANDROID_KEY=... to enable purchases.',
             );
           } else {
-            await Purchases.setLogLevel(LogLevel.debug);
-            await Purchases.configure(
-              PurchasesConfiguration(revenueCatPublicKey),
+            PremiumAccess.revenueCatConfigured = await runStartupStep(
+              'RevenueCat configure',
+              () async {
+                await Purchases.setLogLevel(LogLevel.debug);
+                await Purchases.configure(
+                  PurchasesConfiguration(revenueCatPublicKey),
+                );
+              },
             );
-            PremiumAccess.revenueCatConfigured = true;
           }
         } catch (_) {
           // RevenueCat is mobile-only; app should still boot for local/web testing.
@@ -200,6 +197,25 @@ Future<void> main() async {
           ),
         ),
       );
+
+      // Opt-in reminders start after the first screen is up: the iOS
+      // permission request can wait on a system dialog, which must never
+      // hold the app on the launch screen.
+      if (!kIsWeb) {
+        unawaited(
+          runStartupStep('notifications', () async {
+            await NotificationService().initialize();
+            if (await AppPrefs.getNotificationsEnabled()) {
+              final granted = await NotificationService().requestPermissions();
+              if (granted) {
+                await NotificationService().resyncScheduledReminders();
+              } else {
+                await AppPrefs.setNotificationsEnabled(false);
+              }
+            }
+          }, timeout: const Duration(minutes: 2)),
+        );
+      }
     },
     (Object error, StackTrace stack) async {
       try {
@@ -221,8 +237,12 @@ Future<bool> _initializeCrashlytics() async {
   }
 
   try {
-    await Firebase.initializeApp();
-    await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(true);
+    // Bounded so a Firebase setup that never answers can't hold the app on
+    // the launch screen; a timeout is treated like Firebase being absent.
+    await Firebase.initializeApp().timeout(defaultStartupStepTimeout);
+    await FirebaseCrashlytics.instance
+        .setCrashlyticsCollectionEnabled(true)
+        .timeout(defaultStartupStepTimeout);
     return true;
   } catch (_) {
     // App should remain usable even when Firebase files are not configured yet.
