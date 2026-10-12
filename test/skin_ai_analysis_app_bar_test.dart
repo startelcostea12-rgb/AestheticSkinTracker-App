@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:flutter/material.dart';
@@ -73,5 +75,23 @@ void main() {
     await tester.tap(find.text('I Understand and Continue'));
     await tester.pump();
     expect(find.text('Photo upload acknowledged'), findsOneWidget);
+  });
+
+  test('the export menu is not limited to debug builds', () {
+    // kDebugMode is a compile-time constant and flutter test always runs in
+    // debug mode, so release behavior is checked in the source: nothing
+    // between the AppBar's actions and the export menu may test a build
+    // mode.
+    final source = File(
+      'lib/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart',
+    ).readAsStringSync();
+    final menuAt = source.indexOf('PopupMenuButton<_DebugExportAction>(');
+    expect(menuAt, isNonNegative);
+    final actionsAt = source.lastIndexOf('actions: [', menuAt);
+    expect(actionsAt, isNonNegative);
+    final beforeMenu = source.substring(actionsAt, menuAt);
+    for (final flag in const ['kDebugMode', 'kReleaseMode', 'kProfileMode']) {
+      expect(beforeMenu, isNot(contains(flag)), reason: flag);
+    }
   });
 }

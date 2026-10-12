@@ -3482,43 +3482,42 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           ),
         ),
         actions: [
-          if (kDebugMode)
-            Builder(
-              builder: (buttonContext) => PopupMenuButton<_DebugExportAction>(
-                tooltip: 'Debug exports',
-                icon: const Icon(Icons.more_vert_rounded),
-                onSelected: (action) async {
-                  switch (action) {
-                    case _DebugExportAction.burstLog:
-                      await _exportBurstLuminanceLog(buttonContext);
-                    case _DebugExportAction.scanData:
-                      await _exportScanData(buttonContext);
-                  }
-                },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(
-                    value: _DebugExportAction.burstLog,
-                    child: Row(
-                      children: [
-                        Icon(Icons.bug_report_outlined, size: 18),
-                        SizedBox(width: 10),
-                        Text('Export Burst Log'),
-                      ],
-                    ),
+          Builder(
+            builder: (buttonContext) => PopupMenuButton<_DebugExportAction>(
+              tooltip: 'Debug exports',
+              icon: const Icon(Icons.more_vert_rounded),
+              onSelected: (action) async {
+                switch (action) {
+                  case _DebugExportAction.burstLog:
+                    await _exportBurstLuminanceLog(buttonContext);
+                  case _DebugExportAction.scanData:
+                    await _exportScanData(buttonContext);
+                }
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: _DebugExportAction.burstLog,
+                  child: Row(
+                    children: [
+                      Icon(Icons.bug_report_outlined, size: 18),
+                      SizedBox(width: 10),
+                      Text('Export Burst Log'),
+                    ],
                   ),
-                  PopupMenuItem(
-                    value: _DebugExportAction.scanData,
-                    child: Row(
-                      children: [
-                        Icon(Icons.table_view_outlined, size: 18),
-                        SizedBox(width: 10),
-                        Text('Export Scan Data'),
-                      ],
-                    ),
+                ),
+                PopupMenuItem(
+                  value: _DebugExportAction.scanData,
+                  child: Row(
+                    children: [
+                      Icon(Icons.table_view_outlined, size: 18),
+                      SizedBox(width: 10),
+                      Text('Export Scan Data'),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
+          ),
           if (_stage == _Stage.results)
             IconButton(
               tooltip: 'New progress report',
