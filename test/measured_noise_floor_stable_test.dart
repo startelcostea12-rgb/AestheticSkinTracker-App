@@ -1,6 +1,8 @@
 import 'dart:io';
 
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
+import 'package:aesthetic_skin_tracker/models/scan_history.dart';
+import 'package:aesthetic_skin_tracker/utils/ai_scan_data_csv_exporter.dart';
 import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -251,5 +253,144 @@ void main() {
     expect(measured, greaterThan(run));
     expect(backendGate, greaterThan(measured));
     expect(lighting, greaterThan(backendGate));
+  });
+
+  group('live card matches the saved status', () {
+    Map<String, dynamic> savedPayload(
+      String key,
+      double baseline,
+      double current, {
+      String status = 'improved',
+      String? lockReason,
+    }) {
+      final trend = forceStableWithinMeasuredNoiseFloors(
+        trendStatus: {key: status},
+        trendDeltas: {key: 4.0},
+        trendLockReasons: {if (lockReason != null) key: lockReason},
+        averagedMetricMatrix: {key: current},
+        baselineMetricMatrix: {key: baseline},
+      );
+      final cleared = clearLockedTrendVerdicts(
+        trendStatus: trend.trendStatus,
+        trendDeltas: trend.trendDeltas,
+        trendLockReasons: trend.trendLockReasons,
+      );
+      return <String, dynamic>{
+        'is_follow_up': true,
+        'local_history_count': 2,
+        'metric_matrix': {key: current},
+        'baseline_metric_matrix': {key: baseline},
+        'metric_extraction_paths': {key: 'primary_roi'},
+        'baseline_metric_extraction_paths': {key: 'primary_roi'},
+        'trend_status': cleared.trendStatus,
+        'trend_deltas': cleared.trendDeltas,
+        'trend_lock_reasons': cleared.trendLockReasons,
+      };
+    }
+
+    Widget liveCard(Map<String, dynamic> payload) => MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: LuxeReportLayout(
+            rawPayload: payload,
+            requireBackendVerdict: true,
+            applyDisplayNoiseFloors: true,
+          ),
+        ),
+      ),
+    );
+
+    Finder inCard(String key, Finder matching) => find.descendant(
+      of: find.byKey(ValueKey('result_metric_$key')),
+      matching: matching,
+    );
+
+    String exportedStatus(Map<String, dynamic> payload, String key) {
+      final rows = AiScanDataCsvExporter.format([
+        ScanHistoryEntry(
+          id: 'floor-$key',
+          timestamp: DateTime.utc(2026, 10, 13),
+          scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+          estimatedSkinAge: 0,
+          metrics: const <String, double>{},
+          rawPayload: payload,
+        ),
+      ], registryBaselineScanIds: const {}).split('\r\n');
+      final header = rows.first.split(',');
+      return rows[1].split(',')[header.indexOf('${key}_trend_status')];
+    }
+
+    testWidgets('a 1.0-point texture move is Stable on the card and export', (
+      tester,
+    ) async {
+      final payload = savedPayload('texture_smoothness', 57.0, 58.0);
+      expect(exportedStatus(payload, 'texture_smoothness'), 'stable');
+
+      await tester.pumpWidget(liveCard(payload));
+      await tester.pumpAndSettle();
+      expect(
+        inCard(
+          'texture_smoothness',
+          find.text('Stable - change within tracking noise'),
+        ),
+        findsWidgets,
+      );
+      expect(
+        inCard('texture_smoothness', find.textContaining('%')),
+        findsNothing,
+      );
+      expect(find.text('Texture Smoothness: Stable.'), findsOneWidget);
+    });
+
+    testWidgets('pigment, pores, firmness below their floors read Stable', (
+      tester,
+    ) async {
+      for (final (key, move) in const [
+        ('pigment_load', 1.0),
+        ('pore_visibility', 1.2),
+        ('structural_firmness_elasticity', 1.5),
+      ]) {
+        final payload = savedPayload(
+          key,
+          20.0,
+          20.0 + move,
+          status: 'worsened',
+        );
+        expect(exportedStatus(payload, key), 'stable', reason: key);
+        await tester.pumpWidget(liveCard(payload));
+        await tester.pumpAndSettle();
+        expect(
+          inCard(key, find.text('Stable - change within tracking noise')),
+          findsWidgets,
+          reason: key,
+        );
+      }
+    });
+
+    testWidgets('a locked metric inside the floor still shows the lock', (
+      tester,
+    ) async {
+      final payload = savedPayload(
+        'texture_smoothness',
+        57.0,
+        58.0,
+        status: 'stable',
+        lockReason: 'lighting_mismatch',
+      );
+      expect(exportedStatus(payload, 'texture_smoothness'), isEmpty);
+      await tester.pumpWidget(liveCard(payload));
+      await tester.pumpAndSettle();
+      expect(
+        inCard('texture_smoothness', find.textContaining('Not comparable:')),
+        findsOneWidget,
+      );
+      expect(
+        inCard(
+          'texture_smoothness',
+          find.text('Stable - change within tracking noise'),
+        ),
+        findsNothing,
+      );
+    });
   });
 }

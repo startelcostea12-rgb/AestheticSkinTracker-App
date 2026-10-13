@@ -1022,6 +1022,10 @@ const String _hideReasonDisplayFloor = 'display_floor';
 const String _hideReasonRednessZero = 'redness_zero';
 const String _hideReasonFirmnessSmallMove = 'firmness_small_move';
 
+/// Not a hide: for [displayStableFloorMetrics] on the live views, a move
+/// strictly below the display floor is shown as "Stable" with no percent.
+const String _displayStableBelowFloor = 'display_stable_below_floor';
+
 /// The repeat-noise rule that hides this metric's verdict, or null to keep
 /// it. See the reason constants above.
 String? _repeatNoiseHideReason({
@@ -1038,18 +1042,30 @@ String? _repeatNoiseHideReason({
     return null;
   }
 
-  // Live results views: an absolute move at or below the metric's measured
-  // display floor shows no verdict (see displayVerdictNoiseFloors).
+  // Live results views: see displayVerdictNoiseFloors. For the
+  // displayStableFloorMetrics, a verdict-bearing move strictly below the
+  // floor reads "Stable"; at or above it the metric keeps its own verdict
+  // (and the older firmness small-move rule below does not apply). For the
+  // other floored metrics, a move at or below the floor shows no verdict.
+  final normalizedKey = metricKey.trim().toLowerCase();
   final displayFloor = applyDisplayNoiseFloors
-      ? displayVerdictNoiseFloors[metricKey.trim().toLowerCase()]
+      ? displayVerdictNoiseFloors[normalizedKey]
       : null;
-  if (displayFloor != null &&
-      hasRealBaseline &&
-      (current - baseline).abs() <= displayFloor) {
-    return _hideReasonDisplayFloor;
+  if (displayFloor != null && hasRealBaseline) {
+    final move = (current - baseline).abs();
+    if (displayStableFloorMetrics.contains(normalizedKey)) {
+      final hasVerdict =
+          status == _HonestyStatus.improved ||
+          status == _HonestyStatus.worsened ||
+          status == _HonestyStatus.stable;
+      return hasVerdict && move < displayFloor
+          ? _displayStableBelowFloor
+          : null;
+    }
+    if (move <= displayFloor) return _hideReasonDisplayFloor;
   }
 
-  switch (metricKey.trim().toLowerCase()) {
+  switch (normalizedKey) {
     case 'localized_redness':
       // A 0.0 reading sits at the formula's dead-zone floor; keep it
       // verdict-free as before. Any other unlocked redness keeps its verdict.
@@ -1908,6 +1924,10 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         lockReason: assessment.lockReason,
         applyDisplayNoiseFloors: widget.applyDisplayNoiseFloors,
       );
+      if (repeatNoiseReason == _displayStableBelowFloor) {
+        statements.add('$metricName: Stable.');
+        continue;
+      }
       if (repeatNoiseReason != null) {
         statements.add(
           '$metricName: No verdict for this metric '
@@ -2359,6 +2379,13 @@ class _MetricCard extends StatelessWidget {
         ? _HonestyAssessment(
             status: _HonestyStatus.noVerdict,
             reason: _noVerdictReasonFrameSpread,
+            deltaPct: null,
+            hasRealBaseline: resolvedAssessment.hasRealBaseline,
+          )
+        : repeatNoiseReason == _displayStableBelowFloor
+        ? _HonestyAssessment(
+            status: _HonestyStatus.stable,
+            reason: 'Stable - change within tracking noise',
             deltaPct: null,
             hasRealBaseline: resolvedAssessment.hasRealBaseline,
           )

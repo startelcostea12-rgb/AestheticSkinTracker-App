@@ -1259,29 +1259,32 @@ void main() {
     Finder inCard(String key, Finder matching) =>
         find.descendant(of: card(key), matching: matching);
 
-    testWidgets('a 2-point texture move shows no verdict and no percent', (
+    testWidgets('a 1.0-point texture move shows Stable with no percent', (
       tester,
     ) async {
       await tester.pumpWidget(
         liveHarness(
           basePayload(
             baseline: 57.5,
-            current: 59.5,
+            current: 58.5,
             metricKey: 'texture_smoothness',
             trendStatus: {'texture_smoothness': 'improved'},
-            trendDeltas: {'texture_smoothness': 3.5},
+            trendDeltas: {'texture_smoothness': 1.7},
           ),
         ),
       );
       await tester.pumpAndSettle();
 
       expect(
-        inCard('texture_smoothness', find.text('No verdict for this metric')),
-        findsOneWidget,
+        inCard(
+          'texture_smoothness',
+          find.text('Stable - change within tracking noise'),
+        ),
+        findsWidgets,
       );
       expect(inCard('texture_smoothness', find.text('Improved')), findsNothing);
       expect(
-        inCard('texture_smoothness', find.textContaining('Stable')),
+        inCard('texture_smoothness', find.text('No verdict for this metric')),
         findsNothing,
       );
       expect(
@@ -1289,28 +1292,88 @@ void main() {
         findsNothing,
       );
       expect(
-        inCard('texture_smoothness', find.textContaining('59.5')),
+        inCard('texture_smoothness', find.textContaining('58.5')),
         findsWidgets,
       );
     });
 
-    testWidgets('a move exactly at the floor shows no verdict', (tester) async {
+    testWidgets('a move exactly at the floor keeps its verdict', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         liveHarness(
           basePayload(
             baseline: 57.0,
-            current: 60.0,
+            current: 59.0,
             metricKey: 'texture_smoothness',
-            trendStatus: {'texture_smoothness': 'stable'},
-            trendDeltas: {'texture_smoothness': 0.0},
+            trendStatus: {'texture_smoothness': 'improved'},
+            trendDeltas: {'texture_smoothness': 3.5},
           ),
         ),
       );
       await tester.pumpAndSettle();
-      expect(
-        inCard('texture_smoothness', find.text('No verdict for this metric')),
-        findsOneWidget,
-      );
+      expect(inCard('texture_smoothness', find.text('Improved')), findsWidgets);
+    });
+
+    testWidgets('a 2.5-point texture move shows improved or worsened', (
+      tester,
+    ) async {
+      for (final (current, status, label) in const [
+        (60.0, 'improved', 'Improved'),
+        (55.0, 'worsened', 'Worsened'),
+      ]) {
+        await tester.pumpWidget(
+          liveHarness(
+            basePayload(
+              baseline: 57.5,
+              current: current,
+              metricKey: 'texture_smoothness',
+              trendStatus: {'texture_smoothness': status},
+              trendDeltas: {'texture_smoothness': 4.3},
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(inCard('texture_smoothness', find.text(label)), findsWidgets);
+      }
+    });
+
+    testWidgets('pigment and pores follow the same rule', (tester) async {
+      for (final (key, below, above) in const [
+        ('pigment_load', 1.0, 2.0),
+        ('pore_visibility', 1.2, 1.6),
+      ]) {
+        await tester.pumpWidget(
+          liveHarness(
+            basePayload(
+              baseline: 10.0,
+              current: 10.0 + below,
+              metricKey: key,
+              trendStatus: {key: 'worsened'},
+              trendDeltas: {key: 12.0},
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          inCard(key, find.text('Stable - change within tracking noise')),
+          findsWidgets,
+          reason: key,
+        );
+        await tester.pumpWidget(
+          liveHarness(
+            basePayload(
+              baseline: 10.0,
+              current: 10.0 + above,
+              metricKey: key,
+              trendStatus: {key: 'worsened'},
+              trendDeltas: {key: 20.0},
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(inCard(key, find.text('Worsened')), findsWidgets, reason: key);
+      }
     });
 
     testWidgets('a 4-point texture move can show stable or improved', (
@@ -1355,15 +1418,15 @@ void main() {
       );
     });
 
-    testWidgets('firmness uses its 4-point floor', (tester) async {
+    testWidgets('firmness uses its 2-point floor', (tester) async {
       await tester.pumpWidget(
         liveHarness(
           basePayload(
             baseline: 55.8,
-            current: 52.2,
+            current: 54.3,
             metricKey: 'structural_firmness_elasticity',
             trendStatus: {'structural_firmness_elasticity': 'worsened'},
-            trendDeltas: {'structural_firmness_elasticity': -6.5},
+            trendDeltas: {'structural_firmness_elasticity': -2.7},
           ),
         ),
       );
@@ -1371,19 +1434,21 @@ void main() {
       expect(
         inCard(
           'structural_firmness_elasticity',
-          find.text('No verdict for this metric'),
+          find.text('Stable - change within tracking noise'),
         ),
-        findsOneWidget,
+        findsWidgets,
       );
 
+      // 2.5 points: at or above the floor keeps its verdict on the live
+      // views (the older under-4-point firmness rule no longer applies here).
       await tester.pumpWidget(
         liveHarness(
           basePayload(
             baseline: 55.8,
-            current: 51.0,
+            current: 53.3,
             metricKey: 'structural_firmness_elasticity',
             trendStatus: {'structural_firmness_elasticity': 'worsened'},
-            trendDeltas: {'structural_firmness_elasticity': -8.6},
+            trendDeltas: {'structural_firmness_elasticity': -4.5},
           ),
         ),
       );
@@ -1505,11 +1570,11 @@ void main() {
       final values = rows[1].split(',');
       String cell(String column) => values[header.indexOf(column)];
 
-      expect(cell('texture_smoothness_noise_floor'), '3.0');
-      expect(cell('pigment_load_noise_floor'), '3.0');
+      expect(cell('texture_smoothness_noise_floor'), '2.0');
+      expect(cell('pigment_load_noise_floor'), '1.5');
       expect(cell('skin_tone_radiance_evenness_noise_floor'), '3.0');
-      expect(cell('structural_firmness_elasticity_noise_floor'), '4.0');
-      expect(cell('pore_visibility_noise_floor'), '2.0');
+      expect(cell('structural_firmness_elasticity_noise_floor'), '2.0');
+      expect(cell('pore_visibility_noise_floor'), '1.5');
       expect(cell('sebum_excess_oil_gloss_noise_floor'), '3.0');
       expect(cell('localized_redness_noise_floor'), '5.0');
       expect(cell('wrinkle_load_noise_floor'), isEmpty);
@@ -1726,32 +1791,36 @@ void main() {
     );
 
     testWidgets('within the display floor', (tester) async {
+      // Radiance still uses a "no verdict at or below the floor" floor (3).
       await tester.pumpWidget(
         live(
           basePayload(
-            baseline: 57.5,
-            current: 59.5,
-            metricKey: 'texture_smoothness',
-            trendStatus: {'texture_smoothness': 'improved'},
-            trendDeltas: {'texture_smoothness': 3.5},
+            baseline: 30.0,
+            current: 31.5,
+            metricKey: 'skin_tone_radiance_evenness',
+            trendStatus: {'skin_tone_radiance_evenness': 'improved'},
+            trendDeltas: {'skin_tone_radiance_evenness': 5.0},
           ),
         ),
       );
       await tester.pumpAndSettle();
       expect(
-        inCard('texture_smoothness', find.text('No verdict for this metric')),
+        inCard(
+          'skin_tone_radiance_evenness',
+          find.text('No verdict for this metric'),
+        ),
         findsOneWidget,
       );
       expect(
         inCard(
-          'texture_smoothness',
+          'skin_tone_radiance_evenness',
           find.textContaining('Within ±3 measurement noise'),
         ),
         findsWidgets,
       );
       expect(
         find.textContaining(
-          'Texture Smoothness: No verdict for this metric '
+          'Skin Radiance & Evenness: No verdict for this metric '
           '(Within ±3 measurement noise)',
         ),
         findsOneWidget,
