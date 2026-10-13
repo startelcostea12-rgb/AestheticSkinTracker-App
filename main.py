@@ -3227,11 +3227,24 @@ def _run_yolo_lesion_count(bgr_face: np.ndarray) -> int:
     return count
 
 
+# wrinkle_load (v3): the face patch is smoothed with a fixed Gaussian before
+# edge detection, so a slight change in focus or sharpening (which the
+# smoothing already dominates) no longer flips fine-texture edges on and
+# off. The Canny hysteresis thresholds are set for the smoothed image, whose
+# gradients are much weaker than the raw image's. On the regression photos a
+# sigma-0.7 blur moved v2 by up to 22 points and v3 by at most ~4.
+WRINKLE_PRESMOOTH_SIGMA = 2.0
+WRINKLE_CANNY_LOW = 20
+WRINKLE_CANNY_HIGH = 40
+
+
 def compute_wrinkle_load(gray: np.ndarray, wrinkle_mask: np.ndarray) -> float:
-    """wrinkle_load before clipping: share of [wrinkle_mask] that is a Canny
-    (70, 140) edge, times 240."""
+    """wrinkle_load before clipping: share of [wrinkle_mask] that is an edge
+    of the Gaussian-smoothed (WRINKLE_PRESMOOTH_SIGMA) image at Canny
+    (WRINKLE_CANNY_LOW, WRINKLE_CANNY_HIGH), times 240."""
     wrinkle_pixels = int(cv2.countNonZero(wrinkle_mask))
-    edges = cv2.Canny(gray, 70, 140)
+    smoothed = cv2.GaussianBlur(gray, (0, 0), WRINKLE_PRESMOOTH_SIGMA)
+    edges = cv2.Canny(smoothed, WRINKLE_CANNY_LOW, WRINKLE_CANNY_HIGH)
     edge_ratio = float(np.count_nonzero(np.logical_and(edges > 0, wrinkle_mask > 0))) / max(float(wrinkle_pixels), 1.0)
     return edge_ratio * 240.0
 
@@ -4085,7 +4098,9 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     # are not comparable with the single-path metric.
     "texture_smoothness": 3,
     "pigment_load": 2,
-    "wrinkle_load": 2,
+    # v3: Canny on a sigma-2.0 Gaussian-smoothed patch (20, 40) instead of the
+    # raw patch (70, 140), so focus/sharpening changes no longer flip edges.
+    "wrinkle_load": 3,
     "sebum_excess_oil_gloss": 2,
     "diffuse_flushing_erythema": 2,
     # v3: the U-zone formula is the only producer. The post-emission

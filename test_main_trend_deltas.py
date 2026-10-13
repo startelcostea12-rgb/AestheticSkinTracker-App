@@ -1204,7 +1204,7 @@ class MetricFormulaVersionRegistryTests(unittest.TestCase):
                 "localized_redness": 3,
                 "texture_smoothness": 3,
                 "pigment_load": 2,
-                "wrinkle_load": 2,
+                "wrinkle_load": 3,
                 "sebum_excess_oil_gloss": 2,
                 "diffuse_flushing_erythema": 2,
                 "rosacea_severity": 3,
@@ -1220,7 +1220,7 @@ class MetricFormulaVersionRegistryTests(unittest.TestCase):
 
     def test_every_metric_defaults_to_version_1(self) -> None:
         self.assertEqual(_metric_formula_version("texture_smoothness"), 3)
-        self.assertEqual(_metric_formula_version("wrinkle_load"), 2)
+        self.assertEqual(_metric_formula_version("wrinkle_load"), 3)
         self.assertEqual(_metric_formula_version("anything_unknown"), 1)
 
     def test_texture_v2_baseline_is_refused_by_formula_version_gate(self) -> None:
