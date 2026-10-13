@@ -2710,6 +2710,40 @@ def _compute_zone_based_metrics(
     }
 
 
+def _radiance_specular_exclusion_mask(
+    val: np.ndarray, sat: np.ndarray, t_zone: np.ndarray
+) -> np.ndarray:
+    """Bright, low-saturation T-zone pixels: V >= max(220, the T-zone's own
+    95th-percentile V) and S <= 70, opened and closed with a 3x3 ellipse.
+    Excluded from the radiance evenness pixels."""
+    t_zone_pixels = val[t_zone > 0]
+    v_threshold = 220.0
+    if t_zone_pixels.size > 0:
+        v_threshold = max(220.0, float(np.percentile(t_zone_pixels, 95)))
+    specular_mask = np.logical_and.reduce([t_zone > 0, val >= v_threshold, sat <= 70]).astype(np.uint8) * 255
+    small_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    specular_mask = cv2.morphologyEx(specular_mask, cv2.MORPH_OPEN, small_kernel)
+    return cv2.morphologyEx(specular_mask, cv2.MORPH_CLOSE, small_kernel)
+
+
+def compute_sebum_gloss(val: np.ndarray, sat: np.ndarray, t_zone: np.ndarray) -> float:
+    """sebum_excess_oil_gloss: specular share of the T-zone, in percent."""
+    specular_mask = _radiance_specular_exclusion_mask(val, sat, t_zone)
+    return (float(cv2.countNonZero(specular_mask)) / max(float(cv2.countNonZero(t_zone)), 1.0)) * 100.0
+
+
+def compute_radiance_evenness(lab: np.ndarray, refined_mask: np.ndarray) -> float:
+    """skin_tone_radiance_evenness from L/a/b spread over [refined_mask]."""
+    if np.count_nonzero(refined_mask) == 0:
+        composite_variance = 0.0
+    else:
+        l_std = float(np.std(lab[:, :, 0].astype(np.float32)[refined_mask]))
+        a_std = float(np.std(lab[:, :, 1].astype(np.float32)[refined_mask]))
+        b_std = float(np.std(lab[:, :, 2].astype(np.float32)[refined_mask]))
+        composite_variance = (0.50 * l_std) + (0.30 * a_std) + (0.20 * b_std)
+    return 100.0 * math.exp(-composite_variance / 24.0)
+
+
 def _compute_additional_opencv_metrics(
     face_bgr: np.ndarray,
     skin_mask: np.ndarray,
@@ -2760,15 +2794,8 @@ def _compute_additional_opencv_metrics(
     if cv2.countNonZero(t_zone) == 0:
         t_zone = face_skin_mask
 
-    t_zone_pixels = val[t_zone > 0]
-    v_threshold = 220.0
-    if t_zone_pixels.size > 0:
-        v_threshold = max(220.0, float(np.percentile(t_zone_pixels, 95)))
-    specular_mask = np.logical_and.reduce([t_zone > 0, val >= v_threshold, sat <= 70]).astype(np.uint8) * 255
-    small_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    specular_mask = cv2.morphologyEx(specular_mask, cv2.MORPH_OPEN, small_kernel)
-    specular_mask = cv2.morphologyEx(specular_mask, cv2.MORPH_CLOSE, small_kernel)
-    sebum_gloss_pct = (float(cv2.countNonZero(specular_mask)) / max(float(cv2.countNonZero(t_zone)), 1.0)) * 100.0
+    specular_mask = _radiance_specular_exclusion_mask(val, sat, t_zone)
+    sebum_gloss_pct = compute_sebum_gloss(val, sat, t_zone)
 
     left_cheek = regions.get("left_cheek", np.zeros((h, w), dtype=np.uint8))
     right_cheek = regions.get("right_cheek", np.zeros((h, w), dtype=np.uint8))
@@ -2813,13 +2840,7 @@ def _compute_additional_opencv_metrics(
     refined_healthy = np.logical_and(refined_healthy, ~(specular_mask > 0))
     if int(np.count_nonzero(refined_healthy)) < max(250, int(skin_area * 0.08)):
         refined_healthy = healthy_skin
-    l_channel = lab[:, :, 0].astype(np.float32)
-    b_channel = lab[:, :, 2].astype(np.float32)
-    l_std = float(np.std(l_channel[refined_healthy])) if np.count_nonzero(refined_healthy) > 0 else 0.0
-    a_std = float(np.std(a_channel[refined_healthy])) if np.count_nonzero(refined_healthy) > 0 else 0.0
-    b_std = float(np.std(b_channel[refined_healthy])) if np.count_nonzero(refined_healthy) > 0 else 0.0
-    composite_variance = (0.50 * l_std) + (0.30 * a_std) + (0.20 * b_std)
-    radiance_evenness_score = 100.0 * math.exp(-composite_variance / 24.0)
+    radiance_evenness_score = compute_radiance_evenness(lab, refined_healthy)
     return {
         "sebum_excess_oil_gloss": round(float(np.clip(sebum_gloss_pct, 0.0, 100.0)), 1),
         "diffuse_flushing_erythema": round(float(np.clip(diffuse_flushing_score, 0.0, 100.0)), 1),
@@ -3204,6 +3225,15 @@ def _run_yolo_detection_stats(bgr_face: np.ndarray) -> tuple[int, float]:
 def _run_yolo_lesion_count(bgr_face: np.ndarray) -> int:
     count, _ = _run_yolo_detection_stats(bgr_face)
     return count
+
+
+def compute_wrinkle_load(gray: np.ndarray, wrinkle_mask: np.ndarray) -> float:
+    """wrinkle_load before clipping: share of [wrinkle_mask] that is a Canny
+    (70, 140) edge, times 240."""
+    wrinkle_pixels = int(cv2.countNonZero(wrinkle_mask))
+    edges = cv2.Canny(gray, 70, 140)
+    edge_ratio = float(np.count_nonzero(np.logical_and(edges > 0, wrinkle_mask > 0))) / max(float(wrinkle_pixels), 1.0)
+    return edge_ratio * 240.0
 
 
 def _compute_canonical_patch_metrics(
@@ -3701,9 +3731,7 @@ def _compute_canonical_patch_metrics(
     wrinkle_pixels = int(cv2.countNonZero(wrinkle_mask))
     raw_components["wrinkle_roi_pixels"] = float(wrinkle_pixels)
     if wrinkle_pixels > 0:
-        edges = cv2.Canny(gray, 70, 140)
-        edge_ratio = float(np.count_nonzero(np.logical_and(edges > 0, wrinkle_mask > 0))) / max(float(wrinkle_pixels), 1.0)
-        wrinkle = edge_ratio * 240.0
+        wrinkle = compute_wrinkle_load(gray, wrinkle_mask)
         matrix["wrinkle_load"] = round(float(np.clip(wrinkle, 0.0, 100.0)), 1)
     confidence["wrinkle_load"] = _conf(wrinkle_pixels)
 
