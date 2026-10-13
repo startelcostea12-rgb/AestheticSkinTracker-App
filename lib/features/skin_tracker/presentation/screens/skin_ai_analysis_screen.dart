@@ -852,6 +852,59 @@ downgradeTrendBelowMeasuredNoiseFloor({
   );
 }
 
+/// Per-metric noise floors measured from same-lamp repeat pairs, in each
+/// metric's own 0-100 points. A move strictly below its floor is reported
+/// as "stable" (see [forceStableWithinMeasuredNoiseFloors]). Separate from
+/// the backend's METRIC_NOISE_FLOOR_2SD and from the live cards'
+/// displayVerdictNoiseFloors.
+const Map<String, double> measuredStableNoiseFloors = <String, double>{
+  'texture_smoothness': 2.0,
+  'pigment_load': 1.5,
+  'pore_visibility': 1.5,
+  'structural_firmness_elasticity': 2.0,
+};
+
+/// For the metrics in [measuredStableNoiseFloors]: when the averaged value's
+/// absolute change from the baseline is strictly below that metric's floor,
+/// the trend status becomes "stable" and its delta 0.0, so no percentage is
+/// shown. Locks take priority: a metric with any lock reason, or an
+/// "insufficient_signal" status, is left exactly as it is, and a metric
+/// with no status or missing values is untouched. Every other metric is
+/// unchanged.
+({
+  Map<String, String> trendStatus,
+  Map<String, double> trendDeltas,
+  Map<String, String> trendLockReasons,
+})
+forceStableWithinMeasuredNoiseFloors({
+  required Map<String, String> trendStatus,
+  required Map<String, double> trendDeltas,
+  required Map<String, String> trendLockReasons,
+  required Map<String, dynamic> averagedMetricMatrix,
+  required Map<String, dynamic> baselineMetricMatrix,
+}) {
+  final updatedStatus = Map<String, String>.from(trendStatus);
+  final updatedDeltas = Map<String, double>.from(trendDeltas);
+  for (final entry in measuredStableNoiseFloors.entries) {
+    final key = entry.key;
+    final status = trendStatus[key]?.trim().toLowerCase();
+    if (status == null || status == 'insufficient_signal') continue;
+    if (trendLockReasons[key]?.trim().isNotEmpty ?? false) continue;
+    final current = _parseFiniteDouble(averagedMetricMatrix[key]);
+    final baseline = _parseFiniteDouble(baselineMetricMatrix[key]);
+    if (current == null || baseline == null) continue;
+    if ((current - baseline).abs() < entry.value) {
+      updatedStatus[key] = 'stable';
+      updatedDeltas[key] = 0.0;
+    }
+  }
+  return (
+    trendStatus: updatedStatus,
+    trendDeltas: updatedDeltas,
+    trendLockReasons: Map<String, String>.from(trendLockReasons),
+  );
+}
+
 /// Debug-only, per-frame diagnostic string for a failed or unusable backend
 /// upload. [uploadFrame]'s only surface to analyzeBackendFrames is the
 /// exception it throws (or a successful decoded response) -- there's no
@@ -2754,10 +2807,22 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       // comment) against the averaged metric_matrix value actually shown
       // on screen, since the backend's own noise-floor check ran per-frame
       // against a value that isn't the one displayed.
-      final noiseFloorAdjustedTrend = downgradeTrendBelowMeasuredNoiseFloor(
+      // Measured same-lamp floors for texture, pigment, pores, and
+      // firmness: a move strictly below the floor is "stable" with no
+      // percentage. Runs before the backend-floor gate below so these moves
+      // read as stable rather than locked; locks already set (and the
+      // lighting lock applied later) still win.
+      final measuredFloorTrend = forceStableWithinMeasuredNoiseFloors(
         trendStatus: overlapAdjustedTrend.trendStatus,
         trendDeltas: overlapAdjustedTrend.trendDeltas,
         trendLockReasons: overlapAdjustedTrend.trendLockReasons,
+        averagedMetricMatrix: _dynamicMap(backendResponse['metric_matrix']),
+        baselineMetricMatrix: baselineMetricMatrixForTrend ?? const {},
+      );
+      final noiseFloorAdjustedTrend = downgradeTrendBelowMeasuredNoiseFloor(
+        trendStatus: measuredFloorTrend.trendStatus,
+        trendDeltas: measuredFloorTrend.trendDeltas,
+        trendLockReasons: measuredFloorTrend.trendLockReasons,
         averagedMetricMatrix: _dynamicMap(backendResponse['metric_matrix']),
         baselineMetricMatrix: baselineMetricMatrixForTrend ?? const {},
         metricNoiseFloor2sd: _dynamicMap(
