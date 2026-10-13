@@ -2726,10 +2726,38 @@ def _radiance_specular_exclusion_mask(
     return cv2.morphologyEx(specular_mask, cv2.MORPH_CLOSE, small_kernel)
 
 
+# sebum_excess_oil_gloss (v3): a T-zone pixel is an oil highlight only when
+# it is bright (V >= SEBUM_HIGHLIGHT_MIN_V, a fixed level instead of the
+# T-zone's own 95th percentile), low-saturation (S <= 70), AND stands out
+# from its surroundings by SEBUM_HIGHLIGHT_MIN_LOCAL_CONTRAST V units over a
+# Gaussian local mean (sigma SEBUM_HIGHLIGHT_LOCAL_SIGMA). The interior of a
+# flat, clipped region equals its local mean, so overexposure no longer
+# counts as oil; real specular points on oily skin are small and peaked.
+SEBUM_HIGHLIGHT_MIN_V = 220.0
+SEBUM_HIGHLIGHT_MAX_SATURATION = 70
+SEBUM_HIGHLIGHT_LOCAL_SIGMA = 5.0
+SEBUM_HIGHLIGHT_MIN_LOCAL_CONTRAST = 15.0
+
+
 def compute_sebum_gloss(val: np.ndarray, sat: np.ndarray, t_zone: np.ndarray) -> float:
-    """sebum_excess_oil_gloss: specular share of the T-zone, in percent."""
-    specular_mask = _radiance_specular_exclusion_mask(val, sat, t_zone)
-    return (float(cv2.countNonZero(specular_mask)) / max(float(cv2.countNonZero(t_zone)), 1.0)) * 100.0
+    """sebum_excess_oil_gloss: share of the T-zone that is a local oil
+    highlight (see SEBUM_HIGHLIGHT_*), in percent."""
+    val_f = val.astype(np.float32)
+    local_mean = cv2.GaussianBlur(val_f, (0, 0), SEBUM_HIGHLIGHT_LOCAL_SIGMA)
+    highlight = np.logical_and.reduce(
+        [
+            t_zone > 0,
+            val_f >= SEBUM_HIGHLIGHT_MIN_V,
+            sat <= SEBUM_HIGHLIGHT_MAX_SATURATION,
+            (val_f - local_mean) >= SEBUM_HIGHLIGHT_MIN_LOCAL_CONTRAST,
+        ]
+    ).astype(np.uint8) * 255
+    highlight = cv2.morphologyEx(
+        highlight,
+        cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+    )
+    return (float(cv2.countNonZero(highlight)) / max(float(cv2.countNonZero(t_zone)), 1.0)) * 100.0
 
 
 def compute_radiance_evenness(lab: np.ndarray, refined_mask: np.ndarray) -> float:
@@ -4101,7 +4129,9 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     # v3: Canny on a sigma-2.0 Gaussian-smoothed patch (20, 40) instead of the
     # raw patch (70, 140), so focus/sharpening changes no longer flip edges.
     "wrinkle_load": 3,
-    "sebum_excess_oil_gloss": 2,
+    # v3: fixed V >= 220 plus a local-contrast condition (V over its sigma-5
+    # local mean >= 15), so clipped flat highlights no longer count as oil.
+    "sebum_excess_oil_gloss": 3,
     "diffuse_flushing_erythema": 2,
     # v3: the U-zone formula is the only producer. The post-emission
     # recomputation from emitted redness + diffuse flushing is gone, so a
