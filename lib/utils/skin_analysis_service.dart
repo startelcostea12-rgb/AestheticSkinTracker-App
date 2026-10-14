@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 
 import 'backend_config.dart';
 import 'app_prefs.dart';
+import 'upload_gate.dart';
 import '../models/skin_profile.dart';
 
 class ImageCaptureStateWarning implements Exception {
@@ -117,6 +118,7 @@ class SkinAnalysisService {
     bool allowBackend = false,
   }) async {
     _ensureBackendAllowed(allowBackend);
+    await UploadGate.ensureCanUpload();
     final uri = BackendConfig.analyzeSkinUri;
 
     debugPrint('[SkinAnalysisService] POST $uri');
@@ -206,6 +208,7 @@ class SkinAnalysisService {
   }) async {
     try {
       _ensureBackendAllowed(allowBackend);
+      await UploadGate.ensureCanUpload();
       final uri = BackendConfig.analyzeBodySilhouetteUri;
       debugPrint('[SkinAnalysisService] POST $uri (body silhouette)');
       final poster = httpClient?.post ?? http.post;
@@ -267,6 +270,7 @@ class SkinAnalysisService {
     http.Client? httpClient,
   }) async {
     _ensureBackendAllowed(allowBackend);
+    await UploadGate.ensureCanUpload();
     if (image == null) {
       throw ImageCaptureStateWarning(
         'Upload blocked: image cannot be null.',

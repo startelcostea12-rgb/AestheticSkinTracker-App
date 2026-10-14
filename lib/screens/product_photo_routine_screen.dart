@@ -8,6 +8,7 @@ import '../features/ai_coach/presentation/widgets/shelf_scanner_modal.dart';
 import '../services/ai_llm_service.dart';
 import '../utils/app_prefs.dart';
 import '../utils/product_routine_builder.dart';
+import '../utils/upload_gate.dart';
 
 /// Prompt for reading skincare products from a shelf / product photo and
 /// laying out a simple morning and evening routine.
@@ -95,6 +96,13 @@ class _ProductPhotoRoutineScreenState extends State<ProductPhotoRoutineScreen> {
                   'photo, or type your products below.'
             : null;
       });
+    } on UploadGateBlockedException {
+      if (!mounted) return;
+      setState(
+        () => _message =
+            'Reading product photos needs Premium or a scan credit. Type '
+            'your products below instead.',
+      );
     } on AiLlmConfigurationException {
       if (!mounted) return;
       setState(

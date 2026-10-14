@@ -42,6 +42,8 @@ import 'package:aesthetic_skin_tracker/utils/ai/skin_analysis_runner.dart';
 import 'package:aesthetic_skin_tracker/utils/ai/skin_detections.dart';
 import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
+import 'package:aesthetic_skin_tracker/utils/upload_gate.dart';
+import 'package:aesthetic_skin_tracker/widgets/paywall_screen.dart';
 import 'package:aesthetic_skin_tracker/utils/backend_config.dart';
 import 'package:aesthetic_skin_tracker/utils/skin_analysis_service.dart'
     as remote_analysis;
@@ -2743,6 +2745,20 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         }
       }
 
+      // Paid gate: everything above ran on-device. No photo leaves the
+      // device without a subscription or scan credit (see UploadGate).
+      if (!await UploadGate.canUpload()) {
+        if (!mounted) return;
+        setState(() {
+          _stage = _Stage.capture;
+          _analysisError = UploadGate.blockedMessage;
+        });
+        await Navigator.of(
+          context,
+        ).push(MaterialPageRoute<void>(builder: (_) => const PaywallScreen()));
+        return;
+      }
+
       // Server-first execution: route this scan through the backend multipart
       // endpoint and parse canonical metrics + trend deltas from the payload.
       final backendBytes = imageBytes ?? await XFile(path).readAsBytes();
@@ -3048,6 +3064,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         _qualityScores = aug.qualityScores;
         _stage = _Stage.results;
       });
+      await UploadGate.recordCompletedBackendScan();
 
       if (savedToHistory) {
         // Baseline registration (see _registerAiBaselineIfNeeded, called

@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:google_generative_ai/google_generative_ai.dart';
 
 import '../utils/backend_config.dart';
+import '../utils/upload_gate.dart';
 
 const String _geminiApiKeyForBackend = String.fromEnvironment(
   'GEMINI_API_KEY',
@@ -136,6 +137,8 @@ class AiService {
     required String systemPrompt,
     required String userPrompt,
   }) async {
+    // Sends a photo off the device: paid gate first.
+    await UploadGate.ensureCanUpload();
     const apiKey = String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
 
     if (apiKey.isEmpty) {
