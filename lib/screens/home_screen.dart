@@ -18,6 +18,8 @@ import '../models/procedure.dart' as models;
 import '../main.dart';
 import '../utils/peptide_service.dart';
 import 'log_skincare_product_screen.dart';
+import 'product_photo_routine_screen.dart';
+import '../utils/product_routine_builder.dart';
 import 'at_home_procedure_log_screen.dart';
 import '../models/journal_entry.dart';
 import 'skin_journey_journal_screen.dart';
@@ -2557,6 +2559,28 @@ class _HomePageState extends State<HomePage>
     );
   }
 
+  /// Opens the product photo -> AI routine flow, which saves the active AI
+  /// routine shown on the Routines screen.
+  Widget _buildProductPhotoRoutineEntry() {
+    return OutlinedButton.icon(
+      key: const ValueKey('home_product_photo_routine_button'),
+      onPressed: () async {
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const ProductPhotoRoutineScreen()),
+        );
+        if (mounted) _refreshData();
+      },
+      icon: const Icon(Icons.photo_camera_back_outlined),
+      label: const Text('Photo products for AI routine'),
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size.fromHeight(52),
+        foregroundColor: MyApp.clinicalTeal,
+        side: BorderSide(color: MyApp.clinicalTeal.withValues(alpha: 0.5)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+    );
+  }
+
   void _buildRoutinesFromProducts() {
     if (_parsedData == null) {
       _morningSteps = [];
@@ -2574,20 +2598,14 @@ class _HomePageState extends State<HomePage>
       final p = products[i];
       final selected = _productSelected.length > i ? _productSelected[i] : true;
       if (!selected) continue;
-      final purpose = (p['purpose'] ?? '').toString().toLowerCase();
-      final name = (p['name'] ?? '').toString().toLowerCase();
       final entry = {
         'product': '${p['brand'] ?? ''} ${p['name'] ?? ''}'.trim(),
         'reason': p['purpose'] ?? '',
       };
-      bool isNight =
-          purpose.contains('night') ||
-          purpose.contains('retinol') ||
-          purpose.contains('cream') ||
-          name.contains('retinol') ||
-          name.contains('cream') ||
-          name.contains('mask') ||
-          (purpose.contains('treatment') && !purpose.contains('sunscreen'));
+      final isNight = isNightRoutineProduct(
+        name: (p['name'] ?? '').toString(),
+        purpose: (p['purpose'] ?? '').toString(),
+      );
       if (isNight) {
         _nightSteps.add(entry);
       } else {
@@ -2656,6 +2674,8 @@ class _HomePageState extends State<HomePage>
                 _buildWelcomeSection(),
                 const SizedBox(height: 20),
                 _buildProtocolHomeCard(),
+                const SizedBox(height: 12),
+                _buildProductPhotoRoutineEntry(),
                 const SizedBox(height: 12),
                 if (_userClinic.isNotEmpty || _trackedProcedure.isNotEmpty)
                   Padding(
