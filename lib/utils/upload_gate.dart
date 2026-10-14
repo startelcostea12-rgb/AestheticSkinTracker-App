@@ -87,3 +87,52 @@ class UploadGate {
     if (remaining > 0) await setScanCredits(remaining - 1);
   }
 }
+
+/// Maximum local (no-upload) scans a free user may complete. After this
+/// many, any further scan attempt opens the paywall.
+const int kFreeLocalScanLimit = 3;
+
+/// Free local scan cap. Applies only when [UploadGate.canUpload] is false:
+/// a subscription, a scan credit, or the testing bypass means no cap.
+/// The count is stored like [UploadGate.scanCreditsKey], as an integer
+/// string in AppPrefs.
+class FreeLocalScans {
+  const FreeLocalScans._();
+
+  static const String usedKey = 'free_local_scans_used';
+
+  static Future<int> used() async {
+    final raw = await AppPrefs.getString(usedKey);
+    final value = int.tryParse((raw ?? '').trim()) ?? 0;
+    return value < 0 ? 0 : value;
+  }
+
+  static Future<void> setUsed(int count) =>
+      AppPrefs.setString(usedKey, '${count < 0 ? 0 : count}');
+
+  /// Counts one completed free local scan.
+  static Future<void> recordLocalScan() async => setUsed(await used() + 1);
+
+  /// True when a free user (no upload access) has used every free scan.
+  static Future<bool> capReached() async {
+    if (await UploadGate.canUpload()) return false;
+    return await used() >= kFreeLocalScanLimit;
+  }
+
+  /// Local notes ("From your logs") stay available until the cap is hit.
+  static Future<bool> localNotesAvailable() async => !await capReached();
+}
+
+/// Where a scan attempt goes.
+enum ScanRoute { backend, freeLocal, paywall }
+
+/// Backend when uploads are allowed (subscription, credit, or the testing
+/// bypass); otherwise the free local path until [kFreeLocalScanLimit] is
+/// used, then the paywall.
+Future<ScanRoute> resolveScanRoute() async {
+  if (await UploadGate.canUpload()) return ScanRoute.backend;
+  if (await FreeLocalScans.used() >= kFreeLocalScanLimit) {
+    return ScanRoute.paywall;
+  }
+  return ScanRoute.freeLocal;
+}

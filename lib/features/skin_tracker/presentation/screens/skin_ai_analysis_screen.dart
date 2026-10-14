@@ -44,6 +44,7 @@ import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:aesthetic_skin_tracker/utils/upload_gate.dart';
 import 'package:aesthetic_skin_tracker/widgets/paywall_screen.dart';
+import 'free_local_scan_results_screen.dart';
 import 'package:aesthetic_skin_tracker/utils/backend_config.dart';
 import 'package:aesthetic_skin_tracker/utils/skin_analysis_service.dart'
     as remote_analysis;
@@ -1923,6 +1924,18 @@ AiBaselineResolution resolveAiBaseline({
   );
 }
 
+/// Opens the existing PaywallScreen and returns true when a free user has
+/// used every free local scan ([kFreeLocalScanLimit]) and has no upload
+/// access; the caller must then stop without scanning.
+Future<bool> openPaywallIfFreeScanCapReached(BuildContext context) async {
+  if (!await FreeLocalScans.capReached()) return false;
+  if (!context.mounted) return true;
+  await Navigator.of(
+    context,
+  ).push(MaterialPageRoute<void>(builder: (_) => const PaywallScreen()));
+  return true;
+}
+
 class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// Debug-only: shares camera_screen.dart's burst_luminance.log via the
   /// native share sheet, for pulling burst-luminance logging data off a
@@ -2380,6 +2393,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   // ── Photo source actions ──────────────────────────────────────────
 
   Future<void> _pickFromCamera() async {
+    if (await openPaywallIfFreeScanCapReached(context)) return;
+    if (!mounted) return;
     try {
       final captured = await Navigator.push<Object?>(
         context,
@@ -2455,6 +2470,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// displayable [_imagePath] are set together; on cancel both are cleared
   /// so the "Run AI Analysis" button stays disabled.
   Future<void> _pickAndCrop(ImageSource source, String errorLabel) async {
+    if (await openPaywallIfFreeScanCapReached(context)) return;
+    if (!mounted) return;
     try {
       final picker = ImagePicker();
       final picked = await picker.pickImage(
@@ -2655,6 +2672,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   Future<void> _runAnalysis() async {
     final path = _imagePath;
     if (path == null || path.isEmpty) return;
+    if (await openPaywallIfFreeScanCapReached(context)) return;
+    if (!mounted) return;
     if (!_consentAccepted && !await _reviewConsent()) return;
     if (!mounted || !_consentAccepted) return;
     setState(() {
@@ -2747,15 +2766,36 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
       // Paid gate: everything above ran on-device. No photo leaves the
       // device without a subscription or scan credit (see UploadGate).
-      if (!await UploadGate.canUpload()) {
+      // Free users get a limited local results view instead, up to
+      // kFreeLocalScanLimit scans, then the paywall.
+      final scanRoute = await resolveScanRoute();
+      if (scanRoute != ScanRoute.backend) {
         if (!mounted) return;
-        setState(() {
-          _stage = _Stage.capture;
-          _analysisError = UploadGate.blockedMessage;
-        });
-        await Navigator.of(
-          context,
-        ).push(MaterialPageRoute<void>(builder: (_) => const PaywallScreen()));
+        setState(() => _stage = _Stage.capture);
+        if (scanRoute == ScanRoute.paywall) {
+          setState(() => _analysisError = UploadGate.blockedMessage);
+          await Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const PaywallScreen()),
+          );
+          return;
+        }
+        await FreeLocalScans.recordLocalScan();
+        final summary = FreeLocalScanSummary.fromLocal(
+          faceFound: aug.meshUsed,
+          faceCoverage: aug.faceCoverage,
+          symmetryScore: aug.symmetryScore,
+          captureQuality: _currentCaptureQuality,
+          hasBaseline: _previousFocusAreaScan?.rawPayload?.isNotEmpty ?? false,
+          lightingCheck: lightingCheck,
+          frames: _analysisFrameExposureMetadata,
+          scansUsed: await FreeLocalScans.used(),
+        );
+        if (!mounted) return;
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => FreeLocalScanResultsScreen(summary: summary),
+          ),
+        );
         return;
       }
 

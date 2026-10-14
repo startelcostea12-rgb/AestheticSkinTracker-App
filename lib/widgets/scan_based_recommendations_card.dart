@@ -34,6 +34,9 @@ class ScanBasedRecommendationsCard extends StatefulWidget {
   final List<ProductFeedbackEntry> productFeedback;
   final List<String> activePeptideNames;
 
+  /// False hides the "From your logs" block (free scan cap reached).
+  final bool showContextNotes;
+
   const ScanBasedRecommendationsCard({
     super.key,
     required this.latest,
@@ -48,6 +51,7 @@ class ScanBasedRecommendationsCard extends StatefulWidget {
     this.trackedProducts = const <TrackedProduct>[],
     this.productFeedback = const <ProductFeedbackEntry>[],
     this.activePeptideNames = const <String>[],
+    this.showContextNotes = true,
   });
 
   @override
@@ -120,7 +124,7 @@ class _ScanBasedRecommendationsCardState
         children: [
           _header(rec),
           _summary(rec),
-          FromYourLogsBlock(notes: contextNotes),
+          if (widget.showContextNotes) FromYourLogsBlock(notes: contextNotes),
           if (rec.bodyDeltas.isNotEmpty) _bodyDeltasStrip(rec),
           _segmented(rec, products.length),
           Padding(

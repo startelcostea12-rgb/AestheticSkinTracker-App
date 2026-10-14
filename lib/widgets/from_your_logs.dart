@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import '../utils/recommendation_context.dart';
+import '../utils/upload_gate.dart';
 
 class FromYourLogsBlock extends StatelessWidget {
   const FromYourLogsBlock({
@@ -74,8 +75,9 @@ class FromYourLogsBlock extends StatelessWidget {
 }
 
 /// Loads the stored inputs and shows the notes about any of [relevantTo]
-/// (product names, ingredients, routine steps). Shows nothing while loading
-/// or when no note is relevant.
+/// (product names, ingredients, routine steps). Shows nothing while loading,
+/// when no note is relevant, or once a free user has used every free local
+/// scan (FreeLocalScans.localNotesAvailable).
 class FromYourLogsSection extends StatefulWidget {
   const FromYourLogsSection({
     super.key,
@@ -103,6 +105,7 @@ class _FromYourLogsSectionState extends State<FromYourLogsSection> {
 
   Future<void> _load() async {
     try {
+      if (!await FreeLocalScans.localNotesAvailable()) return;
       final inputs = await widget.loadInputs();
       if (!mounted) return;
       setState(() => _notes = RecommendationContext.contextNotes(inputs));

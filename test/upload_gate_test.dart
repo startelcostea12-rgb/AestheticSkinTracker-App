@@ -156,7 +156,7 @@ void main() {
       ).readAsStringSync();
       final run = source.indexOf('Future<void> _runAnalysis()');
       int at(String needle) => source.indexOf(needle, run);
-      final gate = at('if (!await UploadGate.canUpload())');
+      final gate = at('final scanRoute = await resolveScanRoute();');
       expect(gate, greaterThan(run));
       expect(at('SkinAnalysisRunner.augment('), lessThan(gate));
       expect(at('AcneRosaceaPhotoAnalyzer.analyze('), lessThan(gate));
@@ -164,10 +164,12 @@ void main() {
       expect(at('analyzeBackendFrames('), greaterThan(gate));
       final blocked = source.substring(gate, at('analyzeBackendFrames('));
       expect(blocked, contains('const PaywallScreen()'));
+      expect(blocked, contains('FreeLocalScanResultsScreen('));
       expect(blocked, contains('return;'));
+      expect(blocked, isNot(contains('SkinAnalysisService')));
     });
 
-    test('on-device analysis and log notes never consult the gate', () {
+    test('on-device analysis and log notes never call the upload check', () {
       for (final path in [
         'lib/services/skin_analysis_service.dart',
         'lib/utils/recommendation_context.dart',
@@ -175,7 +177,7 @@ void main() {
       ]) {
         expect(
           File(path).readAsStringSync(),
-          isNot(contains('UploadGate')),
+          isNot(contains('ensureCanUpload')),
           reason: path,
         );
       }

@@ -32,6 +32,7 @@ import '../utils/trend_label_resolver.dart';
 import '../widgets/premium_feature_sheet.dart';
 import '../utils/ai_intelligence_engine.dart';
 import '../utils/ai_product_recommendation_engine.dart';
+import '../utils/upload_gate.dart';
 import '../widgets/scan_based_recommendations_card.dart';
 import '../widgets/bridge_card.dart';
 import 'package:aesthetic_skin_tracker/features/procedures/presentation/procedure_profiles_screen.dart';
@@ -125,6 +126,7 @@ class _HomePageState extends State<HomePage>
   List<TrackedProduct> _trackedProducts = [];
   List<ProductFeedbackEntry> _productFeedback = [];
   List<AcneRosaceaLog> _acneRosaceaLogs = [];
+  bool _localNotesAvailable = true;
   int _selectedIndex = 0;
   String _userName = '';
   String _userClinic = '';
@@ -247,8 +249,10 @@ class _HomePageState extends State<HomePage>
     final products = await AppPrefs.getTrackedProducts();
     final feedback = await AppPrefs.getProductFeedback();
     final acneLogs = await AppPrefs.getAcneRosaceaLogs();
+    final localNotesAvailable = await FreeLocalScans.localNotesAvailable();
     if (!mounted) return;
     setState(() {
+      _localNotesAvailable = localNotesAvailable;
       _trackedProducts = products;
       _productFeedback = feedback;
       _acneRosaceaLogs = acneLogs.values.expand((logs) => logs).toList();
@@ -791,6 +795,7 @@ class _HomePageState extends State<HomePage>
                     activePeptideNames: [
                       for (final p in _activePeptides) p.name,
                     ],
+                    showContextNotes: _localNotesAvailable,
                   ),
                   const SizedBox(height: 12),
                   BridgeCard(
