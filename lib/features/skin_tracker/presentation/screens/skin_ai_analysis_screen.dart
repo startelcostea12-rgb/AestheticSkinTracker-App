@@ -408,6 +408,26 @@ Map<String, dynamic> _perFrameTrendNode(
   return _dynamicMap(metricsNode[key]);
 }
 
+/// Leaves the current screen for HomePage. Pops back to the `/home` route
+/// when it is in the stack. The bottom navigation opens Routines / Procedure
+/// History / Profile with pushReplacement, so the first route is not always
+/// HomePage -- popping "to the first route" alone used to land on that
+/// screen (e.g. the procedure/peptide picker). When HomePage isn't in the
+/// stack, the stack is replaced with a fresh `/home`.
+void navigateHomeFrom(NavigatorState navigator) {
+  var reachedHome = false;
+  navigator.popUntil((route) {
+    if (route.settings.name == '/home') {
+      reachedHome = true;
+      return true;
+    }
+    return route.isFirst;
+  });
+  if (!reachedHome) {
+    navigator.pushNamedAndRemoveUntil('/home', (_) => false);
+  }
+}
+
 /// Metrics whose trend verdict is never kept: the number is saved and
 /// exported, but trend_status and trend_deltas are dropped, so neither the
 /// card nor the scan-data export shows improved/worsened/stable or a
@@ -3588,6 +3608,17 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               tooltip: 'New progress report',
               icon: const Icon(Icons.refresh_rounded),
               onPressed: _startOver,
+            ),
+          if (_stage == _Stage.results)
+            TextButton.icon(
+              key: const ValueKey('results_done_button'),
+              onPressed: _goHome,
+              icon: const Icon(Icons.home_rounded, size: 18),
+              label: const Text(
+                'Done',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              style: TextButton.styleFrom(foregroundColor: MyApp.clinicalTeal),
             ),
         ],
       ),
@@ -7295,25 +7326,32 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         ),
         const SizedBox(height: 10),
         _luxeActionButton(
+          key: const ValueKey('results_home_button'),
           icon: Icons.home_rounded,
           label: 'Home',
           onPressed: _goHome,
+          prominent: true,
         ),
       ],
     );
   }
 
   Widget _luxeActionButton({
+    Key? key,
     required IconData icon,
     required String label,
     required VoidCallback onPressed,
+    bool prominent = false,
   }) {
-    const goldButton = Color(0xFF7A8B7B);
+    // The prominent variant (Home on the results stage) uses the app's
+    // primary teal and a taller target so it stands out from the actions.
+    final goldButton = prominent ? MyApp.clinicalTeal : const Color(0xFF7A8B7B);
     const obsidian = Colors.white;
 
     return SizedBox(
+      key: key,
       width: double.infinity,
-      height: 48,
+      height: prominent ? 56 : 48,
       child: ElevatedButton.icon(
         onPressed: onPressed,
         icon: Icon(icon, size: 16),
@@ -7530,19 +7568,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     ).push(MaterialPageRoute(builder: (_) => const AIRecoveryCoachScreen()));
   }
 
-  void _goHome() {
-    final navigator = Navigator.of(context);
-    navigator.popUntil((route) => route.isFirst);
-
-    // In some web/navigation stacks this screen can be the first route,
-    // so popUntil will not leave the page. Ensure Home always lands on
-    // the app home route.
-    if (!mounted) return;
-    final routeName = ModalRoute.of(context)?.settings.name ?? '';
-    if (routeName != '/home') {
-      navigator.pushNamedAndRemoveUntil('/home', (_) => false);
-    }
-  }
+  void _goHome() => navigateHomeFrom(Navigator.of(context));
 
   Map<String, double> _singleScanMetricMap() {
     if (_fullMetrics.isNotEmpty) {
