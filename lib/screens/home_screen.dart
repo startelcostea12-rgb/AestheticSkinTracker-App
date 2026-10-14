@@ -2653,9 +2653,9 @@ class _HomePageState extends State<HomePage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _buildProtocolHomeCard(),
-                const SizedBox(height: 20),
                 _buildWelcomeSection(),
+                const SizedBox(height: 20),
+                _buildProtocolHomeCard(),
                 const SizedBox(height: 12),
                 if (_userClinic.isNotEmpty || _trackedProcedure.isNotEmpty)
                   Padding(
