@@ -10,6 +10,7 @@ import '../utils/app_prefs.dart';
 import '../utils/skincare_streak.dart';
 import 'progress_report_screen.dart';
 import '../models/product_tracker.dart';
+import '../models/acne_rosacea_log.dart';
 import '../models/product_feedback.dart';
 import '../models/procedure_log.dart';
 import '../models/peptide_model.dart';
@@ -123,6 +124,7 @@ class _HomePageState extends State<HomePage>
     with RouteAware, WidgetsBindingObserver {
   List<TrackedProduct> _trackedProducts = [];
   List<ProductFeedbackEntry> _productFeedback = [];
+  List<AcneRosaceaLog> _acneRosaceaLogs = [];
   int _selectedIndex = 0;
   String _userName = '';
   String _userClinic = '';
@@ -244,10 +246,12 @@ class _HomePageState extends State<HomePage>
   Future<void> _loadTrackedProducts() async {
     final products = await AppPrefs.getTrackedProducts();
     final feedback = await AppPrefs.getProductFeedback();
+    final acneLogs = await AppPrefs.getAcneRosaceaLogs();
     if (!mounted) return;
     setState(() {
       _trackedProducts = products;
       _productFeedback = feedback;
+      _acneRosaceaLogs = acneLogs.values.expand((logs) => logs).toList();
     });
   }
 
@@ -781,6 +785,7 @@ class _HomePageState extends State<HomePage>
                     ),
                     journalEntries: _generalJournalEntries,
                     productJournals: _skincareJournals,
+                    acneRosaceaLogs: _acneRosaceaLogs,
                     trackedProducts: _trackedProducts,
                     productFeedback: _productFeedback,
                     activePeptideNames: [

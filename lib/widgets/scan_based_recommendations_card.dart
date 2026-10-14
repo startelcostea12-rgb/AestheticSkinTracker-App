@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../models/acne_rosacea_log.dart';
 import '../models/journal_entry.dart';
 import '../models/product_feedback.dart';
 import '../models/product_tracker.dart';
@@ -13,6 +14,7 @@ import '../models/scan_history.dart';
 import '../utils/ai_product_recommendation_engine.dart';
 import '../utils/recommendation_context.dart';
 import '../utils/scan_based_recommendation_engine.dart';
+import 'from_your_logs.dart';
 
 class ScanBasedRecommendationsCard extends StatefulWidget {
   final SkinMetrics latest;
@@ -27,6 +29,7 @@ class ScanBasedRecommendationsCard extends StatefulWidget {
   /// never changes which recommendations are selected.
   final List<JournalEntry> journalEntries;
   final Map<String, List<JournalEntry>> productJournals;
+  final List<AcneRosaceaLog> acneRosaceaLogs;
   final List<TrackedProduct> trackedProducts;
   final List<ProductFeedbackEntry> productFeedback;
   final List<String> activePeptideNames;
@@ -41,6 +44,7 @@ class ScanBasedRecommendationsCard extends StatefulWidget {
     this.aiCoachProducts = const <AIProductRecommendation>[],
     this.journalEntries = const <JournalEntry>[],
     this.productJournals = const <String, List<JournalEntry>>{},
+    this.acneRosaceaLogs = const <AcneRosaceaLog>[],
     this.trackedProducts = const <TrackedProduct>[],
     this.productFeedback = const <ProductFeedbackEntry>[],
     this.activePeptideNames = const <String>[],
@@ -83,6 +87,7 @@ class _ScanBasedRecommendationsCardState
     final contextNotes = RecommendationContext.notes(
       journalEntries: widget.journalEntries,
       productJournals: widget.productJournals,
+      acneRosaceaLogs: widget.acneRosaceaLogs,
       trackedProducts: widget.trackedProducts,
       productFeedback: widget.productFeedback,
       activePeptideNames: widget.activePeptideNames,
@@ -115,7 +120,7 @@ class _ScanBasedRecommendationsCardState
         children: [
           _header(rec),
           _summary(rec),
-          if (contextNotes.isNotEmpty) _contextNotes(contextNotes),
+          FromYourLogsBlock(notes: contextNotes),
           if (rec.bodyDeltas.isNotEmpty) _bodyDeltasStrip(rec),
           _segmented(rec, products.length),
           Padding(
@@ -179,50 +184,6 @@ class _ScanBasedRecommendationsCardState
               ],
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _contextNotes(List<String> notes) {
-    return Container(
-      key: const ValueKey('recommendations_context_notes'),
-      margin: const EdgeInsets.fromLTRB(14, 8, 14, 0),
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-      decoration: BoxDecoration(
-        color: _surface.withValues(alpha: 0.9),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _gold.withValues(alpha: 0.25)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.history_edu_outlined, size: 15, color: _rose),
-              SizedBox(width: 6),
-              Text(
-                'From your logs',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  color: _textBrown,
-                ),
-              ),
-            ],
-          ),
-          for (final note in notes)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text(
-                note,
-                style: const TextStyle(
-                  fontSize: 12,
-                  height: 1.4,
-                  color: _muted,
-                ),
-              ),
-            ),
         ],
       ),
     );

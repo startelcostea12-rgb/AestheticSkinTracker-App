@@ -6,8 +6,13 @@ import 'package:aesthetic_skin_tracker/utils/peptide_interactions.dart';
 import 'package:aesthetic_skin_tracker/utils/recommendation_context.dart';
 import 'package:aesthetic_skin_tracker/utils/scan_based_recommendation_engine.dart';
 import 'package:aesthetic_skin_tracker/widgets/scan_based_recommendations_card.dart';
+import 'package:aesthetic_skin_tracker/models/acne_rosacea_log.dart';
+import 'package:aesthetic_skin_tracker/screens/active_skincare_details_screen.dart';
+import 'package:aesthetic_skin_tracker/screens/routines_screen.dart';
+import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const _latest = SkinMetrics(
   redness: 7.5,
@@ -264,6 +269,225 @@ void main() {
         find.text('Procedures · ${before.procedures.length}'),
         findsOneWidget,
       );
+    });
+  });
+
+  group('negation', () {
+    for (final text in [
+      'No irritation today',
+      'no reaction at all',
+      'Skin not irritated after the peel',
+      'It didn’t sting this time',
+      "didn't sting",
+      'no burning or itching',
+      'Went without any stinging',
+      'Irritation-free week',
+      'Zero rash',
+    ]) {
+      test('"$text" is not an irritation note', () {
+        expect(RecommendationContext.mentionsIrritation(text), isFalse);
+        expect(
+          RecommendationContext.notes(
+            journalEntries: [_journal('General Note', text)],
+          ),
+          isEmpty,
+        );
+      });
+    }
+
+    for (final text in [
+      'Irritation around the nose',
+      'Stinging after Glow Serum',
+      'No dryness, but a rash on my cheek',
+      'Not sure why, my skin is itching',
+    ]) {
+      test('"$text" is an irritation note', () {
+        expect(RecommendationContext.mentionsIrritation(text), isTrue);
+      });
+    }
+
+    test('Reaction tag still counts on its own', () {
+      expect(
+        RecommendationContext.isIrritationNote(
+          _journal('Reaction', 'Cheeks warm'),
+        ),
+        isTrue,
+      );
+    });
+  });
+
+  group('acne & rosacea log notes', () {
+    test('a clear reaction note naming a product is used', () {
+      final notes = RecommendationContext.notes(
+        acneRosaceaLogs: [
+          AcneRosaceaLog(
+            timestamp: DateTime(2026, 10, 7),
+            metricKey: 'skinSensitivity',
+            value: 6,
+            note: 'Stinging after Glow Serum',
+          ),
+        ],
+        trackedProducts: [_product('Glow Serum', 'Vitamin E')],
+      );
+      expect(notes, [
+        'You previously noted irritation with Glow Serum in your acne & '
+            'rosacea log (Oct 7).',
+      ]);
+    });
+
+    test('a negated or empty note is not used', () {
+      final notes = RecommendationContext.notes(
+        acneRosaceaLogs: [
+          AcneRosaceaLog(
+            timestamp: DateTime(2026, 10, 7),
+            metricKey: 'skinSensitivity',
+            value: 8,
+            note: 'No stinging today',
+          ),
+          AcneRosaceaLog(
+            timestamp: DateTime(2026, 10, 8),
+            metricKey: 'rosaceaSeverity',
+            value: 9,
+          ),
+        ],
+      );
+      expect(notes, isEmpty);
+    });
+  });
+
+  group('relevantTo', () {
+    final notes = RecommendationContext.contextNotes(
+      RecommendationContextInputs(
+        journalEntries: [
+          _journal('General Note', 'Stinging after Glow Serum'),
+          _journal('Reaction', 'Cheeks felt hot'),
+        ],
+        trackedProducts: [
+          _product('Glow Serum', 'Vitamin E'),
+          _product('Night Cream', 'Retinol'),
+        ],
+        activePeptideNames: const ['Matrixyl 3000'],
+      ),
+    );
+
+    test('product name, ingredient, and whole-word matching', () {
+      expect(RecommendationContext.relevantTo(notes, ['Glow Serum']), [
+        'You previously noted irritation with Glow Serum in your journal '
+            '(Oct 5).',
+      ]);
+      expect(
+        RecommendationContext.relevantTo(notes, ['Other Cream', 'Retinol']),
+        [
+          'Matrixyl 3000 and Night Cream are often discussed as a potential '
+              'interaction. Matrixyl + retinoids: watch for irritation if '
+              'combined; consider alternating evenings.',
+        ],
+      );
+      expect(RecommendationContext.relevantTo(notes, ['Serum']), isNotEmpty);
+      expect(RecommendationContext.relevantTo(notes, ['Serums']), isEmpty);
+      expect(RecommendationContext.relevantTo(notes, const []), isEmpty);
+    });
+  });
+
+  group('screens', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    Future<void> seed() async {
+      await AppPrefs.saveGeneralJournalEntries([
+        _journal('General Note', 'Burning after Glow Serum this morning'),
+        _journal('General Note', 'No irritation today'),
+      ]);
+      await AppPrefs.addTrackedProduct(_product('Glow Serum', 'Vitamin E'));
+      await AppPrefs.addTrackedProduct(_product('Daily SPF', 'Zinc Oxide'));
+    }
+
+    const glowNote =
+        'You previously noted irritation with Glow Serum in your journal '
+        '(Oct 5).';
+
+    testWidgets('product detail shows notes about that product only', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(900, 4000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await seed();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ActiveSkincareDetailsScreen(
+            product: _product('Glow Serum', 'Vitamin E'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(_contextBlock, findsOneWidget);
+      expect(find.text(glowNote), findsOneWidget);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ActiveSkincareDetailsScreen(
+            product: _product('Daily SPF', 'Zinc Oxide'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(_contextBlock, findsNothing);
+    });
+
+    testWidgets('routine screen shows notes about products in the routine', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(900, 2400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await seed();
+      await AppPrefs.saveActiveAiRoutine({
+        'generatedAt': '2026-10-10T08:00:00.000',
+        'morningSteps': ['Daily SPF - protect'],
+        'eveningSteps': ['Glow Serum - hydrate'],
+      });
+
+      await tester.pumpWidget(const MaterialApp(home: RoutinesScreen()));
+      await tester.pumpAndSettle();
+      expect(_contextBlock, findsOneWidget);
+      expect(find.text(glowNote), findsOneWidget);
+    });
+
+    testWidgets('routine without a flagged product: no block', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(900, 2400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await seed();
+      await AppPrefs.saveActiveAiRoutine({
+        'generatedAt': '2026-10-10T08:00:00.000',
+        'morningSteps': ['Daily SPF - protect'],
+        'eveningSteps': <String>[],
+      });
+
+      await tester.pumpWidget(const MaterialApp(home: RoutinesScreen()));
+      await tester.pumpAndSettle();
+      expect(find.text('Daily SPF - protect'), findsOneWidget);
+      expect(_contextBlock, findsNothing);
+    });
+
+    testWidgets('no stored data: no block on either screen', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(900, 4000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await AppPrefs.saveActiveAiRoutine({
+        'morningSteps': ['Glow Serum - hydrate'],
+        'eveningSteps': <String>[],
+      });
+      await tester.pumpWidget(const MaterialApp(home: RoutinesScreen()));
+      await tester.pumpAndSettle();
+      expect(_contextBlock, findsNothing);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ActiveSkincareDetailsScreen(
+            product: _product('Glow Serum', 'Vitamin E'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(_contextBlock, findsNothing);
     });
   });
 }

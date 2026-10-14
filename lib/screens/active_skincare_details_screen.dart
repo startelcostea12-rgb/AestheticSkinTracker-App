@@ -15,6 +15,7 @@ import '../models/scan_history.dart';
 import '../models/journal_entry.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
 import '../widgets/app_brand_title.dart';
+import '../widgets/from_your_logs.dart';
 
 class ActiveSkincareDetailsScreen extends StatefulWidget {
   final TrackedProduct product;
@@ -1137,6 +1138,15 @@ class _ActiveSkincareDetailsScreenState
               ),
             ),
             const SizedBox(height: 20),
+
+            // --- From your logs (notes about this product / ingredients) ---
+            FromYourLogsSection(
+              relevantTo: [
+                widget.product.name,
+                ...widget.product.keyIngredients.split(RegExp(r'[,;/\n]')),
+              ],
+              margin: const EdgeInsets.only(bottom: 20),
+            ),
 
             // --- Overall Progress ---
             Row(

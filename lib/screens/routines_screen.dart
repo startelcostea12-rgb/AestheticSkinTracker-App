@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import '../utils/app_prefs.dart';
+import '../widgets/from_your_logs.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 
 class RoutinesScreen extends StatefulWidget {
@@ -112,6 +113,15 @@ class _RoutinesScreenState extends State<RoutinesScreen> {
                   if (morningSteps.isEmpty && eveningSteps.isEmpty)
                     _buildEmptyState()
                   else ...[
+                    FromYourLogsSection(
+                      key: ValueKey(_routine?['generatedAt']),
+                      relevantTo: [
+                        ...morningSteps,
+                        ...eveningSteps,
+                        ..._stepsFor('detectedProducts'),
+                      ],
+                      margin: const EdgeInsets.only(bottom: 12),
+                    ),
                     _RoutineChecklistCard(
                       title: 'Morning Routine',
                       icon: Icons.wb_sunny_outlined,
