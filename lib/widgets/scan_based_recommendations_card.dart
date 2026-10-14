@@ -6,8 +6,12 @@
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../models/journal_entry.dart';
+import '../models/product_feedback.dart';
+import '../models/product_tracker.dart';
 import '../models/scan_history.dart';
 import '../utils/ai_product_recommendation_engine.dart';
+import '../utils/recommendation_context.dart';
 import '../utils/scan_based_recommendation_engine.dart';
 
 class ScanBasedRecommendationsCard extends StatefulWidget {
@@ -18,6 +22,15 @@ class ScanBasedRecommendationsCard extends StatefulWidget {
   final Map<String, double>? baselineBody;
   final List<AIProductRecommendation> aiCoachProducts;
 
+  /// What the user already logged elsewhere in the app. Only used to show
+  /// context notes beside the recommendations (see RecommendationContext);
+  /// never changes which recommendations are selected.
+  final List<JournalEntry> journalEntries;
+  final Map<String, List<JournalEntry>> productJournals;
+  final List<TrackedProduct> trackedProducts;
+  final List<ProductFeedbackEntry> productFeedback;
+  final List<String> activePeptideNames;
+
   const ScanBasedRecommendationsCard({
     super.key,
     required this.latest,
@@ -26,6 +39,11 @@ class ScanBasedRecommendationsCard extends StatefulWidget {
     this.latestBody,
     this.baselineBody,
     this.aiCoachProducts = const <AIProductRecommendation>[],
+    this.journalEntries = const <JournalEntry>[],
+    this.productJournals = const <String, List<JournalEntry>>{},
+    this.trackedProducts = const <TrackedProduct>[],
+    this.productFeedback = const <ProductFeedbackEntry>[],
+    this.activePeptideNames = const <String>[],
   });
 
   @override
@@ -62,6 +80,15 @@ class _ScanBasedRecommendationsCardState
         products.isNotEmpty;
     if (!hasAnything) return const SizedBox.shrink();
 
+    final contextNotes = RecommendationContext.notes(
+      journalEntries: widget.journalEntries,
+      productJournals: widget.productJournals,
+      trackedProducts: widget.trackedProducts,
+      productFeedback: widget.productFeedback,
+      activePeptideNames: widget.activePeptideNames,
+      recommendedPeptideNames: [for (final p in rec.peptides) p.entry.name],
+    );
+
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -88,6 +115,7 @@ class _ScanBasedRecommendationsCardState
         children: [
           _header(rec),
           _summary(rec),
+          if (contextNotes.isNotEmpty) _contextNotes(contextNotes),
           if (rec.bodyDeltas.isNotEmpty) _bodyDeltasStrip(rec),
           _segmented(rec, products.length),
           Padding(
@@ -151,6 +179,50 @@ class _ScanBasedRecommendationsCardState
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _contextNotes(List<String> notes) {
+    return Container(
+      key: const ValueKey('recommendations_context_notes'),
+      margin: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: _surface.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _gold.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.history_edu_outlined, size: 15, color: _rose),
+              SizedBox(width: 6),
+              Text(
+                'From your logs',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: _textBrown,
+                ),
+              ),
+            ],
+          ),
+          for (final note in notes)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                note,
+                style: const TextStyle(
+                  fontSize: 12,
+                  height: 1.4,
+                  color: _muted,
+                ),
+              ),
+            ),
         ],
       ),
     );

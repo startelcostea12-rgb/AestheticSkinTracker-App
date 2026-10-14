@@ -76,3 +76,32 @@ List<String> peptideInteractionWarnings(Iterable<String> names) {
   }
   return warnings.toList();
 }
+
+/// One labelled item (a peptide, or a product with its ingredients) checked
+/// against the same interaction rules.
+typedef InteractionItem = ({String label, String text});
+
+/// Pairs of distinct [items] that match one of the interaction rules, with
+/// the rule's existing message. Same case-insensitive substring matching as
+/// [peptideInteractionWarnings].
+List<({String a, String b, String message})> interactionMatches(
+  List<InteractionItem> items,
+) {
+  final lowered = [
+    for (final item in items)
+      if (item.text.trim().isNotEmpty)
+        (label: item.label, text: item.text.toLowerCase()),
+  ];
+  final out = <({String a, String b, String message})>[];
+  for (final rule in _kPeptideInteractions) {
+    for (final first in lowered.where((i) => i.text.contains(rule.a))) {
+      final second = lowered.where(
+        (i) => i.label != first.label && i.text.contains(rule.b),
+      );
+      if (second.isEmpty) continue;
+      out.add((a: first.label, b: second.first.label, message: rule.message));
+      break;
+    }
+  }
+  return out;
+}

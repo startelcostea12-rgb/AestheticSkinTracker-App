@@ -10,6 +10,7 @@ import '../utils/app_prefs.dart';
 import '../utils/skincare_streak.dart';
 import 'progress_report_screen.dart';
 import '../models/product_tracker.dart';
+import '../models/product_feedback.dart';
 import '../models/procedure_log.dart';
 import '../models/peptide_model.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
@@ -121,6 +122,7 @@ class _ProcedureScanOptionTile extends StatelessWidget {
 class _HomePageState extends State<HomePage>
     with RouteAware, WidgetsBindingObserver {
   List<TrackedProduct> _trackedProducts = [];
+  List<ProductFeedbackEntry> _productFeedback = [];
   int _selectedIndex = 0;
   String _userName = '';
   String _userClinic = '';
@@ -241,8 +243,12 @@ class _HomePageState extends State<HomePage>
 
   Future<void> _loadTrackedProducts() async {
     final products = await AppPrefs.getTrackedProducts();
+    final feedback = await AppPrefs.getProductFeedback();
     if (!mounted) return;
-    setState(() => _trackedProducts = products);
+    setState(() {
+      _trackedProducts = products;
+      _productFeedback = feedback;
+    });
   }
 
   Future<void> _loadSkincareJournals() async {
@@ -773,6 +779,13 @@ class _HomePageState extends State<HomePage>
                     aiCoachProducts: _aiCoachRecommendationsFromScan(
                       latestScan,
                     ),
+                    journalEntries: _generalJournalEntries,
+                    productJournals: _skincareJournals,
+                    trackedProducts: _trackedProducts,
+                    productFeedback: _productFeedback,
+                    activePeptideNames: [
+                      for (final p in _activePeptides) p.name,
+                    ],
                   ),
                   const SizedBox(height: 12),
                   BridgeCard(
