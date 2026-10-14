@@ -142,6 +142,7 @@ Future<void> main() async {
 
       // Warm scan history on startup so trend/delta UI always reads normalized data.
       await runStartupStep('scan history warm-up', () async {
+        await AppPrefs.keepCurrentFrontBaselineAndLaterScansOnce();
         await AppPrefs.getScanEntries();
         await AppPrefs.getProcedureEntries();
         await AppPrefs.resolveActiveProcedureId();

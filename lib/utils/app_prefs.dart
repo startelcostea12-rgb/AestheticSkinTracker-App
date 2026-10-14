@@ -63,6 +63,10 @@ class AppPrefs {
   static const String peptideStackNameKey = 'peptide_stack_name';
   static const String scanHistoryStorageWarningKey =
       'scan_history_storage_warning';
+  static const String _frontBaselineScanHistoryCleanupKey =
+      'front_baseline_scan_history_cleanup_2026_10_14';
+  static const String _frontBaselineScanHistoryCleanupScanId =
+      'scan_1791886190709_41055101';
   static const String scanHistoryUnreadableBackupPrefix =
       'scan_history_unreadable_backup';
   static const String aiBaselineRegistryUnreadableBackupPrefix =
@@ -1052,6 +1056,62 @@ class AppPrefs {
       entries[idx] = marker;
     }
     await _writeAiBaselineRegistry(entries);
+  }
+
+  static Future<int> keepCurrentFrontBaselineAndLaterScansOnce() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    if (prefs.getBool(_frontBaselineScanHistoryCleanupKey) == true) return 0;
+
+    const baselineKey = (
+      procedureId: null,
+      focusArea: 'full face',
+      poseTemplate: 'Front',
+      guideType: 'facial',
+    );
+    final registeredBaselineId = await getAiBaselineScanId(baselineKey);
+    if (registeredBaselineId != _frontBaselineScanHistoryCleanupScanId) {
+      return 0;
+    }
+
+    final history = await getScanEntries();
+    ScanHistoryEntry? baselineScan;
+    for (final scan in history) {
+      if (scan.id == registeredBaselineId) {
+        baselineScan = scan;
+        break;
+      }
+    }
+    if (baselineScan == null) return 0;
+
+    final retained = history
+        .where((scan) => !scan.timestamp.isBefore(baselineScan!.timestamp))
+        .toList();
+    final removedCount = history.length - retained.length;
+    if (removedCount > 0) {
+      await _saveScanEntries(retained);
+    }
+
+    final savedHistory = await getScanEntriesWithoutNormalization();
+    if (await getAiBaselineScanId(baselineKey) != registeredBaselineId ||
+        !savedHistory.any((scan) => scan.id == registeredBaselineId) ||
+        savedHistory.any(
+          (scan) => scan.timestamp.isBefore(baselineScan!.timestamp),
+        )) {
+      throw StateError('Front baseline scan-history cleanup did not verify.');
+    }
+
+    final markedComplete = await prefs.setBool(
+      _frontBaselineScanHistoryCleanupKey,
+      true,
+    );
+    if (!markedComplete) {
+      throw StateError('Could not mark Front scan-history cleanup complete.');
+    }
+    debugPrint(
+      '[SCAN_HISTORY_CLEANUP] frontBaseline=$registeredBaselineId removed=$removedCount retained=${savedHistory.length}',
+    );
+    return removedCount;
   }
 
   /// Drops the pre-registry global baseline cache outright -- never

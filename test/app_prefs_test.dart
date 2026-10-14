@@ -851,6 +851,122 @@ void main() {
       expect(await AppPrefs.getAllAiBaselineScanIds(), {'scan_front_2'});
     });
 
+    test(
+      'one-time Front history cleanup keeps its baseline and later scans without changing registry',
+      () async {
+        const frontKeyNoProcedure = (
+          procedureId: null,
+          focusArea: 'full face',
+          poseTemplate: 'Front',
+          guideType: 'facial',
+        );
+        const leftKeyNoProcedure = (
+          procedureId: null,
+          focusArea: 'full face',
+          poseTemplate: 'Left 45°',
+          guideType: 'facial',
+        );
+        final baselineTimestamp = DateTime.utc(2026, 10, 13, 6, 9, 50);
+        ScanHistoryEntry scan(String id, DateTime timestamp) =>
+            ScanHistoryEntry(
+              id: id,
+              timestamp: timestamp,
+              scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+              estimatedSkinAge: 0,
+              metrics: const {'localized_redness': 20.0},
+              poseTemplate: 'Front',
+              guideType: 'facial',
+              focusArea: 'Full face',
+            );
+
+        for (final entry in [
+          scan('older-1', DateTime.utc(2026, 10, 12, 12)),
+          scan('older-2', DateTime.utc(2026, 10, 13, 6, 9, 49)),
+          scan(
+            'scan_1791886190709_41055101',
+            baselineTimestamp,
+          ),
+          scan('later-1', DateTime.utc(2026, 10, 13, 6, 11)),
+          scan('later-2', DateTime.utc(2026, 10, 14, 10, 4)),
+          scan('later-3', DateTime.utc(2026, 10, 14, 10, 5)),
+        ]) {
+          await AppPrefs.addScanEntry(entry);
+        }
+        await AppPrefs.setAiBaselineScanId(
+          frontKeyNoProcedure,
+          'scan_1791886190709_41055101',
+        );
+        await AppPrefs.setAiBaselineScanId(
+          leftKeyNoProcedure,
+          'scan_left45_existing',
+        );
+        final registryBefore = await AppPrefs.getAllAiBaselineScanIds();
+
+        final removedCount =
+            await AppPrefs.keepCurrentFrontBaselineAndLaterScansOnce();
+
+        expect(removedCount, 2);
+        final retained = await AppPrefs.getScanEntriesWithoutNormalization();
+        expect(
+          retained.map((entry) => entry.id).toSet(),
+          {
+            'scan_1791886190709_41055101',
+            'later-1',
+            'later-2',
+            'later-3',
+          },
+        );
+        expect(
+          retained.every((entry) => !entry.timestamp.isBefore(baselineTimestamp)),
+          isTrue,
+        );
+        expect(
+          await AppPrefs.getAiBaselineScanId(frontKeyNoProcedure),
+          'scan_1791886190709_41055101',
+        );
+        expect(await AppPrefs.getAllAiBaselineScanIds(), registryBefore);
+        expect(
+          await AppPrefs.keepCurrentFrontBaselineAndLaterScansOnce(),
+          0,
+        );
+      },
+    );
+
+    test('Front history cleanup does nothing for a different registered baseline', () async {
+      const frontKeyNoProcedure = (
+        procedureId: null,
+        focusArea: 'full face',
+        poseTemplate: 'Front',
+        guideType: 'facial',
+      );
+      await AppPrefs.setAiBaselineScanId(
+        frontKeyNoProcedure,
+        'another-front-baseline',
+      );
+      await AppPrefs.addScanEntry(
+        ScanHistoryEntry(
+          id: 'old-scan',
+          timestamp: DateTime.utc(2026, 10, 12),
+          scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+          estimatedSkinAge: 0,
+          metrics: const {'localized_redness': 20.0},
+        ),
+      );
+
+      expect(
+        await AppPrefs.keepCurrentFrontBaselineAndLaterScansOnce(),
+        0,
+      );
+      expect(
+        (await AppPrefs.getScanEntriesWithoutNormalization()).single.id,
+        'old-scan',
+      );
+      expect(
+        await AppPrefs.getAiBaselineScanId(frontKeyNoProcedure),
+        'another-front-baseline',
+      );
+    });
+
     test('clearAiBaselineScanId clears only that key', () async {
       await AppPrefs.setAiBaselineScanId(key, 'scan_front_1');
       await AppPrefs.setAiBaselineScanId(otherKey, 'scan_left45_1');
