@@ -7,10 +7,9 @@
 //
 // All output is keyed off a baseline-vs-latest scan comparison and is
 // returned with plain-language explanations such as:
-//   "Dark Spots only improved 0.2 points — recommend GHK-Cu + Brightening Stack"
+//   "People whose Dark Spots readings move only a little often look at GHK-Cu"
 
 library scan_based_recommendation_engine;
-
 
 import '../models/peptide_model.dart';
 import '../models/scan_history.dart';
@@ -111,7 +110,7 @@ class ScanBasedRecommendationEngine {
   }) {
     final hasBaseline = baseline != null;
     final deltas = hasBaseline
-      ? _buildDeltas(latest, baseline)
+        ? _buildDeltas(latest, baseline)
         : const <MetricDelta>[];
     final bodyDeltas = _buildBodyDeltas(latestBody, baselineBody);
 
@@ -149,11 +148,7 @@ class ScanBasedRecommendationEngine {
     );
 
     return ScanRecommendations(
-      headline: _buildHeadline(
-        deltas,
-        bodyDeltas,
-        hasBaseline: hasBaseline,
-      ),
+      headline: _buildHeadline(deltas, bodyDeltas, hasBaseline: hasBaseline),
       summary: _buildSummary(
         deltas,
         bodyDeltas: bodyDeltas,
@@ -333,11 +328,9 @@ class ScanBasedRecommendationEngine {
   // ── Headline / Summary ─────────────────────────────────────────────────────
   static String _buildHeadline(
     List<MetricDelta> deltas,
-    List<MetricDelta> bodyDeltas,
-    {
+    List<MetricDelta> bodyDeltas, {
     required bool hasBaseline,
-  }
-  ) {
+  }) {
     if (!hasBaseline) {
       return bodyDeltas.isNotEmpty
           ? 'Body trend captured — add a baseline scan to unlock full skin status trends'
@@ -352,9 +345,11 @@ class ScanBasedRecommendationEngine {
         .length;
     final bodyFocus = bodyDeltas.where((d) => !d.improved).length;
     final total = focusAreas + bodyFocus;
-    if (total == 0) return 'Your routine is working — keep building on it';
-    if (total == 1) return '1 area to focus on next';
-    return '$total areas to focus on next';
+    if (total == 0) {
+      return 'Your readings look steady — general maintenance ideas below';
+    }
+    if (total == 1) return '1 area people with similar readings often look at';
+    return '$total areas people with similar readings often look at';
   }
 
   static String _buildSummary(
@@ -363,7 +358,7 @@ class ScanBasedRecommendationEngine {
     List<MetricDelta> bodyDeltas = const [],
   }) {
     if (!hasBaseline) {
-      return 'These recommendations are based on your latest scan. Capture a baseline scan to unlock improvement-over-time tracking.';
+      return 'These are general patterns tied to your latest scan readings. Add a baseline scan to see how your readings change over time.';
     }
     final improving = deltas
         .where((d) => d.improvement >= 0.4)
@@ -381,21 +376,21 @@ class ScanBasedRecommendationEngine {
     final parts = <String>[];
     if (improving.isNotEmpty) {
       parts.add(
-        '${_joinWithAnd(improving)} ${improving.length == 1 ? "is" : "are"} responding well to your current routine',
+        '${_joinWithAnd(improving)} ${improving.length == 1 ? "is" : "are"} moving in a favorable direction',
       );
     }
     if (stalling.isNotEmpty) {
       parts.add(
-        '${_joinWithAnd(stalling)} ${stalling.length == 1 ? "has" : "have"} plateaued and would benefit from a targeted addition',
+        '${_joinWithAnd(stalling)} ${stalling.length == 1 ? "has" : "have"} held steady — people seeing similar plateaus often explore the options below',
       );
     }
     if (worsening.isNotEmpty) {
       parts.add(
-        '${_joinWithAnd(worsening)} ${worsening.length == 1 ? "is" : "are"} trending in the wrong direction and need active intervention',
+        '${_joinWithAnd(worsening)} ${worsening.length == 1 ? "has" : "have"} moved in the less favorable direction — common options discussed for this pattern are below',
       );
     }
     if (parts.isEmpty) {
-      return 'Your metrics are stable and within healthy ranges. The recommendations below focus on maintenance and prevention.';
+      return 'Your readings look stable. The ideas below are common maintenance options people explore.';
     }
     final base =
         '${parts.join('. ').replaceFirstMapped(RegExp(r'^\w'), (m) => m[0]!.toUpperCase())}.';
@@ -411,12 +406,12 @@ class ScanBasedRecommendationEngine {
     final bodyParts = <String>[];
     if (bodyImproving.isNotEmpty) {
       bodyParts.add(
-        '${_joinWithAnd(bodyImproving)} ${bodyImproving.length == 1 ? "is" : "are"} trending in the right direction',
+        '${_joinWithAnd(bodyImproving)} ${bodyImproving.length == 1 ? "is" : "are"} moving in a favorable direction',
       );
     }
     if (bodyStuck.isNotEmpty) {
       bodyParts.add(
-        '${_joinWithAnd(bodyStuck)} ${bodyStuck.length == 1 ? "needs" : "need"} a targeted protocol',
+        '${_joinWithAnd(bodyStuck)} ${bodyStuck.length == 1 ? "has" : "have"} held steady — options people often explore are below',
       );
     }
     if (bodyParts.isEmpty) return base;
@@ -569,30 +564,30 @@ class ScanBasedRecommendationEngine {
     final latest = d.latest.toStringAsFixed(1);
     final improvementStr = d.improvement.abs().toStringAsFixed(1);
     if (d.improvement.abs() < 0.05) {
-      return 'Your ${d.label} has plateaued at $latest. ${p.name} introduces a clinically-supported mechanism to restart progress.';
+      return 'People whose ${d.label} readings hold steady (now $latest) often look into ${p.name}.';
     }
     if (!d.improved) {
-      return '${d.label} moved $improvementStr in the wrong direction (now $latest). ${p.name} directly targets this pathway.';
+      return 'Many users watching ${d.label} move $improvementStr the less favorable way (now $latest) explore ${p.name}.';
     }
-    return 'Your ${d.label} is at $latest. ${p.name} can compound the trajectory you\'re already on.';
+    return 'People tracking similar ${d.label} readings ($latest) often look at ${p.name}.';
   }
 
   static String _bodyPeptideBenefitFor(String key) {
     switch (key) {
       case 'weight':
-        return 'Reduces appetite and caloric intake via incretin pathways.';
+        return 'Often discussed for appetite and weight.';
       case 'bodyFat':
-        return 'Targets adipose tissue lipolysis without affecting lean mass.';
+        return 'Often discussed for body fat.';
       case 'waist':
-        return 'Specifically reduces visceral adipose tissue (VAT).';
+        return 'Often discussed for waist measurements.';
       case 'muscleMass':
-        return 'Stimulates GH/IGF-1 axis to preserve and build lean tissue.';
+        return 'Often discussed for lean muscle.';
       case 'appetiteControl':
-        return 'Improves satiety signaling and reduces craving frequency.';
+        return 'Often discussed for appetite and cravings.';
       case 'bodyCompositionScore':
-        return 'Supports a recomposition phenotype — fat down, lean up.';
+        return 'Often discussed for overall body composition.';
       default:
-        return 'Targets the underlying biology of this concern.';
+        return 'Often discussed for this concern.';
     }
   }
 
@@ -617,32 +612,31 @@ class ScanBasedRecommendationEngine {
 
   static String _peptideReason(MetricDelta d, PeptideLibraryEntry p) {
     final latest = d.latest.toStringAsFixed(1);
-    final improvementStr = d.improvement.abs().toStringAsFixed(1);
     if (d.improvement < 0.4 && d.improvement >= -0.05) {
-      return 'Your ${d.label} score only improved $improvementStr points (now $latest). ${p.name} directly targets this pathway and is a strong next step.';
+      return 'People whose ${d.label} readings move only a little (now $latest) often look at ${p.name}.';
     }
     if (d.improvement < -0.05) {
-      return 'Your ${d.label} has worsened by $improvementStr points (now $latest). ${p.name} adds a clinically-validated mechanism to reverse the trend.';
+      return 'Many users watching elevated ${d.label} readings (now $latest) explore ${p.name}.';
     }
-    return 'Your ${d.label} is currently at $latest. Adding ${p.name} can compound the improvements you\'re already seeing.';
+    return 'People tracking similar ${d.label} readings ($latest) often look at ${p.name}.';
   }
 
   static String _peptideBenefitFor(String key) {
     switch (key) {
       case 'darkSpots':
-        return 'Inhibits melanogenesis and accelerates fading of pigmentation.';
+        return 'Often discussed for dark spots and uneven tone.';
       case 'redness':
-        return 'Calms inflammatory signaling and supports barrier resilience.';
+        return 'Often discussed for redness and barrier support.';
       case 'texture':
-        return 'Promotes orderly keratinocyte renewal and a smoother surface.';
+        return 'Often discussed for texture and surface renewal.';
       case 'wrinkles':
-        return 'Stimulates collagen synthesis to soften static and dynamic lines.';
+        return 'Often discussed for fine lines and collagen support.';
       case 'pores':
-        return 'Regulates sebum and supports perifollicular collagen structure.';
+        return 'Often discussed for pore appearance and oil balance.';
       case 'elasticity':
-        return 'Drives collagen I/III synthesis for measurable firming.';
+        return 'Often discussed for firmness and elasticity.';
       default:
-        return 'Targets the underlying biology of this concern.';
+        return 'Often discussed for this concern.';
     }
   }
 
@@ -848,7 +842,7 @@ class ScanBasedRecommendationEngine {
       tier: 'Tier 1',
       triggerKeys: const ['bodyFat', 'waist'],
       reasonTemplate:
-          '{m} is not responding to current protocol — CoolSculpting directly reduces stubborn subcutaneous fat depots.',
+          'People whose {m} readings hold steady often ask a provider about non-invasive fat-reduction options such as CoolSculpting.',
     );
     emit(
       name: 'EmSculpt NEO',
@@ -858,7 +852,7 @@ class ScanBasedRecommendationEngine {
       tier: 'Tier 1',
       triggerKeys: const ['muscleMass', 'bodyFat'],
       reasonTemplate:
-          '{m} would benefit from a recomposition-focused intervention — EmSculpt NEO builds muscle while reducing overlying fat.',
+          'People tracking similar {m} readings often ask a provider about muscle-and-fat recomposition options such as EmSculpt NEO.',
     );
     emit(
       name: 'BodyTite (RF Lipo)',
@@ -868,7 +862,7 @@ class ScanBasedRecommendationEngine {
       tier: 'Tier 1',
       triggerKeys: const ['waist', 'bodyFat'],
       reasonTemplate:
-          '{m} stalled — BodyTite addresses both adiposity and overlying skin laxity in one procedure.',
+          'People whose {m} readings hold steady sometimes ask a provider about fat-and-skin-tightening options such as BodyTite.',
     );
     emit(
       name: 'Liposuction (Tumescent)',
@@ -878,7 +872,7 @@ class ScanBasedRecommendationEngine {
       tier: 'Tier 1',
       triggerKeys: const ['bodyFat'],
       reasonTemplate:
-          '{m} is significantly elevated and not responding — liposuction is the definitive surgical option for localized fat.',
+          'People with similar {m} readings sometimes ask a provider about surgical contouring options such as liposuction.',
     );
     emit(
       name: 'Lymphatic Drainage Massage',
@@ -888,7 +882,7 @@ class ScanBasedRecommendationEngine {
       tier: 'Tier 2',
       triggerKeys: const ['waist'],
       reasonTemplate:
-          '{m} may reflect fluid retention — lymphatic drainage accelerates resolution alongside body-comp protocols.',
+          'People tracking similar {m} readings sometimes explore fluid-related options such as lymphatic drainage.',
     );
 
     return results.take(3).toList();
@@ -904,15 +898,15 @@ class ScanBasedRecommendationEngine {
       if (d == null || !s.matched.contains(d.label)) continue;
       final latest = d.latest.toStringAsFixed(1);
       if (d.improvement < 0.4) {
-        parts.add('${d.label} is plateaued at $latest');
+        parts.add('${d.label} holding at $latest');
       } else {
-        parts.add('${d.label} sits at $latest');
+        parts.add('${d.label} at $latest');
       }
     }
     if (parts.isEmpty) {
-      return 'Your scan profile aligns with the clinical indications for this procedure.';
+      return 'People with similar scan readings often ask a provider about ${s.rule.name}.';
     }
-    return '${parts.join(" and ")} — ${s.rule.name} directly targets ${s.matched.length == 1 ? "this" : "these"} concern${s.matched.length == 1 ? "" : "s"}.';
+    return 'With ${parts.join(" and ")}, people with similar readings often ask a provider about ${s.rule.name}.';
   }
 }
 

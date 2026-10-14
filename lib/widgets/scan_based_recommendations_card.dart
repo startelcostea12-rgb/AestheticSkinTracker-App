@@ -91,9 +91,10 @@ class _ScanBasedRecommendationsCardState
           if (rec.bodyDeltas.isNotEmpty) _bodyDeltasStrip(rec),
           _segmented(rec, products.length),
           Padding(
-            padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
+            padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
             child: _body(rec, products),
           ),
+          _disclaimer(),
         ],
       ),
     );
@@ -130,7 +131,7 @@ class _ScanBasedRecommendationsCardState
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'AI Recommendations from Your Scan',
+                  'Ideas people with similar readings explore',
                   style: TextStyle(
                     color: _textBrown,
                     fontSize: 13,
@@ -351,19 +352,24 @@ class _ScanBasedRecommendationsCardState
 
   Widget _peptidesBody(ScanRecommendations rec) {
     if (rec.peptides.isEmpty) {
-      return _emptyState(
-        'No peptide recommendations right now — your scan is in healthy range across the board.',
-      );
+      return _emptyState('No peptide ideas to show for these readings.');
     }
+    final concerns = _concernsText(
+      rec.peptides.expand((p) => p.matchedMetrics),
+    );
     return Column(
-      children: rec.peptides
-          .map(
-            (p) => Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: _peptideCard(p),
-            ),
-          )
-          .toList(),
+      children: [
+        _sectionIntro(
+          'Many users watching $concerns explore topical peptide options '
+          'such as ${_examples(rec.peptides.map((p) => p.entry.name))}.',
+        ),
+        ...rec.peptides.map(
+          (p) => Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: _peptideCard(p),
+          ),
+        ),
+      ],
     );
   }
 
@@ -464,19 +470,25 @@ class _ScanBasedRecommendationsCardState
 
   Widget _proceduresBody(ScanRecommendations rec) {
     if (rec.procedures.isEmpty) {
-      return _emptyState(
-        'No procedure recommendations — your metrics are well-controlled through home care.',
-      );
+      return _emptyState('No procedure ideas to show for these readings.');
     }
+    final concerns = _concernsText(
+      rec.procedures.expand((p) => p.matchedMetrics),
+    );
     return Column(
-      children: rec.procedures
-          .map(
-            (p) => Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: _procedureCard(p),
-            ),
-          )
-          .toList(),
+      children: [
+        _sectionIntro(
+          'Common options discussed for $concerns include '
+          '${_examples(rec.procedures.map((p) => p.category))}. '
+          'People usually talk these through with a licensed provider.',
+        ),
+        ...rec.procedures.map(
+          (p) => Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: _procedureCard(p),
+          ),
+        ),
+      ],
     );
   }
 
@@ -566,19 +578,21 @@ class _ScanBasedRecommendationsCardState
 
   Widget _productsBody(List<AIProductRecommendation> products) {
     if (products.isEmpty) {
-      return _emptyState(
-        'No product recommendations available for this scan profile.',
-      );
+      return _emptyState('No product ideas to show for these readings.');
     }
     return Column(
-      children: products
-          .map(
-            (p) => Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: _productCard(p),
-            ),
-          )
-          .toList(),
+      children: [
+        _sectionIntro(
+          'People tracking similar readings often look at product options '
+          'such as ${_examples(products.map((p) => p.productName))}.',
+        ),
+        ...products.map(
+          (p) => Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: _productCard(p),
+          ),
+        ),
+      ],
     );
   }
 
@@ -634,7 +648,7 @@ class _ScanBasedRecommendationsCardState
           ),
           const SizedBox(height: 8),
           Text(
-            p.clinicalReason,
+            'Often mentioned because: ${p.clinicalReason}',
             style: const TextStyle(
               fontSize: 12,
               height: 1.4,
@@ -655,7 +669,7 @@ class _ScanBasedRecommendationsCardState
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
-                    p.usageGuidance,
+                    'How people commonly use it: ${p.usageGuidance}',
                     style: const TextStyle(
                       fontSize: 11.5,
                       height: 1.35,
@@ -741,6 +755,78 @@ class _ScanBasedRecommendationsCardState
               fontSize: 10.5,
               color: _textBrown,
               fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// "redness and texture" from the metrics the shown items matched, or a
+  /// neutral phrase when none are attached. Display only.
+  static String _concernsText(Iterable<String> metrics) {
+    final distinct = <String>[];
+    for (final metric in metrics) {
+      final label = metric.trim().toLowerCase();
+      if (label.isNotEmpty && !distinct.contains(label)) distinct.add(label);
+    }
+    if (distinct.isEmpty) return 'similar readings';
+    final shown = distinct.take(2).toList();
+    return '${shown.join(' and ')} readings';
+  }
+
+  /// Up to three distinct examples from the items already shown, joined as
+  /// "a, b, and c". Display only.
+  static String _examples(Iterable<String> items) {
+    final distinct = <String>[];
+    for (final item in items) {
+      final text = item.trim();
+      if (text.isNotEmpty && !distinct.contains(text)) distinct.add(text);
+      if (distinct.length == 3) break;
+    }
+    if (distinct.length <= 1) return distinct.join();
+    if (distinct.length == 2) return '${distinct[0]} and ${distinct[1]}';
+    return '${distinct[0]}, ${distinct[1]}, and ${distinct[2]}';
+  }
+
+  Widget _sectionIntro(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 2),
+      child: Text(
+        text,
+        key: const ValueKey('recommendations_section_intro'),
+        style: const TextStyle(
+          fontSize: 12,
+          height: 1.4,
+          color: _muted,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  static const String disclaimerText =
+      'These are general patterns, not personalized medical advice. Talk '
+      'with a licensed provider before starting anything new.';
+
+  Widget _disclaimer() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline_rounded, size: 14, color: _muted),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              disclaimerText,
+              key: const ValueKey('recommendations_disclaimer'),
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.35,
+                color: _muted.withValues(alpha: 0.85),
+                fontStyle: FontStyle.italic,
+              ),
             ),
           ),
         ],
