@@ -32,6 +32,15 @@ import 'trend_label_resolver.dart';
 import 'report_disclaimer.dart';
 import 'tracked_item_display.dart';
 
+/// Change cell text for the PDF report: "+12.0%" for an improvement and
+/// "17.3%" for a decline (no leading minus; colour and the DECLINING / DOWN
+/// label carry the direction). A locked comparison shows no percent ("—").
+String reportChangeText(double pct, {bool locked = false}) {
+  if (locked) return '—';
+  final magnitude = pct.abs().toStringAsFixed(1);
+  return pct >= 0 ? '+$magnitude%' : '$magnitude%';
+}
+
 bool reportMetricHasSavedSource(
   ClinicalMetricDef definition,
   Map<String, double>? raw,
@@ -1591,8 +1600,7 @@ class ReportService {
       if (b == null || l == null) continue;
       final pct = metricPctChange(b, l, lowerIsBetter: def.lowerIsBetter);
       final isImprovement = pct >= 0;
-      final sign = isImprovement ? '+' : '-';
-      final changeText = '$sign${pct.abs().toStringAsFixed(1)}%';
+      final changeText = reportChangeText(pct);
       final isImproving = isImprovement && pct.abs() > 0.5;
       final isWorsening = !isImprovement && pct.abs() > 0.5;
       final clinicalSig = isImproving
@@ -1829,8 +1837,7 @@ class ReportService {
       final improving = row.pct >= 0;
       final color = improving ? teal : redWarn;
       final arrow = improving ? 'UP' : 'DOWN';
-      final changeText =
-          '${improving ? '+' : '-'}${row.pct.abs().toStringAsFixed(1)}%';
+      final changeText = reportChangeText(row.pct);
       return pw.Container(
         padding: const pw.EdgeInsets.all(10),
         decoration: pw.BoxDecoration(
@@ -2497,9 +2504,6 @@ class ReportService {
       final l = row['latest'] as double;
       final lowerBetter = row['lowerBetter'] as bool;
       final pct = metricPctChange(b, l, lowerIsBetter: lowerBetter);
-      final isImprovement = pct >= 0;
-      final sign = isImprovement ? '+' : '-';
-      final changeText = '$sign${pct.abs().toStringAsFixed(1)}%';
       // Trend wording (IMPROVING/DECLINING/STABLE) must defer to the
       // backend's honesty-gated trend_status for this metric when
       // available — never a raw percent-change threshold. When no
@@ -2519,6 +2523,10 @@ class ReportService {
       final resolvedTrend = resolveTrendLabel(
         trendStatus: backendTrendStatus,
         trendLockReason: backendTrendLockReason,
+      );
+      final changeText = reportChangeText(
+        pct,
+        locked: resolvedTrend?.lockShortLabel != null,
       );
       final isImproving = resolvedTrend?.isImproved ?? false;
       final isWorsening = resolvedTrend?.isWorsened ?? false;
