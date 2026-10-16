@@ -24,6 +24,15 @@ const Set<String> metricsWithHiddenTrendVerdicts = <String>{
 bool shouldShowTrendVerdict(String metricKey) =>
     !metricsWithHiddenTrendVerdicts.contains(metricKey);
 
+/// Whether [metric]'s card shows a trend verdict. On the live results views
+/// ([liveDisplay], i.e. applyDisplayNoiseFloors) this is decided by
+/// displayNoVerdictMetrics; elsewhere by [LuxeMetric.showTrendVerdict].
+/// Display only: parsing (including baseline selection) is unchanged.
+bool showsTrendVerdictOnCard(LuxeMetric metric, {required bool liveDisplay}) =>
+    liveDisplay
+    ? !displayNoVerdictMetrics.contains(metric.key)
+    : metric.showTrendVerdict;
+
 class LuxeMetric {
   const LuxeMetric({
     required this.key,
@@ -1888,7 +1897,12 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
 
     final statements = <String>[];
     for (final metric in metrics) {
-      if (!metric.showTrendVerdict) continue;
+      if (!showsTrendVerdictOnCard(
+        metric,
+        liveDisplay: widget.applyDisplayNoiseFloors,
+      )) {
+        continue;
+      }
       final assessment = _assessMetricHonesty(
         metricKey: metric.key,
         current: metric.currentScore,
@@ -2303,10 +2317,13 @@ class _MetricCard extends StatelessWidget {
   /// shared lock, so the card says only "Not comparable".
   final bool scanWideLockShown;
 
+  bool get _showVerdict =>
+      showsTrendVerdictOnCard(metric, liveDisplay: applyDisplayNoiseFloors);
+
   _MetricRowData _buildMetricRowData() {
     final hasComparisonContext =
         showProgressComparison || metric.hasBaselineValue;
-    if (!hasComparisonContext && !metric.showTrendVerdict) {
+    if (!hasComparisonContext && !_showVerdict) {
       return _MetricRowData(
         baselineValue: 0.0,
         currentValue: metric.currentScore,
@@ -2325,8 +2342,16 @@ class _MetricCard extends StatelessWidget {
       );
     }
 
-    if (!metric.showTrendVerdict) {
+    if (!_showVerdict) {
       final hasBaseline = metric.hasBaselineValue;
+      // No verdict for these metrics; on the live views a backend lock
+      // still wins.
+      final lockReason = metric.backendTrendLockReason?.trim() ?? '';
+      final locked =
+          applyDisplayNoiseFloors &&
+          hasBaseline &&
+          metric.hasComparableCurrentValue &&
+          lockReason.isNotEmpty;
       return _MetricRowData(
         baselineValue: metric.baselineScore,
         currentValue: metric.currentScore,
@@ -2336,10 +2361,14 @@ class _MetricCard extends StatelessWidget {
         subtext: '',
         initialBaseline: !hasBaseline,
         honestyStatus: _HonestyStatus.noVerdict,
-        honestyLabel: metric.hasComparableCurrentValue
+        honestyLabel: locked
+            ? (scanWideLockShown
+                  ? 'Not comparable'
+                  : 'Not comparable: ${_shortLockReasonPhrase(lockReason)}')
+            : metric.hasComparableCurrentValue
             ? metric.name
             : 'Starting point',
-        trendLocked: false,
+        trendLocked: locked,
         hasRealBaseline: hasBaseline,
         hasComparableCurrentValue: metric.hasComparableCurrentValue,
       );
@@ -2475,13 +2504,12 @@ class _MetricCard extends StatelessWidget {
     const titleColor = AppColors.textStructure;
     final headlineDelta = row.honestyLabel;
     final hideDuplicateMetricName =
-        metricsWithHiddenTrendVerdicts.contains(metric.key) &&
-        row.hasComparableCurrentValue;
+        !_showVerdict && row.hasComparableCurrentValue && !row.trendLocked;
     final precision = metricPrecisionPresentation(metric);
     final currentDisplayText = row.hasComparableCurrentValue
         ? formatScoreWithSeverityBand(metric.key, row.currentValue)
         : 'Not compared';
-    final comparisonSubtitle = !metric.showTrendVerdict
+    final comparisonSubtitle = !_showVerdict
         ? currentDisplayText
         : row.trendLocked
         ? 'Current $currentDisplayText${precision.rangeSuffix}'
@@ -2544,7 +2572,7 @@ class _MetricCard extends StatelessWidget {
                   letterSpacing: 0.1,
                 ),
               ),
-              if (metric.showTrendVerdict) ...[
+              if (_showVerdict) ...[
                 const SizedBox(height: 3),
                 Text(
                   precision.detailText,
@@ -2567,7 +2595,7 @@ class _MetricCard extends StatelessWidget {
                 ),
               ],
               const SizedBox(height: 10),
-              if (metric.showTrendVerdict) ...[
+              if (_showVerdict) ...[
                 const SizedBox(height: 8),
                 Text(
                   progressionLine,
