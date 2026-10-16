@@ -45,6 +45,7 @@ import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:aesthetic_skin_tracker/utils/upload_gate.dart';
 import 'package:aesthetic_skin_tracker/widgets/paywall_screen.dart';
 import 'free_local_scan_results_screen.dart';
+import 'package:aesthetic_skin_tracker/utils/gray_card_region.dart';
 import 'package:aesthetic_skin_tracker/utils/backend_config.dart';
 import 'package:aesthetic_skin_tracker/utils/skin_analysis_service.dart'
     as remote_analysis;
@@ -2116,6 +2117,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   String? _capturedPoseTemplate;
   String? _capturedGuideType;
 
+  /// Off by default: when on, the camera offers gray-card marking after the
+  /// face crop. [_grayCardRegion] is the marked card as fractions of the
+  /// uploaded crop, sent as gray_card_region; null sends nothing.
+  bool _markGrayCard = false;
+  GrayCardRegion? _grayCardRegion;
+
   /// Set by [_getPreviousMetrics] when prior scans exist for this
   /// procedure/focus area but none share this capture's angle AND guide
   /// type -- so the results UI can say plainly that no matching baseline
@@ -2410,10 +2417,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       final captured = await Navigator.push<Object?>(
         context,
         MaterialPageRoute(
-          builder: (_) => const CameraScreen(
+          builder: (_) => CameraScreen(
             isSkincareScan: true,
             aiMultiFrameCapture: true,
             capturePurpose: CameraCapturePurpose.aiSkinAnalysis,
+            markGrayCardAfterCapture: _markGrayCard,
           ),
         ),
       );
@@ -2442,6 +2450,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           );
           _capturedPoseTemplate = captured.poseTemplate;
           _capturedGuideType = captured.guideType;
+          _grayCardRegion = captured.grayCardRegion;
         } else {
           _analysisFrameBytes = const [];
           _analysisFrameExposureMetadata = const [];
@@ -2450,6 +2459,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _currentCaptureSharpness = (crop: null, fullStill: null, floor: null);
           _capturedPoseTemplate = null;
           _capturedGuideType = null;
+          _grayCardRegion = null;
         }
         _explicitBaselineSelection = false;
       });
@@ -2509,6 +2519,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _analysisFrameExposureMetadata = const [];
           _capturedPoseTemplate = null;
           _capturedGuideType = null;
+          _grayCardRegion = null;
         });
         return;
       }
@@ -2525,6 +2536,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         // -- must not be guessed from the focus-area/procedure selection.
         _capturedPoseTemplate = null;
         _capturedGuideType = null;
+        _grayCardRegion = null;
       });
     } catch (e) {
       if (!mounted) return;
@@ -2823,6 +2835,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         baselinePoseTemplate: _previousFocusAreaScan?.poseTemplate,
         guideType: _capturedGuideType,
         baselineGuideType: _previousFocusAreaScan?.guideType,
+        grayCardRegion: _grayCardRegion,
       );
 
       final frames = _analysisFrameBytes.isNotEmpty
@@ -4003,6 +4016,18 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         children: [
           if (hasPhoto) _selectedPhotoPreview() else _photoPlaceholder(),
           const SizedBox(height: 12),
+          SwitchListTile.adaptive(
+            key: const ValueKey('gray_card_switch'),
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            value: _markGrayCard,
+            onChanged: (value) => setState(() => _markGrayCard = value),
+            title: const Text('Gray card in shot'),
+            subtitle: const Text(
+              'After the camera capture, mark the card to correct white '
+              'balance. Off sends nothing.',
+            ),
+          ),
           Row(
             children: [
               Expanded(

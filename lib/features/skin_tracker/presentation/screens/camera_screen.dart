@@ -29,6 +29,8 @@ import 'package:aesthetic_skin_tracker/widgets/adaptive_camera_guide_visuals.dar
 import 'package:aesthetic_skin_tracker/widgets/clinical_camera_guidance.dart';
 import 'package:aesthetic_skin_tracker/widgets/clinical_section_header.dart';
 import 'package:aesthetic_skin_tracker/widgets/image_crop_dialog.dart';
+import 'package:aesthetic_skin_tracker/utils/gray_card_region.dart';
+import 'package:aesthetic_skin_tracker/widgets/gray_card_mark_dialog.dart';
 import 'package:aesthetic_skin_tracker/widgets/local_image_preview.dart';
 import 'package:aesthetic_skin_tracker/widgets/makeup_badge.dart';
 import 'package:aesthetic_skin_tracker/widgets/makeup_disclosure_dialog.dart';
@@ -979,6 +981,10 @@ class CameraScreen extends StatefulWidget {
   final String? initialProcedureLabel;
   final Map<String, dynamic>? initialTrackProcedureBaselineRecord;
 
+  /// AI Skin Analysis only: after the face crop, offer GrayCardMarkDialog so
+  /// the user can mark a gray card; off by default.
+  final bool markGrayCardAfterCapture;
+
   const CameraScreen({
     this.procedure,
     this.isSkincareScan = false,
@@ -988,6 +994,7 @@ class CameraScreen extends StatefulWidget {
     this.initialProcedureId,
     this.initialProcedureLabel,
     this.initialTrackProcedureBaselineRecord,
+    this.markGrayCardAfterCapture = false,
   }) : assert(
          !aiMultiFrameCapture ||
              capturePurpose == CameraCapturePurpose.aiSkinAnalysis,
@@ -1009,9 +1016,14 @@ class AiSkinAnalysisCaptureResult {
     this.cropSharpness,
     this.fullStillSharpness,
     this.sharpnessFloor,
+    this.grayCardRegion,
   });
 
   final String primaryImagePath;
+
+  /// The marked gray card as fractions of the uploaded crop, or null when
+  /// none was marked (see grayCardRegionInUploadedFrame).
+  final GrayCardRegion? grayCardRegion;
   final List<Uint8List> croppedFrames;
   final String captureQuality;
 
@@ -5264,9 +5276,13 @@ class _CameraScreenState extends State<CameraScreen>
       // blocks or alters capture, and never touches frame selection/
       // anything sent to analysis.
       NormalizedSquareCrop? autoRegion;
+      int? decodedStillWidth;
+      int? decodedStillHeight;
       try {
         final decodedFirst = img.decodeImage(firstBytes);
         if (decodedFirst != null) {
+          decodedStillWidth = decodedFirst.width;
+          decodedStillHeight = decodedFirst.height;
           if (kDebugMode) {
             _debugLastCapturedStillWidth = decodedFirst.width;
             _debugLastCapturedStillHeight = decodedFirst.height;
@@ -5391,6 +5407,36 @@ class _CameraScreenState extends State<CameraScreen>
         extraFields: burstSizeFields,
       );
 
+      // Optional gray card: marked on the full still, mapped into the
+      // uploaded crop. Skipped, or a box outside the crop, sends nothing.
+      GrayCardRegion? grayCardRegion;
+      if (widget.markGrayCardAfterCapture &&
+          decodedStillWidth != null &&
+          decodedStillHeight != null) {
+        if (!mounted) return;
+        final stillWidth = decodedStillWidth;
+        final stillHeight = decodedStillHeight;
+        final stillBox = await showDialog<GrayCardRegion>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => GrayCardMarkDialog(
+            imageBytes: firstBytes,
+            stillWidth: stillWidth,
+            stillHeight: stillHeight,
+            uploadCrop: cropSelection!.region,
+          ),
+        );
+        if (!mounted) return;
+        if (stillBox != null) {
+          grayCardRegion = grayCardRegionInUploadedFrame(
+            stillBox: stillBox,
+            stillWidth: stillWidth,
+            stillHeight: stillHeight,
+            crop: cropSelection!.region,
+          );
+        }
+      }
+
       final primaryImagePath = await _persistScanImage(
         croppedFrames.first,
         sourcePath: capturedFiles.first.path,
@@ -5411,6 +5457,7 @@ class _CameraScreenState extends State<CameraScreen>
           cropSharpness: qualityTag.cropSharpness,
           fullStillSharpness: qualityTag.fullStillSharpness,
           sharpnessFloor: _sharpnessVarianceFloor,
+          grayCardRegion: grayCardRegion,
         ),
       );
     } catch (e) {
