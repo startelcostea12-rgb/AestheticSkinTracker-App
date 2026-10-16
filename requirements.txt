@@ -2,7 +2,12 @@ fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.7.0
 ultralytics>=8.2.0
-opencv-python>=4.9.0
+# Both OpenCV wheels ship the same cv2 module (ultralytics pulls in
+# opencv-python, mediapipe 0.10.14 requires opencv-contrib-python), so both
+# are pinned to one build: the metric regression fixtures depend on cv2's
+# decode/resize/CLAHE output staying identical.
+opencv-python==5.0.0.93
+opencv-contrib-python==5.0.0.93
 Pillow>=10.3.0
 numpy>=1.26.0
 torch>=2.0.0
