@@ -77,10 +77,14 @@ class AiScanDataCsvExporter {
     'image_quality.redness_cheek_p10_a_before_wb',
     'image_quality.redness_cheek_p95_a_before_wb',
     'image_quality.redness_baseline_cheek_p95_a',
-    'image_quality.gray_card_used',
-    'image_quality.gray_card_gain_r',
-    'image_quality.gray_card_gain_g',
-    'image_quality.gray_card_gain_b',
+    // Gray-card white balance, scan-level summary across frames (see
+    // summarizeGrayCardFrames); per frame under frameN_gray_card_*.
+    'image_quality.gray_card_marked',
+    'image_quality.gray_card_mean_L',
+    'image_quality.gray_card_mean_a',
+    'image_quality.gray_card_mean_b',
+    'image_quality.gray_card_correction_applied',
+    'image_quality.gray_card_frames_applied',
     'image_quality.gray_card_reason',
   ];
 
@@ -105,6 +109,11 @@ class AiScanDataCsvExporter {
     'cheek_p10_a_after_wb',
     'cheek_p10_a_before_wb',
     'localized_redness',
+    'gray_card_marked',
+    'gray_card_mean_L',
+    'gray_card_mean_a',
+    'gray_card_mean_b',
+    'gray_card_correction_applied',
     'iso',
     'exposure_bias',
     'shutter_seconds',

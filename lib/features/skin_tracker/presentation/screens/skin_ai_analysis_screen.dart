@@ -457,6 +457,52 @@ const Set<String> untrustedTrendVerdictMetricKeys = <String>{
   'diffuse_flushing_erythema',
 };
 
+/// Scan-level gray-card summary over the frames' image_quality (main.py
+/// logs it per frame): marked if any frame was marked, correction applied
+/// only if every frame applied it, and the mean of the frames' raw card
+/// samples. Empty when no frame reports gray-card fields (older backend).
+Map<String, dynamic> summarizeGrayCardFrames(
+  List<Map<String, dynamic>> responses,
+) {
+  final qualities = [
+    for (final response in responses)
+      _dynamicMap(response['image_quality']).isNotEmpty
+          ? _dynamicMap(response['image_quality'])
+          : _dynamicMap(_dynamicMap(response['metrics'])['image_quality']),
+  ].where((q) => q.containsKey('gray_card_marked')).toList();
+  if (qualities.isEmpty) return const <String, dynamic>{};
+
+  double? mean(String key) {
+    final values = [
+      for (final q in qualities)
+        if (q[key] is num && (q[key] as num).isFinite)
+          (q[key] as num).toDouble(),
+    ];
+    if (values.isEmpty) return null;
+    final average = values.reduce((a, b) => a + b) / values.length;
+    return double.parse(average.toStringAsFixed(3));
+  }
+
+  final applied = qualities
+      .where((q) => q['gray_card_correction_applied'] == true)
+      .length;
+  final reason = qualities
+      .map((q) => q['gray_card_reason'])
+      .firstWhere(
+        (r) => r != null && r.toString().isNotEmpty,
+        orElse: () => null,
+      );
+  return <String, dynamic>{
+    'gray_card_marked': qualities.any((q) => q['gray_card_marked'] == true),
+    'gray_card_mean_L': mean('gray_card_mean_L'),
+    'gray_card_mean_a': mean('gray_card_mean_a'),
+    'gray_card_mean_b': mean('gray_card_mean_b'),
+    'gray_card_correction_applied': applied == qualities.length,
+    'gray_card_frames_applied': applied,
+    'gray_card_reason': reason,
+  };
+}
+
 MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
   List<Map<String, dynamic>> responses, {
   required int requestedFrames,
@@ -681,6 +727,16 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     ..['metric_extraction_paths'] = resolvedExtractionPaths
     ..['baseline_metric_extraction_paths'] = resolvedBaselineExtractionPaths;
   response['metrics'] = metricsNode;
+  final grayCardSummary = summarizeGrayCardFrames(successfulResponses);
+  if (grayCardSummary.isNotEmpty) {
+    final firstQuality = _dynamicMap(first['image_quality']).isNotEmpty
+        ? _dynamicMap(first['image_quality'])
+        : _dynamicMap(_dynamicMap(first['metrics'])['image_quality']);
+    response['image_quality'] = <String, dynamic>{
+      ...firstQuality,
+      ...grayCardSummary,
+    };
+  }
   response['multi_frame_analysis'] = <String, dynamic>{
     'requested_frames': requestedFrames,
     'successful_frames': successfulResponses.length,
@@ -1177,6 +1233,12 @@ List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
       'cheek_p10_a_after_wb': imageQuality['redness_cheek_p10_a_after_wb'],
       'cheek_p10_a_before_wb': imageQuality['redness_cheek_p10_a_before_wb'],
       'localized_redness': metricMatrix['localized_redness'],
+      'gray_card_marked': imageQuality['gray_card_marked'],
+      'gray_card_mean_L': imageQuality['gray_card_mean_L'],
+      'gray_card_mean_a': imageQuality['gray_card_mean_a'],
+      'gray_card_mean_b': imageQuality['gray_card_mean_b'],
+      'gray_card_correction_applied':
+          imageQuality['gray_card_correction_applied'],
       'face_skin_pixels': imageQuality['face_skin_pixels'],
       'pore_roi_pixels': imageQuality['pore_roi_pixels'],
       'u_zone_pixels': imageQuality['u_zone_pixels'],

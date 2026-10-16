@@ -773,8 +773,15 @@ def normalize_lighting_and_shadows(bgr_image: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
 
 
-def _apply_capture_white_balance_correction(bgr_image: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """Apply a restrained LAB neutral-axis correction before metric extraction."""
+def _apply_capture_white_balance_correction(
+    bgr_image: np.ndarray, gray_card_sample: Dict[str, Any] | None = None
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Apply a restrained LAB neutral-axis correction before metric extraction.
+
+    With an accepted gray-card sample (see _sample_gray_card), the card's
+    measured a*/b* replace the automatic neutral-pixel estimate: the same
+    a*/b* shift is applied so the card lands on neutral (128). L* is not
+    changed. Without one, this is the automatic path unchanged."""
     if bgr_image is None or bgr_image.size == 0:
         return bgr_image, {
             "applied": False,
@@ -782,6 +789,20 @@ def _apply_capture_white_balance_correction(bgr_image: np.ndarray) -> Tuple[np.n
         }
 
     lab = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2LAB)
+    if gray_card_sample is not None and gray_card_sample.get("accepted"):
+        a_adjustment = float(gray_card_sample["mean_a"]) - 128.0
+        b_adjustment = float(gray_card_sample["mean_b"]) - 128.0
+        corrected_lab = lab.copy().astype(np.float32)
+        corrected_lab[:, :, 1] = np.clip(corrected_lab[:, :, 1] - a_adjustment, 0.0, 255.0)
+        corrected_lab[:, :, 2] = np.clip(corrected_lab[:, :, 2] - b_adjustment, 0.0, 255.0)
+        corrected_bgr = cv2.cvtColor(corrected_lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
+        return corrected_bgr, {
+            "applied": True,
+            "method": "gray_card_reference",
+            "a_adjustment": round(a_adjustment, 3),
+            "b_adjustment": round(b_adjustment, 3),
+        }
+
     l_channel = lab[:, :, 0]
     a_channel = lab[:, :, 1].astype(np.float32)
     b_channel = lab[:, :, 2].astype(np.float32)
@@ -827,18 +848,14 @@ def _apply_capture_white_balance_correction(bgr_image: np.ndarray) -> Tuple[np.n
     }
 
 
-# Optional gray-card calibration. A user-marked card region's mean LAB is
-# measured against a neutral target to produce a correction (delta_a,
-# delta_b, l_gain) that a future integration can apply to a SEPARATE copy
-# of the analyzed image before redness/rosacea/pigment scoring. This must
-# never be applied to (or derived from) the image used by
-# assess_and_normalize_image()'s quality_profile (lighting_mean_l,
-# lighting_balance_score, confidence) — that signal has to keep reflecting
-# the true, uncorrected capture, or a genuinely dim photo could have its
-# low-light confidence downgrade masked by the very correction meant to fix
-# its color, not its exposure gate. Whatever integration consumes this must
-# insert its correction strictly after assess_and_normalize_image() returns
-# and before analyze_skin_patch()/_compute_canonical_patch_metrics() runs.
+# Optional gray-card calibration. A user-marked card region is sampled from
+# the decoded image before any white balance (_sample_gray_card); when
+# compute_gray_card_correction() accepts it, its mean a*/b* replace the
+# automatic neutral-pixel estimate in _apply_capture_white_balance_correction
+# -- the same a*/b* shift, no other pixel change. L* is never corrected, so
+# lighting_mean_l and the low-light confidence gate keep describing the true
+# exposure; chroma_cast is measured after the shift, as it already is for the
+# automatic correction (whole_image_mean_*_before_wb keep the raw cast).
 #
 # Target: OpenCV's 8-bit LAB encodes neutral chroma as a*=b*=128 by
 # definition. A standard 18%-reflectance gray card measures L*≈49-50 under
@@ -981,34 +998,17 @@ def parse_gray_card_region(raw: Any) -> Dict[str, float] | None:
     return region
 
 
-def apply_gray_card_white_balance(
+def _sample_gray_card(
     image_bgr: np.ndarray, region: Dict[str, float] | None
-) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """Optional gray-card correction, applied to the normalized image after
-    assess_and_normalize_image() and before analyze_skin_patch() (see the
-    note above GRAY_CARD_NEUTRAL_TARGET), so lighting quality signals keep
-    describing the uncorrected capture.
-
-    With a valid card region, the card's mean B, G, R are measured and each
-    channel gets gain = (mean of the three channel means) / channel mean, so
-    the card becomes neutral gray at its own brightness; the gains are
-    applied to the whole image. The region must pass
-    compute_gray_card_correction()'s existing plausibility checks (size,
-    exposure, chroma); each gain is clamped to the existing
-    GRAY_CARD_MIN_L_GAIN..GRAY_CARD_MAX_L_GAIN range. Without a region, or
-    with an invalid one, the image is returned unchanged.
-    """
-    skipped = {
-        "gray_card_used": False,
-        "gray_card_gain_r": None,
-        "gray_card_gain_g": None,
-        "gray_card_gain_b": None,
-    }
+) -> Dict[str, Any]:
+    """Mean 8-bit LAB inside a marked gray-card box (fractions of the
+    uploaded image), taken from the decoded image before any white balance,
+    plus whether compute_gray_card_correction()'s existing checks (size,
+    exposure, chroma) accept it as a neutral reference."""
     if region is None:
-        return image_bgr, {**skipped, "gray_card_reason": "no_card_region"}
+        return {"marked": False}
     if image_bgr is None or image_bgr.size == 0:
-        return image_bgr, {**skipped, "gray_card_reason": "empty_image"}
-
+        return {"marked": True, "accepted": False, "reason": "empty_image"}
     height, width = image_bgr.shape[:2]
     x0 = int(round(region["x"] * width))
     y0 = int(round(region["y"] * height))
@@ -1024,40 +1024,33 @@ def apply_gray_card_white_balance(
         or x1 <= x0
         or y1 <= y0
     ):
-        return image_bgr, {**skipped, "gray_card_reason": "region_out_of_bounds"}
+        return {"marked": True, "accepted": False, "reason": "region_out_of_bounds"}
+    card_lab = cv2.cvtColor(image_bgr[y0:y1, x0:x1], cv2.COLOR_BGR2LAB)
+    flat = card_lab.reshape(-1, 3).astype(np.float64)
+    check = compute_gray_card_correction(card_lab)
+    return {
+        "marked": True,
+        "accepted": bool(check.get("accepted")),
+        "reason": None if check.get("accepted") else str(check.get("reason", "rejected")),
+        "mean_l": float(flat[:, 0].mean()),
+        "mean_a": float(flat[:, 1].mean()),
+        "mean_b": float(flat[:, 2].mean()),
+        "region_pixels": int(flat.shape[0]),
+    }
 
-    card = image_bgr[y0:y1, x0:x1]
-    check = compute_gray_card_correction(cv2.cvtColor(card, cv2.COLOR_BGR2LAB))
-    if not check.get("accepted"):
-        return image_bgr, {
-            **skipped,
-            "gray_card_reason": str(check.get("reason", "rejected")),
-        }
 
-    means_bgr = card.reshape(-1, 3).astype(np.float64).mean(axis=0)
-    if np.any(means_bgr <= 0.0):
-        return image_bgr, {**skipped, "gray_card_reason": "zero_channel"}
-    target = float(np.mean(means_bgr))
-    gains_bgr = np.clip(
-        target / means_bgr, GRAY_CARD_MIN_L_GAIN, GRAY_CARD_MAX_L_GAIN
-    )
-    corrected = np.clip(
-        image_bgr.astype(np.float32) * gains_bgr.astype(np.float32), 0.0, 255.0
-    ).astype(np.uint8)
-    card_after = corrected[y0:y1, x0:x1].reshape(-1, 3).astype(np.float64).mean(axis=0)
-
-    def rgb(values: np.ndarray, digits: int) -> list[float]:
-        return [round(float(values[2]), digits), round(float(values[1]), digits), round(float(values[0]), digits)]
-
-    return corrected, {
-        "gray_card_used": True,
-        "gray_card_gain_r": round(float(gains_bgr[2]), 4),
-        "gray_card_gain_g": round(float(gains_bgr[1]), 4),
-        "gray_card_gain_b": round(float(gains_bgr[0]), 4),
-        "gray_card_region": {k: round(v, 4) for k, v in region.items()},
-        "gray_card_region_pixels": int(card.shape[0] * card.shape[1]),
-        "gray_card_mean_rgb_before": rgb(means_bgr, 2),
-        "gray_card_mean_rgb_after": rgb(card_after, 2),
+def _gray_card_quality_fields(sample: Dict[str, Any], applied: bool) -> Dict[str, Any]:
+    """image_quality fields for the gray card: the raw pre-white-balance
+    sample (L* in 8-bit 0-255 like lighting_mean_l; a*/b* signed like the
+    other image_quality color fields) and whether it drove the shift."""
+    marked = bool(sample.get("marked"))
+    return {
+        "gray_card_marked": marked,
+        "gray_card_mean_L": round(sample["mean_l"], 2) if "mean_l" in sample else None,
+        "gray_card_mean_a": _signed_lab_value(sample.get("mean_a")),
+        "gray_card_mean_b": _signed_lab_value(sample.get("mean_b")),
+        "gray_card_correction_applied": bool(applied),
+        "gray_card_reason": sample.get("reason") if marked else None,
     }
 
 
@@ -1163,16 +1156,19 @@ def _signed_lab_value(value: float | None) -> float | None:
     return round(float(value) - 128.0, 3)
 
 
-def assess_and_normalize_image(image_bytes: bytes) -> Tuple[np.ndarray, Dict[str, Any]]:
+def assess_and_normalize_image(
+    image_bytes: bytes, gray_card_region: Dict[str, float] | None = None
+) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Run image quality assessment and lighting normalization before extraction."""
     normalized_bgr, quality_profile, _ = _assess_and_normalize_image_with_pre_white_balance(
-        image_bytes
+        image_bytes, gray_card_region
     )
     return normalized_bgr, quality_profile
 
 
 def _assess_and_normalize_image_with_pre_white_balance(
     image_bytes: bytes,
+    gray_card_region: Dict[str, float] | None = None,
 ) -> Tuple[np.ndarray, Dict[str, Any], np.ndarray]:
     """Same as assess_and_normalize_image, plus a diagnostic-only copy of the
     image with the identical luminance normalization but no white balance.
@@ -1190,7 +1186,13 @@ def _assess_and_normalize_image_with_pre_white_balance(
     pre_wb_lab = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2LAB)
     pre_wb_l, pre_wb_a, pre_wb_b = cv2.split(pre_wb_lab)
 
-    white_balanced_bgr, white_balance_profile = _apply_capture_white_balance_correction(image_bgr)
+    # Optional gray card: sampled here, before any white balance, and used
+    # as the neutral reference for the shift below (see
+    # _apply_capture_white_balance_correction). No region: unchanged path.
+    gray_card_sample = _sample_gray_card(image_bgr, gray_card_region)
+    white_balanced_bgr, white_balance_profile = _apply_capture_white_balance_correction(
+        image_bgr, gray_card_sample
+    )
     lab = cv2.cvtColor(white_balanced_bgr, cv2.COLOR_BGR2LAB)
     l_channel, a_channel, b_channel = cv2.split(lab)
 
@@ -1260,6 +1262,10 @@ def _assess_and_normalize_image_with_pre_white_balance(
         "whole_image_mean_b_after_wb": _signed_lab_value(float(np.mean(b_channel))),
         "wb_a_adjustment_post_clip": round(wb_a_post_clip, 3),
         "wb_b_adjustment_post_clip": round(wb_b_post_clip, 3),
+        **_gray_card_quality_fields(
+            gray_card_sample,
+            applied=white_balance_profile.get("method") == "gray_card_reference",
+        ),
     }, pre_white_balance_bgr
 
 
@@ -8007,14 +8013,12 @@ async def analyze_skin(request: Request):
             normalized_image,
             quality_profile,
             pre_white_balance_image,
-        ) = _assess_and_normalize_image_with_pre_white_balance(image_data)
-        normalized_image, gray_card_profile = apply_gray_card_white_balance(
-            normalized_image,
+        ) = _assess_and_normalize_image_with_pre_white_balance(
+            image_data,
             parse_gray_card_region(
                 body.get("grayCardRegion") or body.get("gray_card_region")
             ),
         )
-        quality_profile = {**quality_profile, **gray_card_profile}
         logger.info("/api/analyze-skin request matrix accepted for inference.")
         validate_camera_hardware_qa(normalized_image)
         result = analyze_skin_patch(
@@ -8154,14 +8158,11 @@ async def analyze_skin_single(
                 img_bgr,
                 quality_profile,
                 pre_white_balance_image,
-            ) = _assess_and_normalize_image_with_pre_white_balance(contents)
+            ) = _assess_and_normalize_image_with_pre_white_balance(
+                contents, parse_gray_card_region(gray_card_region)
+            )
         except Exception as exc:
             raise HTTPException(status_code=400, detail="Corrupted image encoding matrix parameters.") from exc
-
-        img_bgr, gray_card_profile = apply_gray_card_white_balance(
-            img_bgr, parse_gray_card_region(gray_card_region)
-        )
-        quality_profile = {**quality_profile, **gray_card_profile}
 
         logger.info("/api/skin/analyze-single request matrix accepted for inference.")
 
