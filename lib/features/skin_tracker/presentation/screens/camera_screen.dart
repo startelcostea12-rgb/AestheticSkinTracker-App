@@ -120,6 +120,59 @@ class ReferenceAlignmentRow extends StatelessWidget {
   }
 }
 
+/// Header of the capture controls card (the one holding Reference
+/// Alignment): title and template-mode label share the row and wrap or
+/// ellipsize instead of overflowing on narrow phones (320-390 wide).
+class CaptureControlsHeader extends StatelessWidget {
+  const CaptureControlsHeader({super.key, required this.modeLabel});
+
+  final String modeLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          Icons.fact_check_outlined,
+          color: MyApp.goldShimmer,
+          size: 20,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          flex: 3,
+          child: Text(
+            'Progress Capture Controls',
+            key: const ValueKey('capture-controls-title'),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: MyApp.textBrown,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          flex: 2,
+          child: Text(
+            modeLabel,
+            key: const ValueKey('capture-controls-mode'),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.right,
+            style: TextStyle(
+              color: MyApp.textBrown.withValues(alpha: 0.62),
+              fontWeight: FontWeight.w600,
+              fontSize: 11.3,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 Map<String, dynamic>? buildBaselineMetricMatrix(Map<String, double>? refMetrics) {
   if (refMetrics == null || refMetrics.isEmpty) return null;
 
@@ -7675,32 +7728,7 @@ class _CameraScreenState extends State<CameraScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(
-                Icons.fact_check_outlined,
-                color: MyApp.goldShimmer,
-                size: 20,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Progress Capture Controls',
-                style: TextStyle(
-                  color: MyApp.textBrown,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const Spacer(),
-              Text(
-                modeLabel,
-                style: TextStyle(
-                  color: MyApp.textBrown.withValues(alpha: 0.62),
-                  fontWeight: FontWeight.w600,
-                  fontSize: 11.3,
-                ),
-              ),
-            ],
-          ),
+          CaptureControlsHeader(modeLabel: modeLabel),
           const SizedBox(height: 12),
           Container(
             width: double.infinity,
