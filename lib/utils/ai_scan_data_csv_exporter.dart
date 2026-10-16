@@ -77,6 +77,11 @@ class AiScanDataCsvExporter {
     'image_quality.redness_cheek_p10_a_before_wb',
     'image_quality.redness_cheek_p95_a_before_wb',
     'image_quality.redness_baseline_cheek_p95_a',
+    'image_quality.gray_card_used',
+    'image_quality.gray_card_gain_r',
+    'image_quality.gray_card_gain_g',
+    'image_quality.gray_card_gain_b',
+    'image_quality.gray_card_reason',
   ];
 
   static const List<String> _metricFields = <String>[

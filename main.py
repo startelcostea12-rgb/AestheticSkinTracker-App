@@ -951,6 +951,116 @@ def compute_gray_card_correction(card_region_lab: np.ndarray) -> Dict[str, Any]:
     }
 
 
+def parse_gray_card_region(raw: Any) -> Dict[str, float] | None:
+    """A gray-card region from the request, as fractions of the uploaded
+    image: {"x", "y", "w", "h"} (JSON object or string) or [x, y, w, h].
+    Returns None when absent or malformed, which keeps the correction off."""
+    if raw is None:
+        return None
+    value = raw
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode("utf-8", errors="ignore")
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            value = json.loads(text)
+        except (TypeError, ValueError):
+            return None
+    if isinstance(value, (list, tuple)) and len(value) == 4:
+        value = dict(zip(("x", "y", "w", "h"), value))
+    if not isinstance(value, dict):
+        return None
+    try:
+        region = {key: float(value[key]) for key in ("x", "y", "w", "h")}
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in region.values()):
+        return None
+    return region
+
+
+def apply_gray_card_white_balance(
+    image_bgr: np.ndarray, region: Dict[str, float] | None
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Optional gray-card correction, applied to the normalized image after
+    assess_and_normalize_image() and before analyze_skin_patch() (see the
+    note above GRAY_CARD_NEUTRAL_TARGET), so lighting quality signals keep
+    describing the uncorrected capture.
+
+    With a valid card region, the card's mean B, G, R are measured and each
+    channel gets gain = (mean of the three channel means) / channel mean, so
+    the card becomes neutral gray at its own brightness; the gains are
+    applied to the whole image. The region must pass
+    compute_gray_card_correction()'s existing plausibility checks (size,
+    exposure, chroma); each gain is clamped to the existing
+    GRAY_CARD_MIN_L_GAIN..GRAY_CARD_MAX_L_GAIN range. Without a region, or
+    with an invalid one, the image is returned unchanged.
+    """
+    skipped = {
+        "gray_card_used": False,
+        "gray_card_gain_r": None,
+        "gray_card_gain_g": None,
+        "gray_card_gain_b": None,
+    }
+    if region is None:
+        return image_bgr, {**skipped, "gray_card_reason": "no_card_region"}
+    if image_bgr is None or image_bgr.size == 0:
+        return image_bgr, {**skipped, "gray_card_reason": "empty_image"}
+
+    height, width = image_bgr.shape[:2]
+    x0 = int(round(region["x"] * width))
+    y0 = int(round(region["y"] * height))
+    x1 = int(round((region["x"] + region["w"]) * width))
+    y1 = int(round((region["y"] + region["h"]) * height))
+    if (
+        region["w"] <= 0
+        or region["h"] <= 0
+        or x0 < 0
+        or y0 < 0
+        or x1 > width
+        or y1 > height
+        or x1 <= x0
+        or y1 <= y0
+    ):
+        return image_bgr, {**skipped, "gray_card_reason": "region_out_of_bounds"}
+
+    card = image_bgr[y0:y1, x0:x1]
+    check = compute_gray_card_correction(cv2.cvtColor(card, cv2.COLOR_BGR2LAB))
+    if not check.get("accepted"):
+        return image_bgr, {
+            **skipped,
+            "gray_card_reason": str(check.get("reason", "rejected")),
+        }
+
+    means_bgr = card.reshape(-1, 3).astype(np.float64).mean(axis=0)
+    if np.any(means_bgr <= 0.0):
+        return image_bgr, {**skipped, "gray_card_reason": "zero_channel"}
+    target = float(np.mean(means_bgr))
+    gains_bgr = np.clip(
+        target / means_bgr, GRAY_CARD_MIN_L_GAIN, GRAY_CARD_MAX_L_GAIN
+    )
+    corrected = np.clip(
+        image_bgr.astype(np.float32) * gains_bgr.astype(np.float32), 0.0, 255.0
+    ).astype(np.uint8)
+    card_after = corrected[y0:y1, x0:x1].reshape(-1, 3).astype(np.float64).mean(axis=0)
+
+    def rgb(values: np.ndarray, digits: int) -> list[float]:
+        return [round(float(values[2]), digits), round(float(values[1]), digits), round(float(values[0]), digits)]
+
+    return corrected, {
+        "gray_card_used": True,
+        "gray_card_gain_r": round(float(gains_bgr[2]), 4),
+        "gray_card_gain_g": round(float(gains_bgr[1]), 4),
+        "gray_card_gain_b": round(float(gains_bgr[0]), 4),
+        "gray_card_region": {k: round(v, 4) for k, v in region.items()},
+        "gray_card_region_pixels": int(card.shape[0] * card.shape[1]),
+        "gray_card_mean_rgb_before": rgb(means_bgr, 2),
+        "gray_card_mean_rgb_after": rgb(card_after, 2),
+    }
+
+
 def _compute_ssim_gray(gray_a: np.ndarray, gray_b: np.ndarray) -> float:
     if gray_a.size == 0 or gray_b.size == 0:
         return 0.0
@@ -7919,6 +8029,13 @@ async def analyze_skin(request: Request):
             quality_profile,
             pre_white_balance_image,
         ) = _assess_and_normalize_image_with_pre_white_balance(image_data)
+        normalized_image, gray_card_profile = apply_gray_card_white_balance(
+            normalized_image,
+            parse_gray_card_region(
+                body.get("grayCardRegion") or body.get("gray_card_region")
+            ),
+        )
+        quality_profile = {**quality_profile, **gray_card_profile}
         logger.info("/api/analyze-skin request matrix accepted for inference.")
         validate_camera_hardware_qa(normalized_image)
         result = analyze_skin_patch(
@@ -8030,6 +8147,7 @@ async def analyze_skin_single(
     baseline_pose_template: str | None = Form(None),
     guide_type: str | None = Form(None),
     baseline_guide_type: str | None = Form(None),
+    gray_card_region: str | None = Form(None),
 ):
     try:
         ensure_pipeline_ready()
@@ -8060,6 +8178,11 @@ async def analyze_skin_single(
             ) = _assess_and_normalize_image_with_pre_white_balance(contents)
         except Exception as exc:
             raise HTTPException(status_code=400, detail="Corrupted image encoding matrix parameters.") from exc
+
+        img_bgr, gray_card_profile = apply_gray_card_white_balance(
+            img_bgr, parse_gray_card_region(gray_card_region)
+        )
+        quality_profile = {**quality_profile, **gray_card_profile}
 
         logger.info("/api/skin/analyze-single request matrix accepted for inference.")
 

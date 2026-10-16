@@ -16,7 +16,7 @@
 // The analysis engine itself is the shared `AcneRosaceaPhotoAnalyzer`,
 // so derivations and scoring stay consistent with the tracker.
 
-import 'dart:convert' show base64Decode, base64Encode, utf8;
+import 'dart:convert' show base64Decode, base64Encode, jsonEncode, utf8;
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -374,6 +374,7 @@ Map<String, String> buildAiSkinAnalysisBackendFields({
   String? baselinePoseTemplate,
   String? guideType,
   String? baselineGuideType,
+  ({double x, double y, double w, double h})? grayCardRegion,
 }) {
   return {
     if ((procedureType ?? '').trim().isNotEmpty)
@@ -393,6 +394,16 @@ Map<String, String> buildAiSkinAnalysisBackendFields({
     if ((guideType ?? '').trim().isNotEmpty) 'guide_type': guideType!.trim(),
     if ((baselineGuideType ?? '').trim().isNotEmpty)
       'baseline_guide_type': baselineGuideType!.trim(),
+    // Optional gray-card white balance (main.py
+    // apply_gray_card_white_balance): the card's box as fractions of the
+    // uploaded frame. Omitted (correction off) unless a region is supplied.
+    if (grayCardRegion != null)
+      'gray_card_region': jsonEncode({
+        'x': grayCardRegion.x,
+        'y': grayCardRegion.y,
+        'w': grayCardRegion.w,
+        'h': grayCardRegion.h,
+      }),
   };
 }
 
