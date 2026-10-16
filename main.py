@@ -2237,26 +2237,6 @@ def _extract_native_resolution_pore_roi(
     if mask_pixels <= 0:
         return None, None, 0
 
-    # Final explicit cap: nose/inner-cheek pores should remain in a compact
-    # T-zone window, not a whole-face mask.
-    if mask_pixels > 25000:
-        ys, xs = np.where(skin_locked_mask > 0)
-        if xs.size > 0 and ys.size > 0:
-            cx = int(np.mean(xs))
-            cy = int(np.mean(ys))
-            box_w = int(np.clip(min(w * 0.14, 100.0), 60.0, 100.0))
-            box_h = int(np.clip(min(h * 0.18, 90.0), 50.0, 90.0))
-            x0 = max(0, cx - box_w // 2)
-            x1 = min(w, cx + box_w // 2)
-            y0 = max(0, cy - box_h // 2)
-            y1 = min(h, cy + box_h // 2)
-            tight_mask = np.zeros((h, w), dtype=np.uint8)
-            tight_mask[y0:y1, x0:x1] = 255
-            skin_locked_mask = cv2.bitwise_and(skin_locked_mask, tight_mask)
-            mask_pixels = int(cv2.countNonZero(skin_locked_mask))
-            if mask_pixels <= 0:
-                return None, None, 0
-
     ys, xs = np.where(skin_locked_mask > 0)
     if xs.size == 0 or ys.size == 0:
         return None, None, 0
