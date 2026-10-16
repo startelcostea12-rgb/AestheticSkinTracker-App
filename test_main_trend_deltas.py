@@ -188,6 +188,8 @@ class SourceResolutionTrendHonestyTests(unittest.TestCase):
             820,
             1000,
             750,
+            current_formula_version=2,
+            baseline_formula_version=2,
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -251,6 +253,8 @@ class TrendLockReasonTests(unittest.TestCase):
             750,
             1000,
             750,
+            current_formula_version=2,
+            baseline_formula_version=2,
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -266,6 +270,8 @@ class TrendLockReasonTests(unittest.TestCase):
             750,
             1000,
             750,
+            current_formula_version=2,
+            baseline_formula_version=2,
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -396,6 +402,8 @@ class TrendLockReasonTests(unittest.TestCase):
             750,
             1000,
             750,
+            current_formula_version=2,
+            baseline_formula_version=2,
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -411,6 +419,8 @@ class TrendLockReasonTests(unittest.TestCase):
             750,
             1000,
             750,
+            current_formula_version=2,
+            baseline_formula_version=2,
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -948,6 +958,8 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         delta, status = _trend_delta_and_status(
             "wrinkle_load", 10.0, 20.0, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
+            current_formula_version=2,
+            baseline_formula_version=2,
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -967,6 +979,8 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         delta, status = _trend_delta_and_status(
             "diffuse_flushing_erythema", 1.5, 1.0, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
+            current_formula_version=2,
+            baseline_formula_version=2,
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -986,6 +1000,8 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         delta, status = _trend_delta_and_status(
             "localized_redness", 15.0, 10.0, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
+            current_formula_version=2,
+            baseline_formula_version=2,
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -1004,6 +1020,8 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         delta, status = _trend_delta_and_status(
             "localized_redness", 35.0, 10.0, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
+            current_formula_version=2,
+            baseline_formula_version=2,
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -1018,6 +1036,8 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         delta, status = _trend_delta_and_status(
             "rosacea_severity", 14.0, 10.0, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
+            current_formula_version=2,
+            baseline_formula_version=2,
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -1039,6 +1059,8 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         delta, status = _trend_delta_and_status(
             "rosacea_severity", current, baseline, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
+            current_formula_version=2,
+            baseline_formula_version=2,
             current_pose_template='Front',
             baseline_pose_template='Front',
             current_guide_type='facial',
@@ -1064,20 +1086,20 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
 
 
 class NormalizeMetricFormulaVersionsTests(unittest.TestCase):
-    def test_none_input_defaults_every_metric_to_1(self) -> None:
+    def test_none_input_gives_no_versions(self) -> None:
         result = _normalize_metric_formula_versions(None, ["texture_smoothness", "wrinkle_load"])
-        self.assertEqual(result, {"texture_smoothness": 1, "wrinkle_load": 1})
+        self.assertEqual(result, {})
 
-    def test_empty_string_defaults_every_metric_to_1(self) -> None:
+    def test_empty_string_gives_no_versions(self) -> None:
         result = _normalize_metric_formula_versions("", ["texture_smoothness"])
-        self.assertEqual(result, {"texture_smoothness": 1})
+        self.assertEqual(result, {})
 
-    def test_a_provided_version_overrides_the_default(self) -> None:
+    def test_only_provided_versions_are_kept(self) -> None:
         result = _normalize_metric_formula_versions(
             {"texture_smoothness": 2},
             ["texture_smoothness", "wrinkle_load"],
         )
-        self.assertEqual(result, {"texture_smoothness": 2, "wrinkle_load": 1})
+        self.assertEqual(result, {"texture_smoothness": 2})
 
     def test_json_string_payload_is_parsed(self) -> None:
         result = _normalize_metric_formula_versions(
@@ -1086,36 +1108,33 @@ class NormalizeMetricFormulaVersionsTests(unittest.TestCase):
         )
         self.assertEqual(result, {"texture_smoothness": 2})
 
-    def test_malformed_json_string_falls_back_to_defaults(self) -> None:
+    def test_malformed_json_string_gives_no_versions(self) -> None:
         result = _normalize_metric_formula_versions(
             "{not valid json",
             ["texture_smoothness"],
         )
-        self.assertEqual(result, {"texture_smoothness": 1})
+        self.assertEqual(result, {})
 
-    def test_a_non_numeric_value_falls_back_to_the_default_for_that_key(self) -> None:
+    def test_a_non_numeric_value_is_left_missing(self) -> None:
         result = _normalize_metric_formula_versions(
             {"texture_smoothness": "not-a-number"},
             ["texture_smoothness"],
         )
-        self.assertEqual(result, {"texture_smoothness": 1})
+        self.assertEqual(result, {})
 
     def test_a_key_outside_the_known_metric_list_is_ignored(self) -> None:
         result = _normalize_metric_formula_versions(
             {"not_a_real_metric": 5},
             ["texture_smoothness"],
         )
-        self.assertEqual(result, {"texture_smoothness": 1})
+        self.assertEqual(result, {})
 
     def test_a_canonical_key_is_applied_directly(self) -> None:
         result = _normalize_metric_formula_versions(
             {"glabellar_wrinkle_depth": 4},
             ["texture_smoothness", "glabellar_wrinkle_depth"],
         )
-        self.assertEqual(
-            result,
-            {"texture_smoothness": 1, "glabellar_wrinkle_depth": 4},
-        )
+        self.assertEqual(result, {"glabellar_wrinkle_depth": 4})
 
     def test_baseline_normalizer_keeps_missing_versions_missing(self) -> None:
         self.assertEqual(
@@ -1365,12 +1384,38 @@ class FormulaVersionMismatchGateTests(unittest.TestCase):
         self.assertEqual(status, "stable")
         self.assertEqual(delta, 0.0)
 
-    def test_missing_versions_default_to_1_and_are_therefore_comparable(
-        self,
-    ) -> None:
-        # Neither side specifies a version (an older scan, or a metric with
-        # no registry entry) -- both default to 1 and compare normally.
-        delta, status = _trend_delta_and_status(
+    def test_missing_versions_lock_as_formula_version_mismatch(self) -> None:
+        # A missing version on either side is never assumed to be 1: the
+        # metric is held to stable and the reason is formula_version_mismatch.
+        for current_version, baseline_version in ((None, None), (2, None), (None, 2)):
+            with self.subTest(current=current_version, baseline=baseline_version):
+                delta, status = _trend_delta_and_status(
+                    "wrinkle_load", 10.0, 20.0, "primary_roi", "primary_roi", 8.0,
+                    "normal", "normal", 1000, 750, 1000, 750,
+                    current_formula_version=current_version,
+                    baseline_formula_version=baseline_version,
+                    current_pose_template='Front',
+                    baseline_pose_template='Front',
+                    current_guide_type='facial',
+                    baseline_guide_type='facial',
+                )
+                self.assertEqual(status, "stable")
+                self.assertEqual(delta, 0.0)
+                reason = _trend_lock_reason(
+                    "primary_roi", "primary_roi", "normal", "normal",
+                    1000, 750, 1000, 750,
+                    current_formula_version=current_version,
+                    baseline_formula_version=baseline_version,
+                    current_pose_template='Front',
+                    baseline_pose_template='Front',
+                    current_guide_type='facial',
+                    baseline_guide_type='facial',
+                )
+                self.assertEqual(reason, "formula_version_mismatch")
+
+    def test_omitting_versions_entirely_locks(self) -> None:
+        # No version arguments at all: the defaults are now None, not 1.
+        _, status = _trend_delta_and_status(
             "wrinkle_load", 10.0, 20.0, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
             current_pose_template='Front',
@@ -1378,8 +1423,41 @@ class FormulaVersionMismatchGateTests(unittest.TestCase):
             current_guide_type='facial',
             baseline_guide_type='facial',
         )
+        self.assertEqual(status, "stable")
+        reason = _trend_lock_reason(
+            "primary_roi", "primary_roi", "normal", "normal",
+            1000, 750, 1000, 750,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
+        )
+        self.assertEqual(reason, "formula_version_mismatch")
+
+    def test_stored_v2_vs_current_v2_still_compares(self) -> None:
+        delta, status = _trend_delta_and_status(
+            "wrinkle_load", 10.0, 20.0, "primary_roi", "primary_roi", 8.0,
+            "normal", "normal", 1000, 750, 1000, 750,
+            current_formula_version=2,
+            baseline_formula_version=2,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
+        )
         self.assertEqual(status, "improved")
         self.assertEqual(delta, 50.0)
+        reason = _trend_lock_reason(
+            "primary_roi", "primary_roi", "normal", "normal",
+            1000, 750, 1000, 750,
+            current_formula_version=2,
+            baseline_formula_version=2,
+            current_pose_template='Front',
+            baseline_pose_template='Front',
+            current_guide_type='facial',
+            baseline_guide_type='facial',
+        )
+        self.assertIsNone(reason)
 
     def test_lock_reason_reports_formula_version_mismatch(self) -> None:
         reason = _trend_lock_reason(
@@ -1503,6 +1581,8 @@ class AngleAndGuideTypeTrendHonestyTests(unittest.TestCase):
             750,
             1000,
             750,
+            current_formula_version=2,
+            baseline_formula_version=2,
             current_pose_template="Front",
             baseline_pose_template="Front",
             current_guide_type="facial",
@@ -1651,6 +1731,8 @@ class AngleAndGuideTypeTrendHonestyTests(unittest.TestCase):
             750,
             1000,
             750,
+            current_formula_version=2,
+            baseline_formula_version=2,
             current_pose_template="Front",
             baseline_pose_template="Front",
             current_guide_type="facial",

@@ -4344,11 +4344,10 @@ def _normalize_metric_extraction_paths(raw: Any, metric_keys: list[str]) -> Dict
 
 
 def _normalize_metric_formula_versions(raw: Any, metric_keys: list[str]) -> Dict[str, int]:
-    """Missing/invalid entries default to 1 -- a scan saved before this
-    field existed, or a metric this session doesn't track a version for,
-    is treated as the original formula, never as a value the trend gate
-    should refuse to compare."""
-    normalized = {key: 1 for key in metric_keys}
+    """Parse only versions that were explicitly given and valid. A missing
+    or invalid entry stays missing (never assumed to be 1), so the trend
+    gate locks that metric as formula_version_mismatch."""
+    normalized: Dict[str, int] = {}
     if raw is None:
         return normalized
 
@@ -4370,7 +4369,7 @@ def _normalize_metric_formula_versions(raw: Any, metric_keys: list[str]) -> Dict
         if not canonical_map:
             continue
         canonical_key = next(iter(canonical_map.keys()))
-        if canonical_key not in normalized:
+        if canonical_key not in metric_keys:
             continue
         try:
             normalized[canonical_key] = int(value)
@@ -4614,8 +4613,8 @@ def _trend_delta_and_status(
     current_source_height: int | None = None,
     baseline_source_width: int | None = None,
     baseline_source_height: int | None = None,
-    current_formula_version: int = 1,
-    baseline_formula_version: int | None = 1,
+    current_formula_version: int | None = None,
+    baseline_formula_version: int | None = None,
     current_pose_template: str | None = None,
     baseline_pose_template: str | None = None,
     current_guide_type: str | None = None,
@@ -4725,8 +4724,8 @@ def _trend_lock_reason(
     current_source_height: int | None = None,
     baseline_source_width: int | None = None,
     baseline_source_height: int | None = None,
-    current_formula_version: int = 1,
-    baseline_formula_version: int | None = 1,
+    current_formula_version: int | None = None,
+    baseline_formula_version: int | None = None,
     current_pose_template: str | None = None,
     baseline_pose_template: str | None = None,
     current_guide_type: str | None = None,
@@ -5159,7 +5158,7 @@ def _compute_trend_deltas(
             current_source_height,
             baseline_source_width,
             baseline_source_height,
-            current_versions_norm.get(key, 1),
+            current_versions_norm.get(key),
             baseline_versions_norm.get(key),
             current_pose_template,
             baseline_pose_template,
@@ -5242,7 +5241,7 @@ def _compute_trend_statuses(
             current_source_height,
             baseline_source_width,
             baseline_source_height,
-            current_versions_norm.get(key, 1),
+            current_versions_norm.get(key),
             baseline_versions_norm.get(key),
             current_pose_template,
             baseline_pose_template,
@@ -5325,7 +5324,7 @@ def _compute_trend_lock_reasons(
             current_source_height,
             baseline_source_width,
             baseline_source_height,
-            current_versions_norm.get(key, 1),
+            current_versions_norm.get(key),
             baseline_versions_norm.get(key),
             current_pose_template,
             baseline_pose_template,
