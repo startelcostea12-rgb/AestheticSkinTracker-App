@@ -1,58 +1,42 @@
-/// Gray-card box marked by the user, mapped into the frame that is actually
-/// uploaded (the square face crop), as fractions of that frame -- the
-/// `gray_card_region` main.py's apply_gray_card_white_balance expects.
+/// Gray-card box marked by the user on the full captured still, and the
+/// patch cut from each still for upload. The card may sit anywhere in the
+/// still (e.g. under the chin, outside the uploaded face square): the patch
+/// is uploaded next to the face crop as `gray_card_image`, and main.py
+/// samples it before white balance (see _sample_gray_card).
 library;
 
-import 'dart:math' as math;
+import 'dart:typed_data';
 
-import '../widgets/image_crop_dialog.dart' show NormalizedSquareCrop;
+import 'package:image/image.dart' as img;
 
 /// A box as fractions of an image: left, top, width, height in 0..1.
 typedef GrayCardRegion = ({double x, double y, double w, double h});
 
-/// Maps [stillBox] (fractions of the full still, [stillWidth] x
-/// [stillHeight] px) into the square crop cut by applyNormalizedSquareCrop
-/// with [crop] -- the same size / position / clamp math -- and returns it as
-/// fractions of that crop. The part of the box outside the crop is dropped.
-/// Returns null when no part of the box falls inside the uploaded crop (the
-/// correction then stays off).
-GrayCardRegion? grayCardRegionInUploadedFrame({
-  required GrayCardRegion stillBox,
-  required int stillWidth,
-  required int stillHeight,
-  required NormalizedSquareCrop crop,
-}) {
-  if (stillWidth <= 0 || stillHeight <= 0) return null;
-  if (stillBox.w <= 0 || stillBox.h <= 0) return null;
-
-  // Same as applyNormalizedSquareCrop.
-  final sourceSize = math.min(stillWidth, stillHeight);
-  final cropSize = (crop.size * sourceSize).round().clamp(1, sourceSize);
-  final cropX = (crop.left * stillWidth).round().clamp(
-    0,
-    stillWidth - cropSize,
+/// The pixels inside [box] (fractions of the decoded still in
+/// [stillBytes]), cut from the same decoded, upright pixels the face crop is
+/// cut from, as lossless PNG so the card's colour is not re-compressed.
+/// Null when the still cannot be decoded or the box has no pixels.
+Uint8List? grayCardPatchFromStill(Uint8List stillBytes, GrayCardRegion box) {
+  img.Image? still;
+  try {
+    still = img.decodeImage(stillBytes);
+  } catch (_) {
+    still = null;
+  }
+  if (still == null) return null;
+  final w = still.width;
+  final h = still.height;
+  final x0 = (box.x * w).round().clamp(0, w);
+  final y0 = (box.y * h).round().clamp(0, h);
+  final x1 = ((box.x + box.w) * w).round().clamp(0, w);
+  final y1 = ((box.y + box.h) * h).round().clamp(0, h);
+  if (x1 <= x0 || y1 <= y0) return null;
+  final patch = img.copyCrop(
+    still,
+    x: x0,
+    y: y0,
+    width: x1 - x0,
+    height: y1 - y0,
   );
-  final cropY = (crop.top * stillHeight).round().clamp(
-    0,
-    stillHeight - cropSize,
-  );
-
-  final left = math.max(stillBox.x * stillWidth, cropX.toDouble());
-  final top = math.max(stillBox.y * stillHeight, cropY.toDouble());
-  final right = math.min(
-    (stillBox.x + stillBox.w) * stillWidth,
-    (cropX + cropSize).toDouble(),
-  );
-  final bottom = math.min(
-    (stillBox.y + stillBox.h) * stillHeight,
-    (cropY + cropSize).toDouble(),
-  );
-  if (right <= left || bottom <= top) return null;
-
-  return (
-    x: (left - cropX) / cropSize,
-    y: (top - cropY) / cropSize,
-    w: (right - left) / cropSize,
-    h: (bottom - top) / cropSize,
-  );
+  return Uint8List.fromList(img.encodePng(patch));
 }

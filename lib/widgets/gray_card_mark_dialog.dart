@@ -1,10 +1,12 @@
 // Optional step after an AI scan capture: the user taps or drags a box on
-// the gray card in the captured still. The square that will be uploaded is
-// outlined, since only the part of the card inside it can be used. Returns
-// the box as fractions of the still, or null when skipped.
+// the gray card anywhere in the captured still (including below the face
+// square, which is outlined for reference). Returns the box as fractions of
+// the full still, or null when skipped. The card patch is cut from the still
+// and uploaded separately (see grayCardPatchFromStill).
 
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
@@ -75,17 +77,6 @@ class _GrayCardMarkDialogState extends State<GrayCardMarkDialog> {
     });
   }
 
-  GrayCardRegion? get _uploadedRegion {
-    final box = _box;
-    if (box == null) return null;
-    return grayCardRegionInUploadedFrame(
-      stillBox: box,
-      stillWidth: widget.stillWidth,
-      stillHeight: widget.stillHeight,
-      crop: widget.uploadCrop,
-    );
-  }
-
   Rect _uploadSquare(Size size) {
     final crop = widget.uploadCrop;
     final shorter = widget.stillWidth < widget.stillHeight
@@ -108,7 +99,7 @@ class _GrayCardMarkDialogState extends State<GrayCardMarkDialog> {
   @override
   Widget build(BuildContext context) {
     final box = _box;
-    final hasUsableBox = _uploadedRegion != null;
+    final hasUsableBox = box != null && box.w > 0 && box.h > 0;
     return AlertDialog(
       title: const Text('Mark the gray card'),
       content: SizedBox(
@@ -118,8 +109,8 @@ class _GrayCardMarkDialogState extends State<GrayCardMarkDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Tap the card, or drag a box over it. Only the part inside the '
-              'outlined square is uploaded.',
+              'Tap the card, or drag a box over it. It can be anywhere in the '
+              'photo, including below the outlined face square.',
             ),
             const SizedBox(height: 10),
             Flexible(
@@ -135,6 +126,9 @@ class _GrayCardMarkDialogState extends State<GrayCardMarkDialog> {
                       final size = constraints.biggest;
                       return GestureDetector(
                         key: const ValueKey('gray_card_mark_area'),
+                        // Start the box where the finger went down, not where
+                        // the drag was recognized after touch slop.
+                        dragStartBehavior: DragStartBehavior.down,
                         onTapUp: (d) => _tap(d.localPosition, size),
                         onPanStart: (d) =>
                             _dragStart = _fraction(d.localPosition, size),
@@ -187,14 +181,6 @@ class _GrayCardMarkDialogState extends State<GrayCardMarkDialog> {
                 ),
               ),
             ),
-            if (box != null && !hasUsableBox) ...[
-              const SizedBox(height: 8),
-              const Text(
-                'That box is outside the uploaded square, so it can\'t be '
-                'used. Move the card closer to your face or skip.',
-                key: ValueKey('gray_card_outside_note'),
-              ),
-            ],
           ],
         ),
       ),

@@ -395,11 +395,11 @@ Map<String, String> buildAiSkinAnalysisBackendFields({
     if ((guideType ?? '').trim().isNotEmpty) 'guide_type': guideType!.trim(),
     if ((baselineGuideType ?? '').trim().isNotEmpty)
       'baseline_guide_type': baselineGuideType!.trim(),
-    // Optional gray-card white balance (main.py
-    // apply_gray_card_white_balance): the card's box as fractions of the
-    // uploaded frame. Omitted (correction off) unless a region is supplied.
+    // Optional gray-card white balance: the marked box as fractions of the
+    // full still (logged and exported; the card's pixels travel separately
+    // as gray_card_image). Omitted unless a card was marked.
     if (grayCardRegion != null)
-      'gray_card_region': jsonEncode({
+      'gray_card_still_region': jsonEncode({
         'x': grayCardRegion.x,
         'y': grayCardRegion.y,
         'w': grayCardRegion.w,
@@ -457,6 +457,16 @@ const Set<String> untrustedTrendVerdictMetricKeys = <String>{
   'diffuse_flushing_erythema',
 };
 
+/// Where the gray-card box was drawn, as logged by main.py: the space
+/// ("full_still" for an uploaded patch) and the box as fractions of it.
+const List<String> grayCardRegionFields = <String>[
+  'gray_card_region_space',
+  'gray_card_region_x',
+  'gray_card_region_y',
+  'gray_card_region_w',
+  'gray_card_region_h',
+];
+
 /// Scan-level gray-card summary over the frames' image_quality (main.py
 /// logs it per frame): marked if any frame was marked, correction applied
 /// only if every frame applied it, and the mean of the frames' raw card
@@ -500,6 +510,11 @@ Map<String, dynamic> summarizeGrayCardFrames(
     'gray_card_correction_applied': applied == qualities.length,
     'gray_card_frames_applied': applied,
     'gray_card_reason': reason,
+    // The same box is sent with every frame; take the first frame's.
+    for (final field in grayCardRegionFields)
+      field: qualities
+          .map((q) => q[field])
+          .firstWhere((v) => v != null, orElse: () => null),
   };
 }
 
@@ -1239,6 +1254,8 @@ List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
       'gray_card_mean_b': imageQuality['gray_card_mean_b'],
       'gray_card_correction_applied':
           imageQuality['gray_card_correction_applied'],
+      'gray_card_reason': imageQuality['gray_card_reason'],
+      for (final field in grayCardRegionFields) field: imageQuality[field],
       'face_skin_pixels': imageQuality['face_skin_pixels'],
       'pore_roi_pixels': imageQuality['pore_roi_pixels'],
       'u_zone_pixels': imageQuality['u_zone_pixels'],
@@ -2181,9 +2198,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
   /// Off by default: when on, the camera offers gray-card marking after the
   /// face crop. [_grayCardRegion] is the marked card as fractions of the
-  /// uploaded crop, sent as gray_card_region; null sends nothing.
+  /// full still and [_grayCardPatches] the card patch per frame; both empty
+  /// when nothing was marked (nothing extra is sent).
   bool _markGrayCard = false;
   GrayCardRegion? _grayCardRegion;
+  List<Uint8List> _grayCardPatches = const [];
 
   /// Set by [_getPreviousMetrics] when prior scans exist for this
   /// procedure/focus area but none share this capture's angle AND guide
@@ -2513,6 +2532,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _capturedPoseTemplate = captured.poseTemplate;
           _capturedGuideType = captured.guideType;
           _grayCardRegion = captured.grayCardRegion;
+          _grayCardPatches = captured.grayCardPatches;
         } else {
           _analysisFrameBytes = const [];
           _analysisFrameExposureMetadata = const [];
@@ -2522,6 +2542,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _capturedPoseTemplate = null;
           _capturedGuideType = null;
           _grayCardRegion = null;
+          _grayCardPatches = const [];
         }
         _explicitBaselineSelection = false;
       });
@@ -2582,6 +2603,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _capturedPoseTemplate = null;
           _capturedGuideType = null;
           _grayCardRegion = null;
+          _grayCardPatches = const [];
         });
         return;
       }
@@ -2599,6 +2621,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         _capturedPoseTemplate = null;
         _capturedGuideType = null;
         _grayCardRegion = null;
+        _grayCardPatches = const [];
       });
     } catch (e) {
       if (!mounted) return;
@@ -2931,6 +2954,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               baselineFormulaVersions: storedBaselineFormulaVersions.isEmpty
                   ? null
                   : storedBaselineFormulaVersions,
+              grayCardPatch: frameNumber - 1 < _grayCardPatches.length
+                  ? _grayCardPatches[frameNumber - 1]
+                  : null,
               allowBackend: true,
             ),
       );

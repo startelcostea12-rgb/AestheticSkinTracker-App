@@ -205,3 +205,84 @@ def test_no_mark_endpoint_matches_the_pipeline_without_a_card(client):
     )["metric_matrix"]
     for key, value in direct.items():
         assert _metrics(plain).get(key) == value, key
+
+
+# ── Card patch from outside the face crop ────────────────────────────────
+
+
+def _face_png() -> bytes:
+    image = cv2.imread(str(FACE_PHOTO))
+    assert image is not None
+    return _png(cv2.resize(image, (512, 512)))
+
+
+def _patch(card_bgr) -> bytes:
+    return _png(np.full((60, 90, 3), card_bgr, dtype=np.uint8))
+
+
+STILL_REGION = {"x": 0.30, "y": 0.82, "w": 0.40, "h": 0.12}  # under the chin
+
+
+def _post_with_patch(client, patch: bytes, **fields):
+    response = client.post(
+        "/api/skin/analyze-single",
+        files={
+            "image": ("face.png", _face_png(), "image/png"),
+            "gray_card_image": ("gray_card.png", patch, "image/png"),
+        },
+        data={"gray_card_still_region": json.dumps(STILL_REGION), **fields},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_patch_from_below_the_face_drives_the_white_balance(client):
+    seen = []
+    real = main.analyze_skin_patch
+
+    def recording(image, *args, **kwargs):
+        seen.append(image.copy())
+        return real(image, *args, **kwargs)
+
+    with mock.patch.object(main, "analyze_skin_patch", recording):
+        payload = _post_with_patch(client, _patch(WARM_CARD_BGR))
+        plain = _post(client, _face_png())
+
+    quality = _image_quality(payload)
+    assert quality["gray_card_marked"] is True
+    assert quality["gray_card_correction_applied"] is True
+    assert quality["gray_card_region_space"] == "full_still"
+    assert (
+        quality["gray_card_region_x"],
+        quality["gray_card_region_y"],
+        quality["gray_card_region_w"],
+        quality["gray_card_region_h"],
+    ) == (0.30, 0.82, 0.40, 0.12)
+    card_lab = cv2.cvtColor(
+        np.full((1, 1, 3), WARM_CARD_BGR, dtype=np.uint8), cv2.COLOR_BGR2LAB
+    )[0, 0].astype(float)
+    assert quality["gray_card_mean_a"] == pytest.approx(card_lab[1] - 128, abs=0.01)
+    # The face image the metrics saw was shifted by the card's offset.
+    shift = cv2.cvtColor(seen[1], cv2.COLOR_BGR2LAB)[:, :, 1].astype(float).mean() - cv2.cvtColor(
+        seen[0], cv2.COLOR_BGR2LAB
+    )[:, :, 1].astype(float).mean()
+    assert shift > 1.0
+    assert _image_quality(plain)["gray_card_marked"] is False
+
+
+@pytest.mark.parametrize(
+    "patch, reason",
+    [
+        (_patch((60, 90, 200)), "implausible_card_color"),
+        (b"not an image", "card_image_unreadable"),
+    ],
+)
+def test_rejected_patch_still_completes_the_scan(client, patch, reason):
+    payload = _post_with_patch(client, patch)
+    quality = _image_quality(payload)
+    assert quality["gray_card_marked"] is True
+    assert quality["gray_card_correction_applied"] is False
+    assert quality["gray_card_reason"] == reason
+    assert quality["gray_card_region_y"] == 0.82
+    plain = _post(client, _face_png())
+    assert _metrics(payload) == _metrics(plain)

@@ -1070,13 +1070,18 @@ class AiSkinAnalysisCaptureResult {
     this.fullStillSharpness,
     this.sharpnessFloor,
     this.grayCardRegion,
+    this.grayCardPatches = const <Uint8List>[],
   });
 
   final String primaryImagePath;
 
-  /// The marked gray card as fractions of the uploaded crop, or null when
-  /// none was marked (see grayCardRegionInUploadedFrame).
+  /// The marked gray card as fractions of the full still (it may lie outside
+  /// the face crop), or null when none was marked.
   final GrayCardRegion? grayCardRegion;
+
+  /// The card patch cut from each frame's still (same order as
+  /// [croppedFrames]; see grayCardPatchFromStill). Empty when unmarked.
+  final List<Uint8List> grayCardPatches;
   final List<Uint8List> croppedFrames;
   final String captureQuality;
 
@@ -5460,9 +5465,11 @@ class _CameraScreenState extends State<CameraScreen>
         extraFields: burstSizeFields,
       );
 
-      // Optional gray card: marked on the full still, mapped into the
-      // uploaded crop. Skipped, or a box outside the crop, sends nothing.
+      // Optional gray card: marked anywhere on the full still (it may lie
+      // outside the face crop). The patch is cut from each frame's still and
+      // uploaded beside that frame. Skipped sends nothing.
       GrayCardRegion? grayCardRegion;
+      var grayCardPatches = const <Uint8List>[];
       if (widget.markGrayCardAfterCapture &&
           decodedStillWidth != null &&
           decodedStillHeight != null) {
@@ -5481,13 +5488,21 @@ class _CameraScreenState extends State<CameraScreen>
         );
         if (!mounted) return;
         if (stillBox != null) {
-          grayCardRegion = grayCardRegionInUploadedFrame(
-            stillBox: stillBox,
-            stillWidth: stillWidth,
-            stillHeight: stillHeight,
-            crop: cropSelection!.region,
-          );
+          final patches = <Uint8List>[];
+          for (final file in capturedFiles) {
+            final patch = grayCardPatchFromStill(
+              await file.readAsBytes(),
+              stillBox,
+            );
+            if (patch == null) break;
+            patches.add(patch);
+          }
+          if (patches.length == capturedFiles.length) {
+            grayCardRegion = stillBox;
+            grayCardPatches = List<Uint8List>.unmodifiable(patches);
+          }
         }
+        if (!mounted) return;
       }
 
       final primaryImagePath = await _persistScanImage(
@@ -5511,6 +5526,7 @@ class _CameraScreenState extends State<CameraScreen>
           fullStillSharpness: qualityTag.fullStillSharpness,
           sharpnessFloor: _sharpnessVarianceFloor,
           grayCardRegion: grayCardRegion,
+          grayCardPatches: grayCardPatches,
         ),
       );
     } catch (e) {

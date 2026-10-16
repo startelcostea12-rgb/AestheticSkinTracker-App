@@ -1039,12 +1039,40 @@ def _sample_gray_card(
     }
 
 
+_FULL_IMAGE_REGION = {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
+
+
+def _sample_gray_card_patch(patch_bytes: bytes | None) -> Dict[str, Any] | None:
+    """Samples an uploaded gray-card patch (the marked box cut from the full
+    still by the app) as a whole, with the same checks as _sample_gray_card.
+    None when no patch was sent; an unreadable patch is reported, not raised,
+    so the scan still completes."""
+    if not patch_bytes:
+        return None
+    try:
+        patch_bgr = _decode_image_bytes(patch_bytes)
+    except Exception:
+        patch_bgr = None
+    if patch_bgr is None or patch_bgr.size == 0:
+        return {"marked": True, "accepted": False, "reason": "card_image_unreadable"}
+    return _sample_gray_card(patch_bgr, _FULL_IMAGE_REGION)
+
+
 def _gray_card_quality_fields(sample: Dict[str, Any], applied: bool) -> Dict[str, Any]:
     """image_quality fields for the gray card: the raw pre-white-balance
     sample (L* in 8-bit 0-255 like lighting_mean_l; a*/b* signed like the
-    other image_quality color fields) and whether it drove the shift."""
+    other image_quality color fields), whether it drove the shift, and where
+    the box was drawn (gray_card_region_*, fractions of
+    gray_card_region_space: the full still for an uploaded patch, the
+    uploaded frame for a gray_card_region)."""
     marked = bool(sample.get("marked"))
+    region = sample.get("drawn_region") or {}
     return {
+        "gray_card_region_space": sample.get("region_space") if marked else None,
+        "gray_card_region_x": region.get("x"),
+        "gray_card_region_y": region.get("y"),
+        "gray_card_region_w": region.get("w"),
+        "gray_card_region_h": region.get("h"),
         "gray_card_marked": marked,
         "gray_card_mean_L": round(sample["mean_l"], 2) if "mean_l" in sample else None,
         "gray_card_mean_a": _signed_lab_value(sample.get("mean_a")),
@@ -1169,6 +1197,8 @@ def assess_and_normalize_image(
 def _assess_and_normalize_image_with_pre_white_balance(
     image_bytes: bytes,
     gray_card_region: Dict[str, float] | None = None,
+    gray_card_patch: bytes | None = None,
+    gray_card_still_region: Dict[str, float] | None = None,
 ) -> Tuple[np.ndarray, Dict[str, Any], np.ndarray]:
     """Same as assess_and_normalize_image, plus a diagnostic-only copy of the
     image with the identical luminance normalization but no white balance.
@@ -1189,7 +1219,23 @@ def _assess_and_normalize_image_with_pre_white_balance(
     # Optional gray card: sampled here, before any white balance, and used
     # as the neutral reference for the shift below (see
     # _apply_capture_white_balance_correction). No region: unchanged path.
-    gray_card_sample = _sample_gray_card(image_bgr, gray_card_region)
+    # A patch (cut by the app from the full still, so the card may sit
+    # outside the face crop) takes precedence over an in-frame region.
+    gray_card_sample = _sample_gray_card_patch(gray_card_patch)
+    if gray_card_sample is not None:
+        gray_card_sample = {
+            **gray_card_sample,
+            "region_space": "full_still",
+            "drawn_region": gray_card_still_region,
+        }
+    else:
+        gray_card_sample = _sample_gray_card(image_bgr, gray_card_region)
+        if gray_card_sample.get("marked"):
+            gray_card_sample = {
+                **gray_card_sample,
+                "region_space": "uploaded_frame",
+                "drawn_region": gray_card_region,
+            }
     white_balanced_bgr, white_balance_profile = _apply_capture_white_balance_correction(
         image_bgr, gray_card_sample
     )
@@ -8131,6 +8177,8 @@ async def analyze_skin_single(
     guide_type: str | None = Form(None),
     baseline_guide_type: str | None = Form(None),
     gray_card_region: str | None = Form(None),
+    gray_card_image: UploadFile | None = File(None),
+    gray_card_still_region: str | None = Form(None),
 ):
     try:
         ensure_pipeline_ready()
@@ -8152,6 +8200,7 @@ async def analyze_skin_single(
         contents = await image.read()
         if not contents:
             raise HTTPException(status_code=400, detail="Empty file attachment package received.")
+        gray_card_patch_bytes = await gray_card_image.read() if gray_card_image is not None else None
 
         try:
             (
@@ -8159,7 +8208,10 @@ async def analyze_skin_single(
                 quality_profile,
                 pre_white_balance_image,
             ) = _assess_and_normalize_image_with_pre_white_balance(
-                contents, parse_gray_card_region(gray_card_region)
+                contents,
+                parse_gray_card_region(gray_card_region),
+                gray_card_patch=gray_card_patch_bytes,
+                gray_card_still_region=parse_gray_card_region(gray_card_still_region),
             )
         except Exception as exc:
             raise HTTPException(status_code=400, detail="Corrupted image encoding matrix parameters.") from exc

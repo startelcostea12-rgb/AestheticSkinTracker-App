@@ -266,6 +266,7 @@ class SkinAnalysisService {
     Map<String, dynamic>? baselineMetricMatrix,
     Map<String, String>? baselineExtractionPaths,
     Map<String, int>? baselineFormulaVersions,
+    Uint8List? grayCardPatch,
     bool allowBackend = false,
     http.Client? httpClient,
   }) async {
@@ -322,6 +323,17 @@ class SkinAnalysisService {
         filename: _filenameFromPath(image.path),
       ),
     );
+    // Optional gray-card patch cut from this frame's full still; main.py
+    // samples it before white balance.
+    if (grayCardPatch != null && grayCardPatch.isNotEmpty) {
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'gray_card_image',
+          grayCardPatch,
+          filename: 'gray_card.png',
+        ),
+      );
+    }
 
     try {
         final streamed = await (httpClient?.send(request) ?? request.send())

@@ -86,6 +86,11 @@ class AiScanDataCsvExporter {
     'image_quality.gray_card_correction_applied',
     'image_quality.gray_card_frames_applied',
     'image_quality.gray_card_reason',
+    'image_quality.gray_card_region_space',
+    'image_quality.gray_card_region_x',
+    'image_quality.gray_card_region_y',
+    'image_quality.gray_card_region_w',
+    'image_quality.gray_card_region_h',
   ];
 
   static const List<String> _metricFields = <String>[
@@ -114,6 +119,12 @@ class AiScanDataCsvExporter {
     'gray_card_mean_a',
     'gray_card_mean_b',
     'gray_card_correction_applied',
+    'gray_card_reason',
+    'gray_card_region_space',
+    'gray_card_region_x',
+    'gray_card_region_y',
+    'gray_card_region_w',
+    'gray_card_region_h',
     'iso',
     'exposure_bias',
     'shutter_seconds',

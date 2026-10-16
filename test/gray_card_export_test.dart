@@ -34,6 +34,11 @@ const _grayCardColumns = [
   'image_quality.gray_card_correction_applied',
   'image_quality.gray_card_frames_applied',
   'image_quality.gray_card_reason',
+  'image_quality.gray_card_region_space',
+  'image_quality.gray_card_region_x',
+  'image_quality.gray_card_region_y',
+  'image_quality.gray_card_region_w',
+  'image_quality.gray_card_region_h',
 ];
 
 Map<String, dynamic> _frame({
@@ -58,7 +63,16 @@ Map<String, dynamic> _frame({
     'gray_card_mean_b': b,
     'gray_card_correction_applied': applied,
     'gray_card_reason': reason,
+    if (marked) ..._regionQuality,
   },
+};
+
+const _regionQuality = <String, dynamic>{
+  'gray_card_region_space': 'full_still',
+  'gray_card_region_x': 0.3,
+  'gray_card_region_y': 0.82,
+  'gray_card_region_w': 0.4,
+  'gray_card_region_h': 0.12,
 };
 
 void main() {
@@ -76,6 +90,7 @@ void main() {
       'gray_card_correction_applied': true,
       'gray_card_frames_applied': 3,
       'gray_card_reason': null,
+      ..._regionQuality,
     });
   });
 
@@ -155,6 +170,51 @@ void main() {
     expect(row['frame2_gray_card_mean_a'], '5.0');
     expect(row['frame3_gray_card_mean_b'], '10.0');
     expect(row['frame3_gray_card_correction_applied'], 'true');
+    // Where the box was drawn.
+    expect(row['image_quality.gray_card_region_space'], 'full_still');
+    expect(row['image_quality.gray_card_region_y'], '0.82');
+    expect(row['frame2_gray_card_region_h'], '0.12');
+  });
+
+  test('a rejected box still exports a scan with the reason', () {
+    final frames = [
+      for (var i = 0; i < 3; i++)
+        _frame(
+          marked: true,
+          l: 90,
+          a: 40.0,
+          b: 20.0,
+          reason: 'implausible_card_color',
+        ),
+    ];
+    final aggregate = averageBackendAnalysisFrames(frames, requestedFrames: 3);
+    expect(aggregate.successfulFrames, 3);
+    final row = _parse(
+      AiScanDataCsvExporter.format([
+        ScanHistoryEntry(
+          id: 'scan-rejected',
+          timestamp: DateTime.parse('2026-10-16T09:00:00'),
+          scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+          estimatedSkinAge: 0,
+          metrics: const <String, double>{},
+          rawPayload: <String, dynamic>{
+            ...aggregate.response,
+            aiScanPerFrameDiagnosticsKey: buildAiScanPerFrameDiagnostics(
+              frameResponses: frames,
+              frameExposureMetadata: const [],
+              frameCount: 3,
+            ),
+          },
+        ),
+      ], registryBaselineScanIds: const {}),
+    ).single;
+    expect(row['localized_redness_value'], '10.0');
+    expect(row['image_quality.gray_card_marked'], 'true');
+    expect(row['image_quality.gray_card_correction_applied'], 'false');
+    expect(row['image_quality.gray_card_frames_applied'], '0');
+    expect(row['image_quality.gray_card_reason'], 'implausible_card_color');
+    expect(row['frame1_gray_card_reason'], 'implausible_card_color');
+    expect(row['image_quality.gray_card_region_x'], '0.3');
   });
 
   test('no mark: gray_card_marked is false and samples are empty', () {
@@ -184,13 +244,15 @@ void main() {
 
   test('gray card region is sent only when supplied', () {
     final off = buildAiSkinAnalysisBackendFields(focusArea: 'Full face');
+    expect(off.containsKey('gray_card_still_region'), isFalse);
     expect(off.containsKey('gray_card_region'), isFalse);
 
     final on = buildAiSkinAnalysisBackendFields(
       focusArea: 'Full face',
       grayCardRegion: (x: 0.05, y: 0.1, w: 0.2, h: 0.15),
     );
-    expect(jsonDecode(on['gray_card_region']!), {
+    expect(on.containsKey('gray_card_region'), isFalse);
+    expect(jsonDecode(on['gray_card_still_region']!), {
       'x': 0.05,
       'y': 0.1,
       'w': 0.2,
