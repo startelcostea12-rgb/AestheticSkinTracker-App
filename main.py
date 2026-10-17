@@ -1222,6 +1222,10 @@ def _assess_and_normalize_image_with_pre_white_balance(
     # A patch (cut by the app from the full still, so the card may sit
     # outside the face crop) takes precedence over an in-frame region.
     gray_card_sample = _sample_gray_card_patch(gray_card_patch)
+    if gray_card_sample is None and gray_card_still_region is not None:
+        # The app marked a card (fixed target) but no patch arrived: record
+        # it as marked and not applied rather than dropping it.
+        gray_card_sample = {"marked": True, "accepted": False, "reason": "card_image_missing"}
     if gray_card_sample is not None:
         gray_card_sample = {
             **gray_card_sample,

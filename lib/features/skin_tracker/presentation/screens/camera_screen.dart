@@ -30,7 +30,7 @@ import 'package:aesthetic_skin_tracker/widgets/clinical_camera_guidance.dart';
 import 'package:aesthetic_skin_tracker/widgets/clinical_section_header.dart';
 import 'package:aesthetic_skin_tracker/widgets/image_crop_dialog.dart';
 import 'package:aesthetic_skin_tracker/utils/gray_card_region.dart';
-import 'package:aesthetic_skin_tracker/widgets/gray_card_mark_dialog.dart';
+import 'package:aesthetic_skin_tracker/widgets/gray_card_target_overlay.dart';
 import 'package:aesthetic_skin_tracker/widgets/local_image_preview.dart';
 import 'package:aesthetic_skin_tracker/widgets/makeup_badge.dart';
 import 'package:aesthetic_skin_tracker/widgets/makeup_disclosure_dialog.dart';
@@ -1034,8 +1034,9 @@ class CameraScreen extends StatefulWidget {
   final String? initialProcedureLabel;
   final Map<String, dynamic>? initialTrackProcedureBaselineRecord;
 
-  /// AI Skin Analysis only: after the face crop, offer GrayCardMarkDialog so
-  /// the user can mark a gray card; off by default.
+  /// AI Skin Analysis only: show the fixed "Place gray card here" target
+  /// under the face and sample it at capture (see GrayCardTargetOverlay /
+  /// grayCardTargetInStill); off by default.
   final bool markGrayCardAfterCapture;
 
   const CameraScreen({
@@ -1075,8 +1076,8 @@ class AiSkinAnalysisCaptureResult {
 
   final String primaryImagePath;
 
-  /// The marked gray card as fractions of the full still (it may lie outside
-  /// the face crop), or null when none was marked.
+  /// The fixed gray-card target as fractions of the full still (it lies
+  /// below the face crop), or null when the gray-card switch was off.
   final GrayCardRegion? grayCardRegion;
 
   /// The card patch cut from each frame's still (same order as
@@ -5465,42 +5466,30 @@ class _CameraScreenState extends State<CameraScreen>
         extraFields: burstSizeFields,
       );
 
-      // Optional gray card: marked anywhere on the full still (it may lie
-      // outside the face crop). The patch is cut from each frame's still and
-      // uploaded beside that frame. Skipped sends nothing.
+      // Optional gray card: the fixed under-chin target, mapped from the
+      // preview into the full still, is cut from each frame's still and
+      // uploaded beside that frame. Nothing to draw; never blocks capture.
       GrayCardRegion? grayCardRegion;
       var grayCardPatches = const <Uint8List>[];
       if (widget.markGrayCardAfterCapture &&
           decodedStillWidth != null &&
           decodedStillHeight != null) {
-        if (!mounted) return;
-        final stillWidth = decodedStillWidth;
-        final stillHeight = decodedStillHeight;
-        final stillBox = await showDialog<GrayCardRegion>(
-          context: context,
-          barrierDismissible: false,
-          builder: (_) => GrayCardMarkDialog(
-            imageBytes: firstBytes,
-            stillWidth: stillWidth,
-            stillHeight: stillHeight,
-            uploadCrop: cropSelection!.region,
-          ),
+        grayCardRegion = grayCardTargetInStill(
+          stillWidth: decodedStillWidth,
+          stillHeight: decodedStillHeight,
+          previewAspect: _facePreviewAspectRatio,
         );
-        if (!mounted) return;
-        if (stillBox != null) {
-          final patches = <Uint8List>[];
-          for (final file in capturedFiles) {
-            final patch = grayCardPatchFromStill(
-              await file.readAsBytes(),
-              stillBox,
-            );
-            if (patch == null) break;
-            patches.add(patch);
-          }
-          if (patches.length == capturedFiles.length) {
-            grayCardRegion = stillBox;
-            grayCardPatches = List<Uint8List>.unmodifiable(patches);
-          }
+        final patches = <Uint8List>[];
+        for (final file in capturedFiles) {
+          final patch = grayCardPatchFromStill(
+            await file.readAsBytes(),
+            grayCardRegion,
+          );
+          if (patch == null) break;
+          patches.add(patch);
+        }
+        if (patches.length == capturedFiles.length) {
+          grayCardPatches = List<Uint8List>.unmodifiable(patches);
         }
         if (!mounted) return;
       }
@@ -7373,6 +7362,8 @@ class _CameraScreenState extends State<CameraScreen>
                       ),
                     ),
                   ),
+                if (widget.markGrayCardAfterCapture && !_isBodyGuide)
+                  const GrayCardTargetOverlay(),
                 AdaptiveCameraOutline(
                   guideType: _guideType,
                   height: _isBodyGuide ? 380 : 340,

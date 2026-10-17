@@ -286,3 +286,18 @@ def test_rejected_patch_still_completes_the_scan(client, patch, reason):
     assert quality["gray_card_region_y"] == 0.82
     plain = _post(client, _face_png())
     assert _metrics(payload) == _metrics(plain)
+
+
+def test_region_without_patch_is_recorded_not_dropped(client):
+    response = client.post(
+        "/api/skin/analyze-single",
+        files={"image": ("face.png", _face_png(), "image/png")},
+        data={"gray_card_still_region": json.dumps(STILL_REGION)},
+    )
+    assert response.status_code == 200, response.text
+    quality = _image_quality(response.json())
+    assert quality["gray_card_marked"] is True
+    assert quality["gray_card_correction_applied"] is False
+    assert quality["gray_card_reason"] == "card_image_missing"
+    assert quality["gray_card_region_space"] == "full_still"
+    assert quality["gray_card_region_x"] == 0.30

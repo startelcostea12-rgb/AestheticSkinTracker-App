@@ -2196,10 +2196,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   String? _capturedPoseTemplate;
   String? _capturedGuideType;
 
-  /// Off by default: when on, the camera offers gray-card marking after the
-  /// face crop. [_grayCardRegion] is the marked card as fractions of the
-  /// full still and [_grayCardPatches] the card patch per frame; both empty
-  /// when nothing was marked (nothing extra is sent).
+  /// Off by default: when on, the camera shows the fixed under-chin gray-card
+  /// target and samples it at capture. [_grayCardRegion] is that target as
+  /// fractions of the full still and [_grayCardPatches] the patch per frame;
+  /// both empty when the switch is off (nothing extra is sent).
   bool _markGrayCard = false;
   GrayCardRegion? _grayCardRegion;
   List<Uint8List> _grayCardPatches = const [];
@@ -4112,8 +4112,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             onChanged: (value) => setState(() => _markGrayCard = value),
             title: const Text('Gray card in shot'),
             subtitle: const Text(
-              'After the camera capture, mark the card to correct white '
-              'balance. Off sends nothing.',
+              'Hold a gray card in the "Place gray card here" box under your '
+              'chin to correct white balance. Off sends nothing.',
             ),
           ),
           Row(
