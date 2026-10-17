@@ -9,12 +9,12 @@
 /// it keeps its own verdict. Any other metric listed here would show its
 /// number with no verdict and no percent at or below the floor.
 const Map<String, double> displayVerdictNoiseFloors = <String, double>{
-  'pigment_load': 2.0,
-  'pore_visibility': 2.0,
+  'pigment_load': 2.5,
+  'pore_visibility': 2.5,
   'skin_tone_radiance_evenness': 4.5,
   'diffuse_flushing_erythema': 2.0,
   'glabellar_wrinkle_depth': 3.5,
-  'structural_firmness_elasticity': 4.0,
+  'structural_firmness_elasticity': 5.0,
   'sebum_excess_oil_gloss': 4.0,
   'texture_smoothness': 3.0,
 };
