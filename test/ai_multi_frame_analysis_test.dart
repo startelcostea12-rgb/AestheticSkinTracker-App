@@ -221,6 +221,86 @@ void main() {
         expect(result.cheekLockSkippedLowValues, isFalse);
       });
 
+      group('single cheek vs both with matching values', () {
+        test('left vs both, 9.3 vs 9.3: no cheek_mismatch', () {
+          final result = compare(
+            baselineSide: 'left',
+            currentSide: 'both',
+            baselineRedness: 9.3,
+            currentRedness: 9.3,
+          );
+          expect(result.rednessLockReasons, isNot(contains('cheek_mismatch')));
+          expect(result.trendLockReasons['localized_redness'], isNull);
+          expect(result.trendStatus['localized_redness'], 'stable');
+          // No new export field: the low-value flag stays false.
+          expect(result.cheekLockSkippedLowValues, isFalse);
+        });
+
+        test('both vs right within 1.0 (9.3 vs 10.3): no cheek_mismatch', () {
+          final result = compare(
+            baselineSide: 'both',
+            currentSide: 'right',
+            baselineRedness: 9.3,
+            currentRedness: 10.3,
+          );
+          expect(result.rednessLockReasons, isNot(contains('cheek_mismatch')));
+        });
+
+        test('left vs both, 9.3 vs 12.0: cheek_mismatch', () {
+          final result = compare(
+            baselineSide: 'left',
+            currentSide: 'both',
+            baselineRedness: 9.3,
+            currentRedness: 12.0,
+          );
+          expect(
+            result.trendLockReasons['localized_redness'],
+            'cheek_mismatch',
+          );
+          expect(result.trendStatus.containsKey('localized_redness'), isFalse);
+        });
+
+        test('left vs right still locks, even with equal values', () {
+          for (final (baseline, current) in const [(9.3, 9.3), (9.3, 12.0)]) {
+            final result = compare(
+              baselineSide: 'right',
+              currentSide: 'left',
+              baselineRedness: baseline,
+              currentRedness: current,
+            );
+            expect(
+              result.trendLockReasons['localized_redness'],
+              'cheek_mismatch',
+              reason: '$baseline vs $current',
+            );
+          }
+        });
+
+        test('dead-zone flag still skips the lock', () {
+          final result = downgradeRednessTrendForCaptureMismatch(
+            trendStatus: const {'localized_redness': 'stable'},
+            trendDeltas: const {'localized_redness': 0.0},
+            trendLockReasons: const {},
+            baselinePayload: rednessPayload(
+              cheekSide: 'left',
+              redness: 9.3,
+              bothCheeksInDeadZone: true,
+              frameP95: const [10.0, 10.5, 10.2],
+              p10: 4.0,
+              p95: 10.0,
+            ),
+            currentPayload: rednessPayload(
+              cheekSide: 'right',
+              redness: 14.0,
+              frameP95: const [10.1, 10.6, 10.3],
+              p10: 4.1,
+              p95: 10.1,
+            ),
+          );
+          expect(result.rednessLockReasons, isNot(contains('cheek_mismatch')));
+        });
+      });
+
       test('with real regions at low values, redness now compares', () {
         // left is read from left_cheek and both from u_zone: the cheek and
         // region locks are both skipped at these low values.

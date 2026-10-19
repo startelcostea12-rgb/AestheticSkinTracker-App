@@ -1058,6 +1058,12 @@ const String rednessRegionLockSkippedLowValuesKey =
 /// Redness values at or below this are treated as low enough that a
 /// single-cheek vs both-cheeks reading difference is not a cheek_mismatch.
 const double rednessCheekLockLowValueCeiling = 5.0;
+
+/// A single-cheek ("left"/"right") reading on one scan and a both-cheeks
+/// reading on the other is not a cheek_mismatch when the two
+/// localized_redness values differ by at most this much: the readings agree,
+/// so the side difference did not change the result.
+const double rednessCheekLockMatchingValueTolerance = 1.0;
 const String cheekSideConventionSubjectAnatomical = 'subject_anatomical';
 const double provisionalBrightnessValueMismatchLimit = 1.0;
 
@@ -1422,8 +1428,15 @@ downgradeRednessTrendForCaptureMismatch({
         baselineValue != null &&
         currentValue <= rednessCheekLockLowValueCeiling &&
         baselineValue <= rednessCheekLockLowValueCeiling;
+    final valuesMatch =
+        currentValue != null &&
+        baselineValue != null &&
+        (currentValue - baselineValue).abs() <=
+            rednessCheekLockMatchingValueTolerance;
     if (singleVsBoth && bothLow) {
       cheekLockSkippedLowValues = true;
+    } else if (singleVsBoth && valuesMatch) {
+      // Matching values: no lock, and no new export field for this skip.
     } else {
       reasons.add('cheek_mismatch');
     }
