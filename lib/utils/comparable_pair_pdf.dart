@@ -12,11 +12,29 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import 'last_comparable_pair.dart';
+import 'scan_note.dart';
 
 const String comparablePairPdfClinicPlaceholder = '[Clinic name]';
 
 String _date(DateTime t) => DateFormat('MMM d, y h:mm a').format(t);
 String _value(double? v) => v == null ? '-' : v.toStringAsFixed(1);
+
+/// Notes are free text: map typographic punctuation to ASCII and replace
+/// anything else outside Latin-1 with '?', so the built-in font draws it.
+String pdfSafeText(String text) {
+  final mapped = text
+      .replaceAll(RegExp('[\u2018\u2019]'), "'")
+      .replaceAll(RegExp('[\u201C\u201D]'), '"')
+      .replaceAll(RegExp('[\u2013\u2014]'), '-')
+      .replaceAll('\u2026', '...');
+  return String.fromCharCodes(
+    mapped.runes.map(
+      (r) => (r == 0x0A || (r >= 0x20 && r <= 0x7E) || (r >= 0xA0 && r <= 0xFF))
+          ? r
+          : 0x3F,
+    ),
+  );
+}
 
 /// [compress] false keeps the content stream as plain text (used by tests).
 Future<Uint8List> buildComparablePairPdf(
@@ -107,6 +125,17 @@ Future<Uint8List> buildComparablePairPdf(
                 '${entry.value.replaceAll('_', ' ')}',
               ),
           ],
+          for (final (label, scan) in [
+            if (baseline != null) ('Note (earlier scan)', baseline),
+            (baseline != null ? 'Note (later scan)' : 'Note', pair.latest),
+          ])
+            if (scanNoteOf(scan) case final note?) ...[
+              pw.SizedBox(height: 10),
+              pw.Text(
+                '$label: ${pdfSafeText(note)}',
+                style: const pw.TextStyle(fontSize: 10),
+              ),
+            ],
           pw.Spacer(),
           pw.Text(
             'Absolute values only. Not a diagnosis.',

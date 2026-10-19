@@ -37,6 +37,7 @@ class AiScanDataCsvExporter {
     'is_baseline',
     'comparison_baseline_scan_id',
     'comparison_baseline_source',
+    'scan_note',
     aiCaptureCropSharpnessKey,
     aiCaptureFullStillSharpnessKey,
     aiCaptureSharpnessFloorKey,
@@ -282,6 +283,8 @@ class AiScanDataCsvExporter {
       // Only the id recorded at comparison time; empty on older scans.
       'comparison_baseline_scan_id': payload[aiComparisonBaselineScanIdKey],
       'comparison_baseline_source': payload[aiComparisonBaselineSourceKey],
+      // Empty notes are never stored, so the cell is empty without one.
+      'scan_note': payload['scan_note'],
       // Sharpness that decided captureQuality; empty on older scans.
       aiCaptureCropSharpnessKey: payload[aiCaptureCropSharpnessKey],
       aiCaptureFullStillSharpnessKey: payload[aiCaptureFullStillSharpnessKey],

@@ -46,6 +46,7 @@ import 'package:aesthetic_skin_tracker/utils/upload_gate.dart';
 import 'package:aesthetic_skin_tracker/utils/untrusted_trend_metrics.dart';
 import 'package:aesthetic_skin_tracker/utils/comparable_pair_pdf.dart';
 import 'package:aesthetic_skin_tracker/utils/last_comparable_pair.dart';
+import 'package:aesthetic_skin_tracker/widgets/scan_note_field.dart';
 import 'package:aesthetic_skin_tracker/widgets/paywall_screen.dart';
 import 'free_local_scan_results_screen.dart';
 import 'package:aesthetic_skin_tracker/utils/gray_card_region.dart';
@@ -2636,6 +2637,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
   _Stage _stage = _Stage.capture;
 
+  /// Id of the scan this results screen saved (for "Note for this scan").
+  String? _savedScanId;
+
   String? _imagePath;
 
   /// Cropped JPEG bytes from the mandatory crop step (camera/gallery). When
@@ -3754,6 +3758,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         _detections = aug.detections;
         _efficientNetUsed = aug.efficientNetUsed;
         _qualityScores = aug.qualityScores;
+        _savedScanId = savedEntry?.id;
         _stage = _Stage.results;
       });
       await UploadGate.recordCompletedBackendScan();
@@ -5796,6 +5801,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                   _confirmUpdateBaselinePressed();
                 },
               ),
+              if (_savedScanId != null) ...[
+                const SizedBox(height: 14),
+                ScanNoteField(
+                  key: ValueKey('scan_note_${_savedScanId!}'),
+                  scanId: _savedScanId!,
+                ),
+              ],
               const SizedBox(height: 18),
               const ClinicalSectionHeader(
                 icon: Icons.psychology_alt_rounded,

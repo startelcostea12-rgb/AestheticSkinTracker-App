@@ -2238,6 +2238,29 @@ class AppPrefs {
   /// body-composition measurements (weight, body-fat %, waist, etc.) to a
   /// scan entry that was created by the camera (which only produces skin
   /// metrics).
+  /// Replaces the stored rawPayload of scan [scanId] with [update]'s result
+  /// (used to save the optional scan note). Every other field is kept, via
+  /// the same JSON form the history is stored in. False when no scan matches.
+  static Future<bool> patchScanRawPayload(
+    String scanId,
+    Map<String, dynamic> Function(Map<String, dynamic> rawPayload) update,
+  ) async {
+    if (scanId.isEmpty) return false;
+    final history = await getScanEntries();
+    final idx = history.indexWhere((e) => e.id == scanId);
+    if (idx < 0) return false;
+    final json = history[idx].toJson();
+    final rawPayload = json['rawPayload'];
+    json['rawPayload'] = update(
+      rawPayload is Map
+          ? Map<String, dynamic>.from(rawPayload)
+          : <String, dynamic>{},
+    );
+    history[idx] = ScanHistoryEntry.fromJson(json);
+    await _saveScanEntries(history);
+    return true;
+  }
+
   static Future<void> patchScanMetrics(
     String scanId,
     Map<String, double> extraMetrics,
