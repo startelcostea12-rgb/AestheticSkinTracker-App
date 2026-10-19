@@ -48,6 +48,7 @@ import 'package:aesthetic_skin_tracker/utils/comparable_pair_pdf.dart';
 import 'package:aesthetic_skin_tracker/utils/last_comparable_pair.dart';
 import 'package:aesthetic_skin_tracker/widgets/scan_note_field.dart';
 import 'package:aesthetic_skin_tracker/utils/protocol_checklist.dart';
+import 'package:aesthetic_skin_tracker/widgets/lighting_tip_card.dart';
 import 'package:aesthetic_skin_tracker/widgets/paywall_screen.dart';
 import 'free_local_scan_results_screen.dart';
 import 'package:aesthetic_skin_tracker/utils/gray_card_region.dart';
@@ -2638,6 +2639,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
   _Stage _stage = _Stage.capture;
 
+  /// First visit only: the "Recommended lighting" tip (see LightingTipCard).
+  bool _showLightingTip = false;
+
   /// Id of the scan this results screen saved (for "Note for this scan").
   String? _savedScanId;
 
@@ -2789,6 +2793,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   @override
   void initState() {
     super.initState();
+    shouldShowLightingTip().then((show) {
+      if (show && mounted) setState(() => _showLightingTip = true);
+    });
     _loadLatestScan();
     _loadProcedureContext();
     _refreshFocusAreaPhaseHint();
@@ -4409,6 +4416,15 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           ),
         ),
         const SizedBox(height: 18),
+        if (_showLightingTip) ...[
+          LightingTipCard(
+            onDismiss: () {
+              setState(() => _showLightingTip = false);
+              markLightingTipSeen();
+            },
+          ),
+          const SizedBox(height: 14),
+        ],
         if (_analysisError != null) ...[
           _errorBanner(_analysisError!),
           const SizedBox(height: 14),
