@@ -114,4 +114,83 @@ void main() {
     expect(source, contains('HomeRoutineCard('));
     expect(source, contains('await AppPrefs.getActiveAiRoutine();'));
   });
+
+  testWidgets('product notes are saved with the routine; empty is omitted', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(400, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    Future<void> editAndSave(String notes) async {
+      final initial =
+          await AppPrefs.getActiveAiRoutine() ??
+          {
+            'morningSteps': ['Gentle cleanser'],
+          };
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => RoutineEditorScreen(initialRoutine: initial),
+                ),
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(find.text('Product notes'), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const ValueKey('routine_notes')),
+        notes,
+      );
+      await tester.ensureVisible(find.byKey(const ValueKey('routine_save')));
+      await tester.tap(find.byKey(const ValueKey('routine_save')));
+      await tester.pumpAndSettle();
+      expect(find.text('open'), findsOneWidget); // popped back
+    }
+
+    await editAndSave('  Started retinol Oct 1  ');
+    final saved = (await AppPrefs.getActiveAiRoutine())!;
+    expect(saved['notes'], 'Started retinol Oct 1');
+    expect(saved['morningSteps'], ['Gentle cleanser']);
+
+    await editAndSave(' ');
+    expect(
+      (await AppPrefs.getActiveAiRoutine())!.containsKey('notes'),
+      isFalse,
+    );
+  });
+
+  testWidgets('the home card shows product notes when present', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: HomeRoutineCard(
+            routine: {
+              'morningSteps': ['Gentle cleanser'],
+              'notes': 'Started retinol Oct 1',
+            },
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Notes: Started retinol Oct 1'), findsOneWidget);
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: HomeRoutineCard(
+            routine: {
+              'morningSteps': ['Gentle cleanser'],
+            },
+          ),
+        ),
+      ),
+    );
+    expect(find.byKey(const ValueKey('home_routine_notes')), findsNothing);
+  });
 }

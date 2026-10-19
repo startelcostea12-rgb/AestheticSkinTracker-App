@@ -82,6 +82,19 @@ class HomeRoutineCard extends StatelessWidget {
               ),
             ],
           ),
+          if ((routine['notes']?.toString().trim() ?? '').isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              'Notes: ${routine['notes'].toString().trim()}',
+              key: const ValueKey('home_routine_notes'),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: ink.withValues(alpha: 0.8),
+                fontSize: 12.5,
+              ),
+            ),
+          ],
         ],
       ),
     );

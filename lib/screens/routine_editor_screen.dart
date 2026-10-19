@@ -23,6 +23,9 @@ class _RoutineEditorScreenState extends State<RoutineEditorScreen> {
   late final List<String> _evening = _steps('eveningSteps');
   final _morningInput = TextEditingController();
   final _eveningInput = TextEditingController();
+  late final _notes = TextEditingController(
+    text: widget.initialRoutine?['notes']?.toString() ?? '',
+  );
 
   List<String> _steps(String key) {
     final raw = widget.initialRoutine?[key];
@@ -37,6 +40,7 @@ class _RoutineEditorScreenState extends State<RoutineEditorScreen> {
   void dispose() {
     _morningInput.dispose();
     _eveningInput.dispose();
+    _notes.dispose();
     super.dispose();
   }
 
@@ -65,6 +69,14 @@ class _RoutineEditorScreenState extends State<RoutineEditorScreen> {
         source: 'manual',
       ),
     };
+    // Free-text product notes kept with the routine (profile-level); empty
+    // notes are not stored.
+    final notes = _notes.text.trim();
+    if (notes.isEmpty) {
+      payload.remove('notes');
+    } else {
+      payload['notes'] = notes;
+    }
     await AppPrefs.saveActiveAiRoutine(payload);
     if (!mounted) return;
     Navigator.of(context).pop(true);
@@ -149,6 +161,21 @@ class _RoutineEditorScreenState extends State<RoutineEditorScreen> {
             period: 'evening',
             steps: _evening,
             input: _eveningInput,
+          ),
+          const SizedBox(height: 20),
+          TextField(
+            key: const ValueKey('routine_notes'),
+            controller: _notes,
+            minLines: 2,
+            maxLines: 6,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              labelText: 'Product notes',
+              hintText:
+                  'Optional: products you use, when you started, '
+                  'anything you noticed',
+              border: OutlineInputBorder(),
+            ),
           ),
           const SizedBox(height: 24),
           FilledButton(
