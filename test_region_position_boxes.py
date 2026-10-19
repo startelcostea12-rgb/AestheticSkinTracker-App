@@ -50,3 +50,24 @@ def test_box_helper_units():
     # Face width 200 px; box centre (200, 125) -> (0.5, 0.375) face widths.
     assert box == {"cx": 0.5, "cy": 0.375, "w": 0.5, "h": 0.25}
     assert main._mask_box_in_face_units(np.zeros((10, 10), np.uint8), points) is None
+
+
+def test_trend_direction_is_echoed_for_the_rolling_trend():
+    main.ensure_pipeline_ready()
+    manifest = json.loads(
+        (REPO_ROOT / "test_fixtures/metric_regression/manifest.json").read_text()
+    )
+    case = next(c for c in manifest["cases"] if c["id"] == "clear_face")
+    data = regression._prepare_image_bytes(REPO_ROOT / case["photo_path"], case["preprocess"])
+    normalized, profile = main.assess_and_normalize_image(data)
+    result = main.analyze_skin_patch(normalized, quality_profile=profile)
+    directions = result["metric_higher_is_worse"]
+    for key in (
+        "wrinkle_load",
+        "pore_contraction_index",
+        "under_eye_dark_circle_density",
+        "under_eye_texture_density",
+    ):
+        assert directions[key] is True
+    assert directions["texture_smoothness"] is False
+    assert directions == {k: main._metric_higher_is_worse(k) for k in main.CANONICAL_METRIC_ORDER}

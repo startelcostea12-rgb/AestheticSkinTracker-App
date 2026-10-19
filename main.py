@@ -7641,6 +7641,12 @@ def analyze_skin_patch(
             for key in canonical_metric_order
         },
         "honesty_band_percent": HONESTY_STABLE_BAND_PCT,
+        # Direction used by _trend_delta_and_status, published with the
+        # noise-floor policy below so the app's rolling-average trend can
+        # apply the same rule without a client-side copy.
+        "metric_higher_is_worse": {
+            key: _metric_higher_is_worse(key) for key in CANONICAL_METRIC_ORDER
+        },
         # Published so a caller that aggregates multiple backend calls
         # itself (e.g. the app's multi-frame capture, which averages several
         # single-frame responses into one displayed value the backend never

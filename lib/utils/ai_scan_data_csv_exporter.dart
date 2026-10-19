@@ -122,6 +122,21 @@ class AiScanDataCsvExporter {
     'display_aggregation',
   ];
 
+  /// Metrics with a rolling-average trend note (rolling_trend in the saved
+  /// payload) and the note fields exported as `<metric>_rolling_<field>`.
+  static const List<String> rollingTrendExportMetricKeys = <String>[
+    'wrinkle_load',
+    'pore_contraction_index',
+    'under_eye_dark_circle_density',
+    'under_eye_texture_density',
+  ];
+  static const List<String> rollingTrendExportFields = <String>[
+    'method',
+    'current_value',
+    'baseline_value',
+    'baseline_method',
+  ];
+
   /// Per-frame columns frame1..frame5 (the AI scan captures five frames;
   /// older three-frame scans leave frames 4-5 empty).
   static const int exportedFrameCount = 5;
@@ -212,6 +227,10 @@ class AiScanDataCsvExporter {
     final metricColumns = <String>[
       for (final metric in aiScanDataCanonicalMetricKeys)
         for (final field in _metricFields) '${metric}_$field',
+      // Rolling-average trend note (median-of-five metrics only).
+      for (final metric in rollingTrendExportMetricKeys)
+        for (final field in rollingTrendExportFields)
+          '${metric}_rolling_$field',
     ];
     final perFrameColumns = <String>[
       for (var frame = 1; frame <= exportedFrameCount; frame++)
@@ -320,6 +339,14 @@ class AiScanDataCsvExporter {
       values['${metric}_display_aggregation'] = liveDisplayAggregationFor(
         metric,
       );
+    }
+
+    final rollingTrend = _payloadMap(payload, 'rolling_trend');
+    for (final metric in rollingTrendExportMetricKeys) {
+      final note = _asMap(rollingTrend[metric]);
+      for (final field in rollingTrendExportFields) {
+        values['${metric}_rolling_$field'] = note[field];
+      }
     }
 
     for (var index = 0; index < exportedFrameCount; index++) {

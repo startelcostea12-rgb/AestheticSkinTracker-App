@@ -1207,6 +1207,268 @@ lockTrendsForLightingMismatch({
   );
 }
 
+/// Rolling-average trend for [fiveFrameMedianMetricKeys]: the median of the
+/// last [rollingTrendWindowSize] same-light, same-path scans (the current
+/// one plus the most recent qualifying earlier scans after the baseline) is
+/// compared against the baseline, or against the median of the baseline's
+/// own last three when those exist.
+const int rollingTrendWindowSize = 3;
+
+/// One scan as seen by [applyRollingTrend].
+typedef RollingTrendScan = ({
+  String id,
+  DateTime timestamp,
+  String? poseTemplate,
+  String? guideType,
+  String? captureQuality,
+  Map<String, dynamic> payload,
+});
+
+RollingTrendScan rollingTrendScanOf(ScanHistoryEntry scan) => (
+  id: scan.id,
+  timestamp: scan.timestamp,
+  poseTemplate: scan.poseTemplate,
+  guideType: scan.guideType,
+  captureQuality: scan.captureQuality,
+  payload: scan.rawPayload ?? const <String, dynamic>{},
+);
+
+Map<String, dynamic> _payloadNode(Map<String, dynamic> payload, String key) {
+  final direct = _dynamicMap(payload[key]);
+  if (direct.isNotEmpty) return direct;
+  return _dynamicMap(_dynamicMap(payload['metrics'])[key]);
+}
+
+double? _rollingValue(RollingTrendScan scan, String key) =>
+    _parseFiniteDouble(_payloadNode(scan.payload, 'metric_matrix')[key]);
+
+String? _rollingPath(RollingTrendScan scan, String key) {
+  final path = _payloadNode(
+    scan.payload,
+    'metric_extraction_paths',
+  )[key]?.toString().trim();
+  if (path == null || path.isEmpty || path == 'unknown' || path == 'skipped') {
+    return null;
+  }
+  return path;
+}
+
+String? _rollingVersion(RollingTrendScan scan, String key) =>
+    _payloadNode(scan.payload, 'metric_formula_versions')[key]?.toString();
+
+/// Whether [candidate] (an earlier scan) can share a rolling window with
+/// [reference] for [key]: same angle and region, both captured at normal
+/// quality (no capture_quality_mismatch), |ΔBv| within the lighting limit,
+/// and the same extraction path and formula version for [key].
+bool rollingTrendScanQualifies({
+  required RollingTrendScan candidate,
+  required RollingTrendScan reference,
+  required String key,
+}) {
+  if (!candidate.timestamp.isBefore(reference.timestamp)) return false;
+  if (candidate.poseTemplate == null ||
+      candidate.poseTemplate != reference.poseTemplate ||
+      candidate.guideType == null ||
+      candidate.guideType != reference.guideType) {
+    return false;
+  }
+  if (candidate.captureQuality?.trim().toLowerCase() != 'normal' ||
+      reference.captureQuality?.trim().toLowerCase() != 'normal') {
+    return false;
+  }
+  final candidateBv = _representativeScanExposure(
+    candidate.payload,
+  ).brightnessValue;
+  final referenceBv = _representativeScanExposure(
+    reference.payload,
+  ).brightnessValue;
+  if (candidateBv == null ||
+      referenceBv == null ||
+      (candidateBv - referenceBv).abs() >
+          provisionalBrightnessValueMismatchLimit) {
+    return false;
+  }
+  if (_rollingValue(candidate, key) == null) return false;
+  final path = _rollingPath(reference, key);
+  if (path == null || _rollingPath(candidate, key) != path) return false;
+  final version = _rollingVersion(reference, key);
+  return version != null && _rollingVersion(candidate, key) == version;
+}
+
+/// The backend's _trend_delta_and_status decision after its comparability
+/// gates, applied to rolling values with the policy main.py echoes in the
+/// response (honesty_band_percent, metric_noise_floor_2sd,
+/// trend_noise_floor_exceeds_useful_range,
+/// trend_noise_floor_excluded_multiplier, metric_higher_is_worse). None of
+/// [fiveFrameMedianMetricKeys] is floor-only. Null when the policy is
+/// missing (an older backend).
+({double delta, String status})? rollingTrendStatus({
+  required String key,
+  required double current,
+  required double baseline,
+  required Map<String, dynamic> policy,
+}) {
+  final band = _parseFiniteDouble(policy['honesty_band_percent']);
+  final higherIsWorse = _dynamicMap(policy['metric_higher_is_worse'])[key];
+  if (band == null || higherIsWorse is! bool) return null;
+  if (baseline.abs() < 1e-9) return (delta: 0.0, status: 'stable');
+  final denominator = baseline.abs();
+  final directional = higherIsWorse
+      ? (baseline - current) / denominator * 100.0
+      : (current - baseline) / denominator * 100.0;
+  final floor = _parseFiniteDouble(
+    _dynamicMap(policy['metric_noise_floor_2sd'])[key],
+  );
+  if (floor != null) {
+    final absolute = (current - baseline).abs();
+    final excluded = _stringSetFromDynamic(
+      policy['trend_noise_floor_exceeds_useful_range'],
+    );
+    if (excluded.contains(key)) {
+      final multiplier =
+          _parseFiniteDouble(policy['trend_noise_floor_excluded_multiplier']) ??
+          1.0;
+      if (absolute < floor * multiplier) {
+        return (delta: 0.0, status: 'insufficient_signal');
+      }
+    } else if (absolute < floor) {
+      return (delta: 0.0, status: 'stable');
+    }
+  }
+  if (directional.abs() < band) return (delta: 0.0, status: 'stable');
+  final rounded = double.parse(directional.toStringAsFixed(1));
+  if (rounded > 0) return (delta: rounded, status: 'improved');
+  if (rounded < 0) return (delta: rounded, status: 'worsened');
+  return (delta: 0.0, status: 'stable');
+}
+
+/// Replaces the single-scan trend of [fiveFrameMedianMetricKeys] with the
+/// rolling comparison when [rollingTrendWindowSize] qualifying scans exist;
+/// otherwise keeps the single-scan result (which, for these untrusted
+/// metrics, carries no verdict) and notes the fallback. A metric that is
+/// already locked keeps its lock. [rollingTrend] records, per metric, the
+/// method used and the values compared ("rolling_median_3",
+/// "single_scan_fallback", or "locked").
+({
+  Map<String, String> trendStatus,
+  Map<String, double> trendDeltas,
+  Map<String, Map<String, dynamic>> rollingTrend,
+})
+applyRollingTrend({
+  required Map<String, String> trendStatus,
+  required Map<String, double> trendDeltas,
+  required Map<String, String> trendLockReasons,
+  required RollingTrendScan current,
+  required RollingTrendScan? baseline,
+  required List<RollingTrendScan> history,
+}) {
+  final updatedStatus = Map<String, String>.from(trendStatus);
+  final updatedDeltas = Map<String, double>.from(trendDeltas);
+  final notes = <String, Map<String, dynamic>>{};
+
+  List<RollingTrendScan> recentQualifying(
+    RollingTrendScan reference,
+    String key, {
+    DateTime? after,
+    required Set<String> excludeIds,
+  }) =>
+      history
+          .where(
+            (scan) =>
+                !excludeIds.contains(scan.id) &&
+                (after == null || scan.timestamp.isAfter(after)) &&
+                rollingTrendScanQualifies(
+                  candidate: scan,
+                  reference: reference,
+                  key: key,
+                ),
+          )
+          .toList()
+        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+  for (final key in fiveFrameMedianMetricKeys) {
+    final currentValue = _rollingValue(current, key);
+    if (currentValue == null) continue;
+    final lockReason = trendLockReasons[key]?.trim() ?? '';
+    if (lockReason.isNotEmpty) {
+      notes[key] = {'method': 'locked', 'lock_reason': lockReason};
+      continue;
+    }
+    if (baseline == null || _rollingValue(baseline, key) == null) {
+      notes[key] = {
+        'method': 'single_scan_fallback',
+        'reason': 'no_baseline_value',
+      };
+      continue;
+    }
+    final window = <RollingTrendScan>[
+      current,
+      ...recentQualifying(
+        current,
+        key,
+        after: baseline.timestamp,
+        excludeIds: {current.id, baseline.id},
+      ).take(rollingTrendWindowSize - 1),
+    ];
+    if (window.length < rollingTrendWindowSize) {
+      notes[key] = {
+        'method': 'single_scan_fallback',
+        'reason': 'fewer_than_three_scans',
+        'qualifying_scans': window.length,
+      };
+      continue;
+    }
+    final baselineWindow = <RollingTrendScan>[
+      baseline,
+      ...recentQualifying(
+        baseline,
+        key,
+        excludeIds: {current.id, baseline.id},
+      ).take(rollingTrendWindowSize - 1),
+    ];
+    final baselineRolling = baselineWindow.length == rollingTrendWindowSize;
+    final rollingCurrent = _medianOf([
+      for (final scan in window) _rollingValue(scan, key)!,
+    ]);
+    final baselineValue = baselineRolling
+        ? _medianOf([
+            for (final scan in baselineWindow) _rollingValue(scan, key)!,
+          ])
+        : _rollingValue(baseline, key)!;
+    final result = rollingTrendStatus(
+      key: key,
+      current: rollingCurrent,
+      baseline: baselineValue,
+      policy: current.payload,
+    );
+    if (result == null) {
+      notes[key] = {
+        'method': 'single_scan_fallback',
+        'reason': 'policy_unavailable',
+      };
+      continue;
+    }
+    updatedStatus[key] = result.status;
+    updatedDeltas[key] = result.delta;
+    notes[key] = {
+      'method': 'rolling_median_3',
+      'current_value': double.parse(rollingCurrent.toStringAsFixed(2)),
+      'baseline_value': double.parse(baselineValue.toStringAsFixed(2)),
+      'baseline_method': baselineRolling ? 'rolling_median_3' : 'single_scan',
+      'scan_ids': [for (final scan in window) scan.id],
+      'baseline_scan_ids': [
+        for (final scan in baselineRolling ? baselineWindow : [baseline])
+          scan.id,
+      ],
+    };
+  }
+  return (
+    trendStatus: updatedStatus,
+    trendDeltas: updatedDeltas,
+    rollingTrend: notes,
+  );
+}
+
 /// region_position_mismatch: a tracked region's box (logged by main.py in
 /// image_quality as `<prefix>_box_cx/cy/w/h`, in face-width units) whose
 /// center moved more than this many face widths from the baseline's...
@@ -3217,9 +3479,33 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           backendResponse['trend_noise_floor_excluded_multiplier'],
         ),
       );
-      final rednessAdjustedTrend = downgradeRednessTrendForCaptureMismatch(
+      // Rolling-average trend for the median-of-five metrics; runs before
+      // the lock steps below so a lock still clears its verdict.
+      final rollingAdjustedTrend = applyRollingTrend(
         trendStatus: noiseFloorAdjustedTrend.trendStatus,
         trendDeltas: noiseFloorAdjustedTrend.trendDeltas,
+        trendLockReasons: noiseFloorAdjustedTrend.trendLockReasons,
+        current: (
+          id: 'current',
+          timestamp: input.capturedAt,
+          poseTemplate: _capturedPoseTemplate,
+          guideType: _capturedGuideType,
+          captureQuality: _currentCaptureQuality,
+          payload: backendResponse,
+        ),
+        baseline: _previousFocusAreaScan == null
+            ? null
+            : rollingTrendScanOf(_previousFocusAreaScan!),
+        history: [
+          for (final scan in await AppPrefs.getScanEntries())
+            if (scan.scanType == ScanHistoryEntry.scanTypeAiAnalysis)
+              rollingTrendScanOf(scan),
+        ],
+      );
+      backendResponse['rolling_trend'] = rollingAdjustedTrend.rollingTrend;
+      final rednessAdjustedTrend = downgradeRednessTrendForCaptureMismatch(
+        trendStatus: rollingAdjustedTrend.trendStatus,
+        trendDeltas: rollingAdjustedTrend.trendDeltas,
         trendLockReasons: noiseFloorAdjustedTrend.trendLockReasons,
         currentPayload: backendResponse,
         baselinePayload:
