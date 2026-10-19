@@ -47,6 +47,7 @@ import 'package:aesthetic_skin_tracker/utils/untrusted_trend_metrics.dart';
 import 'package:aesthetic_skin_tracker/utils/comparable_pair_pdf.dart';
 import 'package:aesthetic_skin_tracker/utils/last_comparable_pair.dart';
 import 'package:aesthetic_skin_tracker/widgets/scan_note_field.dart';
+import 'package:aesthetic_skin_tracker/utils/protocol_checklist.dart';
 import 'package:aesthetic_skin_tracker/widgets/paywall_screen.dart';
 import 'free_local_scan_results_screen.dart';
 import 'package:aesthetic_skin_tracker/utils/gray_card_region.dart';
@@ -3007,6 +3008,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     if (await openPaywallIfFreeScanCapReached(context)) return;
     if (!mounted) return;
     try {
+      final selectedProcedureId = (_selectedProcedureId ?? '').trim();
+      final checklistToken = await frontBaselineResetToken(
+        procedureId: selectedProcedureId.isEmpty ? null : selectedProcedureId,
+        focusArea: _resolvedFocusArea(),
+      );
+      if (!mounted) return;
       final captured = await Navigator.push<Object?>(
         context,
         MaterialPageRoute(
@@ -3015,6 +3022,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             aiMultiFrameCapture: true,
             capturePurpose: CameraCapturePurpose.aiSkinAnalysis,
             markGrayCardAfterCapture: _markGrayCard,
+            protocolChecklistResetToken: checklistToken,
           ),
         ),
       );

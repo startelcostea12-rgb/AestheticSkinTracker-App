@@ -31,6 +31,8 @@ import 'package:aesthetic_skin_tracker/widgets/clinical_section_header.dart';
 import 'package:aesthetic_skin_tracker/widgets/image_crop_dialog.dart';
 import 'package:aesthetic_skin_tracker/utils/gray_card_region.dart';
 import 'package:aesthetic_skin_tracker/widgets/gray_card_target_overlay.dart';
+import 'package:aesthetic_skin_tracker/utils/protocol_checklist.dart';
+import 'package:aesthetic_skin_tracker/widgets/protocol_checklist_card.dart';
 import 'package:aesthetic_skin_tracker/widgets/local_image_preview.dart';
 import 'package:aesthetic_skin_tracker/widgets/makeup_badge.dart';
 import 'package:aesthetic_skin_tracker/widgets/makeup_disclosure_dialog.dart';
@@ -1076,6 +1078,11 @@ class CameraScreen extends StatefulWidget {
   /// grayCardTargetInStill); off by default.
   final bool markGrayCardAfterCapture;
 
+  /// The pending Front baseline reset's marker (see
+  /// frontBaselineResetToken), or null. When set and not yet dismissed, the
+  /// dismissible ProtocolChecklistCard is shown; it never gates capture.
+  final String? protocolChecklistResetToken;
+
   const CameraScreen({
     this.procedure,
     this.isSkincareScan = false,
@@ -1086,6 +1093,7 @@ class CameraScreen extends StatefulWidget {
     this.initialProcedureLabel,
     this.initialTrackProcedureBaselineRecord,
     this.markGrayCardAfterCapture = false,
+    this.protocolChecklistResetToken,
   }) : assert(
          !aiMultiFrameCapture ||
              capturePurpose == CameraCapturePurpose.aiSkinAnalysis,
@@ -1150,6 +1158,20 @@ class AiSkinAnalysisCaptureResult {
 
 class _CameraScreenState extends State<CameraScreen>
     with TickerProviderStateMixin {
+  bool _showProtocolChecklist = false;
+
+  Future<void> _loadProtocolChecklist() async {
+    final token = widget.protocolChecklistResetToken;
+    if (!await shouldShowProtocolChecklist(token)) return;
+    if (mounted) setState(() => _showProtocolChecklist = true);
+  }
+
+  Future<void> _dismissProtocolChecklist() async {
+    final token = widget.protocolChecklistResetToken;
+    setState(() => _showProtocolChecklist = false);
+    if (token != null) await dismissProtocolChecklist(token);
+  }
+
   bool _capturing = false;
 
   bool get _isTrackProcedureFlow =>
@@ -1594,6 +1616,7 @@ class _CameraScreenState extends State<CameraScreen>
   @override
   void initState() {
     super.initState();
+    _loadProtocolChecklist();
     _shimmerController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
@@ -6531,6 +6554,16 @@ class _CameraScreenState extends State<CameraScreen>
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: _buildDebugCollapsedSummaryLine(report),
+                    ),
+
+                  // Dismissible protocol checklist after a Front baseline
+                  // reset; never gates capture.
+                  if (_showProtocolChecklist)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: ProtocolChecklistCard(
+                        onDismiss: _dismissProtocolChecklist,
+                      ),
                     ),
 
                   // Non-blocking reminder; never gates capture.
