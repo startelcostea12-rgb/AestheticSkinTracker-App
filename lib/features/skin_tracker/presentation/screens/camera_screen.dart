@@ -59,10 +59,14 @@ class ReferenceAlignmentRow extends StatelessWidget {
         ? AppColors.mutedSage.withValues(alpha: 0.32)
         : AppColors.borders;
 
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
+    return LayoutBuilder(
+      builder: (context, constraints) => Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
+        runSpacing: 6,
+        children: [
+          Text(
             'Reference Alignment',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -74,12 +78,11 @@ class ReferenceAlignmentRow extends StatelessWidget {
               letterSpacing: 0.2,
             ),
           ),
-        ),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Container(
+          Container(
             alignment: Alignment.centerRight,
-            constraints: const BoxConstraints(maxWidth: 220),
+            constraints: BoxConstraints(
+              maxWidth: math.min(220, constraints.maxWidth),
+            ),
             padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
             decoration: BoxDecoration(
               color: backgroundColor,
@@ -116,8 +119,8 @@ class ReferenceAlignmentRow extends StatelessWidget {
               ],
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
