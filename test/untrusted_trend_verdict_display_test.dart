@@ -12,13 +12,18 @@ const hiddenMetrics = <String, double>{
   'under_eye_texture_density': 14.0,
 };
 
-Widget harness(Map<String, dynamic> payload) => MaterialApp(
-  home: Scaffold(
-    body: SingleChildScrollView(
-      child: LuxeReportLayout(rawPayload: payload, requireBackendVerdict: true),
-    ),
-  ),
-);
+Widget harness(Map<String, dynamic> payload, {bool liveDisplay = false}) =>
+    MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: LuxeReportLayout(
+            rawPayload: payload,
+            requireBackendVerdict: true,
+            applyDisplayNoiseFloors: liveDisplay,
+          ),
+        ),
+      ),
+    );
 
 void main() {
   test('worsening progress percent displays magnitude without a minus', () {
@@ -42,6 +47,107 @@ void main() {
       'Improved +17.3%',
     );
   });
+
+  for (final delta in const [-17.3, 17.3, -0.01, 0.0]) {
+    test('worsening percent badges are unsigned for delta $delta', () {
+      final progressBadge = formatProgressReportTrendPercent(
+        trendLabel: 'Worsened',
+        percentDelta: delta,
+        isWorsened: true,
+      );
+      expect(progressBadge, 'Worsened ${delta.abs().toStringAsFixed(1)}%');
+      final resultBadge = LuxeMetricParser.formatDisplayDelta(
+        baseline: 40.0,
+        current: 47.0,
+        deltaPct: delta,
+        includeSign: true,
+      );
+      expect(resultBadge, isNot(contains('-')));
+      expect(resultBadge, isNot(contains('\u2212')));
+    });
+  }
+
+  test(
+    'negative percentage cap stays unsigned without changing point display',
+    () {
+      expect(
+        LuxeMetricParser.formatDisplayDelta(
+          baseline: 40.0,
+          current: 47.0,
+          deltaPct: -275.0,
+          includeSign: true,
+        ),
+        '100.0%',
+      );
+      expect(
+        LuxeMetricParser.formatDisplayDelta(
+          baseline: 8.0,
+          current: 2.0,
+          deltaPct: -75.0,
+          includeSign: true,
+        ),
+        '-6.0 pts',
+      );
+    },
+  );
+
+  for (final entry in hiddenMetrics.entries) {
+    testWidgets('${entry.key} worsening badge has no percent and keeps locks', (
+      tester,
+    ) async {
+      final payload = <String, dynamic>{
+        'is_follow_up': true,
+        'local_history_count': 2,
+        'metric_matrix': {entry.key: entry.value},
+        'baseline_metric_matrix': {entry.key: entry.value + 10.0},
+        'metric_extraction_paths': {entry.key: 'primary_roi'},
+        'baseline_metric_extraction_paths': {entry.key: 'primary_roi'},
+        'trend_status': {entry.key: 'worsened'},
+        'trend_deltas': {entry.key: -17.3},
+      };
+      await tester.pumpWidget(harness(payload));
+      await tester.pumpAndSettle();
+
+      final card = find.byKey(ValueKey('result_metric_${entry.key}'));
+      expect(
+        find.descendant(of: card, matching: find.textContaining('%')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(of: card, matching: find.text('Worsened')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.text(entry.value.toStringAsFixed(1)),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.pumpWidget(
+        harness({
+          ...payload,
+          'trend_status': {entry.key: 'stable'},
+          'trend_deltas': {entry.key: 0.0},
+          'trend_lock_reasons': {entry.key: 'path_mismatch'},
+        }, liveDisplay: true),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.textContaining('Not comparable'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: card, matching: find.textContaining('%')),
+        findsNothing,
+      );
+    });
+  }
 
   testWidgets('six untrusted metrics show values without verdicts or percent', (
     tester,
