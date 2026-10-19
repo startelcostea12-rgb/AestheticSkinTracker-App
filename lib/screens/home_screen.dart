@@ -36,6 +36,7 @@ import '../utils/upload_gate.dart';
 import '../utils/last_comparable_pair.dart';
 import '../widgets/last_comparable_pair_card.dart';
 import '../widgets/home_routine_card.dart';
+import 'progress_summary_screen.dart';
 import '../widgets/scan_based_recommendations_card.dart';
 import '../widgets/bridge_card.dart';
 import 'package:aesthetic_skin_tracker/features/procedures/presentation/procedure_profiles_screen.dart';
@@ -2704,7 +2705,14 @@ class _HomePageState extends State<HomePage>
                 const SizedBox(height: 20),
                 // Primary card: last comparable pair (or latest scan alone).
                 if (lastComparablePair(sortedScans) case final pair?) ...[
-                  LastComparablePairCard(pair: pair),
+                  LastComparablePairCard(
+                    pair: pair,
+                    onOpenSummary: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const ProgressSummaryScreen(),
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 12),
                 ],
                 if (_activeRoutine case final routine?

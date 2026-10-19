@@ -8,9 +8,16 @@ import '../app_theme.dart';
 import '../utils/last_comparable_pair.dart';
 
 class LastComparablePairCard extends StatelessWidget {
-  const LastComparablePairCard({super.key, required this.pair});
+  const LastComparablePairCard({
+    super.key,
+    required this.pair,
+    this.onOpenSummary,
+  });
 
   final ComparablePair pair;
+
+  /// Opens the progress summary; no button when null.
+  final VoidCallback? onOpenSummary;
 
   static const String noPriorText = 'No prior comparable scan.';
 
@@ -144,6 +151,15 @@ class LastComparablePairCard extends StatelessWidget {
               ),
             ),
           ],
+          if (onOpenSummary != null)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                key: const ValueKey('open_progress_summary'),
+                onPressed: onOpenSummary,
+                child: const Text('Progress summary'),
+              ),
+            ),
         ],
       ),
     );

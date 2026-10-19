@@ -151,7 +151,7 @@ void main() {
   test('home shows the card as the primary card under Welcome back', () {
     final source = File('lib/screens/home_screen.dart').readAsStringSync();
     final welcome = source.indexOf('                _buildWelcomeSection(),');
-    final card = source.indexOf('LastComparablePairCard(pair: pair)');
+    final card = source.indexOf('LastComparablePairCard(');
     final protocol = source.indexOf(
       '                _buildProtocolHomeCard(),',
     );
