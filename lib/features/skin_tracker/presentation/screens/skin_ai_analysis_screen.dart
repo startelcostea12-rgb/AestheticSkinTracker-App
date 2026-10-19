@@ -44,6 +44,8 @@ import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:aesthetic_skin_tracker/utils/upload_gate.dart';
 import 'package:aesthetic_skin_tracker/utils/untrusted_trend_metrics.dart';
+import 'package:aesthetic_skin_tracker/utils/comparable_pair_pdf.dart';
+import 'package:aesthetic_skin_tracker/utils/last_comparable_pair.dart';
 import 'package:aesthetic_skin_tracker/widgets/paywall_screen.dart';
 import 'free_local_scan_results_screen.dart';
 import 'package:aesthetic_skin_tracker/utils/gray_card_region.dart';
@@ -73,7 +75,7 @@ class SkinAiAnalysisScreen extends StatefulWidget {
 
 enum _Stage { capture, analyzing, results }
 
-enum _DebugExportAction { burstLog, scanData }
+enum _DebugExportAction { burstLog, scanData, comparisonPdf }
 
 class MultiFrameAnalysisAggregate {
   const MultiFrameAnalysisAggregate({
@@ -2570,6 +2572,61 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     }
   }
 
+  /// One-page PDF of the last comparable pair, saved and shared the same way
+  /// as the scan-data CSV (temporary directory, then the share sheet).
+  Future<void> _exportComparisonPdf(BuildContext buttonContext) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final renderObject = buttonContext.findRenderObject();
+    final box = renderObject is RenderBox ? renderObject : null;
+    final origin =
+        (box != null &&
+            box.hasSize &&
+            box.size.width > 0 &&
+            box.size.height > 0)
+        ? (box.localToGlobal(Offset.zero) & box.size)
+        : const Rect.fromLTWH(0, 0, 1, 1);
+    try {
+      final pair = lastComparablePair(
+        await AppPrefs.getScanEntriesWithoutNormalization(),
+      );
+      if (pair == null) {
+        if (mounted) {
+          messenger.showSnackBar(
+            const SnackBar(content: Text('No saved AI scan to export.')),
+          );
+        }
+        return;
+      }
+      final bytes = await buildComparablePairPdf(pair);
+      final fileName =
+          'ai_skin_comparison_${DateTime.now().toIso8601String().replaceAll(':', '-')}.pdf';
+      final XFile file;
+      if (kIsWeb) {
+        file = XFile.fromData(
+          bytes,
+          mimeType: 'application/pdf',
+          name: fileName,
+        );
+      } else {
+        final directory = await getTemporaryDirectory();
+        final path = '${directory.path}${Platform.pathSeparator}$fileName';
+        await File(path).writeAsBytes(bytes, flush: true);
+        file = XFile(path, mimeType: 'application/pdf', name: fileName);
+      }
+      await Share.shareXFiles(
+        [file],
+        text: 'AI Skin Analysis comparison',
+        sharePositionOrigin: origin,
+      );
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Failed to export comparison PDF: $e')),
+        );
+      }
+    }
+  }
+
   Future<XFile> _writeScanDataCsv(String fileName, String csv) async {
     final directory = await getTemporaryDirectory();
     final file = File('${directory.path}${Platform.pathSeparator}$fileName');
@@ -4229,6 +4286,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                     await _exportBurstLuminanceLog(buttonContext);
                   case _DebugExportAction.scanData:
                     await _exportScanData(buttonContext);
+                  case _DebugExportAction.comparisonPdf:
+                    await _exportComparisonPdf(buttonContext);
                 }
               },
               itemBuilder: (_) => const [
@@ -4249,6 +4308,21 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                       Icon(Icons.table_view_outlined, size: 18),
                       SizedBox(width: 10),
                       Text('Export Scan Data'),
+                    ],
+                  ),
+                ),
+                PopupMenuItem(
+                  value: _DebugExportAction.comparisonPdf,
+                  child: Row(
+                    children: [
+                      Icon(Icons.picture_as_pdf_outlined, size: 18),
+                      SizedBox(width: 10),
+                      Flexible(
+                        child: Text(
+                          'Export Comparison PDF',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                     ],
                   ),
                 ),

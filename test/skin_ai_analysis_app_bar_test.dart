@@ -35,6 +35,7 @@ void main() {
 
         expect(find.text('Export Burst Log'), findsOneWidget);
         expect(find.text('Export Scan Data'), findsOneWidget);
+        expect(find.text('Export Comparison PDF'), findsOneWidget);
         expect(tester.takeException(), isNull);
       },
     );
