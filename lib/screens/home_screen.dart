@@ -33,6 +33,8 @@ import '../widgets/premium_feature_sheet.dart';
 import '../utils/ai_intelligence_engine.dart';
 import '../utils/ai_product_recommendation_engine.dart';
 import '../utils/upload_gate.dart';
+import '../utils/last_comparable_pair.dart';
+import '../widgets/last_comparable_pair_card.dart';
 import '../widgets/scan_based_recommendations_card.dart';
 import '../widgets/bridge_card.dart';
 import 'package:aesthetic_skin_tracker/features/procedures/presentation/procedure_profiles_screen.dart';
@@ -2696,6 +2698,11 @@ class _HomePageState extends State<HomePage>
               children: [
                 _buildWelcomeSection(),
                 const SizedBox(height: 20),
+                // Primary card: last comparable pair (or latest scan alone).
+                if (lastComparablePair(sortedScans) case final pair?) ...[
+                  LastComparablePairCard(pair: pair),
+                  const SizedBox(height: 12),
+                ],
                 _buildProtocolHomeCard(),
                 const SizedBox(height: 12),
                 _buildProductPhotoRoutineEntry(),
