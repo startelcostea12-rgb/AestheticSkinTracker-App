@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import '../utils/app_prefs.dart';
+import 'routine_editor_screen.dart';
 import '../widgets/from_your_logs.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 
@@ -63,6 +64,15 @@ class _RoutinesScreenState extends State<RoutinesScreen> {
     await AppPrefs.saveActiveAiRoutineCompletion(updated);
     if (!mounted) return;
     setState(() => _completion = updated);
+  }
+
+  Future<void> _editRoutine() async {
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => RoutineEditorScreen(initialRoutine: _routine),
+      ),
+    );
+    await _loadRoutineState();
   }
 
   Future<void> _openSkinScan() async {
@@ -180,6 +190,13 @@ class _RoutinesScreenState extends State<RoutinesScreen> {
             ),
           ),
           const SizedBox(height: 12),
+          OutlinedButton.icon(
+            key: const ValueKey('routines_edit_button'),
+            onPressed: _editRoutine,
+            icon: const Icon(Icons.edit_note_rounded),
+            label: const Text('Edit routine'),
+          ),
+          const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: _openSkinScan,
             icon: const Icon(Icons.auto_awesome_rounded),

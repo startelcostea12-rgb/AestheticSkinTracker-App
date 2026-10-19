@@ -35,6 +35,7 @@ import '../utils/ai_product_recommendation_engine.dart';
 import '../utils/upload_gate.dart';
 import '../utils/last_comparable_pair.dart';
 import '../widgets/last_comparable_pair_card.dart';
+import '../widgets/home_routine_card.dart';
 import '../widgets/scan_based_recommendations_card.dart';
 import '../widgets/bridge_card.dart';
 import 'package:aesthetic_skin_tracker/features/procedures/presentation/procedure_profiles_screen.dart';
@@ -126,6 +127,7 @@ class _ProcedureScanOptionTile extends StatelessWidget {
 class _HomePageState extends State<HomePage>
     with RouteAware, WidgetsBindingObserver {
   List<TrackedProduct> _trackedProducts = [];
+  Map<String, dynamic>? _activeRoutine;
   List<ProductFeedbackEntry> _productFeedback = [];
   List<AcneRosaceaLog> _acneRosaceaLogs = [];
   bool _localNotesAvailable = true;
@@ -248,6 +250,8 @@ class _HomePageState extends State<HomePage>
   }
 
   Future<void> _loadTrackedProducts() async {
+    final routine = await AppPrefs.getActiveAiRoutine();
+    if (mounted) setState(() => _activeRoutine = routine);
     final products = await AppPrefs.getTrackedProducts();
     final feedback = await AppPrefs.getProductFeedback();
     final acneLogs = await AppPrefs.getAcneRosaceaLogs();
@@ -2701,6 +2705,24 @@ class _HomePageState extends State<HomePage>
                 // Primary card: last comparable pair (or latest scan alone).
                 if (lastComparablePair(sortedScans) case final pair?) ...[
                   LastComparablePairCard(pair: pair),
+                  const SizedBox(height: 12),
+                ],
+                if (_activeRoutine case final routine?
+                    when HomeRoutineCard.stepsOf(
+                          routine,
+                          'morningSteps',
+                        ).isNotEmpty ||
+                        HomeRoutineCard.stepsOf(
+                          routine,
+                          'eveningSteps',
+                        ).isNotEmpty) ...[
+                  HomeRoutineCard(
+                    routine: routine,
+                    onOpen: () async {
+                      await Navigator.of(context).pushNamed('/routines');
+                      await _refreshData();
+                    },
+                  ),
                   const SizedBox(height: 12),
                 ],
                 _buildProtocolHomeCard(),
