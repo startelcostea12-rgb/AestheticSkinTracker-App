@@ -9,6 +9,7 @@ import '../utils/display_noise_floors.dart';
 import '../utils/severity_band.dart';
 import '../utils/trend_label_resolver.dart';
 import '../utils/trend_lock_reason.dart';
+import '../utils/untrusted_trend_metrics.dart';
 import 'before_after_split_slider.dart';
 
 const Set<String> metricsWithHiddenTrendVerdicts = <String>{
@@ -20,6 +21,19 @@ const Set<String> metricsWithHiddenTrendVerdicts = <String>{
   'under_eye_dark_circle_density',
   'under_eye_texture_density',
 };
+
+/// What a results card shows instead of "Starting point" when the baseline
+/// scan has a stored value for [metric]: "Recorded" for an untrusted metric
+/// (untrustedTrendVerdictMetrics), otherwise the number ("Not compared" when
+/// there is no current value). Null when the baseline has no value, so
+/// "Starting point" stays only in that case. Applies to every metric.
+String? storedBaselineLabelFor(LuxeMetric metric) {
+  if (!metric.hasStoredBaselineValue) return null;
+  if (untrustedTrendVerdictMetrics.contains(metric.key)) return 'Recorded';
+  return metric.hasComparableCurrentValue
+      ? metric.currentScore.toStringAsFixed(1)
+      : 'Not compared';
+}
 
 bool shouldShowTrendVerdict(String metricKey) =>
     !metricsWithHiddenTrendVerdicts.contains(metricKey);
@@ -47,6 +61,7 @@ class LuxeMetric {
     this.hasComparableCurrentValue = true,
     this.hasBaselineValue = false,
     this.showTrendVerdict = true,
+    this.hasStoredBaselineValue = false,
     this.currentExtractionPath = 'unknown',
     this.baselineExtractionPath = 'unknown',
     this.backendTrendDeltaPct,
@@ -73,6 +88,11 @@ class LuxeMetric {
   final bool hasComparableCurrentValue;
   final bool hasBaselineValue;
   final bool showTrendVerdict;
+
+  /// True when the baseline matrix holds any stored (finite, >= 0) value
+  /// for this metric -- even one too small or large to compare with. The
+  /// card then never says "Starting point" (see _storedBaselineLabel).
+  final bool hasStoredBaselineValue;
   final String currentExtractionPath;
   final String baselineExtractionPath;
   final double? backendTrendDeltaPct;
@@ -645,6 +665,12 @@ class LuxeMetricParser {
           hasComparableCurrentValue: hasComparableCurrentValue,
           hasBaselineValue: hasComparisonBaseline,
           showTrendVerdict: showTrendVerdict,
+          hasStoredBaselineValue:
+              _findPresentBaselineValue(
+                baselineMetricMatrix,
+                baselineCandidates,
+              ) !=
+              null,
           currentExtractionPath: currentExtractionPath,
           baselineExtractionPath: baselineExtractionPath,
           backendTrendDeltaPct: usesBackendTrend ? backendTrendDelta : null,
@@ -2322,6 +2348,8 @@ class _MetricCard extends StatelessWidget {
   bool get _showVerdict =>
       showsTrendVerdictOnCard(metric, liveDisplay: applyDisplayNoiseFloors);
 
+  String? get _storedBaselineLabel => storedBaselineLabelFor(metric);
+
   _MetricRowData _buildMetricRowData() {
     final hasComparisonContext =
         showProgressComparison || metric.hasBaselineValue;
@@ -2332,12 +2360,14 @@ class _MetricCard extends StatelessWidget {
         trendDelta: null,
         badgePercent: null,
         badgeValueText: null,
-        subtext: 'Starting point for future progress tracking',
+        subtext: _storedBaselineLabel != null
+            ? ''
+            : 'Starting point for future progress tracking',
         initialBaseline: true,
         honestyStatus: _HonestyStatus.insufficientSignal,
         honestyLabel: metric.hasComparableCurrentValue
             ? metric.name
-            : 'Starting point',
+            : _storedBaselineLabel ?? 'Starting point',
         trendLocked: false,
         hasRealBaseline: false,
         hasComparableCurrentValue: metric.hasComparableCurrentValue,
@@ -2369,7 +2399,7 @@ class _MetricCard extends StatelessWidget {
                   : 'Not comparable: ${_shortLockReasonPhrase(lockReason)}')
             : metric.hasComparableCurrentValue
             ? metric.name
-            : 'Starting point',
+            : _storedBaselineLabel ?? 'Starting point',
         trendLocked: locked,
         hasRealBaseline: hasBaseline,
         hasComparableCurrentValue: metric.hasComparableCurrentValue,

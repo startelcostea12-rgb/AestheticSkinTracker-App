@@ -43,6 +43,7 @@ import 'package:aesthetic_skin_tracker/utils/ai/skin_detections.dart';
 import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:aesthetic_skin_tracker/utils/upload_gate.dart';
+import 'package:aesthetic_skin_tracker/utils/untrusted_trend_metrics.dart';
 import 'package:aesthetic_skin_tracker/widgets/paywall_screen.dart';
 import 'free_local_scan_results_screen.dart';
 import 'package:aesthetic_skin_tracker/utils/gray_card_region.dart';
@@ -448,14 +449,8 @@ void navigateHomeFrom(NavigatorState navigator) {
 /// card nor the scan-data export shows improved/worsened/stable or a
 /// percent. A lock reason is still kept, so a locked one shows "Not
 /// comparable".
-const Set<String> untrustedTrendVerdictMetricKeys = <String>{
-  'pore_contraction_index',
-  'under_eye_dark_circle_density',
-  'under_eye_texture_density',
-  'wrinkle_load',
-  'rosacea_severity',
-  'diffuse_flushing_erythema',
-};
+const Set<String> untrustedTrendVerdictMetricKeys =
+    untrustedTrendVerdictMetrics;
 
 /// Where the gray-card box was drawn, as logged by main.py: the space
 /// ("full_still" for an uploaded patch) and the box as fractions of it.
