@@ -1140,6 +1140,117 @@ lockTrendsForLightingMismatch({
   );
 }
 
+/// region_position_mismatch: a tracked region's box (logged by main.py in
+/// image_quality as `<prefix>_box_cx/cy/w/h`, in face-width units) whose
+/// center moved more than this many face widths from the baseline's...
+const double regionPositionCenterShiftLimit = 0.04;
+
+/// ...or whose area changed by more than this fraction of the baseline's.
+const double regionPositionAreaChangeLimit = 0.08;
+
+/// Which logged region boxes each metric is measured in.
+const Map<String, List<String>> regionPositionBoxPrefixes = {
+  'wrinkle_load': ['wrinkle_region'],
+  'pore_contraction_index': ['pore_contraction_roi'],
+  'under_eye_dark_circle_density': ['under_eye_left', 'under_eye_right'],
+  'under_eye_texture_density': ['under_eye_left', 'under_eye_right'],
+};
+
+({double cx, double cy, double area})? _regionBox(
+  Map<String, dynamic> imageQuality,
+  String prefix,
+) {
+  final cx = _parseFiniteDouble(imageQuality['${prefix}_box_cx']);
+  final cy = _parseFiniteDouble(imageQuality['${prefix}_box_cy']);
+  final w = _parseFiniteDouble(imageQuality['${prefix}_box_w']);
+  final h = _parseFiniteDouble(imageQuality['${prefix}_box_h']);
+  if (cx == null || cy == null || w == null || h == null) return null;
+  return (cx: cx, cy: cy, area: w * h);
+}
+
+/// Whether [prefix]'s region moved or resized past the limits above between
+/// [baselineQuality] and [currentQuality]. False when either scan did not
+/// log the box (e.g. scans saved before boxes were logged).
+bool regionPositionShifted({
+  required Map<String, dynamic> currentQuality,
+  required Map<String, dynamic> baselineQuality,
+  required String prefix,
+}) {
+  final current = _regionBox(currentQuality, prefix);
+  final baseline = _regionBox(baselineQuality, prefix);
+  if (current == null || baseline == null) return false;
+  final dx = current.cx - baseline.cx;
+  final dy = current.cy - baseline.cy;
+  final centerShift = math.sqrt(dx * dx + dy * dy);
+  final areaChange = baseline.area <= 0
+      ? double.infinity
+      : (current.area - baseline.area).abs() / baseline.area;
+  return centerShift > regionPositionCenterShiftLimit ||
+      areaChange > regionPositionAreaChangeLimit;
+}
+
+/// Locks wrinkle_load, pore_contraction_index and the under-eye metrics with
+/// region_position_mismatch when their region shifted (see
+/// [regionPositionShifted]), clearing status and delta like the other locks.
+/// Applies to every one of those metrics the current scan emitted -- they
+/// can carry a lock reason even with no status -- and never replaces a lock
+/// reason that is already set.
+({
+  Map<String, String> trendStatus,
+  Map<String, double> trendDeltas,
+  Map<String, String> trendLockReasons,
+})
+lockTrendsForRegionPositionMismatch({
+  required Map<String, String> trendStatus,
+  required Map<String, double> trendDeltas,
+  required Map<String, String> trendLockReasons,
+  required Map<String, dynamic> currentPayload,
+  required Map<String, dynamic> baselinePayload,
+}) {
+  Map<String, dynamic> imageQuality(Map<String, dynamic> payload) {
+    final direct = _dynamicMap(payload['image_quality']);
+    if (direct.isNotEmpty) return direct;
+    return _dynamicMap(_dynamicMap(payload['metrics'])['image_quality']);
+  }
+
+  final currentQuality = imageQuality(currentPayload);
+  final baselineQuality = imageQuality(baselinePayload);
+  final currentMatrix = _dynamicMap(currentPayload['metric_matrix']).isNotEmpty
+      ? _dynamicMap(currentPayload['metric_matrix'])
+      : _dynamicMap(_dynamicMap(currentPayload['metrics'])['metric_matrix']);
+  final updatedStatus = Map<String, String>.from(trendStatus);
+  final updatedDeltas = Map<String, double>.from(trendDeltas);
+  final updatedLockReasons = Map<String, String>.from(trendLockReasons);
+  if (baselinePayload.isEmpty) {
+    return (
+      trendStatus: updatedStatus,
+      trendDeltas: updatedDeltas,
+      trendLockReasons: updatedLockReasons,
+    );
+  }
+  for (final entry in regionPositionBoxPrefixes.entries) {
+    final metricKey = entry.key;
+    if (!currentMatrix.containsKey(metricKey)) continue;
+    if ((updatedLockReasons[metricKey] ?? '').trim().isNotEmpty) continue;
+    final shifted = entry.value.any(
+      (prefix) => regionPositionShifted(
+        currentQuality: currentQuality,
+        baselineQuality: baselineQuality,
+        prefix: prefix,
+      ),
+    );
+    if (!shifted) continue;
+    updatedStatus.remove(metricKey);
+    updatedDeltas.remove(metricKey);
+    updatedLockReasons[metricKey] = 'region_position_mismatch';
+  }
+  return (
+    trendStatus: updatedStatus,
+    trendDeltas: updatedDeltas,
+    trendLockReasons: updatedLockReasons,
+  );
+}
+
 /// Pre-upload check: would this capture's frames be locked as
 /// lighting_mismatch against [baselinePayload] by the same rule the
 /// results use ([lockTrendsForLightingMismatch])? [wouldLock] is true only
@@ -3052,10 +3163,18 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         baselinePayload:
             _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
       );
-      final unlockedVerdictsOnly = clearLockedTrendVerdicts(
+      final regionAdjustedTrend = lockTrendsForRegionPositionMismatch(
         trendStatus: lightingAdjustedTrend.trendStatus,
         trendDeltas: lightingAdjustedTrend.trendDeltas,
         trendLockReasons: lightingAdjustedTrend.trendLockReasons,
+        currentPayload: backendResponse,
+        baselinePayload:
+            _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
+      );
+      final unlockedVerdictsOnly = clearLockedTrendVerdicts(
+        trendStatus: regionAdjustedTrend.trendStatus,
+        trendDeltas: regionAdjustedTrend.trendDeltas,
+        trendLockReasons: regionAdjustedTrend.trendLockReasons,
       );
       final Map<String, double> serverTrendDeltas =
           unlockedVerdictsOnly.trendDeltas;

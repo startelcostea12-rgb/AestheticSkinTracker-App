@@ -91,6 +91,23 @@ class AiScanDataCsvExporter {
     'image_quality.gray_card_region_y',
     'image_quality.gray_card_region_w',
     'image_quality.gray_card_region_h',
+    // Region boxes for region_position_mismatch (face-width units).
+    'image_quality.wrinkle_region_box_cx',
+    'image_quality.wrinkle_region_box_cy',
+    'image_quality.wrinkle_region_box_w',
+    'image_quality.wrinkle_region_box_h',
+    'image_quality.pore_contraction_roi_box_cx',
+    'image_quality.pore_contraction_roi_box_cy',
+    'image_quality.pore_contraction_roi_box_w',
+    'image_quality.pore_contraction_roi_box_h',
+    'image_quality.under_eye_left_box_cx',
+    'image_quality.under_eye_left_box_cy',
+    'image_quality.under_eye_left_box_w',
+    'image_quality.under_eye_left_box_h',
+    'image_quality.under_eye_right_box_cx',
+    'image_quality.under_eye_right_box_cy',
+    'image_quality.under_eye_right_box_w',
+    'image_quality.under_eye_right_box_h',
   ];
 
   static const List<String> _metricFields = <String>[

@@ -3423,6 +3423,46 @@ def compute_wrinkle_load(gray: np.ndarray, wrinkle_mask: np.ndarray) -> float:
     return edge_ratio * 240.0
 
 
+# Region-position logging: each tracked region's bounding box in face-width
+# units (relative to the face landmarks' bounding-box top-left, both axes
+# divided by the landmarks' bounding-box width), so a shift of the region
+# between scans can be compared independent of image size. Logged only;
+# never feeds a metric value.
+REGION_POSITION_BOX_PREFIXES = (
+    "wrinkle_region",
+    "pore_contraction_roi",
+    "under_eye_left",
+    "under_eye_right",
+)
+
+
+def _mask_box_in_face_units(mask: np.ndarray, points: np.ndarray) -> Dict[str, float] | None:
+    if mask is None or points is None or len(points) == 0:
+        return None
+    ys, xs = np.where(np.asarray(mask) > 0)
+    if xs.size == 0:
+        return None
+    face_x0 = float(np.min(points[:, 0]))
+    face_y0 = float(np.min(points[:, 1]))
+    face_w = float(np.max(points[:, 0])) - face_x0
+    if face_w <= 0:
+        return None
+    x0, x1 = float(xs.min()), float(xs.max()) + 1.0
+    y0, y1 = float(ys.min()), float(ys.max()) + 1.0
+    return {
+        "cx": round(((x0 + x1) / 2.0 - face_x0) / face_w, 4),
+        "cy": round(((y0 + y1) / 2.0 - face_y0) / face_w, 4),
+        "w": round((x1 - x0) / face_w, 4),
+        "h": round((y1 - y0) / face_w, 4),
+    }
+
+
+def _region_box_fields(prefix: str, box: Dict[str, float] | None) -> Dict[str, float]:
+    if box is None:
+        return {}
+    return {f"{prefix}_box_{key}": value for key, value in box.items()}
+
+
 def _compute_canonical_patch_metrics(
     face_bgr: np.ndarray,
     skin_mask: np.ndarray,
@@ -3590,6 +3630,10 @@ def _compute_canonical_patch_metrics(
         pigment_roi_source = "full_face_fallback"
     cheek_mask = primary_cheek_mask if cheek_primary_usable else full_face_skin_mask.copy()
     wrinkle_mask = cv2.bitwise_or(glabella, texture_mask)
+    # Logged for region_position_mismatch (see REGION_POSITION_BOX_PREFIXES).
+    raw_components.update(
+        _region_box_fields("wrinkle_region", _mask_box_in_face_units(wrinkle_mask, points))
+    )
 
     primary_texture_pixels = int(cv2.countNonZero(texture_mask))
     primary_pigment_pixels = int(cv2.countNonZero(cheek_mask))
@@ -6425,6 +6469,28 @@ def analyze_skin_patch(
         mask,
     )
     pore_contraction_roi_pixels = int(cv2.countNonZero(structural_pore_roi))
+    region_position_boxes = {
+        **_region_box_fields(
+            "pore_contraction_roi",
+            _mask_box_in_face_units(structural_pore_roi, norm_points),
+        ),
+        **{
+            key: value
+            for side in ("left", "right")
+            for key, value in _region_box_fields(
+                f"under_eye_{side}",
+                _mask_box_in_face_units(
+                    _under_eye_region_mask(norm.shape[:2], norm_points, mask, side=side),
+                    norm_points,
+                ),
+            ).items()
+        },
+        **{
+            key: value
+            for key, value in raw_components.items()
+            if key.startswith("wrinkle_region_box_")
+        },
+    }
     raw_components["pore_contraction_roi_pixels"] = float(
         pore_contraction_roi_pixels
     )
@@ -7467,6 +7533,7 @@ def analyze_skin_patch(
 
     image_quality_payload = {
         **(quality_profile or {}),
+        **region_position_boxes,
         **_redness_color_diagnostics(
             redness_diagnostics,
             branch=redness_branch,
