@@ -1223,23 +1223,23 @@ class MetricFormulaVersionRegistryTests(unittest.TestCase):
                 "localized_redness": 3,
                 "texture_smoothness": 3,
                 "pigment_load": 2,
-                "wrinkle_load": 3,
+                "wrinkle_load": 4,
                 "sebum_excess_oil_gloss": 3,
                 "diffuse_flushing_erythema": 2,
                 "rosacea_severity": 3,
                 "pore_visibility": 3,
                 "chin_pore_visibility": 1,
-                "pore_contraction_index": 2,
+                "pore_contraction_index": 3,
                 "glabellar_wrinkle_depth": 2,
-                "under_eye_texture_density": 4,
-                "under_eye_dark_circle_density": 4,
+                "under_eye_texture_density": 5,
+                "under_eye_dark_circle_density": 5,
                 "breakout_activity": 2,
             },
         )
 
     def test_every_metric_defaults_to_version_1(self) -> None:
         self.assertEqual(_metric_formula_version("texture_smoothness"), 3)
-        self.assertEqual(_metric_formula_version("wrinkle_load"), 3)
+        self.assertEqual(_metric_formula_version("wrinkle_load"), 4)
         self.assertEqual(_metric_formula_version("anything_unknown"), 1)
 
     def test_texture_v2_baseline_is_refused_by_formula_version_gate(self) -> None:
@@ -1324,7 +1324,7 @@ class MetricFormulaVersionRegistryTests(unittest.TestCase):
         )
 
     def test_pore_contraction_omission_refuses_version_one_baseline(self) -> None:
-        self.assertEqual(_metric_formula_version("pore_contraction_index"), 2)
+        self.assertEqual(_metric_formula_version("pore_contraction_index"), 3)
         self.assertEqual(
             _trend_lock_reason(
                 "primary_roi",
@@ -1335,7 +1335,7 @@ class MetricFormulaVersionRegistryTests(unittest.TestCase):
                 750,
                 1000,
                 750,
-                current_formula_version=2,
+                current_formula_version=3,
                 baseline_formula_version=1,
                 current_pose_template="Front",
                 baseline_pose_template="Front",

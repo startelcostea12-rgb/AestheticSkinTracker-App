@@ -5281,7 +5281,9 @@ class _CameraScreenState extends State<CameraScreen>
       );
 
       await Future<void>.delayed(const Duration(milliseconds: 200));
-      for (var index = 0; index < 3; index++) {
+      // aiScanCaptureFrameCount (5): frames 1-3 feed every metric as
+      // before; all five feed the median-of-five metrics.
+      for (var index = 0; index < aiScanCaptureFrameCount; index++) {
         capturedFiles.add(
           await captureAiScanFrameWithFlashOff<XFile>(
             setFlashMode: controller.setFlashMode,
@@ -5291,11 +5293,11 @@ class _CameraScreenState extends State<CameraScreen>
             ),
           ),
         );
-        if (index < 2) {
+        if (index < aiScanCaptureFrameCount - 1) {
           await Future<void>.delayed(const Duration(milliseconds: 110));
         }
       }
-      if (!mounted || capturedFiles.length != 3) return;
+      if (!mounted || capturedFiles.length != aiScanCaptureFrameCount) return;
 
       // Logging-only: per-frame mean luminance, purely for observability.
       // Must NOT affect frame selection or anything passed to analysis --

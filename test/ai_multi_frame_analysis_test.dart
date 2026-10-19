@@ -1126,20 +1126,18 @@ void main() {
     () {
       final aggregate = averageBackendAnalysisFrames([
         {
-          'metric_matrix': {'under_eye_texture_density': 20.0},
-          'metric_extraction_paths': {
-            'under_eye_texture_density': 'primary_roi',
-          },
+          'metric_matrix': {'chin_pore_visibility': 20.0},
+          'metric_extraction_paths': {'chin_pore_visibility': 'primary_roi'},
         },
         {
           'metric_matrix': {'pigment_load': 12.0},
-          'metric_extraction_paths': {'under_eye_texture_density': 'skipped'},
+          'metric_extraction_paths': {'chin_pore_visibility': 'skipped'},
         },
       ], requestedFrames: 2);
 
       expect(
         (aggregate.response['metric_extraction_paths']
-            as Map)['under_eye_texture_density'],
+            as Map)['chin_pore_visibility'],
         'primary_roi',
       );
     },
@@ -1246,7 +1244,9 @@ void main() {
           frame(59.7),
           frame(65.1),
           frame(62.0),
-        ], requestedFrames: 3);
+          frame(60.5),
+          frame(63.3),
+        ], requestedFrames: 5);
 
         final status = aggregate.response['trend_status'] as Map;
         final deltas = aggregate.response['trend_deltas'] as Map;
@@ -1256,7 +1256,7 @@ void main() {
         expect(status['pigment_load'], 'stable');
         expect(
           aggregate.response['metric_matrix']['pore_contraction_index'],
-          closeTo(62.267, 0.001),
+          62.0, // median of five
         );
 
         final scan = ScanHistoryEntry(
@@ -1274,21 +1274,24 @@ void main() {
         final values = rows[1].split(',');
         String cell(String column) => values[header.indexOf(column)];
         expect(cell('pore_contraction_index_trend_status'), isEmpty);
-        expect(cell('pore_contraction_index_value'), startsWith('62.2'));
+        expect(cell('pore_contraction_index_value'), '62.0');
         expect(cell('pigment_load_trend_status'), 'stable');
       },
     );
 
     test('every untrusted metric drops status and delta but keeps a lock', () {
       for (final key in untrustedTrendVerdictMetricKeys) {
+        // Median-of-five metrics need all five frames to be emitted.
+        final frames = fiveFrameMedianMetricKeys.contains(key) ? 5 : 1;
         final aggregate = averageBackendAnalysisFrames([
-          {
-            'metric_matrix': {key: 40.0},
-            'trend_status': {key: 'worsened'},
-            'trend_deltas': {key: -12.0},
-            'trend_lock_reasons': {key: 'capture_quality_mismatch'},
-          },
-        ], requestedFrames: 1);
+          for (var i = 0; i < frames; i++)
+            {
+              'metric_matrix': {key: 40.0},
+              'trend_status': {key: 'worsened'},
+              'trend_deltas': {key: -12.0},
+              'trend_lock_reasons': {key: 'capture_quality_mismatch'},
+            },
+        ], requestedFrames: frames);
         expect(aggregate.response['trend_status'], isEmpty, reason: key);
         expect(aggregate.response['trend_deltas'], isEmpty, reason: key);
         expect(aggregate.response['trend_lock_reasons'], {
@@ -1308,13 +1311,14 @@ void main() {
     testWidgets('a locked untrusted metric keeps its lock in the export and '
         'shows only its number on the card', (tester) async {
       final aggregate = averageBackendAnalysisFrames([
-        {
-          'metric_matrix': {'wrinkle_load': 46.2},
-          'trend_status': {'wrinkle_load': 'stable'},
-          'trend_deltas': {'wrinkle_load': 0.0},
-          'trend_lock_reasons': {'wrinkle_load': 'capture_quality_mismatch'},
-        },
-      ], requestedFrames: 1);
+        for (var i = 0; i < 5; i++)
+          {
+            'metric_matrix': {'wrinkle_load': 46.2},
+            'trend_status': {'wrinkle_load': 'stable'},
+            'trend_deltas': {'wrinkle_load': 0.0},
+            'trend_lock_reasons': {'wrinkle_load': 'capture_quality_mismatch'},
+          },
+      ], requestedFrames: 5);
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -1798,7 +1802,12 @@ void main() {
       expect(source, contains('Future<XFile?> _captureFromLiveCamera()'));
       expect(source, contains('navigator.pop(imagePathToSave);'));
       expect(source, contains('Future<void> _captureAiSkinAnalysisFrames()'));
-      expect(source, contains('for (var index = 0; index < 3; index++)'));
+      expect(
+        source,
+        contains(
+          'for (var index = 0; index < aiScanCaptureFrameCount; index++)',
+        ),
+      );
       expect(source, contains('AiSkinAnalysisCaptureResult('));
     },
   );

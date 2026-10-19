@@ -4318,7 +4318,11 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     "pigment_load": 2,
     # v3: Canny on a sigma-2.0 Gaussian-smoothed patch (20, 40) instead of the
     # raw patch (70, 140), so focus/sharpening changes no longer flip edges.
-    "wrinkle_load": 3,
+    # v4: per-frame formula unchanged; the app's saved scan value is now the
+    # median of five frames (omitted unless all five produced a value)
+    # instead of the mean of three, so v3 and v4 scan values are not
+    # comparable. Same for pore_contraction_index v3 and the under-eye v5s.
+    "wrinkle_load": 4,
     # v3: fixed V >= 220 plus a local-contrast condition (V over its sigma-5
     # local mean >= 15), so clipped flat highlights no longer count as oil.
     "sebum_excess_oil_gloss": 3,
@@ -4329,7 +4333,7 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     "rosacea_severity": 3,
     "pore_visibility": 3,
     "chin_pore_visibility": 1,
-    "pore_contraction_index": 2,
+    "pore_contraction_index": 3,
     # v2: fixed avg_width quantization (boundingRect integer px -> minAreaRect
     # continuous size) and the 26-32%-of-photos zero-out (82nd-percentile
     # threshold + (3,5) opening kernel erasing thin-but-real furrow
@@ -4342,8 +4346,9 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     # lid) instead of the lid-hugging polygon. Dark circles compare the
     # band's median L to a same-height cheek strip directly below it;
     # texture is fine-scale DoG energy on the band over the same strip.
-    "under_eye_texture_density": 4,
-    "under_eye_dark_circle_density": 4,
+    # v5: median of five frames in the app (see wrinkle_load v4).
+    "under_eye_texture_density": 5,
+    "under_eye_dark_circle_density": 5,
     # v2: only boxes kept at YOLO_CONF_THRESHOLD contribute. v1 also added
     # 22 x the strongest rejected box, so zero kept boxes still scored
     # 0.7-3.6 on the regression fixtures; v1 and v2 are not comparable.

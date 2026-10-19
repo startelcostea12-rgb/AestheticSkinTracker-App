@@ -132,15 +132,16 @@ def test_texture_is_the_band_over_reference_dog_ratio(zone_inputs, caplog):
 
 def test_formula_versions_bumped_and_old_baselines_refused():
     for key in UNDER_EYE_KEYS:
-        assert main._metric_formula_version(key) == 4
-        for old in (1, 2, 3):
+        # v4 introduced the lash-free band; v5 is the five-frame median.
+        assert main._metric_formula_version(key) == 5
+        for old in (1, 2, 3, 4):
             assert (
                 main._trend_lock_reason(
                     "primary_roi",
                     "primary_roi",
                     "normal",
                     "normal",
-                    current_formula_version=4,
+                    current_formula_version=5,
                     baseline_formula_version=old,
                     current_pose_template="front",
                     baseline_pose_template="front",

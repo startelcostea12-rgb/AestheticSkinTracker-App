@@ -518,9 +518,39 @@ Map<String, dynamic> summarizeGrayCardFrames(
   };
 }
 
+/// Frames the AI scan captures and uploads per scan.
+const int aiScanCaptureFrameCount = 5;
+
+/// Every metric except [fiveFrameMedianMetricKeys] is combined from the
+/// first this-many captured frames only, exactly as before five frames were
+/// captured.
+const int standardMetricFrameCount = 3;
+
+/// Noisy metrics combined as the median of five frames, emitted only when
+/// all five frames produced a value (main.py bumped their formula versions
+/// for this: wrinkle_load v4, pore_contraction_index v3, under-eye v5).
+const Set<String> fiveFrameMedianMetricKeys = <String>{
+  'wrinkle_load',
+  'pore_contraction_index',
+  'under_eye_dark_circle_density',
+  'under_eye_texture_density',
+};
+
+double _medianOf(List<double> values) {
+  final sorted = List<double>.of(values)..sort();
+  final mid = sorted.length ~/ 2;
+  return sorted.length.isOdd
+      ? sorted[mid]
+      : (sorted[mid - 1] + sorted[mid]) / 2.0;
+}
+
+/// [frameNumbers], when given, is each response's 1-based capture frame
+/// number (parallel to [responses]); otherwise responses are taken as
+/// frames 1, 2, 3, ... in order.
 MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
   List<Map<String, dynamic>> responses, {
   required int requestedFrames,
+  List<int>? frameNumbers,
 }) {
   final samples = <String, List<double>>{};
   // Parallel to `samples`: which successfulResponses index each sample came
@@ -548,7 +578,16 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     return null;
   }
 
-  for (final response in responses) {
+  for (
+    var responseIndex = 0;
+    responseIndex < responses.length;
+    responseIndex++
+  ) {
+    final response = responses[responseIndex];
+    final frameNumber =
+        frameNumbers != null && responseIndex < frameNumbers.length
+        ? frameNumbers[responseIndex]
+        : responseIndex + 1;
     final metricsNode = _dynamicMap(response['metrics']);
     final matrix = _dynamicMap(response['metric_matrix']).isNotEmpty
         ? _dynamicMap(response['metric_matrix'])
@@ -561,6 +600,12 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
           ? value.toDouble()
           : double.tryParse(value?.toString() ?? '');
       if (numeric == null || !numeric.isFinite) continue;
+      // Standard metrics keep the three-frame path: frames 4+ only feed
+      // fiveFrameMedianMetricKeys.
+      if (frameNumber > standardMetricFrameCount &&
+          !fiveFrameMedianMetricKeys.contains(entry.key)) {
+        continue;
+      }
       frameMetrics[entry.key] = numeric;
     }
     if (frameMetrics.isEmpty) continue;
@@ -585,9 +630,19 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
   final averagedMatrix = <String, double>{};
   final contributorCounts = <String, int>{};
   final metricRanges = <String, Map<String, num>>{};
+  final fiveFrameMedianOmitted = <String>[];
   for (final entry in samples.entries) {
-    averagedMatrix[entry.key] =
-        entry.value.reduce((a, b) => a + b) / entry.value.length;
+    if (fiveFrameMedianMetricKeys.contains(entry.key)) {
+      // Median of five; omitted unless all five frames produced a value.
+      if (entry.value.length < aiScanCaptureFrameCount) {
+        fiveFrameMedianOmitted.add(entry.key);
+        continue;
+      }
+      averagedMatrix[entry.key] = _medianOf(entry.value);
+    } else {
+      averagedMatrix[entry.key] =
+          entry.value.reduce((a, b) => a + b) / entry.value.length;
+    }
     contributorCounts[entry.key] = entry.value.length;
     metricRanges[entry.key] = <String, num>{
       'min': entry.value.reduce((a, b) => a < b ? a : b),
@@ -720,9 +775,19 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     }
   }
 
+  // A median-of-five metric without five values is not emitted at all:
+  // never fall back to a frame's own value, and record it as skipped.
+  for (final key in fiveFrameMedianOmitted) {
+    resolvedExtractionPaths[key] = 'skipped';
+  }
+
   final first = successfulResponses.first;
   final response = Map<String, dynamic>.from(first);
   final metricsNode = Map<String, dynamic>.from(_dynamicMap(first['metrics']));
+  for (final key in fiveFrameMedianOmitted) {
+    response.remove(key);
+    metricsNode.remove(key);
+  }
   response['metric_matrix'] = averagedMatrix;
   response['metric_confidence'] = correctedConfidence;
   response['trend_status'] = resolvedTrendStatus;
@@ -763,6 +828,8 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
         entry.key: List<double>.unmodifiable(entry.value),
     },
     'metric_ranges': metricRanges,
+    if (fiveFrameMedianOmitted.isNotEmpty)
+      'five_frame_median_omitted': fiveFrameMedianOmitted..sort(),
   };
 
   return MultiFrameAnalysisAggregate(
@@ -1680,6 +1747,7 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
     throw StateError('Face photo upload acknowledgment is required.');
   }
   final responses = <Map<String, dynamic>>[];
+  final responseFrameNumbers = <int>[];
   final responsesByFrame = List<Map<String, dynamic>?>.filled(
     frames.length,
     null,
@@ -1696,6 +1764,7 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
     try {
       final response = await uploadFrame(frames[index], frameNumber);
       responses.add(response);
+      responseFrameNumbers.add(frameNumber);
       responsesByFrame[index] = response;
       if (kDebugMode) {
         final metricsNode = _dynamicMap(response['metrics']);
@@ -1724,6 +1793,7 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
     final aggregate = averageBackendAnalysisFrames(
       responses,
       requestedFrames: frames.length,
+      frameNumbers: responseFrameNumbers,
     );
     aggregate.response[aiScanPerFrameDiagnosticsKey] =
         buildAiScanPerFrameDiagnostics(

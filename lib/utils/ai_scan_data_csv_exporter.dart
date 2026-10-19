@@ -122,6 +122,10 @@ class AiScanDataCsvExporter {
     'display_aggregation',
   ];
 
+  /// Per-frame columns frame1..frame5 (the AI scan captures five frames;
+  /// older three-frame scans leave frames 4-5 empty).
+  static const int exportedFrameCount = 5;
+
   static const List<String> perFrameFields = <String>[
     'cheek_side',
     'cheek_side_convention',
@@ -210,7 +214,7 @@ class AiScanDataCsvExporter {
         for (final field in _metricFields) '${metric}_$field',
     ];
     final perFrameColumns = <String>[
-      for (var frame = 1; frame <= 3; frame++)
+      for (var frame = 1; frame <= exportedFrameCount; frame++)
         for (final field in perFrameFields) 'frame${frame}_$field',
     ];
     final columns = <String>[
@@ -318,7 +322,7 @@ class AiScanDataCsvExporter {
       );
     }
 
-    for (var index = 0; index < 3; index++) {
+    for (var index = 0; index < exportedFrameCount; index++) {
       final frame = index < frameDiagnostics.length
           ? _asMap(frameDiagnostics[index])
           : const <String, dynamic>{};

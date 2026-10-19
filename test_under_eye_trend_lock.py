@@ -17,7 +17,7 @@ import main
 REPO_ROOT = Path(__file__).resolve().parent
 CLEAR_FACE_PHOTO = REPO_ROOT / "test_fixtures" / "metric_regression" / "clear_face.jfif"
 UNDER_EYE_KEYS = ("under_eye_texture_density", "under_eye_dark_circle_density")
-CURRENT_VERSION = 4
+CURRENT_VERSION = 5
 
 
 @pytest.fixture(scope="module")
@@ -67,7 +67,7 @@ def _compare(scan, baseline_paths, baseline_version, *, baseline_matrix=None, em
             patch.stop()
 
 
-def test_current_under_eye_version_is_four():
+def test_current_under_eye_version_is_five():
     for key in UNDER_EYE_KEYS:
         assert main._metric_formula_version(key) == CURRENT_VERSION
 
@@ -87,7 +87,7 @@ def test_missing_baseline_path_still_locks_on_path(scan):
         assert result["trend_lock_reasons"][key] == "path_mismatch"
 
 
-@pytest.mark.parametrize("baseline_version", [1, 2, 3])
+@pytest.mark.parametrize("baseline_version", [1, 2, 3, 4])
 def test_older_baseline_version_locks_on_formula_version(scan, baseline_version):
     result = _compare(scan, {key: "primary_roi" for key in UNDER_EYE_KEYS}, baseline_version)
     for key in UNDER_EYE_KEYS:

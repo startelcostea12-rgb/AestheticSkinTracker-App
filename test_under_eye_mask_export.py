@@ -117,4 +117,4 @@ def test_under_eye_roi_too_small_gate_is_gone():
 
 def test_under_eye_formula_versions_bumped():
     for key in UNDER_EYE_KEYS:
-        assert main._metric_formula_version(key) == 4
+        assert main._metric_formula_version(key) == 5
