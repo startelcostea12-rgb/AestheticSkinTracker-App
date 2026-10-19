@@ -120,6 +120,43 @@ class ReferenceAlignmentRow extends StatelessWidget {
   }
 }
 
+/// Non-blocking reminder on the AI scan camera to frame the face the same
+/// way as the baseline (region boxes are compared; see
+/// lockTrendsForRegionPositionMismatch). Text only, no logic.
+class BaselinePositionHint extends StatelessWidget {
+  const BaselinePositionHint({super.key});
+
+  static const String text =
+      'Keep your chin at the same height and distance as the baseline.';
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      key: const ValueKey('baseline-position-hint'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          Icons.straighten_rounded,
+          size: 16,
+          color: MyApp.textBrown.withValues(alpha: 0.7),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              color: MyApp.textBrown.withValues(alpha: 0.82),
+              fontSize: 12.2,
+              fontWeight: FontWeight.w700,
+              height: 1.3,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// Header of the capture controls card (the one holding Reference
 /// Alignment): title and template-mode label share the row and wrap or
 /// ellipsize instead of overflowing on narrow phones (320-390 wide).
@@ -6494,6 +6531,13 @@ class _CameraScreenState extends State<CameraScreen>
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: _buildDebugCollapsedSummaryLine(report),
+                    ),
+
+                  // Non-blocking reminder; never gates capture.
+                  if (_isAiSkinAnalysisFacialFlow)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 10),
+                      child: BaselinePositionHint(),
                     ),
 
                   const SizedBox(height: 14),
