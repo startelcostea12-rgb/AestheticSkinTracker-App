@@ -70,9 +70,7 @@ void main() {
     });
 
     testWidgets('history detail is titled AI Quick Scan', (tester) async {
-      // Wide surface: the detail screen has a separate, pre-existing
-      // overflow at phone widths for every AI scan.
-      await tester.binding.setSurfaceSize(const Size(900, 1600));
+      await tester.binding.setSurfaceSize(const Size(375, 1600));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await tester.pumpWidget(
         MaterialApp(

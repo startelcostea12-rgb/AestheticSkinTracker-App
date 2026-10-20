@@ -3120,10 +3120,15 @@ class ScanDetailScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
+                // Wrap, not Row: on narrow phones the timestamp drops below
+                // the badge instead of overflowing.
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 6,
                   children: [
                     _badge(meta.icon, meta.label, meta.color),
-                    const Spacer(),
                     Text(
                       scan.timestamp.toLocal().toString().split('.').first,
                       style: TextStyle(
@@ -4092,12 +4097,14 @@ class ScanDetailScreen extends StatelessWidget {
         children: [
           Icon(icon, color: color, size: 13),
           const SizedBox(width: 5),
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontSize: 10.8,
-              fontWeight: FontWeight.w900,
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 10.8,
+                fontWeight: FontWeight.w900,
+              ),
             ),
           ),
         ],
@@ -4118,12 +4125,14 @@ class ScanDetailScreen extends StatelessWidget {
         children: [
           Icon(icon, color: color, size: 15),
           const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(
-              color: AppColors.refinedSlate,
-              fontSize: 11.8,
-              fontWeight: FontWeight.w800,
+          Flexible(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: AppColors.refinedSlate,
+                fontSize: 11.8,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
         ],
