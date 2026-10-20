@@ -18,44 +18,47 @@ void main() {
       expect(prefs.getString(AppPrefs.userNameKey), 'Alice');
     });
 
-    test('preserves real backend extraction paths during scan migration', () async {
-      await AppPrefs.addScanEntry(
-        ScanHistoryEntry(
-          id: 'real-extraction-paths',
-          timestamp: DateTime.parse('2026-09-27T20:00:00Z'),
-          scanType: ScanHistoryEntry.scanTypeAiAnalysis,
-          estimatedSkinAge: 0,
-          metrics: const {'localized_redness': 25.0},
-          rawPayload: const {
-            'metric_matrix': {'localized_redness': 25.0},
-            'metric_extraction_paths': {
-              'localized_redness': 'cheek_primary',
-              'texture_smoothness': 'laplacian_fallback',
-              'pigment_load': 'full_face_fallback',
-              'breakout_activity': 'full_face_yolo',
+    test(
+      'preserves real backend extraction paths during scan migration',
+      () async {
+        await AppPrefs.addScanEntry(
+          ScanHistoryEntry(
+            id: 'real-extraction-paths',
+            timestamp: DateTime.parse('2026-09-27T20:00:00Z'),
+            scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+            estimatedSkinAge: 0,
+            metrics: const {'localized_redness': 25.0},
+            rawPayload: const {
+              'metric_matrix': {'localized_redness': 25.0},
+              'metric_extraction_paths': {
+                'localized_redness': 'cheek_primary',
+                'texture_smoothness': 'laplacian_fallback',
+                'pigment_load': 'full_face_fallback',
+                'breakout_activity': 'full_face_yolo',
+              },
             },
-          },
-        ),
-      );
+          ),
+        );
 
-      final payload = (await AppPrefs.getScanEntries()).single.rawPayload!;
-      expect(payload['metric_extraction_paths'], containsPair(
-        'localized_redness',
-        'cheek_primary',
-      ));
-      expect(payload['metric_extraction_paths'], containsPair(
-        'texture_smoothness',
-        'laplacian_fallback',
-      ));
-      expect(payload['metric_extraction_paths'], containsPair(
-        'pigment_load',
-        'full_face_fallback',
-      ));
-      expect(payload['metric_extraction_paths'], containsPair(
-        'breakout_activity',
-        'full_face_yolo',
-      ));
-    });
+        final payload = (await AppPrefs.getScanEntries()).single.rawPayload!;
+        expect(
+          payload['metric_extraction_paths'],
+          containsPair('localized_redness', 'cheek_primary'),
+        );
+        expect(
+          payload['metric_extraction_paths'],
+          containsPair('texture_smoothness', 'laplacian_fallback'),
+        );
+        expect(
+          payload['metric_extraction_paths'],
+          containsPair('pigment_load', 'full_face_fallback'),
+        );
+        expect(
+          payload['metric_extraction_paths'],
+          containsPair('breakout_activity', 'full_face_yolo'),
+        );
+      },
+    );
 
     test(
       'malformed scan entry is skipped while valid entries survive save',
@@ -208,34 +211,37 @@ void main() {
       expect(prefs.getString(AppPrefs.trackedProcedureKey), null);
     });
 
-    test('recovery plan activation is opt-in procedure metadata only', () async {
-      await AppPrefs.saveProcedureHistory([
-        {
-          'id': 'proc_halo',
-          'type': 'Halo Laser',
-          'provider': 'Self / At-Home',
-          'startDate': DateTime(2026, 9, 18).toIso8601String(),
-          'numSessions': 1,
-        },
-      ]);
+    test(
+      'recovery plan activation is opt-in procedure metadata only',
+      () async {
+        await AppPrefs.saveProcedureHistory([
+          {
+            'id': 'proc_halo',
+            'type': 'Halo Laser',
+            'provider': 'Self / At-Home',
+            'startDate': DateTime(2026, 9, 18).toIso8601String(),
+            'numSessions': 1,
+          },
+        ]);
 
-      var procedures = await AppPrefs.getProcedureEntries();
-      expect(procedures.single.containsKey('recoveryPlanId'), isFalse);
+        var procedures = await AppPrefs.getProcedureEntries();
+        expect(procedures.single.containsKey('recoveryPlanId'), isFalse);
 
-      await AppPrefs.activateRecoveryPlanForProcedure(
-        procedureId: 'proc_halo',
-        recoveryPlanId: 'halo_laser_7_day_first_draft',
-      );
-      procedures = await AppPrefs.getProcedureEntries();
-      expect(
-        procedures.single['recoveryPlanId'],
-        'halo_laser_7_day_first_draft',
-      );
+        await AppPrefs.activateRecoveryPlanForProcedure(
+          procedureId: 'proc_halo',
+          recoveryPlanId: 'halo_laser_7_day_first_draft',
+        );
+        procedures = await AppPrefs.getProcedureEntries();
+        expect(
+          procedures.single['recoveryPlanId'],
+          'halo_laser_7_day_first_draft',
+        );
 
-      await AppPrefs.clearRecoveryPlanForProcedure('proc_halo');
-      procedures = await AppPrefs.getProcedureEntries();
-      expect(procedures.single.containsKey('recoveryPlanId'), isFalse);
-    });
+        await AppPrefs.clearRecoveryPlanForProcedure('proc_halo');
+        procedures = await AppPrefs.getProcedureEntries();
+        expect(procedures.single.containsKey('recoveryPlanId'), isFalse);
+      },
+    );
 
     test('reminder notifications toggle persists and defaults off', () async {
       expect(await AppPrefs.getNotificationsEnabled(), isFalse);
@@ -528,233 +534,242 @@ void main() {
       },
     );
 
-    test('locked baseline preserves body reference geometry after normalization', () async {
-      const procedureId = 'proc_body_reference_geometry';
-      const geometry = <String, double>{
-        'shoulderWidthNorm': 0.40,
-        'hipWidthNorm': 0.36,
-        'shoulderToHipRatio': 1.11,
-        'centerOffsetX': 0.01,
-        'centerOffsetY': -0.02,
-      };
+    test(
+      'locked baseline preserves body reference geometry after normalization',
+      () async {
+        const procedureId = 'proc_body_reference_geometry';
+        const geometry = <String, double>{
+          'shoulderWidthNorm': 0.40,
+          'hipWidthNorm': 0.36,
+          'shoulderToHipRatio': 1.11,
+          'centerOffsetX': 0.01,
+          'centerOffsetY': -0.02,
+        };
 
-      await AppPrefs.addScanEntry(
-        ScanHistoryEntry(
-          id: 'body_baseline',
-          timestamp: DateTime.parse('2026-06-20T10:00:00.000Z'),
-          procedureId: procedureId,
-          imagePath: 'body_baseline.jpg',
-          estimatedSkinAge: 0,
-          metrics: const {'capture_pose_similarity': 95.0},
-          bodyReferenceGeometry: geometry,
-        ),
-      );
-      await AppPrefs.addScanEntry(
-        ScanHistoryEntry(
-          id: 'body_followup',
-          timestamp: DateTime.parse('2026-06-21T10:00:00.000Z'),
-          procedureId: procedureId,
-          imagePath: 'body_followup.jpg',
-          estimatedSkinAge: 0,
-          metrics: const {
-            'capture_pose_similarity': 90.0,
-            'capture_reference_alignment_score': 88.0,
-          },
-          bodyReferenceGeometry: const {
-            'shoulderWidthNorm': 0.41,
-            'hipWidthNorm': 0.35,
-            'shoulderToHipRatio': 1.10,
-            'centerOffsetX': 0.02,
-            'centerOffsetY': -0.01,
-          },
-        ),
-      );
+        await AppPrefs.addScanEntry(
+          ScanHistoryEntry(
+            id: 'body_baseline',
+            timestamp: DateTime.parse('2026-06-20T10:00:00.000Z'),
+            procedureId: procedureId,
+            imagePath: 'body_baseline.jpg',
+            estimatedSkinAge: 0,
+            metrics: const {'capture_pose_similarity': 95.0},
+            bodyReferenceGeometry: geometry,
+          ),
+        );
+        await AppPrefs.addScanEntry(
+          ScanHistoryEntry(
+            id: 'body_followup',
+            timestamp: DateTime.parse('2026-06-21T10:00:00.000Z'),
+            procedureId: procedureId,
+            imagePath: 'body_followup.jpg',
+            estimatedSkinAge: 0,
+            metrics: const {
+              'capture_pose_similarity': 90.0,
+              'capture_reference_alignment_score': 88.0,
+            },
+            bodyReferenceGeometry: const {
+              'shoulderWidthNorm': 0.41,
+              'hipWidthNorm': 0.35,
+              'shoulderToHipRatio': 1.10,
+              'centerOffsetX': 0.02,
+              'centerOffsetY': -0.01,
+            },
+          ),
+        );
 
-      await AppPrefs.patchScanMetrics(
-        'body_baseline',
-        const {'waist_measurement': 31.5},
-      );
+        await AppPrefs.patchScanMetrics('body_baseline', const {
+          'waist_measurement': 31.5,
+        });
 
-      final scans = await AppPrefs.getScanEntries();
-      final baseline = scans.singleWhere((entry) => entry.id == 'body_baseline');
-      final followup = scans.singleWhere((entry) => entry.id == 'body_followup');
+        final scans = await AppPrefs.getScanEntries();
+        final baseline = scans.singleWhere(
+          (entry) => entry.id == 'body_baseline',
+        );
+        final followup = scans.singleWhere(
+          (entry) => entry.id == 'body_followup',
+        );
 
-      expect(baseline.isBaseline, isTrue);
-      expect(baseline.bodyReferenceGeometry, geometry);
-      expect(baseline.metrics['waist_measurement'], 31.5);
-      expect(followup.parentBaselineId, 'body_baseline');
-      expect(followup.metrics['capture_reference_alignment_score'], 88.0);
-    });
+        expect(baseline.isBaseline, isTrue);
+        expect(baseline.bodyReferenceGeometry, geometry);
+        expect(baseline.metrics['waist_measurement'], 31.5);
+        expect(followup.parentBaselineId, 'body_baseline');
+        expect(followup.metrics['capture_reference_alignment_score'], 88.0);
+      },
+    );
 
-    test('poor body follow-up alignment survives storage and gates comparison', () async {
-      const procedureId = 'proc_body_alignment_gate';
-      const baselineGeometry = <String, double>{
-        'shoulderWidthNorm': 0.40,
-        'hipWidthNorm': 0.36,
-        'shoulderToHipRatio': 1.11,
-        'centerOffsetX': 0.0,
-        'centerOffsetY': 0.0,
-      };
-      const poorGeometry = <String, double>{
-        'shoulderWidthNorm': 0.18,
-        'hipWidthNorm': 0.62,
-        'shoulderToHipRatio': 0.35,
-        'centerOffsetX': 0.30,
-        'centerOffsetY': 0.25,
-      };
-      final poorScore = bodyReferenceAlignmentScore(
-        baselineGeometry,
-        poorGeometry,
-      )!;
+    test(
+      'poor body follow-up alignment survives storage and gates comparison',
+      () async {
+        const procedureId = 'proc_body_alignment_gate';
+        const baselineGeometry = <String, double>{
+          'shoulderWidthNorm': 0.40,
+          'hipWidthNorm': 0.36,
+          'shoulderToHipRatio': 1.11,
+          'centerOffsetX': 0.0,
+          'centerOffsetY': 0.0,
+        };
+        const poorGeometry = <String, double>{
+          'shoulderWidthNorm': 0.18,
+          'hipWidthNorm': 0.62,
+          'shoulderToHipRatio': 0.35,
+          'centerOffsetX': 0.30,
+          'centerOffsetY': 0.25,
+        };
+        final poorScore = bodyReferenceAlignmentScore(
+          baselineGeometry,
+          poorGeometry,
+        )!;
 
-      await AppPrefs.addScanEntry(
-        ScanHistoryEntry(
-          id: 'body_gate_baseline',
-          timestamp: DateTime.parse('2026-07-01T10:00:00.000Z'),
-          procedureId: procedureId,
-          imagePath: 'baseline.jpg',
-          estimatedSkinAge: 0,
-          metrics: const {},
-          bodyReferenceGeometry: baselineGeometry,
-          captureQuality: 'normal',
-          captureMode: 'mirror',
-          poseTemplate: 'Front',
-          guideType: 'body',
-          rawPayload: const {
-            'result': {'scale_reference_pixels': 200.0},
-          },
-        ),
-      );
-      await AppPrefs.addScanEntry(
-        ScanHistoryEntry(
-          id: 'body_gate_followup',
-          timestamp: DateTime.parse('2026-07-02T10:00:00.000Z'),
-          procedureId: procedureId,
-          imagePath: 'followup.jpg',
-          estimatedSkinAge: 0,
-          metrics: {'capture_reference_alignment_score': poorScore},
-          bodyReferenceGeometry: poorGeometry,
-          captureQuality: 'normal',
-          captureMode: 'mirror',
-          poseTemplate: 'Front',
-          guideType: 'body',
-          rawPayload: const {
-            'result': {'scale_reference_pixels': 205.0},
-          },
-        ),
-      );
+        await AppPrefs.addScanEntry(
+          ScanHistoryEntry(
+            id: 'body_gate_baseline',
+            timestamp: DateTime.parse('2026-07-01T10:00:00.000Z'),
+            procedureId: procedureId,
+            imagePath: 'baseline.jpg',
+            estimatedSkinAge: 0,
+            metrics: const {},
+            bodyReferenceGeometry: baselineGeometry,
+            captureQuality: 'normal',
+            captureMode: 'mirror',
+            poseTemplate: 'Front',
+            guideType: 'body',
+            rawPayload: const {
+              'result': {'scale_reference_pixels': 200.0},
+            },
+          ),
+        );
+        await AppPrefs.addScanEntry(
+          ScanHistoryEntry(
+            id: 'body_gate_followup',
+            timestamp: DateTime.parse('2026-07-02T10:00:00.000Z'),
+            procedureId: procedureId,
+            imagePath: 'followup.jpg',
+            estimatedSkinAge: 0,
+            metrics: {'capture_reference_alignment_score': poorScore},
+            bodyReferenceGeometry: poorGeometry,
+            captureQuality: 'normal',
+            captureMode: 'mirror',
+            poseTemplate: 'Front',
+            guideType: 'body',
+            rawPayload: const {
+              'result': {'scale_reference_pixels': 205.0},
+            },
+          ),
+        );
 
-      final scans = (await AppPrefs.getScanEntries())
-          .where((entry) => entry.procedureId == procedureId)
-          .toList();
-      final baseline = lockedProcedureReference(scans, procedureId);
-      final followup = scans.singleWhere(
-        (entry) => entry.id == 'body_gate_followup',
-      );
-      final eligibility = procedurePhotoComparisonEligibility(
-        isBodyProcedure: true,
-        baseline: baseline,
-        latest: followup,
-      );
+        final scans = (await AppPrefs.getScanEntries())
+            .where((entry) => entry.procedureId == procedureId)
+            .toList();
+        final baseline = lockedProcedureReference(scans, procedureId);
+        final followup = scans.singleWhere(
+          (entry) => entry.id == 'body_gate_followup',
+        );
+        final eligibility = procedurePhotoComparisonEligibility(
+          isBodyProcedure: true,
+          baseline: baseline,
+          latest: followup,
+        );
 
-      expect(baseline?.id, 'body_gate_baseline');
-      expect(baseline?.bodyReferenceGeometry, baselineGeometry);
-      expect(poorScore, lessThan(minimumComparableReferenceAlignmentScore));
-      expect(
-        followup.metrics['capture_reference_alignment_score'],
-        poorScore,
-      );
-      expect(eligibility.isComparable, isFalse);
-      expect(eligibility.caveat, contains('locked reference'));
-    });
+        expect(baseline?.id, 'body_gate_baseline');
+        expect(baseline?.bodyReferenceGeometry, baselineGeometry);
+        expect(poorScore, lessThan(minimumComparableReferenceAlignmentScore));
+        expect(
+          followup.metrics['capture_reference_alignment_score'],
+          poorScore,
+        );
+        expect(eligibility.isComparable, isFalse);
+        expect(eligibility.caveat, contains('locked reference'));
+      },
+    );
 
-    test('poor face follow-up alignment survives storage and gates comparison', () async {
-      const procedureId = 'proc_face_alignment_gate';
-      const baselineGeometry = <String, double>{
-        'eyeDistanceNorm': 0.22,
-        'faceWidthNorm': 0.48,
-        'faceHeightNorm': 0.62,
-        'faceAspectRatio': 0.77,
-        'centerOffsetX': 0.0,
-        'centerOffsetY': 0.0,
-      };
-      const poorGeometry = <String, double>{
-        'eyeDistanceNorm': 0.08,
-        'faceWidthNorm': 0.25,
-        'faceHeightNorm': 0.30,
-        'faceAspectRatio': 1.30,
-        'centerOffsetX': 0.30,
-        'centerOffsetY': 0.25,
-      };
-      final poorScore = faceReferenceAlignmentScore(
-        baselineGeometry,
-        poorGeometry,
-      )!;
-      const extractionPaths = <String, dynamic>{
-        'metric_extraction_paths': {
-          'localized_redness': 'primary_roi',
-        },
-      };
+    test(
+      'poor face follow-up alignment survives storage and gates comparison',
+      () async {
+        const procedureId = 'proc_face_alignment_gate';
+        const baselineGeometry = <String, double>{
+          'eyeDistanceNorm': 0.22,
+          'faceWidthNorm': 0.48,
+          'faceHeightNorm': 0.62,
+          'faceAspectRatio': 0.77,
+          'centerOffsetX': 0.0,
+          'centerOffsetY': 0.0,
+        };
+        const poorGeometry = <String, double>{
+          'eyeDistanceNorm': 0.08,
+          'faceWidthNorm': 0.25,
+          'faceHeightNorm': 0.30,
+          'faceAspectRatio': 1.30,
+          'centerOffsetX': 0.30,
+          'centerOffsetY': 0.25,
+        };
+        final poorScore = faceReferenceAlignmentScore(
+          baselineGeometry,
+          poorGeometry,
+        )!;
+        const extractionPaths = <String, dynamic>{
+          'metric_extraction_paths': {'localized_redness': 'primary_roi'},
+        };
 
-      await AppPrefs.addScanEntry(
-        ScanHistoryEntry(
-          id: 'face_gate_baseline',
-          timestamp: DateTime.parse('2026-07-10T10:00:00.000Z'),
-          procedureId: procedureId,
-          imagePath: 'face_baseline.jpg',
-          estimatedSkinAge: 0,
-          metrics: const {},
-          faceReferenceGeometry: baselineGeometry,
-          captureQuality: 'normal',
-          poseTemplate: 'Front',
-          guideType: 'facial',
-          rawPayload: extractionPaths,
-        ),
-      );
-      await AppPrefs.addScanEntry(
-        ScanHistoryEntry(
-          id: 'face_gate_followup',
-          timestamp: DateTime.parse('2026-07-11T10:00:00.000Z'),
-          procedureId: procedureId,
-          imagePath: 'face_followup.jpg',
-          estimatedSkinAge: 0,
-          metrics: {'capture_reference_alignment_score': poorScore},
-          faceReferenceGeometry: poorGeometry,
-          captureQuality: 'normal',
-          poseTemplate: 'Front',
-          guideType: 'facial',
-          rawPayload: extractionPaths,
-        ),
-      );
-      await AppPrefs.patchScanMetrics(
-        'face_gate_baseline',
-        const {'provider_note_count': 1.0},
-      );
+        await AppPrefs.addScanEntry(
+          ScanHistoryEntry(
+            id: 'face_gate_baseline',
+            timestamp: DateTime.parse('2026-07-10T10:00:00.000Z'),
+            procedureId: procedureId,
+            imagePath: 'face_baseline.jpg',
+            estimatedSkinAge: 0,
+            metrics: const {},
+            faceReferenceGeometry: baselineGeometry,
+            captureQuality: 'normal',
+            poseTemplate: 'Front',
+            guideType: 'facial',
+            rawPayload: extractionPaths,
+          ),
+        );
+        await AppPrefs.addScanEntry(
+          ScanHistoryEntry(
+            id: 'face_gate_followup',
+            timestamp: DateTime.parse('2026-07-11T10:00:00.000Z'),
+            procedureId: procedureId,
+            imagePath: 'face_followup.jpg',
+            estimatedSkinAge: 0,
+            metrics: {'capture_reference_alignment_score': poorScore},
+            faceReferenceGeometry: poorGeometry,
+            captureQuality: 'normal',
+            poseTemplate: 'Front',
+            guideType: 'facial',
+            rawPayload: extractionPaths,
+          ),
+        );
+        await AppPrefs.patchScanMetrics('face_gate_baseline', const {
+          'provider_note_count': 1.0,
+        });
 
-      final scans = (await AppPrefs.getScanEntries())
-          .where((entry) => entry.procedureId == procedureId)
-          .toList();
-      final baseline = lockedProcedureReference(scans, procedureId);
-      final followup = scans.singleWhere(
-        (entry) => entry.id == 'face_gate_followup',
-      );
-      final eligibility = procedurePhotoComparisonEligibility(
-        isBodyProcedure: false,
-        baseline: baseline,
-        latest: followup,
-      );
+        final scans = (await AppPrefs.getScanEntries())
+            .where((entry) => entry.procedureId == procedureId)
+            .toList();
+        final baseline = lockedProcedureReference(scans, procedureId);
+        final followup = scans.singleWhere(
+          (entry) => entry.id == 'face_gate_followup',
+        );
+        final eligibility = procedurePhotoComparisonEligibility(
+          isBodyProcedure: false,
+          baseline: baseline,
+          latest: followup,
+        );
 
-      expect(baseline?.id, 'face_gate_baseline');
-      expect(baseline?.faceReferenceGeometry, baselineGeometry);
-      expect(baseline?.metrics['provider_note_count'], 1.0);
-      expect(poorScore, lessThan(minimumComparableReferenceAlignmentScore));
-      expect(
-        followup.metrics['capture_reference_alignment_score'],
-        poorScore,
-      );
-      expect(eligibility.isComparable, isFalse);
-      expect(eligibility.caveat, contains('locked reference'));
-    });
+        expect(baseline?.id, 'face_gate_baseline');
+        expect(baseline?.faceReferenceGeometry, baselineGeometry);
+        expect(baseline?.metrics['provider_note_count'], 1.0);
+        expect(poorScore, lessThan(minimumComparableReferenceAlignmentScore));
+        expect(
+          followup.metrics['capture_reference_alignment_score'],
+          poorScore,
+        );
+        expect(eligibility.isComparable, isFalse);
+        expect(eligibility.caveat, contains('locked reference'));
+      },
+    );
   });
 
   group('AppPrefs AI Skin Analysis baseline registry', () {
@@ -836,20 +851,23 @@ void main() {
       expect(await AppPrefs.getAiBaselineScanId(key), 'scan_front_2');
     });
 
-    test('getAllAiBaselineScanIds returns every key\'s current baseline', () async {
-      expect(await AppPrefs.getAllAiBaselineScanIds(), isEmpty);
+    test(
+      'getAllAiBaselineScanIds returns every key\'s current baseline',
+      () async {
+        expect(await AppPrefs.getAllAiBaselineScanIds(), isEmpty);
 
-      await AppPrefs.setAiBaselineScanId(key, 'scan_front_1');
-      await AppPrefs.setAiBaselineScanId(otherKey, 'scan_left45_1');
-      await AppPrefs.setAiBaselineScanId(key, 'scan_front_2');
-      expect(
-        await AppPrefs.getAllAiBaselineScanIds(),
-        {'scan_front_2', 'scan_left45_1'},
-      );
+        await AppPrefs.setAiBaselineScanId(key, 'scan_front_1');
+        await AppPrefs.setAiBaselineScanId(otherKey, 'scan_left45_1');
+        await AppPrefs.setAiBaselineScanId(key, 'scan_front_2');
+        expect(await AppPrefs.getAllAiBaselineScanIds(), {
+          'scan_front_2',
+          'scan_left45_1',
+        });
 
-      await AppPrefs.clearAiBaselineScanId(otherKey);
-      expect(await AppPrefs.getAllAiBaselineScanIds(), {'scan_front_2'});
-    });
+        await AppPrefs.clearAiBaselineScanId(otherKey);
+        expect(await AppPrefs.getAllAiBaselineScanIds(), {'scan_front_2'});
+      },
+    );
 
     test(
       'one-time Front history cleanup keeps its baseline and later scans without changing registry',
@@ -882,10 +900,7 @@ void main() {
         for (final entry in [
           scan('older-1', DateTime.utc(2026, 10, 12, 12)),
           scan('older-2', DateTime.utc(2026, 10, 13, 6, 9, 49)),
-          scan(
-            'scan_1791886190709_41055101',
-            baselineTimestamp,
-          ),
+          scan('scan_1791886190709_41055101', baselineTimestamp),
           scan('later-1', DateTime.utc(2026, 10, 13, 6, 11)),
           scan('later-2', DateTime.utc(2026, 10, 14, 10, 4)),
           scan('later-3', DateTime.utc(2026, 10, 14, 10, 5)),
@@ -907,17 +922,16 @@ void main() {
 
         expect(removedCount, 2);
         final retained = await AppPrefs.getScanEntriesWithoutNormalization();
+        expect(retained.map((entry) => entry.id).toSet(), {
+          'scan_1791886190709_41055101',
+          'later-1',
+          'later-2',
+          'later-3',
+        });
         expect(
-          retained.map((entry) => entry.id).toSet(),
-          {
-            'scan_1791886190709_41055101',
-            'later-1',
-            'later-2',
-            'later-3',
-          },
-        );
-        expect(
-          retained.every((entry) => !entry.timestamp.isBefore(baselineTimestamp)),
+          retained.every(
+            (entry) => !entry.timestamp.isBefore(baselineTimestamp),
+          ),
           isTrue,
         );
         expect(
@@ -925,47 +939,44 @@ void main() {
           'scan_1791886190709_41055101',
         );
         expect(await AppPrefs.getAllAiBaselineScanIds(), registryBefore);
-        expect(
-          await AppPrefs.keepCurrentFrontBaselineAndLaterScansOnce(),
-          0,
-        );
+        expect(await AppPrefs.keepCurrentFrontBaselineAndLaterScansOnce(), 0);
       },
     );
 
-    test('Front history cleanup does nothing for a different registered baseline', () async {
-      const frontKeyNoProcedure = (
-        procedureId: null,
-        focusArea: 'full face',
-        poseTemplate: 'Front',
-        guideType: 'facial',
-      );
-      await AppPrefs.setAiBaselineScanId(
-        frontKeyNoProcedure,
-        'another-front-baseline',
-      );
-      await AppPrefs.addScanEntry(
-        ScanHistoryEntry(
-          id: 'old-scan',
-          timestamp: DateTime.utc(2026, 10, 12),
-          scanType: ScanHistoryEntry.scanTypeAiAnalysis,
-          estimatedSkinAge: 0,
-          metrics: const {'localized_redness': 20.0},
-        ),
-      );
+    test(
+      'Front history cleanup does nothing for a different registered baseline',
+      () async {
+        const frontKeyNoProcedure = (
+          procedureId: null,
+          focusArea: 'full face',
+          poseTemplate: 'Front',
+          guideType: 'facial',
+        );
+        await AppPrefs.setAiBaselineScanId(
+          frontKeyNoProcedure,
+          'another-front-baseline',
+        );
+        await AppPrefs.addScanEntry(
+          ScanHistoryEntry(
+            id: 'old-scan',
+            timestamp: DateTime.utc(2026, 10, 12),
+            scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+            estimatedSkinAge: 0,
+            metrics: const {'localized_redness': 20.0},
+          ),
+        );
 
-      expect(
-        await AppPrefs.keepCurrentFrontBaselineAndLaterScansOnce(),
-        0,
-      );
-      expect(
-        (await AppPrefs.getScanEntriesWithoutNormalization()).single.id,
-        'old-scan',
-      );
-      expect(
-        await AppPrefs.getAiBaselineScanId(frontKeyNoProcedure),
-        'another-front-baseline',
-      );
-    });
+        expect(await AppPrefs.keepCurrentFrontBaselineAndLaterScansOnce(), 0);
+        expect(
+          (await AppPrefs.getScanEntriesWithoutNormalization()).single.id,
+          'old-scan',
+        );
+        expect(
+          await AppPrefs.getAiBaselineScanId(frontKeyNoProcedure),
+          'another-front-baseline',
+        );
+      },
+    );
 
     test('clearAiBaselineScanId clears only that key', () async {
       await AppPrefs.setAiBaselineScanId(key, 'scan_front_1');
@@ -1016,31 +1027,26 @@ void main() {
       final retained = await AppPrefs.getScanEntries();
 
       expect(retained, hasLength(AppPrefs.maxStoredScans));
-      final pinned = retained.singleWhere(
-        (scan) => scan.id == 'pinned-oldest',
-      );
+      final pinned = retained.singleWhere((scan) => scan.id == 'pinned-oldest');
       expect(pinned.imagePath, 'data:image/jpeg;base64,image-0');
     });
 
-    test(
-      'the old device-global cached matrix is ignored: clearing it removes '
-      'the legacy key without touching the new per-key registry',
-      () async {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString(
-          AppPrefs.legacyAiManualBaselineMetricMatrixKey,
-          '{"localized_redness": 42.0}',
-        );
-        await AppPrefs.setAiBaselineScanId(key, 'scan_front_1');
+    test('the old device-global cached matrix is ignored: clearing it removes '
+        'the legacy key without touching the new per-key registry', () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        AppPrefs.legacyAiManualBaselineMetricMatrixKey,
+        '{"localized_redness": 42.0}',
+      );
+      await AppPrefs.setAiBaselineScanId(key, 'scan_front_1');
 
-        await AppPrefs.clearLegacyAiManualBaselineMetricMatrix();
+      await AppPrefs.clearLegacyAiManualBaselineMetricMatrix();
 
-        expect(
-          prefs.getString(AppPrefs.legacyAiManualBaselineMetricMatrixKey),
-          isNull,
-        );
-        expect(await AppPrefs.getAiBaselineScanId(key), 'scan_front_1');
-      },
-    );
+      expect(
+        prefs.getString(AppPrefs.legacyAiManualBaselineMetricMatrixKey),
+        isNull,
+      );
+      expect(await AppPrefs.getAiBaselineScanId(key), 'scan_front_1');
+    });
   });
 }

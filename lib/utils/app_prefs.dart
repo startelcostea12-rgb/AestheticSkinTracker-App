@@ -25,7 +25,8 @@ class AiBaselineRegistryState {
   final String? baselineScanId;
   final DateTime? resetAt;
 
-  bool get isResetPending => hasEntry && baselineScanId == null && resetAt != null;
+  bool get isResetPending =>
+      hasEntry && baselineScanId == null && resetAt != null;
 }
 
 class AppPrefs {
@@ -47,7 +48,7 @@ class AppPrefs {
   static const String legacyScanHistoryKey = 'scan_history_v1';
   static const String procedurePhotoComparisonKey =
       'procedure_photo_comparison';
-    static const String bodyConsistentScanCountsKey =
+  static const String bodyConsistentScanCountsKey =
       'body_consistent_scan_counts';
   static const String procedureHistoryKey = 'procedure_history';
   static const String selectedProcedureIdKey = 'selected_procedure_id';
@@ -173,11 +174,15 @@ class AppPrefs {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! List) return [];
-      final entries = decoded
-          .whereType<Map>()
-          .map((item) => JournalEntry.fromJson(Map<String, dynamic>.from(item)))
-          .toList(growable: false)
-        ..sort((a, b) => b.date.compareTo(a.date));
+      final entries =
+          decoded
+              .whereType<Map>()
+              .map(
+                (item) =>
+                    JournalEntry.fromJson(Map<String, dynamic>.from(item)),
+              )
+              .toList(growable: false)
+            ..sort((a, b) => b.date.compareTo(a.date));
       return entries;
     } catch (error) {
       debugPrint('Failed to decode general journal entries: $error');
@@ -762,16 +767,15 @@ class AppPrefs {
     if (cleanProcedureId.isEmpty || cleanPlanId.isEmpty) return;
     final procedures = await getProcedureEntries();
     var changed = false;
-    final updated = procedures.map((procedure) {
-      if ((procedure['id']?.toString() ?? '') != cleanProcedureId) {
-        return procedure;
-      }
-      changed = true;
-      return <String, dynamic>{
-        ...procedure,
-        'recoveryPlanId': cleanPlanId,
-      };
-    }).toList(growable: false);
+    final updated = procedures
+        .map((procedure) {
+          if ((procedure['id']?.toString() ?? '') != cleanProcedureId) {
+            return procedure;
+          }
+          changed = true;
+          return <String, dynamic>{...procedure, 'recoveryPlanId': cleanPlanId};
+        })
+        .toList(growable: false);
     if (changed) await saveProcedureHistory(updated);
   }
 
@@ -780,15 +784,17 @@ class AppPrefs {
     if (cleanProcedureId.isEmpty) return;
     final procedures = await getProcedureEntries();
     var changed = false;
-    final updated = procedures.map((procedure) {
-      if ((procedure['id']?.toString() ?? '') != cleanProcedureId) {
-        return procedure;
-      }
-      changed = true;
-      final copy = <String, dynamic>{...procedure};
-      copy.remove('recoveryPlanId');
-      return copy;
-    }).toList(growable: false);
+    final updated = procedures
+        .map((procedure) {
+          if ((procedure['id']?.toString() ?? '') != cleanProcedureId) {
+            return procedure;
+          }
+          changed = true;
+          final copy = <String, dynamic>{...procedure};
+          copy.remove('recoveryPlanId');
+          return copy;
+        })
+        .toList(growable: false);
     if (changed) await saveProcedureHistory(updated);
   }
 
@@ -830,10 +836,11 @@ class AppPrefs {
     final procedureId = target.procedureId?.trim();
     if (procedureId == null || procedureId.isEmpty) return false;
 
-    final procedureScans = history
-        .where((scan) => (scan.procedureId ?? '').trim() == procedureId)
-        .toList()
-      ..sort(_compareScansByTimestampAscThenId);
+    final procedureScans =
+        history
+            .where((scan) => (scan.procedureId ?? '').trim() == procedureId)
+            .toList()
+          ..sort(_compareScansByTimestampAscThenId);
     if (procedureScans.isEmpty) return false;
 
     final latestScan = procedureScans.last;
@@ -997,7 +1004,10 @@ class AppPrefs {
   /// path for the registry -- both automatic "first real scan becomes the
   /// baseline" registration and explicit "Save as Baseline"/"Update
   /// baseline" pinning go through this, always scoped to one exact key.
-  static Future<void> setAiBaselineScanId(AiBaselineKey key, String scanId) async {
+  static Future<void> setAiBaselineScanId(
+    AiBaselineKey key,
+    String scanId,
+  ) async {
     final entries = await _readAiBaselineRegistry();
     final idx = entries.indexWhere(
       (entry) => _aiBaselineKeyMatchesEntry(entry, key),
@@ -1015,9 +1025,7 @@ class AppPrefs {
       entries[idx] = record;
     }
     await _writeAiBaselineRegistry(entries);
-    debugPrint(
-      '[AI_BASELINE_WRITE] key=$key baselineScanId=$scanId',
-    );
+    debugPrint('[AI_BASELINE_WRITE] key=$key baselineScanId=$scanId');
   }
 
   /// Every scan id currently registered as some key's AI baseline. Read-only
@@ -1253,10 +1261,11 @@ class AppPrefs {
     ScanHistoryEntry entryToPersist = entry;
 
     if (procedureId != null && procedureId.isNotEmpty) {
-      final procedureHistory = history
-          .where((scan) => (scan.procedureId ?? '').trim() == procedureId)
-          .toList()
-        ..sort(_compareScansByTimestampAscThenId);
+      final procedureHistory =
+          history
+              .where((scan) => (scan.procedureId ?? '').trim() == procedureId)
+              .toList()
+            ..sort(_compareScansByTimestampAscThenId);
 
       final projectedProcedureHistory = <ScanHistoryEntry>[
         ...procedureHistory,
@@ -1423,7 +1432,7 @@ class AppPrefs {
       id: ScanHistoryEntry.generateId(now, imagePath),
       timestamp: now,
       procedureId: procedureId,
-        parentBaselineId: null,
+      parentBaselineId: null,
       scanType: procedureId?.trim().isNotEmpty == true
           ? ScanHistoryEntry.scanTypeProcedure
           : activeProduct.isNotEmpty
@@ -1517,20 +1526,22 @@ class AppPrefs {
       mergedCalibration[imagePath] = sanitizedCalibrationRecord;
     }
 
-    final log = (existing ??
-            ProcedureLog(
+    final log =
+        (existing ??
+                ProcedureLog(
+                  id: procedureId,
+                  procedureType: procedureType ?? 'Procedure',
+                  dateTime: entry.timestamp,
+                ))
+            .copyWith(
               id: procedureId,
-              procedureType: procedureType ?? 'Procedure',
-              dateTime: entry.timestamp,
-            ))
-        .copyWith(
-          id: procedureId,
-          procedureType: procedureType ?? existing?.procedureType ?? 'Procedure',
-          dateTime: existing?.dateTime ?? entry.timestamp,
-          photoPaths: mergedPaths,
-          photoLabels: mergedLabels,
-          photoCalibrationByPath: mergedCalibration,
-        );
+              procedureType:
+                  procedureType ?? existing?.procedureType ?? 'Procedure',
+              dateTime: existing?.dateTime ?? entry.timestamp,
+              photoPaths: mergedPaths,
+              photoLabels: mergedLabels,
+              photoCalibrationByPath: mergedCalibration,
+            );
 
     await box.put(procedureId, log);
     debugPrint(
@@ -1581,9 +1592,13 @@ class AppPrefs {
 
     // Remove procedure-scoped recovery/assessment history snapshots that are
     // derived from scan timelines.
-    final keysToRemove = prefs.getKeys().where((key) {
-      return key.startsWith('bbl_assessment_') || key.startsWith('bbl_history_');
-    }).toList(growable: false);
+    final keysToRemove = prefs
+        .getKeys()
+        .where((key) {
+          return key.startsWith('bbl_assessment_') ||
+              key.startsWith('bbl_history_');
+        })
+        .toList(growable: false);
     for (final key in keysToRemove) {
       await prefs.remove(key);
     }
@@ -1918,9 +1933,9 @@ class AppPrefs {
     for (final entry in retained) {
       final procedureId = entry.procedureId?.trim();
       if (procedureId == null || procedureId.isEmpty) continue;
-      procedureScansById.putIfAbsent(procedureId, () => <ScanHistoryEntry>[]).add(
-        entry,
-      );
+      procedureScansById
+          .putIfAbsent(procedureId, () => <ScanHistoryEntry>[])
+          .add(entry);
     }
 
     final lockedBaselineByProcedure = <String, ScanHistoryEntry>{};
@@ -1944,10 +1959,11 @@ class AppPrefs {
       final shouldBeBaseline = procedureId != null && procedureId.isNotEmpty
           ? baselineEntry != null && baselineEntry.id == entry.id
           : entry.isBaseline;
-        final parentBaselineId = procedureId != null &&
-            procedureId.isNotEmpty &&
-            baselineEntry != null &&
-            baselineEntry.id != entry.id
+      final parentBaselineId =
+          procedureId != null &&
+              procedureId.isNotEmpty &&
+              baselineEntry != null &&
+              baselineEntry.id != entry.id
           ? baselineEntry.id
           : null;
       final imagePath = keepImageIds.contains(entry.id)
@@ -2004,7 +2020,8 @@ class AppPrefs {
     final out = Map<String, dynamic>.from(rawPayload);
 
     Map<String, dynamic> asMap(dynamic value) {
-      if (value is Map<String, dynamic>) return Map<String, dynamic>.from(value);
+      if (value is Map<String, dynamic>)
+        return Map<String, dynamic>.from(value);
       if (value is Map) return Map<String, dynamic>.from(value);
       return <String, dynamic>{};
     }
@@ -2208,9 +2225,9 @@ class AppPrefs {
     for (final entry in history) {
       final procedureId = (entry.procedureId ?? '').trim();
       if (procedureId.isEmpty) continue;
-      byProcedure.putIfAbsent(procedureId, () => <ScanHistoryEntry>[]).add(
-        entry,
-      );
+      byProcedure
+          .putIfAbsent(procedureId, () => <ScanHistoryEntry>[])
+          .add(entry);
     }
 
     final out = <String, dynamic>{};
@@ -2451,15 +2468,11 @@ class AppPrefs {
     // Derive baseline/latest from normalized history.
     // Baseline is always the oldest scan (day 0), latest is always newest.
     final procedureScans =
-        history
-            .where((e) => e.procedureId == procedureId)
-            .toList()
+        history.where((e) => e.procedureId == procedureId).toList()
           ..sort(_compareScansByTimestampAscThenId); // oldest → newest
 
     if (procedureScans.isEmpty) {
-      debugPrint(
-        '[COMPARISON] No scans for $procedureId — skipping',
-      );
+      debugPrint('[COMPARISON] No scans for $procedureId — skipping');
       return;
     }
 
@@ -2469,10 +2482,11 @@ class AppPrefs {
     final comparisonMap = await _getProcedurePhotoComparisonMap();
     final existing = comparisonMap[procedureId];
     final existingMap = existing is Map<String, dynamic>
-      ? existing
-      : (existing is Map ? Map<String, dynamic>.from(existing) : null);
-    final existingBaselineId =
-      existingMap?['baselineScanId']?.toString().trim();
+        ? existing
+        : (existing is Map ? Map<String, dynamic>.from(existing) : null);
+    final existingBaselineId = existingMap?['baselineScanId']
+        ?.toString()
+        .trim();
     final existingLatestId = existingMap?['latestScanId']?.toString().trim();
 
     debugPrint(
@@ -2502,12 +2516,12 @@ class AppPrefs {
     final afterMap = await _getProcedurePhotoComparisonMap();
     final afterRaw = afterMap[procedureId];
     final afterEntry = afterRaw is Map<String, dynamic>
-      ? afterRaw
-      : (afterRaw is Map ? Map<String, dynamic>.from(afterRaw) : <String, dynamic>{});
-    final afterBaselineId =
-      afterEntry['baselineScanId']?.toString().trim();
-    final afterLatestId =
-      afterEntry['latestScanId']?.toString().trim();
+        ? afterRaw
+        : (afterRaw is Map
+              ? Map<String, dynamic>.from(afterRaw)
+              : <String, dynamic>{});
+    final afterBaselineId = afterEntry['baselineScanId']?.toString().trim();
+    final afterLatestId = afterEntry['latestScanId']?.toString().trim();
 
     debugPrint(
       '[BASELINE_WRITE] after procedureId=$procedureId '
@@ -2529,9 +2543,7 @@ class AppPrefs {
     List<ScanHistoryEntry> history,
   ) {
     final procedureScans =
-        history
-            .where((entry) => entry.procedureId == procedureId)
-            .toList()
+        history.where((entry) => entry.procedureId == procedureId).toList()
           ..sort(_compareScansByTimestampAscThenId);
 
     if (procedureScans.isEmpty) {
