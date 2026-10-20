@@ -7981,7 +7981,16 @@ class _AddEditSheet extends StatefulWidget {
   State<_AddEditSheet> createState() => _AddEditSheetState();
 }
 
-class _AddEditSheetState extends State<_AddEditSheet> {
+class _AddEditSheetState extends State<_AddEditSheet>
+    with AutomaticKeepAliveClientMixin<_AddEditSheet> {
+  // Kept alive inside the Add Peptide tabs: when the user moves to the
+  // Library tab, the Manual Entry form must survive so picking a peptide
+  // there (_AddEditPeptidePageState._onLibraryPick ->
+  // applyLibraryEntry) can fill it. Without this the form was disposed
+  // offscreen, the pick was dropped, and Manual Entry came back empty.
+  @override
+  bool get wantKeepAlive => true;
+
   final _formKey = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
   final _concCtrl = TextEditingController();
@@ -8164,6 +8173,7 @@ class _AddEditSheetState extends State<_AddEditSheet> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final bottomPad = MediaQuery.of(context).viewInsets.bottom;
     final isEdit = widget.editing != null && !widget.isNew;
 
