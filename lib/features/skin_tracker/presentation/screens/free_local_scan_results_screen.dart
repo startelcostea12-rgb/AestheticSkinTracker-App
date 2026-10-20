@@ -9,6 +9,7 @@ import '../../../../app_theme.dart';
 import '../../../../models/ai_scan_frame_exposure.dart';
 import '../../../../utils/upload_gate.dart';
 import '../../../../widgets/paywall_screen.dart';
+import '../../../../widgets/premium_more_picks_link.dart';
 
 class FreeLocalScanSummary {
   const FreeLocalScanSummary({
@@ -95,6 +96,10 @@ class FreeLocalScanResultsScreen extends StatelessWidget {
   const FreeLocalScanResultsScreen({super.key, required this.summary});
 
   final FreeLocalScanSummary summary;
+
+  static const String lastFreeScanText =
+      'That was your last free scan. Your saved scans stay as they are; '
+      'Premium unlocks full analysis anytime.';
 
   static const String premiumNote =
       'Full metrics, trends, history, and the PDF report require Premium. '
@@ -205,13 +210,21 @@ class FreeLocalScanResultsScreen extends StatelessWidget {
             key: const ValueKey('free_scan_count'),
             style: const TextStyle(color: AppColors.textStructure),
           ),
+          if (summary.scansLeft == 0) ...[
+            const SizedBox(height: 4),
+            const Text(
+              lastFreeScanText,
+              key: ValueKey('free_scan_last'),
+              style: TextStyle(color: AppColors.textStructure, height: 1.35),
+            ),
+          ],
           const SizedBox(height: 14),
           FilledButton(
             key: const ValueKey('free_scan_upgrade_button'),
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute<void>(builder: (_) => const PaywallScreen()),
             ),
-            child: const Text('See Premium'),
+            child: const Text(kSeePremiumLabel),
           ),
           TextButton(
             onPressed: () => Navigator.of(context).maybePop(),

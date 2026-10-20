@@ -65,7 +65,26 @@ void main() {
   ) async {
     await _pump(tester, styles: {SkincareStyle.korean}, premium: false);
     expect(find.byKey(const ValueKey('style_recs_locked')), findsOneWidget);
-    expect(find.text('Upgrade to see picks'), findsOneWidget);
+    expect(
+      find.text('Curated picks for Korean are part of Premium.'),
+      findsOneWidget,
+    );
+    // Same lock-icon link style as the concerns section's "See N more".
+    final link = find.byKey(const ValueKey('style_recs_upgrade'));
+    expect(
+      find.descendant(
+        of: link,
+        matching: find.text('See your style picks with Premium'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: link,
+        matching: find.byIcon(Icons.lock_outline_rounded),
+      ),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('style_recs_list')), findsNothing);
     for (final product in skincareStyleCatalog[SkincareStyle.korean]!) {
       expect(find.text(product.name), findsNothing, reason: product.name);
@@ -81,7 +100,10 @@ void main() {
     }
     expect(find.byKey(const ValueKey('style_recs_locked')), findsNothing);
     expect(find.byKey(const ValueKey('style_recs_upgrade')), findsNothing);
-    expect(find.text('Upgrade to see picks'), findsNothing);
+    expect(
+      find.text(StyleRecommendationsSection.lockedLinkLabel),
+      findsNothing,
+    );
     expect(find.textContaining('with Premium'), findsNothing);
   });
 

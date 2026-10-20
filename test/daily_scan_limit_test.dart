@@ -110,6 +110,8 @@ void main() {
       expect(find.text(DailyScanLimitDialog.title), findsOneWidget);
       expect(find.text(DailyScanLimitDialog.message), findsOneWidget);
       expect(DailyScanLimitDialog.message, contains('3 AI scans per day'));
+      expect(DailyScanLimitDialog.message, contains('scan again tomorrow'));
+      expect(find.text('See Premium'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('daily_scan_limit_premium')));
       await tester.pumpAndSettle();
       expect(find.byType(PaywallScreen), findsOneWidget);

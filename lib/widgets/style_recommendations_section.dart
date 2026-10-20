@@ -1,12 +1,14 @@
 // "Recommended for your style": curated products from the user's selected
 // skincare styles (skincare_style_catalog.dart). Premium only -- free users
-// see a locked state with an upgrade action. Separate from, and leaves
+// see a locked note with a "See your style picks with Premium" link (the
+// same link style as the concerns section's "See N more picks"). Separate from, and leaves
 // unchanged, the metric-based recommendations.
 
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import 'home_section_style.dart';
+import 'premium_more_picks_link.dart';
 import '../utils/premium_access.dart';
 import '../utils/skincare_style_catalog.dart';
 import 'paywall_screen.dart';
@@ -24,6 +26,9 @@ class StyleRecommendationsSection extends StatefulWidget {
   final int limit;
 
   static const String title = 'Recommended for your style';
+  static const String lockedLinkLabel = 'See your style picks with Premium';
+  static String lockedText(String styleLabels) =>
+      'Curated picks for $styleLabels are part of Premium.';
   static const String disclaimer =
       'General product ideas for the styles you chose, not personalized '
       'medical advice. Talk with a licensed provider before starting '
@@ -84,26 +89,15 @@ class _StyleRecommendationsSectionState
         key: const ValueKey('style_recs_locked'),
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.lock_outline_rounded, size: 18, color: ink),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Premium: curated $selectedLabels picks',
-                  style: const TextStyle(
-                    color: ink,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
+          Text(
+            StyleRecommendationsSection.lockedText(selectedLabels),
+            style: homeSectionMessageStyle(),
           ),
-          const SizedBox(height: 10),
-          FilledButton(
+          const SizedBox(height: 4),
+          PremiumUpsellLink(
             key: const ValueKey('style_recs_upgrade'),
+            label: StyleRecommendationsSection.lockedLinkLabel,
             onPressed: _upgrade,
-            child: const Text('Upgrade to see picks'),
           ),
         ],
       );

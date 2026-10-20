@@ -41,8 +41,9 @@ class UploadGate {
   static const String scanCreditsKey = 'paid_scan_credits';
 
   static const String blockedMessage =
-      'Your on-device check is done and nothing was uploaded. Full AI '
-      'analysis needs Premium or a scan credit.';
+      "You've used your free scans. Your on-device check is done and "
+      'nothing was uploaded. Full AI analysis needs Premium or a scan '
+      'credit.';
 
   /// Test-only override of [kUploadGateBypass]; null in production.
   @visibleForTesting

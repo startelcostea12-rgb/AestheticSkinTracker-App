@@ -110,6 +110,11 @@ void main() {
         expect(await attempt, 'local', reason: 'scan $i');
         expect(find.byType(FreeLocalScanResultsScreen), findsOneWidget);
         expect(find.text('Free scans left: ${3 - i} of 3'), findsOneWidget);
+        // A short note only after the last free scan.
+        expect(
+          find.text(FreeLocalScanResultsScreen.lastFreeScanText),
+          i == 3 ? findsOneWidget : findsNothing,
+        );
         navKey.currentState!.pop();
         await settle();
       }

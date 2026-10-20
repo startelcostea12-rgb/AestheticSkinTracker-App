@@ -17,6 +17,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../widgets/paywall_screen.dart';
+import '../widgets/premium_more_picks_link.dart';
 import 'app_prefs.dart';
 import 'upload_gate.dart';
 
@@ -75,11 +76,11 @@ class DailyAiScans {
 class DailyScanLimitDialog {
   const DailyScanLimitDialog._();
 
-  static const String title = 'Daily scan limit reached';
+  static const String title = "You've used today's free scans";
   static const String message =
-      'Free accounts include $kFreeDailyAiScanLimit AI scans per day. Your '
-      'saved scans stay as they are. Scan again tomorrow, or get unlimited '
-      'scans with Premium.';
+      'Free accounts include $kFreeDailyAiScanLimit AI scans per day. You can '
+      'scan again tomorrow, and your saved scans are not affected. Premium '
+      'has unlimited scans.';
 }
 
 /// Shows the daily-limit message with a Premium upsell and returns true
@@ -92,6 +93,7 @@ Future<bool> showDailyScanLimitIfReached(BuildContext context) async {
     context: context,
     builder: (dialogContext) => AlertDialog(
       key: const ValueKey('daily_scan_limit_dialog'),
+      icon: const Icon(Icons.lock_clock_outlined),
       title: const Text(DailyScanLimitDialog.title),
       content: const Text(DailyScanLimitDialog.message),
       actions: [
@@ -102,7 +104,7 @@ Future<bool> showDailyScanLimitIfReached(BuildContext context) async {
         FilledButton(
           key: const ValueKey('daily_scan_limit_premium'),
           onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: const Text('See Premium'),
+          child: const Text(kSeePremiumLabel),
         ),
       ],
     ),

@@ -190,6 +190,13 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('See 2 more picks with Premium'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('concern_recs_upgrade')),
+          matching: find.byIcon(Icons.lock_outline_rounded),
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets('premium users see the full list per concern', (tester) async {
