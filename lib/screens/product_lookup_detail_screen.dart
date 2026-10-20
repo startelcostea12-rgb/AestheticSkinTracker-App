@@ -47,7 +47,7 @@ class _ProductLookupDetailScreenState extends State<ProductLookupDetailScreen> {
     if (_saved) {
       await removeSavedProduct(_product.name);
     } else {
-      await saveProductForLater(_product.name);
+      await saveLookupProductForLater(_product);
     }
     if (!mounted) return;
     setState(() => _saved = !_saved);
@@ -126,6 +126,13 @@ class _ProductLookupDetailScreenState extends State<ProductLookupDetailScreen> {
               style: const TextStyle(color: AppColors.refinedSlate),
             ),
           ],
+          if (_product.barcode != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Barcode: ${_product.barcode}',
+              style: TextStyle(color: muted, fontSize: 12.5),
+            ),
+          ],
           if (_product.style != null) ...[
             const SizedBox(height: 4),
             Text(
@@ -134,9 +141,11 @@ class _ProductLookupDetailScreenState extends State<ProductLookupDetailScreen> {
             ),
           ],
           const SizedBox(height: 18),
-          const Text(
-            'Key ingredients',
-            style: TextStyle(
+          Text(
+            _product.source == LookupSource.openBeautyFacts
+                ? 'Ingredients'
+                : 'Key ingredients',
+            style: const TextStyle(
               color: AppColors.refinedSlate,
               fontWeight: FontWeight.w800,
             ),
@@ -174,8 +183,13 @@ class _ProductLookupDetailScreenState extends State<ProductLookupDetailScreen> {
           ),
           const SizedBox(height: 14),
           Text(
-            'Source: built-in product list. Product info only — not a '
-            'recommendation or medical advice.',
+            _product.source == LookupSource.openBeautyFacts
+                ? 'Source: Open Beauty Facts (openbeautyfacts.org, ODbL), a '
+                      'community database that may be incomplete. Product '
+                      'info only — not a recommendation or medical advice.'
+                : 'Source: built-in product list. Product info only — not a '
+                      'recommendation or medical advice.',
+            key: const ValueKey('product_detail_source'),
             style: TextStyle(color: muted, fontSize: 12, height: 1.35),
           ),
         ],

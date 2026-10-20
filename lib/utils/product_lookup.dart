@@ -2,18 +2,21 @@
 /// catalog, saved-for-later products, and adding a product name to the
 /// active routine.
 ///
-/// First version limitation: there is no product or barcode API in the
-/// project, so lookups run against a local catalog made from the curated
-/// style lists (skincare_style_catalog.dart, read only). Those entries have
-/// no barcodes and no ingredient data, so a barcode lookup reports "not
-/// found" and the detail screen says ingredient data is unavailable rather
-/// than guessing. No metric-based recommendations are made here.
+/// Online lookups go to Open Beauty Facts first (open_beauty_facts.dart);
+/// the local catalog, made from the curated style lists
+/// (skincare_style_catalog.dart, read only), is the fallback and works
+/// offline. Local entries have no barcodes and no ingredient data, so the
+/// detail screen says ingredient data is unavailable rather than guessing.
+/// No metric-based recommendations are made here.
 library;
 
 import 'dart:convert';
 
 import 'app_prefs.dart';
 import 'skincare_style_catalog.dart';
+
+/// Where a looked-up product's data came from.
+enum LookupSource { local, openBeautyFacts }
 
 class LookupProduct {
   const LookupProduct({
@@ -23,7 +26,36 @@ class LookupProduct {
     this.style,
     this.barcode,
     this.ingredients,
+    this.source = LookupSource.local,
   });
+
+  /// Rebuilds a product saved with [toJson]; null when unreadable.
+  static LookupProduct? fromJson(Map<String, dynamic> json) {
+    final name = json['name']?.toString().trim() ?? '';
+    if (name.isEmpty) return null;
+    final ingredients = json['ingredients'];
+    return LookupProduct(
+      name: name,
+      brand: json['brand']?.toString(),
+      description: json['description']?.toString(),
+      barcode: json['barcode']?.toString(),
+      ingredients: ingredients is List
+          ? [for (final item in ingredients) item.toString()]
+          : null,
+      source: json['source'] == LookupSource.openBeautyFacts.name
+          ? LookupSource.openBeautyFacts
+          : LookupSource.local,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'brand': ?brand,
+    'description': ?description,
+    'barcode': ?barcode,
+    'ingredients': ?ingredients,
+    'source': source.name,
+  };
 
   final String name;
   final String? brand;
@@ -37,6 +69,8 @@ class LookupProduct {
   /// Key ingredients, when the source provides them. Null or empty means
   /// "no ingredient data" -- never filled in by guessing.
   final List<String>? ingredients;
+
+  final LookupSource source;
 
   bool get hasIngredients => ingredients?.isNotEmpty ?? false;
 }
@@ -142,32 +176,63 @@ LookupProduct? productNamed(String name) {
   return null;
 }
 
-/// AppPrefs key holding saved-for-later product names as a JSON list.
+/// AppPrefs key holding saved-for-later products as a JSON list. Each item
+/// is a local catalog product name, or a full product map (toJson) for
+/// products that came from Open Beauty Facts.
 const String savedProductsKey = 'saved_lookup_products';
 
-Future<List<String>> loadSavedProducts() async {
+Future<List<dynamic>> _loadSavedItems() async {
   final raw = await AppPrefs.getString(savedProductsKey);
   if (raw == null || raw.isEmpty) return const [];
   try {
     final decoded = jsonDecode(raw);
-    if (decoded is! List) return const [];
-    return [for (final item in decoded) item.toString()];
+    return decoded is List ? decoded : const [];
   } catch (_) {
     return const [];
   }
 }
 
+String? _savedItemName(dynamic item) =>
+    item is Map ? item['name']?.toString() : item?.toString();
+
+/// Names of the saved products, in saved order.
+Future<List<String>> loadSavedProducts() async => [
+  for (final item in await _loadSavedItems()) ?_savedItemName(item),
+];
+
+/// The saved products themselves (local names resolved via the catalog).
+Future<List<LookupProduct>> loadSavedLookupProducts() async => [
+  for (final item in await _loadSavedItems())
+    if (item is Map)
+      ?LookupProduct.fromJson(Map<String, dynamic>.from(item))
+    else
+      ?productNamed(item.toString()),
+];
+
 Future<void> saveProductForLater(String name) async {
-  final saved = await loadSavedProducts();
-  if (saved.contains(name)) return;
+  final saved = await _loadSavedItems();
+  if (saved.map(_savedItemName).contains(name)) return;
   await AppPrefs.setString(savedProductsKey, jsonEncode([...saved, name]));
 }
 
-Future<void> removeSavedProduct(String name) async {
-  final saved = await loadSavedProducts();
+/// Saves [product]; online products keep their data so they reopen offline.
+Future<void> saveLookupProductForLater(LookupProduct product) async {
+  if (product.source == LookupSource.local) {
+    return saveProductForLater(product.name);
+  }
+  final saved = await _loadSavedItems();
+  if (saved.map(_savedItemName).contains(product.name)) return;
   await AppPrefs.setString(
     savedProductsKey,
-    jsonEncode([...saved.where((item) => item != name)]),
+    jsonEncode([...saved, product.toJson()]),
+  );
+}
+
+Future<void> removeSavedProduct(String name) async {
+  final saved = await _loadSavedItems();
+  await AppPrefs.setString(
+    savedProductsKey,
+    jsonEncode([...saved.where((item) => _savedItemName(item) != name)]),
   );
 }
 
