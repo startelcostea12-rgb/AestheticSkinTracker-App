@@ -6851,13 +6851,17 @@ class _LibraryPickerTabState extends State<_LibraryPickerTab> {
                   color: _rose,
                 ),
                 const SizedBox(width: 6),
-                Text(
-                  '${items.length} peptide${items.length == 1 ? '' : 's'} \u00b7 sorted by popularity',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: _muted,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.4,
+                // Expanded + wrap: never overflows on narrow phones.
+                Expanded(
+                  child: Text(
+                    '${items.length} peptide${items.length == 1 ? '' : 's'} \u00b7 sorted by popularity',
+                    key: const ValueKey('peptide_library_count_line'),
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: _muted,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.4,
+                    ),
                   ),
                 ),
               ],
@@ -8524,10 +8528,18 @@ class _AddEditSheetState extends State<_AddEditSheet>
                 initialValue: _category,
                 decoration: _inputDecoration(null),
                 style: const TextStyle(color: _textBrown, fontSize: 14),
+                // Fill the field width and ellipsize long labels instead of
+                // overflowing on narrow phones.
+                isExpanded: true,
                 items: _categoryOptions
                     .map(
-                      (c) =>
-                          DropdownMenuItem(value: c, child: Text(_catLabel(c))),
+                      (c) => DropdownMenuItem(
+                        value: c,
+                        child: Text(
+                          _catLabel(c),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                     )
                     .toList(),
                 onChanged: (v) => setState(() => _category = v!),

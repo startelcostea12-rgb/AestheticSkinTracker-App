@@ -6,11 +6,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Opens Add Peptide from the peptide tracker (My Peptides tab FAB).
-Future<void> _openAddPeptide(WidgetTester tester) async {
-  // Wide surface: the Library tab's "N peptides · sorted by popularity"
-  // line overflows at phone widths with the test font (separate from
-  // selection, left unchanged).
-  await tester.binding.setSurfaceSize(const Size(800, 1200));
+Future<void> _openAddPeptide(
+  WidgetTester tester, {
+  Size size = const Size(400, 1000),
+}) async {
+  await tester.binding.setSurfaceSize(size);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(
     const MaterialApp(home: PeptideTrackerScreen(initialTab: 0)),
@@ -48,7 +48,9 @@ void main() {
   testWidgets('a picked peptide is added to the list on save, as before', (
     tester,
   ) async {
-    await _openAddPeptide(tester);
+    // Wide surface: the peptide detail screen opened after saving has its
+    // own overflows at phone widths (separate from the library).
+    await _openAddPeptide(tester, size: const Size(800, 1200));
     await tester.tap(find.text('Library'));
     await tester.pumpAndSettle();
     final lib = kPeptideLibrary.first;
@@ -76,4 +78,26 @@ void main() {
     await tester.pumpAndSettle();
     expect(_fieldWithText(tester, 'My custom serum'), 'My custom serum');
   });
+
+  for (final width in [320.0, 375.0]) {
+    testWidgets('Library tab fits at ${width.toInt()}px; the count line '
+        'stays visible', (tester) async {
+      await _openAddPeptide(tester, size: Size(width, 900));
+      await tester.tap(find.text('Library'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      final line = find.byKey(const ValueKey('peptide_library_count_line'));
+      expect(
+        tester.widget<Text>(line).data,
+        '${kPeptideLibrary.length} peptides \u00b7 sorted by popularity',
+      );
+      expect(tester.getRect(line).right, lessThanOrEqualTo(width));
+      // Scroll the list too.
+      for (var i = 0; i < 6; i++) {
+        await tester.drag(find.byType(ListView).last, const Offset(0, -400));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      }
+    });
+  }
 }
