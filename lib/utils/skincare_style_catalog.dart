@@ -206,22 +206,22 @@ const Map<SkincareStyle, List<StyleProduct>> skincareStyleCatalog = {
     ),
     StyleProduct(
       'SkinCeuticals Triple Lipid Restore',
-      'Barrier repair',
+      'Barrier support cream',
       SkincareStyle.clinical,
     ),
     StyleProduct(
       'Alastin Restorative Skin Complex',
-      'Collagen support',
+      'Peptide-based serum',
       SkincareStyle.clinical,
     ),
     StyleProduct(
       'ZO Skin Health Daily Power Defense',
-      'Antioxidant and repair',
+      'Daily antioxidant serum',
       SkincareStyle.clinical,
     ),
     StyleProduct(
       'Obagi Nu-Derm',
-      'Pigment and texture system',
+      'Prescription pigment system (consult a provider)',
       SkincareStyle.clinical,
     ),
     StyleProduct(
@@ -231,22 +231,22 @@ const Map<SkincareStyle, List<StyleProduct>> skincareStyleCatalog = {
     ),
     StyleProduct(
       'SkinCeuticals HA Intensifier',
-      'Hyaluronic acid booster',
+      'Hyaluronic acid serum',
       SkincareStyle.clinical,
     ),
     StyleProduct(
       'Alastin Regenerating Skin Nectar',
-      'Post-procedure recovery',
+      'Post-procedure serum',
       SkincareStyle.clinical,
     ),
     StyleProduct(
       'ZO Skin Health Growth Factor Serum',
-      'Repair and renewal',
+      'Peptide serum',
       SkincareStyle.clinical,
     ),
     StyleProduct(
       'Revision Skincare C+ Correcting Complex 30%',
-      'Strong vitamin C',
+      'Vitamin C serum',
       SkincareStyle.clinical,
     ),
   ],

@@ -44,7 +44,7 @@ void main() {
       );
       expect(
         skincareStyleCatalog[SkincareStyle.clinical]!.last.description,
-        'Strong vitamin C',
+        'Vitamin C serum',
       );
     });
 
