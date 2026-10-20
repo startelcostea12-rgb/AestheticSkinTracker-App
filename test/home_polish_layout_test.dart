@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/screens/home_screen.dart';
@@ -6,6 +7,7 @@ import 'package:aesthetic_skin_tracker/utils/ai_comparison_baseline.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:aesthetic_skin_tracker/utils/skincare_style_catalog.dart';
 import 'package:aesthetic_skin_tracker/widgets/concern_recommendations_section.dart';
+import 'package:aesthetic_skin_tracker/widgets/home_first_scan_card.dart';
 import 'package:aesthetic_skin_tracker/widgets/home_routine_card.dart';
 import 'package:aesthetic_skin_tracker/widgets/last_comparable_pair_card.dart';
 import 'package:aesthetic_skin_tracker/widgets/style_recommendations_section.dart';
@@ -82,6 +84,7 @@ void main() {
     ) async {
       await _pumpHome(tester, width);
       expect(find.byType(LastComparablePairCard), findsOneWidget);
+      expect(find.byType(HomeFirstScanCard), findsNothing);
       expect(find.byType(HomeRoutineCard), findsOneWidget);
       expect(find.text('For your texture'), findsOneWidget);
       expect(find.byType(StyleRecommendationsSection), findsOneWidget);
@@ -92,10 +95,63 @@ void main() {
   testWidgets('home fits at 320px with empty states', (tester) async {
     await _pumpHome(tester, 320, withData: false);
     expect(find.byType(HomeRoutineCard), findsNothing);
+    expect(find.byType(HomeFirstScanCard), findsOneWidget);
+    await _scrollThrough(tester);
+  });
+
+  testWidgets('no scans: the first-scan card replaces the pair card and '
+      'the concerns section, above the style and protocol cards', (
+    tester,
+  ) async {
+    await _pumpHome(tester, 375, withData: false);
+    expect(find.text(HomeFirstScanCard.title), findsOneWidget);
+    expect(find.text(HomeFirstScanCard.intro), findsOneWidget);
+    for (final tip in HomeFirstScanCard.tips) {
+      expect(find.text(tip.text), findsOneWidget, reason: tip.text);
+    }
+    expect(HomeFirstScanCard.tips[0].text, contains('Controlled scan'));
+    expect(HomeFirstScanCard.tips[1].text, contains('same light'));
+    expect(
+      find.byKey(const ValueKey('home_first_scan_button')),
+      findsOneWidget,
+    );
+    expect(find.byType(LastComparablePairCard), findsNothing);
+    expect(find.byType(ConcernRecommendationsSection), findsNothing);
+    final card = tester.getTopLeft(find.byType(HomeFirstScanCard)).dy;
+    expect(
+      card,
+      lessThan(tester.getTopLeft(find.byType(StyleRecommendationsSection)).dy),
+    );
+    expect(
+      card,
+      lessThan(
+        tester
+            .getTopLeft(find.byKey(const ValueKey('home_protocol_scan_pair')))
+            .dy,
+      ),
+    );
+    expect(tester.getTopLeft(find.text('Welcome back')).dy, lessThan(card));
+  });
+
+  testWidgets('a single AI scan: pair card and concerns message, no '
+      'first-scan card', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      AppPrefs.scanHistoryKey: jsonEncode([_scan('only', 1).toJson()]),
+    });
+    await tester.binding.setSurfaceSize(const Size(375, 2400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(const MaterialApp(home: HomePage()));
+    await tester.pumpAndSettle();
+    expect(find.byType(HomeFirstScanCard), findsNothing);
+    expect(find.byType(LastComparablePairCard), findsOneWidget);
     expect(
       find.text(ConcernRecommendationsSection.noComparableText),
       findsOneWidget,
     );
-    await _scrollThrough(tester);
+  });
+
+  test('the first-scan button opens the AI scan screen', () {
+    final home = File('lib/screens/home_screen.dart').readAsStringSync();
+    expect(home, contains('HomeFirstScanCard(onStartScan: _openSkinScan)'));
   });
 }

@@ -37,6 +37,7 @@ import '../utils/last_comparable_pair.dart';
 import '../widgets/last_comparable_pair_card.dart';
 import '../widgets/home_routine_card.dart';
 import '../widgets/concern_recommendations_section.dart';
+import '../widgets/home_first_scan_card.dart';
 import '../widgets/home_section_style.dart';
 import '../widgets/style_recommendations_section.dart';
 import 'progress_summary_screen.dart';
@@ -2706,7 +2707,12 @@ class _HomePageState extends State<HomePage>
               children: [
                 _buildWelcomeSection(),
                 const SizedBox(height: homeSectionGap),
-                // Primary card: last comparable pair (or latest scan alone).
+                // Primary card: last comparable pair (or latest scan alone),
+                // or how to take the first scan when there is no AI scan.
+                if (lastComparablePair(sortedScans) == null) ...[
+                  HomeFirstScanCard(onStartScan: _openSkinScan),
+                  const SizedBox(height: homeSectionGap),
+                ],
                 if (lastComparablePair(sortedScans) case final pair?) ...[
                   LastComparablePairCard(
                     pair: pair,
@@ -2736,8 +2742,12 @@ class _HomePageState extends State<HomePage>
                   ),
                   const SizedBox(height: homeSectionGap),
                 ],
-                ConcernRecommendationsSection(scans: sortedScans),
-                const SizedBox(height: homeSectionGap),
+                // Hidden until there is an AI scan; the first-scan card
+                // already says picks come after a follow-up scan.
+                if (lastComparablePair(sortedScans) != null) ...[
+                  ConcernRecommendationsSection(scans: sortedScans),
+                  const SizedBox(height: homeSectionGap),
+                ],
                 const StyleRecommendationsSection(),
                 const SizedBox(height: homeSectionGap),
                 _buildProtocolHomeCard(),
