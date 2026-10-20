@@ -43,7 +43,7 @@ import 'package:aesthetic_skin_tracker/utils/ai/skin_detections.dart';
 import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:aesthetic_skin_tracker/utils/upload_gate.dart';
-import 'package:aesthetic_skin_tracker/utils/daily_scan_limit.dart';
+import 'package:aesthetic_skin_tracker/utils/free_scan_limit.dart';
 import 'package:aesthetic_skin_tracker/utils/untrusted_trend_metrics.dart';
 import 'package:aesthetic_skin_tracker/utils/comparable_pair_pdf.dart';
 import 'package:aesthetic_skin_tracker/utils/last_comparable_pair.dart';
@@ -2476,10 +2476,13 @@ AiBaselineResolution resolveAiBaseline({
 }
 
 /// Opens the existing PaywallScreen and returns true when a free user has
-/// used every free local scan ([kFreeLocalScanLimit]) and has no upload
-/// access; the caller must then stop without scanning.
+/// used the free AI scan ([kFreeAiScanLimit]) or every free local scan
+/// ([kFreeLocalScanLimit]) without upload access; the caller must then stop
+/// without scanning. Premium and Test Premium are never stopped.
 Future<bool> openPaywallIfFreeScanCapReached(BuildContext context) async {
-  if (!await FreeLocalScans.capReached()) return false;
+  if (!await FreeAiScans.limitReached() && !await FreeLocalScans.capReached()) {
+    return false;
+  }
   if (!context.mounted) return true;
   await Navigator.of(
     context,
@@ -3026,8 +3029,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   Future<void> _pickFromCamera() async {
     if (await openPaywallIfFreeScanCapReached(context)) return;
     if (!mounted) return;
-    if (await showDailyScanLimitIfReached(context)) return;
-    if (!mounted) return;
     try {
       final selectedProcedureId = (_selectedProcedureId ?? '').trim();
       final checklistToken = await frontBaselineResetToken(
@@ -3121,8 +3122,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// so the "Run AI Analysis" button stays disabled.
   Future<void> _pickAndCrop(ImageSource source, String errorLabel) async {
     if (await openPaywallIfFreeScanCapReached(context)) return;
-    if (!mounted) return;
-    if (await showDailyScanLimitIfReached(context)) return;
     if (!mounted) return;
     try {
       final picker = ImagePicker();
@@ -3332,8 +3331,6 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     if (path == null || path.isEmpty) return;
     if (await openPaywallIfFreeScanCapReached(context)) return;
     if (!mounted) return;
-    if (await showDailyScanLimitIfReached(context)) return;
-    if (!mounted) return;
     if (!_consentAccepted && !await _reviewConsent()) return;
     if (!mounted || !_consentAccepted) return;
     setState(() {
@@ -3429,7 +3426,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       // Free users get a limited local results view instead, up to
       // kFreeLocalScanLimit scans, then the paywall.
       final scanRoute = await resolveScanRoute();
-      if (scanRoute != ScanRoute.backend) {
+      // A free user's one free AI scan runs as a full backend scan under a
+      // one-scan upload pass, closed in the finally below.
+      if (scanRoute == ScanRoute.freeAiScan) {
+        UploadGate.beginFreeAiScanUpload();
+      }
+      if (scanRoute != ScanRoute.backend && scanRoute != ScanRoute.freeAiScan) {
         if (!mounted) return;
         setState(() => _stage = _Stage.capture);
         if (scanRoute == ScanRoute.paywall) {
@@ -3440,7 +3442,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           return;
         }
         await FreeLocalScans.recordLocalScan();
-        await DailyAiScans.recordScan();
+        await FreeAiScans.recordScan();
         final summary = FreeLocalScanSummary.fromLocal(
           faceFound: aug.meshUsed,
           faceCoverage: aug.faceCoverage,
@@ -3806,7 +3808,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         _stage = _Stage.results;
       });
       await UploadGate.recordCompletedBackendScan();
-      await DailyAiScans.recordScan();
+      await FreeAiScans.recordScan();
 
       if (savedToHistory) {
         // Baseline registration (see _registerAiBaselineIfNeeded, called
@@ -3834,6 +3836,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         _analysisError = 'Analysis failed: $e';
         _latestBackendAnalysisPayload = null;
       });
+    } finally {
+      UploadGate.endFreeAiScanUpload();
     }
   }
 

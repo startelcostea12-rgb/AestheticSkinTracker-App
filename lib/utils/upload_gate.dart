@@ -17,6 +17,7 @@ library;
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'app_prefs.dart';
+import 'free_scan_limit.dart';
 import 'premium_access.dart';
 
 const bool kUploadGateBypass = bool.fromEnvironment(
@@ -51,6 +52,16 @@ class UploadGate {
 
   static bool get bypassEnabled => debugBypassOverride ?? kUploadGateBypass;
 
+  static bool _freeAiScanUploadActive = false;
+
+  /// One-scan upload pass for a free user's single free AI scan
+  /// (FreeAiScans, free_scan_limit.dart). The AI scan screen opens it only
+  /// for that analysis and always closes it (finally), so no other upload
+  /// (product photos, procedure photos) is allowed by it.
+  static void beginFreeAiScanUpload() => _freeAiScanUploadActive = true;
+  static void endFreeAiScanUpload() => _freeAiScanUploadActive = false;
+  static bool get freeAiScanUploadActive => _freeAiScanUploadActive;
+
   static Future<int> remainingScanCredits() async {
     final raw = await AppPrefs.getString(scanCreditsKey);
     final value = int.tryParse((raw ?? '').trim()) ?? 0;
@@ -69,7 +80,7 @@ class UploadGate {
   /// Whether a photo may be uploaded now ([bypassEnabled] short-circuits
   /// the real check while testing).
   static Future<bool> canUpload() async {
-    if (bypassEnabled) return true;
+    if (bypassEnabled || _freeAiScanUploadActive) return true;
     return hasPaidAccess();
   }
 
@@ -125,13 +136,18 @@ class FreeLocalScans {
 }
 
 /// Where a scan attempt goes.
-enum ScanRoute { backend, freeLocal, paywall }
+enum ScanRoute { backend, freeAiScan, freeLocal, paywall }
 
 /// Backend when uploads are allowed (subscription, credit, or the testing
-/// bypass); otherwise the free local path until [kFreeLocalScanLimit] is
-/// used, then the paywall.
+/// bypass); otherwise a free user's one free AI scan ([kFreeAiScanLimit])
+/// is a full backend scan under a one-scan upload pass ([ScanRoute.
+/// freeAiScan]); otherwise the free local path until [kFreeLocalScanLimit]
+/// is used, then the paywall. (Once the free AI scan is used, the scan
+/// screen's entry check opens the paywall before this is reached.)
 Future<ScanRoute> resolveScanRoute() async {
   if (await UploadGate.canUpload()) return ScanRoute.backend;
+  if (await FreeAiScans.freeScanAvailable()) return ScanRoute.freeAiScan;
+  if (await FreeAiScans.limitReached()) return ScanRoute.paywall;
   if (await FreeLocalScans.used() >= kFreeLocalScanLimit) {
     return ScanRoute.paywall;
   }

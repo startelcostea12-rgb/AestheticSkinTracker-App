@@ -9,6 +9,7 @@ import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/utils/premium_access.dart';
 import 'package:aesthetic_skin_tracker/utils/recommendation_context.dart';
 import 'package:aesthetic_skin_tracker/utils/skin_analysis_service.dart';
+import 'package:aesthetic_skin_tracker/utils/free_scan_limit.dart';
 import 'package:aesthetic_skin_tracker/utils/upload_gate.dart';
 import 'package:aesthetic_skin_tracker/widgets/from_your_logs.dart';
 import 'package:aesthetic_skin_tracker/widgets/paywall_screen.dart';
@@ -63,6 +64,7 @@ Future<String> _attemptScan(WidgetTester tester, BuildContext context) async {
   final route = await resolveScanRoute();
   if (route == ScanRoute.paywall) return 'paywall';
   if (route == ScanRoute.backend) return 'backend';
+  if (route == ScanRoute.freeAiScan) return 'freeAiScan';
   await FreeLocalScans.recordLocalScan();
   final summary = _summary(scansUsed: await FreeLocalScans.used());
   if (!context.mounted) return 'unmounted';
@@ -77,7 +79,10 @@ Future<String> _attemptScan(WidgetTester tester, BuildContext context) async {
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
-  tearDown(() => UploadGate.debugBypassOverride = null);
+  tearDown(() {
+    UploadGate.debugBypassOverride = null;
+    UploadGate.endFreeAiScanUpload();
+  });
 
   test('free local scan limit is 3', () {
     expect(kFreeLocalScanLimit, 3);
@@ -87,9 +92,8 @@ void main() {
   group('free user, bypass off', () {
     setUp(() => UploadGate.debugBypassOverride = false);
 
-    testWidgets('3 local scans show the limited view; the 4th opens paywall', (
-      tester,
-    ) async {
+    testWidgets('the one free AI scan is a full backend scan; the next '
+        'attempt opens the paywall', (tester) async {
       await tester.binding.setSurfaceSize(const Size(900, 2000));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final navKey = GlobalKey<NavigatorState>();
@@ -104,48 +108,44 @@ void main() {
         }
       }
 
-      for (var i = 1; i <= 3; i++) {
-        final attempt = _attemptScan(tester, ctx());
-        await settle();
-        expect(await attempt, 'local', reason: 'scan $i');
-        expect(find.byType(FreeLocalScanResultsScreen), findsOneWidget);
-        expect(find.text('Free scans left: ${3 - i} of 3'), findsOneWidget);
-        // A short note only after the last free scan.
-        expect(
-          find.text(FreeLocalScanResultsScreen.lastFreeScanText),
-          i == 3 ? findsOneWidget : findsNothing,
-        );
-        navKey.currentState!.pop();
-        await settle();
-      }
+      final first = _attemptScan(tester, ctx());
+      await settle();
+      expect(await first, 'freeAiScan');
+      expect(find.byType(PaywallScreen), findsNothing);
       expect(find.byType(FreeLocalScanResultsScreen), findsNothing);
-      expect(await FreeLocalScans.used(), 3);
-      expect(await FreeLocalScans.capReached(), isTrue);
+      // The scan completes (counted by the scan screen).
+      await FreeAiScans.recordScan();
+      expect(await FreeAiScans.used(), 1);
 
-      final fourth = _attemptScan(tester, ctx());
+      final second = _attemptScan(tester, ctx());
       await settle();
       expect(find.byType(PaywallScreen), findsOneWidget);
-      expect(find.byType(FreeLocalScanResultsScreen), findsNothing);
       navKey.currentState!.pop();
       await settle();
-      expect(await fourth, 'paywall');
-      expect(await FreeLocalScans.used(), 3);
+      expect(await second, 'paywall');
+      expect(await FreeAiScans.used(), 1);
+      expect(await FreeLocalScans.used(), 0);
       expect(await resolveScanRoute(), ScanRoute.paywall);
     });
 
-    test('free scans never grant a backend upload', () async {
+    test('the free-scan upload pass allows only that scan\'s upload', () async {
       final rec = _recordingClient();
-      expect(await resolveScanRoute(), ScanRoute.freeLocal);
+      expect(await resolveScanRoute(), ScanRoute.freeAiScan);
+      // Without the pass nothing is sent.
       await expectLater(
         _upload(rec.client),
         throwsA(isA<UploadGateBlockedException>()),
       );
-      await FreeLocalScans.setUsed(3);
+      UploadGate.beginFreeAiScanUpload();
+      await _upload(rec.client);
+      UploadGate.endFreeAiScanUpload();
+      expect(rec.requests, hasLength(1));
+      // Closed again afterwards.
       await expectLater(
         _upload(rec.client),
         throwsA(isA<UploadGateBlockedException>()),
       );
-      expect(rec.requests, isEmpty);
+      expect(rec.requests, hasLength(1));
     });
 
     testWidgets('From your logs hides once the cap is reached', (tester) async {

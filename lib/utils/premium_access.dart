@@ -8,10 +8,9 @@
 //                Professional Reports, AI Recovery Coach, full insights.
 //
 // Free limits (Premium has none of these):
-//   • AI scans: 3 per calendar day (kFreeDailyAiScanLimit,
-//     daily_scan_limit.dart). A paid scan credit also lifts it. Separate
-//     from the upload gate and the lifetime free local-scan cap
-//     (upload_gate.dart), which are unchanged.
+//   • AI scans: 1 in total (kFreeAiScanLimit, free_scan_limit.dart), a
+//     full scan with full results; the next attempt opens the paywall. A
+//     paid scan credit also lifts it.
 //   • "For your concerns": the top product per concern; Premium sees each
 //     concern's full list.
 //   • "Recommended for your style": Premium only; free users see a locked
@@ -64,7 +63,7 @@ class PremiumPlans {
   ];
 
   static const List<String> freeValueLines = [
-    '3 AI skin scans per day',
+    '1 AI skin scan',
     'Top product pick per concern',
     'Basic skin metrics',
     'One-time Professional Report purchases',
