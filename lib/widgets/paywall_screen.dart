@@ -555,7 +555,10 @@ class _PaywallScreenState extends State<PaywallScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Wrap(
+            spacing: 10,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text(
                 'Premium',
@@ -566,7 +569,6 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   letterSpacing: -0.2,
                 ),
               ),
-              const SizedBox(width: 10),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                 decoration: BoxDecoration(
@@ -588,8 +590,9 @@ class _PaywallScreenState extends State<PaywallScreen> {
             ],
           ),
           const SizedBox(height: 8),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+          Wrap(
+            spacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.end,
             children: [
               Text(
                 _annual
@@ -603,7 +606,6 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   letterSpacing: -1.0,
                 ),
               ),
-              const SizedBox(width: 6),
               Padding(
                 padding: const EdgeInsets.only(bottom: 6),
                 child: Text(
@@ -895,17 +897,19 @@ class _PaywallScreenState extends State<PaywallScreen> {
                 size: 18,
               ),
               const SizedBox(width: 8),
-              Text(
-                _testingActive
-                    ? 'Test Premium is ACTIVE'
-                    : 'Test Premium is INACTIVE',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: _testingActive
-                      ? MyApp.clinicalTeal
-                      : MyApp.clinicalSlate,
-                  letterSpacing: 0.2,
+              Expanded(
+                child: Text(
+                  _testingActive
+                      ? 'Test Premium is ACTIVE'
+                      : 'Test Premium is INACTIVE',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: _testingActive
+                        ? MyApp.clinicalTeal
+                        : MyApp.clinicalSlate,
+                    letterSpacing: 0.2,
+                  ),
                 ),
               ),
             ],

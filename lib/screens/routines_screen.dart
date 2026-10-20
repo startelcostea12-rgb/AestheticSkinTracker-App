@@ -306,12 +306,14 @@ class _RoutineChecklistCard extends StatelessWidget {
             children: [
               Icon(icon, size: 18, color: const Color(0xFF7A8B7B)),
               const SizedBox(width: 8),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w900,
-                  color: AppColors.refinedSlate,
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    color: AppColors.refinedSlate,
+                  ),
                 ),
               ),
             ],

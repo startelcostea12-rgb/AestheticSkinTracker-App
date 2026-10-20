@@ -5297,25 +5297,33 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             borderRadius: BorderRadius.circular(16),
             onTap: enabled ? _onRunPressed : null,
             child: Center(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(
-                    Icons.timeline_rounded,
-                    size: 20,
-                    color: AppColors.onChampagneGold,
+              // Fixed-height button: shrink the label slightly on narrow
+              // phones instead of overflowing.
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.timeline_rounded,
+                        size: 20,
+                        color: AppColors.onChampagneGold,
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        label,
+                        style: const TextStyle(
+                          fontSize: 15.5,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.4,
+                          color: AppColors.onChampagneGold,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 10),
-                  Text(
-                    label,
-                    style: const TextStyle(
-                      fontSize: 15.5,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.4,
-                      color: AppColors.onChampagneGold,
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),

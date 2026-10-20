@@ -2146,16 +2146,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 size: 20,
               ),
               const SizedBox(width: 8),
-              Text(
-                'Current plan',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.3,
-                  color: MyApp.clinicalSlate,
+              Expanded(
+                child: Text(
+                  'Current plan',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                    color: MyApp.clinicalSlate,
+                  ),
                 ),
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 10,

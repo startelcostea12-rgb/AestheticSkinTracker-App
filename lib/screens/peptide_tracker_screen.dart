@@ -2066,9 +2066,11 @@ class _CorrelationCard extends StatelessWidget {
                     color: Colors.orange.shade400,
                   ),
                   const SizedBox(width: 4),
-                  const Text(
-                    'Based on 1 scan after start — add more scans for stronger signal.',
-                    style: TextStyle(fontSize: 11, color: Color(0xFFB07040)),
+                  const Expanded(
+                    child: Text(
+                      'Based on 1 scan after start — add more scans for stronger signal.',
+                      style: TextStyle(fontSize: 11, color: Color(0xFFB07040)),
+                    ),
                   ),
                 ],
               ),
@@ -2099,16 +2101,18 @@ class _MetricDeltaRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                metric,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFF5B6469),
-                  fontWeight: FontWeight.w500,
+              Expanded(
+                child: Text(
+                  metric,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF5B6469),
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
+              const SizedBox(width: 8),
               Text(
                 '$sign${delta.toStringAsFixed(1)} pts',
                 style: TextStyle(
