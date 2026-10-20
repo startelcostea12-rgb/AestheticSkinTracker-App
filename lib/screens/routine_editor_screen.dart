@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_theme.dart';
 import '../utils/app_prefs.dart';
 import '../utils/product_routine_builder.dart';
+import '../widgets/home_section_style.dart';
 
 /// Edit the morning and evening routine by hand: a plain list of product
 /// names per period, saved as the active routine (the same store the
@@ -82,106 +83,240 @@ class _RoutineEditorScreenState extends State<RoutineEditorScreen> {
     Navigator.of(context).pop(true);
   }
 
+  static const Color _sage = Color(0xFF7A8B7B);
+
+  BoxDecoration get _cardDecoration => BoxDecoration(
+    color: AppColors.cardBackground,
+    borderRadius: BorderRadius.circular(18),
+    border: Border.all(color: AppColors.borders),
+  );
+
   Widget _section({
     required String title,
     required String period,
+    required IconData icon,
     required List<String> steps,
     required TextEditingController input,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: const TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w900,
-            color: AppColors.refinedSlate,
-          ),
-        ),
-        const SizedBox(height: 6),
-        if (steps.isEmpty)
-          const Text('No products yet')
-        else
-          for (var i = 0; i < steps.length; i++)
-            ListTile(
-              key: ValueKey('routine_${period}_item_$i'),
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              leading: Text('${i + 1}.'),
-              title: Text(steps[i]),
-              trailing: IconButton(
-                tooltip: 'Remove',
-                icon: const Icon(Icons.close_rounded, size: 18),
-                onPressed: () => setState(() => steps.removeAt(i)),
-              ),
-            ),
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                key: ValueKey('routine_${period}_input'),
-                controller: input,
-                textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(
-                  hintText: 'Add a product',
-                  isDense: true,
+    final muted = AppColors.textStructure.withValues(alpha: 0.7);
+    final count = steps.length;
+    return Container(
+      key: ValueKey('routine_${period}_section'),
+      padding: const EdgeInsets.all(16),
+      decoration: _cardDecoration,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 20, color: _sage),
+              const SizedBox(width: 8),
+              Expanded(child: Text(title, style: homeSectionTitleStyle)),
+              Text(
+                count == 0 ? 'No steps' : '$count step${count == 1 ? '' : 's'}',
+                style: TextStyle(
+                  color: muted,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
                 ),
-                onSubmitted: (_) => _add(steps, input),
+              ),
+            ],
+          ),
+          const SizedBox(height: homeSectionTitleGap),
+          if (steps.isEmpty)
+            Container(
+              key: ValueKey('routine_${period}_empty'),
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              decoration: BoxDecoration(
+                color: AppColors.warmAlabaster,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.borders),
+              ),
+              child: Text(
+                'No ${title.toLowerCase()} products yet. Add your first one '
+                'below.',
+                style: homeSectionMessageStyle(),
+              ),
+            )
+          else
+            for (var i = 0; i < steps.length; i++)
+              _stepTile(period: period, index: i, steps: steps),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  key: ValueKey('routine_${period}_input'),
+                  controller: input,
+                  textCapitalization: TextCapitalization.words,
+                  textInputAction: TextInputAction.done,
+                  decoration: InputDecoration(
+                    hintText: 'Add a ${title.toLowerCase()} product',
+                    isDense: true,
+                    filled: true,
+                    fillColor: AppColors.warmAlabaster,
+                    prefixIcon: const Icon(Icons.edit_outlined, size: 18),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onSubmitted: (_) => _add(steps, input),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filled(
+                key: ValueKey('routine_${period}_add'),
+                tooltip: 'Add',
+                style: IconButton.styleFrom(
+                  backgroundColor: _sage,
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(Icons.add_rounded),
+                onPressed: () => _add(steps, input),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _stepTile({
+    required String period,
+    required int index,
+    required List<String> steps,
+  }) {
+    return Container(
+      key: ValueKey('routine_${period}_item_$index'),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(10, 4, 4, 4),
+      decoration: BoxDecoration(
+        color: AppColors.warmAlabaster,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.borders),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 12,
+            backgroundColor: _sage.withValues(alpha: 0.15),
+            child: Text(
+              '${index + 1}',
+              style: const TextStyle(
+                color: _sage,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
               ),
             ),
-            IconButton(
-              key: ValueKey('routine_${period}_add'),
-              tooltip: 'Add',
-              icon: const Icon(Icons.add_circle_outline_rounded),
-              onPressed: () => _add(steps, input),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              steps[index],
+              style: const TextStyle(
+                color: AppColors.textStructure,
+                fontWeight: FontWeight.w700,
+              ),
             ),
-          ],
-        ),
-      ],
+          ),
+          IconButton(
+            tooltip: 'Remove',
+            icon: const Icon(Icons.close_rounded, size: 18),
+            color: AppColors.textStructure.withValues(alpha: 0.6),
+            onPressed: () => setState(() => steps.removeAt(index)),
+          ),
+        ],
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Edit routine')),
+      backgroundColor: AppColors.warmAlabaster,
+      appBar: AppBar(
+        backgroundColor: AppColors.warmAlabaster,
+        elevation: 0,
+        centerTitle: true,
+        title: const Text(
+          'Edit routine',
+          style: TextStyle(
+            color: AppColors.refinedSlate,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        iconTheme: const IconThemeData(color: AppColors.refinedSlate),
+      ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
+          Text(
+            'Add products in the order you use them. Tap × to remove one. '
+            'Changes are saved when you tap Save routine.',
+            key: const ValueKey('routine_editor_hint'),
+            style: homeSectionMessageStyle(),
+          ),
+          const SizedBox(height: homeSectionGap),
           _section(
             title: 'Morning',
             period: 'morning',
+            icon: Icons.wb_sunny_outlined,
             steps: _morning,
             input: _morningInput,
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: homeSectionGap),
           _section(
             title: 'Evening',
             period: 'evening',
+            icon: Icons.nights_stay_outlined,
             steps: _evening,
             input: _eveningInput,
           ),
-          const SizedBox(height: 20),
-          TextField(
-            key: const ValueKey('routine_notes'),
-            controller: _notes,
-            minLines: 2,
-            maxLines: 6,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(
-              labelText: 'Product notes',
-              hintText:
-                  'Optional: products you use, when you started, '
-                  'anything you noticed',
-              border: OutlineInputBorder(),
+          const SizedBox(height: homeSectionGap),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: _cardDecoration,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.notes_rounded, size: 20, color: _sage),
+                    SizedBox(width: 8),
+                    Text('Product notes', style: homeSectionTitleStyle),
+                  ],
+                ),
+                const SizedBox(height: homeSectionTitleGap),
+                TextField(
+                  key: const ValueKey('routine_notes'),
+                  controller: _notes,
+                  minLines: 2,
+                  maxLines: 6,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: InputDecoration(
+                    hintText:
+                        'Optional: products you use, when you started, '
+                        'anything you noticed',
+                    filled: true,
+                    fillColor: AppColors.warmAlabaster,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 24),
-          FilledButton(
-            key: const ValueKey('routine_save'),
-            onPressed: _save,
-            child: const Text('Save routine'),
+          const SizedBox(height: 20),
+          SizedBox(
+            height: 48,
+            child: FilledButton.icon(
+              key: const ValueKey('routine_save'),
+              onPressed: _save,
+              icon: const Icon(Icons.check_rounded),
+              label: const Text('Save routine'),
+            ),
           ),
         ],
       ),
