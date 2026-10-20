@@ -14,6 +14,7 @@ import '../utils/concern_recommendations.dart';
 import '../utils/premium_access.dart';
 import '../utils/product_lookup.dart';
 import 'home_section_style.dart';
+import 'premium_more_picks_link.dart';
 import 'paywall_screen.dart';
 
 class ConcernRecommendationsSection extends StatefulWidget {
@@ -139,20 +140,10 @@ class _ConcernRecommendationsSectionState
                 _productRow(group, product),
             ],
             if (hiddenCount > 0)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton(
-                  key: const ValueKey('concern_recs_upgrade'),
-                  onPressed: _upgrade,
-                  style: TextButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                  ),
-                  child: Text(
-                    'See $hiddenCount more pick${hiddenCount == 1 ? '' : 's'} '
-                    'with Premium',
-                  ),
-                ),
+              PremiumMorePicksLink(
+                key: const ValueKey('concern_recs_upgrade'),
+                hiddenCount: hiddenCount,
+                onPressed: _upgrade,
               ),
             const SizedBox(height: 4),
             Text(

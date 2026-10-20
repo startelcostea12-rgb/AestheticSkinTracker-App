@@ -43,6 +43,7 @@ import 'package:aesthetic_skin_tracker/utils/ai/skin_detections.dart';
 import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:aesthetic_skin_tracker/utils/upload_gate.dart';
+import 'package:aesthetic_skin_tracker/utils/daily_scan_limit.dart';
 import 'package:aesthetic_skin_tracker/utils/untrusted_trend_metrics.dart';
 import 'package:aesthetic_skin_tracker/utils/comparable_pair_pdf.dart';
 import 'package:aesthetic_skin_tracker/utils/last_comparable_pair.dart';
@@ -3025,6 +3026,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   Future<void> _pickFromCamera() async {
     if (await openPaywallIfFreeScanCapReached(context)) return;
     if (!mounted) return;
+    if (await showDailyScanLimitIfReached(context)) return;
+    if (!mounted) return;
     try {
       final selectedProcedureId = (_selectedProcedureId ?? '').trim();
       final checklistToken = await frontBaselineResetToken(
@@ -3118,6 +3121,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// so the "Run AI Analysis" button stays disabled.
   Future<void> _pickAndCrop(ImageSource source, String errorLabel) async {
     if (await openPaywallIfFreeScanCapReached(context)) return;
+    if (!mounted) return;
+    if (await showDailyScanLimitIfReached(context)) return;
     if (!mounted) return;
     try {
       final picker = ImagePicker();
@@ -3327,6 +3332,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     if (path == null || path.isEmpty) return;
     if (await openPaywallIfFreeScanCapReached(context)) return;
     if (!mounted) return;
+    if (await showDailyScanLimitIfReached(context)) return;
+    if (!mounted) return;
     if (!_consentAccepted && !await _reviewConsent()) return;
     if (!mounted || !_consentAccepted) return;
     setState(() {
@@ -3433,6 +3440,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           return;
         }
         await FreeLocalScans.recordLocalScan();
+        await DailyAiScans.recordScan();
         final summary = FreeLocalScanSummary.fromLocal(
           faceFound: aug.meshUsed,
           faceCoverage: aug.faceCoverage,
@@ -3798,6 +3806,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         _stage = _Stage.results;
       });
       await UploadGate.recordCompletedBackendScan();
+      await DailyAiScans.recordScan();
 
       if (savedToHistory) {
         // Baseline registration (see _registerAiBaselineIfNeeded, called

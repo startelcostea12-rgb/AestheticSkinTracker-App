@@ -4,6 +4,9 @@
 /// field is missing. Every lookup falls back to the local catalog when the
 /// service is unreachable or has no match (see [lookupBarcode] and
 /// [lookupByName]).
+///
+/// Lookups are free for everyone with no limit (see the Free limits note
+/// in premium_access.dart); a future paid data source could add limits.
 library;
 
 import 'dart:convert';

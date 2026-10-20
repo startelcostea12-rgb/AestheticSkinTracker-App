@@ -40,7 +40,6 @@ void main() {
     }
     expect(find.text('CeraVe Moisturizing Cream'), findsNothing);
     expect(find.text(StyleRecommendationsSection.disclaimer), findsOneWidget);
-    expect(find.byKey(const ValueKey('style_recs_locked')), findsNothing);
   });
 
   testWidgets('premium: several styles are mixed', (tester) async {
@@ -61,15 +60,28 @@ void main() {
     expect(find.textContaining('· Clinical'), findsNWidgets(4));
   });
 
-  testWidgets('free: locked with an upgrade action, no products', (
-    tester,
-  ) async {
+  testWidgets('free: the first $kFreeStylePicks picks and a Premium link '
+      'for the rest', (tester) async {
     await _pump(tester, styles: {SkincareStyle.korean}, premium: false);
-    expect(find.byKey(const ValueKey('style_recs_locked')), findsOneWidget);
-    expect(find.text('Upgrade to see picks'), findsOneWidget);
-    for (final product in skincareStyleCatalog[SkincareStyle.korean]!) {
+    final all = styleRecommendations({SkincareStyle.korean});
+    for (final product in all.take(kFreeStylePicks)) {
+      expect(find.text(product.name), findsOneWidget, reason: product.name);
+    }
+    for (final product in all.skip(kFreeStylePicks)) {
       expect(find.text(product.name), findsNothing, reason: product.name);
     }
+    expect(
+      find.text('See ${all.length - kFreeStylePicks} more picks with Premium'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('style_recs_upgrade')), findsOneWidget);
+    expect(find.text(StyleRecommendationsSection.disclaimer), findsOneWidget);
+  });
+
+  testWidgets('premium: no upgrade link', (tester) async {
+    await _pump(tester, styles: {SkincareStyle.korean}, premium: true);
+    expect(find.byKey(const ValueKey('style_recs_upgrade')), findsNothing);
+    expect(find.textContaining('with Premium'), findsNothing);
   });
 
   testWidgets('no style chosen: a prompt instead of products', (tester) async {

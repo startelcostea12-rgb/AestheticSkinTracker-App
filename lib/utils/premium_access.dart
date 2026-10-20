@@ -7,6 +7,18 @@
 //   • Premium  — $14.99 / month or $129 / year. Unlimited scans, unlimited
 //                Professional Reports, AI Recovery Coach, full insights.
 //
+// Free limits (Premium has none of these):
+//   • AI scans: 3 per calendar day (kFreeDailyAiScanLimit,
+//     daily_scan_limit.dart). A paid scan credit also lifts it. Separate
+//     from the upload gate and the lifetime free local-scan cap
+//     (upload_gate.dart), which are unchanged.
+//   • "For your concerns": the top product per concern; Premium sees each
+//     concern's full list.
+//   • "Recommended for your style": the first 2 picks (kFreeStylePicks);
+//     Premium sees the full list.
+//   • Product lookup (Open Beauty Facts): free, no limit. A future paid
+//     data source could add a lookup limit for free users.
+//
 // In addition to the real RevenueCat-backed entitlement, this layer supports
 // a local-only "testing mode" so the team can flip Premium on/off without
 // running through a real purchase. Testing toggles are available on web,
@@ -43,6 +55,7 @@ class PremiumPlans {
 
   static const List<String> premiumValueLines = [
     'Unlimited skin scans & deltas',
+    'Every product pick for your concerns and style',
     'Unlimited Professional Reports',
     'Full AI Recovery Coach & personalized plans',
     'Advanced metrics, insights & Recovery Timeline',
@@ -51,7 +64,8 @@ class PremiumPlans {
   ];
 
   static const List<String> freeValueLines = [
-    '3 skin scans per month',
+    '3 AI skin scans per day',
+    'Top product pick per concern, 2 style picks',
     'Basic skin metrics',
     'One-time Professional Report purchases',
     'Limited provider directory',
