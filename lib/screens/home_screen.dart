@@ -36,6 +36,7 @@ import '../utils/upload_gate.dart';
 import '../utils/last_comparable_pair.dart';
 import '../widgets/last_comparable_pair_card.dart';
 import '../widgets/home_routine_card.dart';
+import '../widgets/style_recommendations_section.dart';
 import 'progress_summary_screen.dart';
 import '../widgets/scan_based_recommendations_card.dart';
 import '../widgets/bridge_card.dart';
@@ -2733,6 +2734,8 @@ class _HomePageState extends State<HomePage>
                   ),
                   const SizedBox(height: 12),
                 ],
+                const StyleRecommendationsSection(),
+                const SizedBox(height: 12),
                 _buildProtocolHomeCard(),
                 const SizedBox(height: 12),
                 _buildProductPhotoRoutineEntry(),
