@@ -1364,8 +1364,12 @@ void main() {
         }).map((m) => m.key).toSet().intersection(noCard),
         isEmpty,
       );
+      // diffuse_flushing_erythema keeps its floor entry above but, as
+      // an untrusted metric, shows no verdict on the live cards at all
+      // (covered in results_card_verdict_display_test.dart).
+      const noVerdictOnCard = {'diffuse_flushing_erythema'};
       for (final MapEntry(key: key, value: floor) in floors.entries) {
-        if (noCard.contains(key)) continue;
+        if (noCard.contains(key) || noVerdictOnCard.contains(key)) continue;
         await tester.pumpWidget(
           liveHarness(
             basePayload(

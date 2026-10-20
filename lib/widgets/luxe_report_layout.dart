@@ -40,12 +40,22 @@ bool shouldShowTrendVerdict(String metricKey) =>
 
 /// Whether [metric]'s card shows a trend verdict. On the live results views
 /// ([liveDisplay], i.e. applyDisplayNoiseFloors) this is decided by
-/// displayNoVerdictMetrics; elsewhere by [LuxeMetric.showTrendVerdict].
+/// displayNoVerdictMetrics plus the untrusted metrics
+/// (untrustedTrendVerdictMetrics, e.g. diffuse_flushing_erythema), which
+/// never show a verdict; elsewhere by [LuxeMetric.showTrendVerdict].
 /// Display only: parsing (including baseline selection) is unchanged.
 bool showsTrendVerdictOnCard(LuxeMetric metric, {required bool liveDisplay}) =>
     liveDisplay
-    ? !displayNoVerdictMetrics.contains(metric.key)
+    ? !displayNoVerdictMetrics.contains(metric.key) &&
+          !untrustedTrendVerdictMetrics.contains(metric.key)
     : metric.showTrendVerdict;
+
+/// True when, on the live results views, [metric] carries a trend lock
+/// reason. Such a metric shows only "Not comparable" even if a directional
+/// trend_status is still in the payload: the status is ignored for display
+/// (it is not changed, saved or exported differently).
+bool liveLockOverridesStatus(LuxeMetric metric, {required bool liveDisplay}) =>
+    liveDisplay && (metric.backendTrendLockReason?.trim().isNotEmpty ?? false);
 
 class LuxeMetric {
   const LuxeMetric({
@@ -1931,6 +1941,10 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
       )) {
         continue;
       }
+      final liveLocked = liveLockOverridesStatus(
+        metric,
+        liveDisplay: widget.applyDisplayNoiseFloors,
+      );
       final assessment = _assessMetricHonesty(
         metricKey: metric.key,
         current: metric.currentScore,
@@ -1942,8 +1956,8 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         currentExtractionPath: metric.currentExtractionPath,
         baselineExtractionPath: metric.baselineExtractionPath,
         backendTrendDeltaPct: metric.backendTrendDeltaPct,
-        backendTrendStatus: metric.backendTrendStatus,
-        usesBackendTrend: metric.usesBackendTrend,
+        backendTrendStatus: liveLocked ? null : metric.backendTrendStatus,
+        usesBackendTrend: !liveLocked && metric.usesBackendTrend,
         backendTrendLockReason: metric.backendTrendLockReason,
         requireBackendVerdict: widget._requiresBackendVerdictFor(metric.key),
       );
@@ -2408,6 +2422,11 @@ class _MetricCard extends StatelessWidget {
 
     final baselineValue = metric.baselineScore;
     final currentValue = metric.currentScore;
+    // A lock always wins on the live views, whatever status came with it.
+    final liveLocked = liveLockOverridesStatus(
+      metric,
+      liveDisplay: applyDisplayNoiseFloors,
+    );
     final resolvedAssessment = _assessMetricHonesty(
       metricKey: metric.key,
       current: currentValue,
@@ -2419,8 +2438,8 @@ class _MetricCard extends StatelessWidget {
       currentExtractionPath: metric.currentExtractionPath,
       baselineExtractionPath: metric.baselineExtractionPath,
       backendTrendDeltaPct: metric.backendTrendDeltaPct,
-      backendTrendStatus: metric.backendTrendStatus,
-      usesBackendTrend: metric.usesBackendTrend,
+      backendTrendStatus: liveLocked ? null : metric.backendTrendStatus,
+      usesBackendTrend: !liveLocked && metric.usesBackendTrend,
       backendTrendLockReason: metric.backendTrendLockReason,
       requireBackendVerdict: requireBackendVerdict,
     );
@@ -2466,12 +2485,14 @@ class _MetricCard extends StatelessWidget {
     String? badgeValueText;
     double? badgePercent = trendDelta;
     if (directionalStatus && assessment.deltaPct != null) {
+      // The status word carries the direction; a worsening value is shown
+      // without a leading minus.
       badgeValueText = LuxeMetricParser.formatDisplayDelta(
         baseline: baselineValue,
         current: currentValue,
         deltaPct: assessment.deltaPct!,
         includeSign: true,
-      );
+      ).replaceFirst(RegExp(r'^-'), '');
       badgePercent = LuxeMetricParser.displayDeltaMagnitude(
         baseline: baselineValue,
         current: currentValue,
