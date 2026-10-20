@@ -37,6 +37,7 @@ import '../utils/last_comparable_pair.dart';
 import '../widgets/last_comparable_pair_card.dart';
 import '../widgets/home_routine_card.dart';
 import '../widgets/concern_recommendations_section.dart';
+import '../widgets/home_section_style.dart';
 import '../widgets/style_recommendations_section.dart';
 import 'progress_summary_screen.dart';
 import '../widgets/scan_based_recommendations_card.dart';
@@ -918,7 +919,7 @@ class _HomePageState extends State<HomePage>
               Expanded(
                 child: Text(
                   hasProtocol ? 'Current protocol' : 'Start a protocol',
-                  style: MyApp.sectionTitleStyle(color: _darkSlateInk),
+                  style: homeSectionTitleStyle,
                 ),
               ),
             ],
@@ -2704,7 +2705,7 @@ class _HomePageState extends State<HomePage>
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _buildWelcomeSection(),
-                const SizedBox(height: 20),
+                const SizedBox(height: homeSectionGap),
                 // Primary card: last comparable pair (or latest scan alone).
                 if (lastComparablePair(sortedScans) case final pair?) ...[
                   LastComparablePairCard(
@@ -2715,7 +2716,7 @@ class _HomePageState extends State<HomePage>
                       ),
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: homeSectionGap),
                 ],
                 if (_activeRoutine case final routine?
                     when HomeRoutineCard.stepsOf(
@@ -2733,16 +2734,16 @@ class _HomePageState extends State<HomePage>
                       await _refreshData();
                     },
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: homeSectionGap),
                 ],
                 ConcernRecommendationsSection(scans: sortedScans),
-                const SizedBox(height: 12),
+                const SizedBox(height: homeSectionGap),
                 const StyleRecommendationsSection(),
-                const SizedBox(height: 12),
+                const SizedBox(height: homeSectionGap),
                 _buildProtocolHomeCard(),
-                const SizedBox(height: 12),
+                const SizedBox(height: homeSectionGap),
                 _buildProductPhotoRoutineEntry(),
-                const SizedBox(height: 12),
+                const SizedBox(height: homeSectionGap),
                 if (_userClinic.isNotEmpty || _trackedProcedure.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 10, left: 2),
@@ -3126,6 +3127,17 @@ class _HomePageState extends State<HomePage>
   }
 
   Widget _buildWelcomeSection() {
+    return LayoutBuilder(
+      builder: (context, constraints) =>
+          _buildWelcomeCard(compact: constraints.maxWidth < 320),
+    );
+  }
+
+  /// [compact] on narrow phones (under ~360px wide): tighter padding and a
+  /// smaller logo so the name column keeps usable width next to the scan
+  /// count.
+  Widget _buildWelcomeCard({required bool compact}) {
+    final logoSize = compact ? 56.0 : 74.0;
     return TweenAnimationBuilder<double>(
       tween: Tween<double>(begin: 0.0, end: 1.0),
       duration: const Duration(milliseconds: 1100),
@@ -3158,14 +3170,16 @@ class _HomePageState extends State<HomePage>
           ],
         ),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(28, 28, 28, 24),
+          padding: compact
+              ? const EdgeInsets.fromLTRB(18, 20, 18, 18)
+              : const EdgeInsets.fromLTRB(28, 28, 28, 24),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               // Logo / Avatar
               Container(
-                width: 74,
-                height: 74,
+                width: logoSize,
+                height: logoSize,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: const Color(0xFFF4F6F4),
@@ -3212,7 +3226,7 @@ class _HomePageState extends State<HomePage>
                   ),
                 ),
               ),
-              const SizedBox(width: 24),
+              SizedBox(width: compact ? 12 : 24),
 
               Expanded(
                 child: Column(
@@ -3231,14 +3245,16 @@ class _HomePageState extends State<HomePage>
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Text(
-                          'Welcome back',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.7,
-                            color: AppColors.refinedSlate.withValues(
-                              alpha: 0.74,
+                        Flexible(
+                          child: Text(
+                            'Welcome back',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.7,
+                              color: AppColors.refinedSlate.withValues(
+                                alpha: 0.74,
+                              ),
                             ),
                           ),
                         ),
@@ -3321,7 +3337,7 @@ class _HomePageState extends State<HomePage>
 
               if (_scanCount > 0)
                 Container(
-                  margin: const EdgeInsets.only(left: 18),
+                  margin: EdgeInsets.only(left: compact ? 10 : 18),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 14,
                     vertical: 10,
@@ -4658,13 +4674,15 @@ class _HomePageState extends State<HomePage>
           ),
         ),
         const SizedBox(width: 8),
-        Text(
-          title,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            color: textColor.withValues(alpha: 0.80),
-            letterSpacing: 0.1,
+        Flexible(
+          child: Text(
+            title,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: textColor.withValues(alpha: 0.80),
+              letterSpacing: 0.1,
+            ),
           ),
         ),
       ],

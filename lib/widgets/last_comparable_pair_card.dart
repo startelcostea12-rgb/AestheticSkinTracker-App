@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../app_theme.dart';
+import 'home_section_style.dart';
 import '../utils/last_comparable_pair.dart';
 
 class LastComparablePairCard extends StatelessWidget {
@@ -51,13 +52,9 @@ class LastComparablePairCard extends StatelessWidget {
         children: [
           Text(
             pair.hasBaseline ? 'Last comparable pair' : 'Latest scan',
-            style: const TextStyle(
-              color: ink,
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-            ),
+            style: homeSectionTitleStyle,
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: homeSectionTitleGap),
           if (baseline != null)
             Text(
               '${formatTimestamp(baseline.timestamp)}  and  '

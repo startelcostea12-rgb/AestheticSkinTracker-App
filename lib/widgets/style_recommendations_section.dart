@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import 'home_section_style.dart';
 import '../utils/premium_access.dart';
 import '../utils/skincare_style_catalog.dart';
 import 'paywall_screen.dart';
@@ -76,7 +77,7 @@ class _StyleRecommendationsSectionState
       body = Text(
         'Choose your skincare style in Settings to see picks.',
         key: const ValueKey('style_recs_no_style'),
-        style: TextStyle(color: ink.withValues(alpha: 0.75)),
+        style: homeSectionMessageStyle(),
       );
     } else if (!_premium) {
       body = Column(
@@ -127,21 +128,14 @@ class _StyleRecommendationsSectionState
                   ),
                   Text(
                     '${product.description} · ${product.style.label}',
-                    style: TextStyle(
-                      color: ink.withValues(alpha: 0.75),
-                      fontSize: 12.5,
-                    ),
+                    style: homeSectionSubtleStyle(),
                   ),
                 ],
               ),
             ),
           Text(
             StyleRecommendationsSection.disclaimer,
-            style: TextStyle(
-              color: ink.withValues(alpha: 0.65),
-              fontSize: 11,
-              fontStyle: FontStyle.italic,
-            ),
+            style: homeSectionDisclaimerStyle(),
           ),
         ],
       );
@@ -160,13 +154,9 @@ class _StyleRecommendationsSectionState
         children: [
           const Text(
             StyleRecommendationsSection.title,
-            style: TextStyle(
-              color: ink,
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-            ),
+            style: homeSectionTitleStyle,
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: homeSectionTitleGap),
           body,
         ],
       ),

@@ -13,6 +13,7 @@ import '../utils/ai_product_recommendation_engine.dart';
 import '../utils/concern_recommendations.dart';
 import '../utils/premium_access.dart';
 import '../utils/product_lookup.dart';
+import 'home_section_style.dart';
 import 'paywall_screen.dart';
 
 class ConcernRecommendationsSection extends StatefulWidget {
@@ -31,13 +32,15 @@ class ConcernRecommendationsSection extends StatefulWidget {
   static const String noComparableText =
       'Picks for your concerns appear after a follow-up scan that is '
       'comparable with your baseline.';
+  // Non-breaking spaces keep "25 or below (out of 100)" on one line on
+  // narrow phones instead of splitting the number from its scale.
   static const String noneElevatedText =
-      'Redness, pigment, texture and pores are all 25 or below (out of 100) '
-      'on your latest comparable scan.';
+      'Redness, pigment, texture and pores are all '
+      '25\u00A0or\u00A0below (out\u00A0of\u00A0100) on your latest comparable '
+      'scan.';
   static const String disclaimer =
-      'General product ideas based on your latest comparable scan, not '
-      'medical advice. Talk with a licensed provider before starting '
-      'anything new.';
+      'General product ideas from your latest comparable scan, not medical '
+      'advice. Talk with a licensed provider before starting anything new.';
 
   @override
   State<ConcernRecommendationsSection> createState() =>
@@ -83,7 +86,6 @@ class _ConcernRecommendationsSectionState
   @override
   Widget build(BuildContext context) {
     const ink = AppColors.textStructure;
-    final muted = ink.withValues(alpha: 0.75);
     final groups = concernGroupsForScans(
       widget.scans,
       productsFor: widget.productsFor,
@@ -105,64 +107,97 @@ class _ConcernRecommendationsSectionState
         children: [
           const Text(
             ConcernRecommendationsSection.title,
-            style: TextStyle(
-              color: ink,
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-            ),
+            style: homeSectionTitleStyle,
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: homeSectionTitleGap),
           if (groups == null)
             Text(
               ConcernRecommendationsSection.noComparableText,
               key: const ValueKey('concern_recs_no_comparable'),
-              style: TextStyle(color: muted, height: 1.35),
+              style: homeSectionMessageStyle(),
             )
           else if (groups.isEmpty)
             Text(
               ConcernRecommendationsSection.noneElevatedText,
               key: const ValueKey('concern_recs_none_elevated'),
-              style: TextStyle(color: muted, height: 1.35),
+              style: homeSectionMessageStyle(),
             )
           else ...[
             for (final group in groups) ...[
-              const SizedBox(height: 6),
               Text(
                 group.concern.heading,
                 key: ValueKey('concern_group_${group.concern.engineKey}'),
-                style: const TextStyle(color: ink, fontWeight: FontWeight.w800),
+                style: TextStyle(
+                  color: ink.withValues(alpha: 0.7),
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
+              const SizedBox(height: 4),
               for (final product
                   in _premium ? group.products : group.products.take(1))
-                ListTile(
-                  key: ValueKey(
-                    'concern_product_${group.concern.engineKey}_'
-                    '${product.productName}',
-                  ),
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  title: Text(product.productName),
-                  subtitle: Text(product.brand),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () => _open(product),
-                ),
+                _productRow(group, product),
             ],
             if (hiddenCount > 0)
-              TextButton(
-                key: const ValueKey('concern_recs_upgrade'),
-                onPressed: _upgrade,
-                child: Text(
-                  'See $hiddenCount more pick${hiddenCount == 1 ? '' : 's'} '
-                  'with Premium',
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  key: const ValueKey('concern_recs_upgrade'),
+                  onPressed: _upgrade,
+                  style: TextButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  child: Text(
+                    'See $hiddenCount more pick${hiddenCount == 1 ? '' : 's'} '
+                    'with Premium',
+                  ),
                 ),
               ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             Text(
               ConcernRecommendationsSection.disclaimer,
-              style: TextStyle(color: muted, fontSize: 12, height: 1.35),
+              style: homeSectionDisclaimerStyle(),
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  /// Same look as a "Recommended for your style" row (name, then a muted
+  /// line), plus a chevron because it opens the product.
+  Widget _productRow(ConcernGroup group, AIProductRecommendation product) {
+    return InkWell(
+      key: ValueKey(
+        'concern_product_${group.concern.engineKey}_${product.productName}',
+      ),
+      onTap: () => _open(product),
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    product.productName,
+                    style: const TextStyle(
+                      color: AppColors.textStructure,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  Text(product.brand, style: homeSectionSubtleStyle()),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: AppColors.textStructure,
+            ),
+          ],
+        ),
       ),
     );
   }

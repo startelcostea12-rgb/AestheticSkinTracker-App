@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import 'home_section_style.dart';
 
 class HomeRoutineCard extends StatelessWidget {
   const HomeRoutineCard({super.key, required this.routine, this.onOpen});
@@ -56,20 +57,13 @@ class HomeRoutineCard extends StatelessWidget {
           Row(
             children: [
               const Expanded(
-                child: Text(
-                  'My routine',
-                  style: TextStyle(
-                    color: ink,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
+                child: Text('My routine', style: homeSectionTitleStyle),
               ),
               if (onOpen != null)
                 TextButton(onPressed: onOpen, child: const Text('Open')),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: homeSectionTitleGap),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
