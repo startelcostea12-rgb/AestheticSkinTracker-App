@@ -57,6 +57,30 @@ bool showsTrendVerdictOnCard(LuxeMetric metric, {required bool liveDisplay}) =>
 bool liveLockOverridesStatus(LuxeMetric metric, {required bool liveDisplay}) =>
     liveDisplay && (metric.backendTrendLockReason?.trim().isNotEmpty ?? false);
 
+/// Short, plain names used on the live results cards and summary. Display
+/// only: keys, exports and other screens keep the full metric names.
+const Map<String, String> liveResultsShortLabels = <String, String>{
+  'texture_smoothness': 'Texture',
+  'pigment_load': 'Pigment',
+  'skin_tone_radiance_evenness': 'Radiance',
+  'structural_firmness_elasticity': 'Firmness',
+  'pore_visibility': 'Pores',
+  'localized_redness': 'Redness',
+  'wrinkle_load': 'Wrinkles',
+  'rosacea_severity': 'Rosacea',
+  'diffuse_flushing_erythema': 'Flushing',
+  'pore_contraction_index': 'Pore contraction',
+  'under_eye_dark_circle_density': 'Under-eye darkness',
+  'under_eye_texture_density': 'Under-eye texture',
+};
+
+/// [metric]'s card label: the short plain name on the live views, the full
+/// name elsewhere.
+String metricCardLabel(LuxeMetric metric, {required bool liveDisplay}) =>
+    liveDisplay
+    ? (liveResultsShortLabels[metric.key] ?? metric.name)
+    : metric.name;
+
 class LuxeMetric {
   const LuxeMetric({
     required this.key,
@@ -1961,7 +1985,10 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
         backendTrendLockReason: metric.backendTrendLockReason,
         requireBackendVerdict: widget._requiresBackendVerdictFor(metric.key),
       );
-      final metricName = metric.name;
+      final metricName = metricCardLabel(
+        metric,
+        liveDisplay: widget.applyDisplayNoiseFloors,
+      );
       if (assessment.lockReason == null &&
           _hasFrameSpreadAboveNoiseBand(metric)) {
         statements.add(
@@ -2009,7 +2036,13 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
       }
       if (assessment.status == _HonestyStatus.stable) {
         final lockDetail = assessment.stableLockDetail;
-        statements.add('$metricName: ${lockDetail ?? 'Stable.'}');
+        // Live views: a lock reads only "Not comparable" (the reason stays
+        // in the export).
+        statements.add(
+          widget.applyDisplayNoiseFloors && assessment.lockReason != null
+              ? '$metricName: Not comparable.'
+              : '$metricName: ${lockDetail ?? 'Stable.'}',
+        );
         continue;
       }
       statements.add('$metricName: ${assessment.label}.');
@@ -2362,6 +2395,9 @@ class _MetricCard extends StatelessWidget {
   bool get _showVerdict =>
       showsTrendVerdictOnCard(metric, liveDisplay: applyDisplayNoiseFloors);
 
+  String get _label =>
+      metricCardLabel(metric, liveDisplay: applyDisplayNoiseFloors);
+
   String? get _storedBaselineLabel => storedBaselineLabelFor(metric);
 
   _MetricRowData _buildMetricRowData() {
@@ -2380,7 +2416,7 @@ class _MetricCard extends StatelessWidget {
         initialBaseline: true,
         honestyStatus: _HonestyStatus.insufficientSignal,
         honestyLabel: metric.hasComparableCurrentValue
-            ? metric.name
+            ? _label
             : _storedBaselineLabel ?? 'Starting point',
         trendLocked: false,
         hasRealBaseline: false,
@@ -2407,12 +2443,11 @@ class _MetricCard extends StatelessWidget {
         subtext: '',
         initialBaseline: !hasBaseline,
         honestyStatus: _HonestyStatus.noVerdict,
+        // Live views: no lock reason on the card.
         honestyLabel: locked
-            ? (scanWideLockShown
-                  ? 'Not comparable'
-                  : 'Not comparable: ${_shortLockReasonPhrase(lockReason)}')
+            ? 'Not comparable'
             : metric.hasComparableCurrentValue
-            ? metric.name
+            ? _label
             : _storedBaselineLabel ?? 'Starting point',
         trendLocked: locked,
         hasRealBaseline: hasBaseline,
@@ -2541,7 +2576,12 @@ class _MetricCard extends StatelessWidget {
       subtext: finalSubtext,
       initialBaseline: initialBaseline,
       honestyStatus: assessment.status,
-      honestyLabel: sharedLockOnCard ? 'Not comparable' : honestyLabel,
+      // Live views: a locked card says only "Not comparable".
+      honestyLabel:
+          sharedLockOnCard ||
+              (applyDisplayNoiseFloors && assessment.lockReason != null)
+          ? 'Not comparable'
+          : honestyLabel,
       trendLocked: assessment.lockReason != null,
       hasRealBaseline: assessment.hasRealBaseline,
       hasComparableCurrentValue: metric.hasComparableCurrentValue,
@@ -2570,13 +2610,21 @@ class _MetricCard extends StatelessWidget {
         ? 'Current $currentDisplayText${precision.rangeSuffix} · Baseline ${row.baselineValue.toStringAsFixed(1)}'
         : 'Current $currentDisplayText${precision.rangeSuffix}';
     final progressionLine = !row.hasComparableCurrentValue
-        ? '${metric.name}: Not compared (${row.subtext})'
+        ? '$_label: Not compared (${row.subtext})'
         : row.trendLocked
-        ? '${metric.name}: ${row.subtext}'
+        ? '$_label: ${row.subtext}'
         : row.hasRealBaseline
-        ? '${metric.name}: ${row.baselineValue.toStringAsFixed(1)} -> ${row.currentValue.toStringAsFixed(1)} '
+        ? '$_label: ${row.baselineValue.toStringAsFixed(1)} -> ${row.currentValue.toStringAsFixed(1)} '
               '(${row.subtext})'
-        : '${metric.name}: ${row.currentValue.toStringAsFixed(1)} current scan (${row.subtext})';
+        : '$_label: ${row.currentValue.toStringAsFixed(1)} current scan (${row.subtext})';
+    // Live views: a locked card shows no reason line, and the confidence
+    // line only when there is something to say.
+    final liveLocked = applyDisplayNoiseFloors && row.trendLocked;
+    final showPrecisionDetail =
+        _showVerdict &&
+        !(applyDisplayNoiseFloors &&
+            (liveLocked ||
+                precision.detailText == 'Confidence unavailable'));
 
     return Material(
       key: ValueKey('result_metric_${metric.key}'),
@@ -2625,7 +2673,7 @@ class _MetricCard extends StatelessWidget {
                   letterSpacing: 0.1,
                 ),
               ),
-              if (_showVerdict) ...[
+              if (showPrecisionDetail) ...[
                 const SizedBox(height: 3),
                 Text(
                   precision.detailText,
@@ -2639,7 +2687,7 @@ class _MetricCard extends StatelessWidget {
               if (!hideDuplicateMetricName) ...[
                 const SizedBox(height: 5),
                 Text(
-                  metric.name,
+                  _label,
                   style: TextStyle(
                     color: titleColor.withValues(alpha: 0.88),
                     fontSize: 12.5,
@@ -2648,7 +2696,7 @@ class _MetricCard extends StatelessWidget {
                 ),
               ],
               const SizedBox(height: 10),
-              if (_showVerdict) ...[
+              if (_showVerdict && !liveLocked) ...[
                 const SizedBox(height: 8),
                 Text(
                   progressionLine,
@@ -2702,7 +2750,7 @@ class _MetricCard extends StatelessWidget {
       case 'breakout_activity':
         return 'Tracks visible breakout pattern intensity to monitor cosmetic flare-up frequency changes.';
       default:
-        return 'Compares baseline and current scan vectors to track visible skin-quality progression.';
+        return 'Tracks visible changes in this area between your scans.';
     }
   }
 

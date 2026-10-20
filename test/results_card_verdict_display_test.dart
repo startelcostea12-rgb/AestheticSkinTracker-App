@@ -255,4 +255,103 @@ void main() {
       '-6.0 pts',
     );
   });
+
+  group('plain card wording', () {
+    const trusted = <String>[
+      'texture_smoothness',
+      'pigment_load',
+      'skin_tone_radiance_evenness',
+      'structural_firmness_elasticity',
+      'pore_visibility',
+      'localized_redness',
+    ];
+
+    Map<String, dynamic> allMetrics() => _payload({
+      for (final key in [...trusted, ..._untrusted])
+        key: (
+          baseline: 30.0,
+          current: 40.0,
+          status: key == 'texture_smoothness' ? 'improved' : null,
+          delta: key == 'texture_smoothness' ? 33.0 : null,
+          lock: key == 'pigment_load'
+              ? 'lighting_mismatch'
+              : key == 'localized_redness'
+              ? 'cheek_mismatch'
+              : key == 'wrinkle_load'
+              ? 'formula_version_mismatch'
+              : null,
+        ),
+    });
+
+    testWidgets('short plain labels on every card', (tester) async {
+      await _pumpLive(tester, allMetrics());
+      for (final entry in liveResultsShortLabels.entries) {
+        expect(
+          _cardText(tester, entry.key),
+          contains(entry.value),
+          reason: entry.key,
+        );
+      }
+      expect(find.textContaining('Erythema'), findsNothing);
+      expect(find.textContaining('Density'), findsNothing);
+      expect(find.textContaining('scan vectors'), findsNothing);
+      expect(find.text('Confidence unavailable'), findsNothing);
+    });
+
+    testWidgets('locked cards say only "Not comparable": no lock reason', (
+      tester,
+    ) async {
+      await _pumpLive(tester, allMetrics());
+      for (final key in ['pigment_load', 'localized_redness', 'wrinkle_load']) {
+        expect(_headline(tester, key).data, 'Not comparable', reason: key);
+        final text = _cardText(tester, key);
+        for (final technical in [
+          'Standalone entry',
+          'brightness',
+          'cheek',
+          'scoring',
+          'mismatch',
+          'Not comparable:',
+        ]) {
+          expect(text, isNot(contains(technical)), reason: '$key: $text');
+        }
+        expect(text, contains('40.0'), reason: key);
+      }
+      // The summary also says just "Not comparable" for a lock.
+      expect(find.text('Pigment: Not comparable.'), findsOneWidget);
+      expect(find.textContaining('Standalone entry'), findsNothing);
+    });
+
+    testWidgets('trusted unlocked card keeps its verdict and numbers', (
+      tester,
+    ) async {
+      await _pumpLive(tester, allMetrics());
+      final text = _cardText(tester, 'texture_smoothness');
+      expect(text, contains('Improved'));
+      expect(text, contains('Current 40.0 · Baseline 30.0'));
+      expect(text, contains('Texture: 30.0 -> 40.0'));
+    });
+
+    for (final width in [320.0, 375.0]) {
+      testWidgets('every card fits at ${width.toInt()}px', (tester) async {
+        await tester.binding.setSurfaceSize(Size(width, 6000));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: LuxeReportLayout(
+                  rawPayload: allMetrics(),
+                  requireBackendVerdict: true,
+                  applyDisplayNoiseFloors: true,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      });
+    }
+  });
 }

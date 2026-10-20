@@ -1061,10 +1061,7 @@ void main() {
           'pigment_load',
         );
         expect(
-          find.descendant(
-            of: card,
-            matching: find.textContaining('Not comparable:'),
-          ),
+          find.descendant(of: card, matching: find.text('Not comparable')),
           findsOneWidget,
         );
       });
@@ -1688,7 +1685,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(
-        inCard('localized_redness', find.textContaining('Not comparable:')),
+        inCard('localized_redness', find.text('Not comparable')),
         findsOneWidget,
       );
       expect(
@@ -1736,7 +1733,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(
-        inCard('texture_smoothness', find.textContaining('Not comparable:')),
+        inCard('texture_smoothness', find.text('Not comparable')),
         findsOneWidget,
       );
       expect(
@@ -1949,7 +1946,7 @@ void main() {
       expect(
         find.descendant(
           of: card('texture_smoothness'),
-          matching: find.textContaining('Not comparable:'),
+          matching: find.text('Not comparable'),
         ),
         findsOneWidget,
       );

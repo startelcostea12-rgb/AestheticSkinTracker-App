@@ -339,7 +339,7 @@ void main() {
         inCard('texture_smoothness', find.textContaining('%')),
         findsNothing,
       );
-      expect(find.text('Texture Smoothness: Stable.'), findsOneWidget);
+      expect(find.text('Texture: Stable.'), findsOneWidget);
     });
 
     testWidgets('pigment, pores, firmness below their floors read Stable', (
@@ -381,7 +381,7 @@ void main() {
       await tester.pumpWidget(liveCard(payload));
       await tester.pumpAndSettle();
       expect(
-        inCard('texture_smoothness', find.textContaining('Not comparable:')),
+        inCard('texture_smoothness', find.text('Not comparable')),
         findsOneWidget,
       );
       expect(
