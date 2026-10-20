@@ -14,8 +14,8 @@
 //     (upload_gate.dart), which are unchanged.
 //   • "For your concerns": the top product per concern; Premium sees each
 //     concern's full list.
-//   • "Recommended for your style": the first 2 picks (kFreeStylePicks);
-//     Premium sees the full list.
+//   • "Recommended for your style": Premium only; free users see a locked
+//     card with an upgrade prompt.
 //   • Product lookup (Open Beauty Facts): free, no limit. A future paid
 //     data source could add a lookup limit for free users.
 //
@@ -65,7 +65,7 @@ class PremiumPlans {
 
   static const List<String> freeValueLines = [
     '3 AI skin scans per day',
-    'Top product pick per concern, 2 style picks',
+    'Top product pick per concern',
     'Basic skin metrics',
     'One-time Professional Report purchases',
     'Limited provider directory',

@@ -1,20 +1,15 @@
 // "Recommended for your style": curated products from the user's selected
-// skincare styles (skincare_style_catalog.dart). Free users see the first
-// kFreeStylePicks with a "See N more picks with Premium" link; Premium sees
-// the full list. Separate from, and leaves unchanged, the metric-based
-// recommendations.
+// skincare styles (skincare_style_catalog.dart). Premium only -- free users
+// see a locked state with an upgrade action. Separate from, and leaves
+// unchanged, the metric-based recommendations.
 
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import 'home_section_style.dart';
-import 'premium_more_picks_link.dart';
 import '../utils/premium_access.dart';
 import '../utils/skincare_style_catalog.dart';
 import 'paywall_screen.dart';
-
-/// Style picks a free user sees; Premium sees the full list.
-const int kFreeStylePicks = 2;
 
 class StyleRecommendationsSection extends StatefulWidget {
   const StyleRecommendationsSection({
@@ -72,6 +67,10 @@ class _StyleRecommendationsSectionState
     final styles = _styles;
     if (styles == null) return const SizedBox.shrink();
     const ink = AppColors.textStructure;
+    final selectedLabels = [
+      for (final style in SkincareStyle.values)
+        if (styles.contains(style)) style.label,
+    ].join(', ');
 
     Widget body;
     if (styles.isEmpty) {
@@ -80,11 +79,36 @@ class _StyleRecommendationsSectionState
         key: const ValueKey('style_recs_no_style'),
         style: homeSectionMessageStyle(),
       );
+    } else if (!_premium) {
+      body = Column(
+        key: const ValueKey('style_recs_locked'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.lock_outline_rounded, size: 18, color: ink),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Premium: curated $selectedLabels picks',
+                  style: const TextStyle(
+                    color: ink,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          FilledButton(
+            key: const ValueKey('style_recs_upgrade'),
+            onPressed: _upgrade,
+            child: const Text('Upgrade to see picks'),
+          ),
+        ],
+      );
     } else {
-      // Free: the first kFreeStylePicks; Premium: the full list.
-      final all = styleRecommendations(styles, limit: widget.limit);
-      final picks = _premium ? all : all.take(kFreeStylePicks).toList();
-      final hiddenCount = all.length - picks.length;
+      final picks = styleRecommendations(styles, limit: widget.limit);
       body = Column(
         key: const ValueKey('style_recs_list'),
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -108,12 +132,6 @@ class _StyleRecommendationsSectionState
                   ),
                 ],
               ),
-            ),
-          if (hiddenCount > 0)
-            PremiumMorePicksLink(
-              key: const ValueKey('style_recs_upgrade'),
-              hiddenCount: hiddenCount,
-              onPressed: _upgrade,
             ),
           Text(
             StyleRecommendationsSection.disclaimer,

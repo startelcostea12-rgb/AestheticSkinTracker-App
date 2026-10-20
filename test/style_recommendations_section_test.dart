@@ -60,27 +60,28 @@ void main() {
     expect(find.textContaining('· Clinical'), findsNWidgets(4));
   });
 
-  testWidgets('free: the first $kFreeStylePicks picks and a Premium link '
-      'for the rest', (tester) async {
+  testWidgets('free: locked card with an upgrade prompt, no picks', (
+    tester,
+  ) async {
     await _pump(tester, styles: {SkincareStyle.korean}, premium: false);
-    final all = styleRecommendations({SkincareStyle.korean});
-    for (final product in all.take(kFreeStylePicks)) {
-      expect(find.text(product.name), findsOneWidget, reason: product.name);
-    }
-    for (final product in all.skip(kFreeStylePicks)) {
+    expect(find.byKey(const ValueKey('style_recs_locked')), findsOneWidget);
+    expect(find.text('Upgrade to see picks'), findsOneWidget);
+    expect(find.byKey(const ValueKey('style_recs_list')), findsNothing);
+    for (final product in skincareStyleCatalog[SkincareStyle.korean]!) {
       expect(find.text(product.name), findsNothing, reason: product.name);
     }
-    expect(
-      find.text('See ${all.length - kFreeStylePicks} more picks with Premium'),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('style_recs_upgrade')), findsOneWidget);
-    expect(find.text(StyleRecommendationsSection.disclaimer), findsOneWidget);
+    expect(find.textContaining('more pick'), findsNothing);
   });
 
-  testWidgets('premium: no upgrade link', (tester) async {
+  testWidgets('premium: full list, no locked card or upsell', (tester) async {
     await _pump(tester, styles: {SkincareStyle.korean}, premium: true);
+    final all = styleRecommendations({SkincareStyle.korean});
+    for (final product in all) {
+      expect(find.text(product.name), findsOneWidget, reason: product.name);
+    }
+    expect(find.byKey(const ValueKey('style_recs_locked')), findsNothing);
     expect(find.byKey(const ValueKey('style_recs_upgrade')), findsNothing);
+    expect(find.text('Upgrade to see picks'), findsNothing);
     expect(find.textContaining('with Premium'), findsNothing);
   });
 
