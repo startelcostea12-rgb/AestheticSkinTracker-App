@@ -9,7 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _calm = <String, double>{
-  'texture_smoothness': 59.0, // texture concern 4.1
+  'texture_smoothness': 80.0, // texture concern 20
   'pigment_load': 10.2,
   'skin_tone_radiance_evenness': 31.0,
   'structural_firmness_elasticity': 50.5,
@@ -92,18 +92,35 @@ void main() {
       expect(groups.single.products, isNotEmpty);
     });
 
-    test('uses the existing > 6.0 cutoff on the engine scale; texture is '
-        'inverted smoothness', () {
-      // 60 is not above the cutoff; 61 is.
-      expect(
-        concernGroupsForScans(_comparable({'pigment_load': 60.0})),
-        isEmpty,
-      );
+    test('cutoff is above 25 on the 0-100 scale: 26 shows, 25 does not', () {
+      for (final concern in skinConcerns) {
+        Map<String, double> at(double concernValue) => {
+          concern.metricKey: concern.higherIsBetter
+              ? 100 - concernValue
+              : concernValue,
+        };
+        expect(
+          concernGroupsForScans(_comparable(at(25))),
+          isEmpty,
+          reason: '${concern.metricKey} at 25',
+        );
+        final groups = concernGroupsForScans(_comparable(at(26)))!;
+        expect(
+          groups.map((g) => g.concern.heading),
+          [concern.heading],
+          reason: '${concern.metricKey} at 26',
+        );
+        // The engine gets the 0-10 level, as before.
+        expect(groups.single.level, closeTo(2.6, 1e-9));
+      }
+    });
+
+    test('texture is inverted smoothness; most elevated first', () {
       final groups = concernGroupsForScans(
         _comparable({
-          'pigment_load': 61.0,
-          'texture_smoothness': 20.0, // concern 8.0
-          'pore_visibility': 65.0,
+          'pigment_load': 26.0,
+          'texture_smoothness': 20.0, // concern 80
+          'pore_visibility': 40.0,
         }),
       )!;
       // Most elevated first.

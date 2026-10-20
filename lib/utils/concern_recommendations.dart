@@ -2,13 +2,10 @@
 /// product recommendations grouped by concern, from the latest comparable
 /// AI scan (lastComparablePair with a baseline).
 ///
-/// Uses existing rules only:
-/// - AI metric values (0-100) are read on the recommendation engine's
-///   0-10 scale, the inverse of ScanHistoryEntry.migrateMetricsForLuxe
-///   (concern x10; texture concern = 100 - texture_smoothness).
-/// - A concern is shown when it is above [elevatedConcernCutoff], the same
-///   "> 6.0" rule the progress report and scan-based recommendations use
-///   for userSkinConcerns.
+/// - A concern is shown when its 0-100 concern value is above
+///   [elevatedConcernCutoff] (texture concern = 100 - texture_smoothness).
+/// - The value is passed to the recommendation engine on its 0-10 scale,
+///   the inverse of ScanHistoryEntry.migrateMetricsForLuxe (concern / 10).
 /// - Products and their order come from
 ///   AIProductRecommendationEngine.productsForConcern.
 library;
@@ -17,8 +14,10 @@ import '../models/scan_history.dart';
 import 'ai_product_recommendation_engine.dart';
 import 'last_comparable_pair.dart';
 
-/// Same cutoff as the existing userSkinConcerns rule (0-10 scale).
-const double elevatedConcernCutoff = 6.0;
+/// A concern is shown above this value on the scan's 0-100 scale. Set so
+/// groups appear at realistic scan values (the progress report's "> 6.0"
+/// userSkinConcerns rule, i.e. 60, almost never matched real AI scans).
+const double elevatedConcernCutoff = 25.0;
 
 class SkinConcern {
   const SkinConcern({
@@ -38,12 +37,17 @@ class SkinConcern {
   /// True when a higher metric value means less concern (smoothness).
   final bool higherIsBetter;
 
-  /// The metric on the engine's 0-10 concern scale, or null when missing.
-  double? concernLevel(ScanHistoryEntry scan) {
+  /// The concern on the scan's 0-100 scale, or null when missing.
+  double? concernValue(ScanHistoryEntry scan) {
     final value = scanMetricValue(scan, metricKey);
     if (value == null) return null;
-    final concern = higherIsBetter ? 100 - value : value;
-    return (concern / 10).clamp(0.0, 10.0).toDouble();
+    return (higherIsBetter ? 100 - value : value).clamp(0.0, 100.0).toDouble();
+  }
+
+  /// The concern on the engine's 0-10 scale, or null when missing.
+  double? concernLevel(ScanHistoryEntry scan) {
+    final value = concernValue(scan);
+    return value == null ? null : value / 10;
   }
 }
 
@@ -101,8 +105,9 @@ List<ConcernGroup>? concernGroupsForScans(
   if (pair == null || pair.baseline == null) return null;
   final groups = <ConcernGroup>[];
   for (final concern in skinConcerns) {
-    final level = concern.concernLevel(pair.latest);
-    if (level == null || level <= elevatedConcernCutoff) continue;
+    final value = concern.concernValue(pair.latest);
+    if (value == null || value <= elevatedConcernCutoff) continue;
+    final level = value / 10;
     final products = productsFor(concern.engineKey, level);
     if (products.isEmpty) continue;
     groups.add(

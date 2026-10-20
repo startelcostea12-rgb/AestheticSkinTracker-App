@@ -32,8 +32,8 @@ class ConcernRecommendationsSection extends StatefulWidget {
       'Picks for your concerns appear after a follow-up scan that is '
       'comparable with your baseline.';
   static const String noneElevatedText =
-      'Redness, pigment, texture and pores are not elevated on your latest '
-      'comparable scan.';
+      'Redness, pigment, texture and pores are all 25 or below (out of 100) '
+      'on your latest comparable scan.';
   static const String disclaimer =
       'General product ideas based on your latest comparable scan, not '
       'medical advice. Talk with a licensed provider before starting '
