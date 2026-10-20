@@ -16,6 +16,7 @@ import '../main.dart' show RestartWidget;
 import '../providers/procedure_logs_provider.dart';
 import '../services/notification_service.dart';
 import '../utils/app_prefs.dart';
+import '../widgets/skincare_style_picker.dart';
 import '../utils/premium_access.dart';
 import '../widgets/clinical_metric_label.dart';
 import '../widgets/clinical_section_header.dart';
@@ -1625,6 +1626,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                           onTap: _editName,
                         ),
+                        Divider(
+                          height: 1,
+                          color: textColor.withValues(alpha: 0.1),
+                        ),
+                        const SkincareStyleSettingsTile(),
                         Divider(
                           height: 1,
                           color: textColor.withValues(alpha: 0.1),

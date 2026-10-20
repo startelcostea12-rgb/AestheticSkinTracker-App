@@ -4,6 +4,8 @@ import 'dart:math' as math;
 
 import '../app_theme.dart';
 import '../utils/app_prefs.dart';
+import '../utils/skincare_style_catalog.dart';
+import '../widgets/skincare_style_picker.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -401,7 +403,8 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen>
   bool _saving = false;
   late final AnimationController _shimmerController;
   late final Animation<double> _shimmer;
-  static const int _totalSteps = 2;
+  static const int _totalSteps = 3;
+  Set<SkincareStyle> _skincareStyles = <SkincareStyle>{};
 
   @override
   void initState() {
@@ -427,8 +430,10 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen>
   Future<void> _restoreStoredSelections() async {
     final savedName = await AppPrefs.getUserNameOrNull();
     final savedClinic = await AppPrefs.getUserClinic();
+    final savedStyles = await loadSkincareStyles();
     if (!mounted) return;
     setState(() {
+      _skincareStyles = savedStyles;
       if (savedName != null && savedName.isNotEmpty) {
         _nameController.text = savedName;
         _step = 1;
@@ -446,6 +451,11 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen>
     }
     if (_step == 0) {
       await AppPrefs.setUserName(_nameController.text.trim());
+      if (!mounted) return;
+    }
+    if (_step == 1) {
+      // Skincare style (optional, multi-select; editable in Settings).
+      await saveSkincareStyles(_skincareStyles);
       if (!mounted) return;
     }
     if (_step < (_totalSteps - 1)) {
@@ -997,6 +1007,28 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen>
         ],
       );
     } else if (_step == 1) {
+      content = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildHeroMark(),
+          const SizedBox(height: 22),
+          _buildEyebrow('Your skincare style', Icons.spa_outlined),
+          const SizedBox(height: 18),
+          _buildTitle(skincareStyleQuestion, textColor),
+          const SizedBox(height: 14),
+          _buildSupportCopy(
+            'Pick any that fit. You can change this later in Settings.',
+            textColor,
+          ),
+          const SizedBox(height: 20),
+          SkincareStylePicker(
+            key: const ValueKey('onboarding_style_picker'),
+            selected: _skincareStyles,
+            onChanged: (next) => setState(() => _skincareStyles = next),
+          ),
+        ],
+      );
+    } else if (_step == 2) {
       final displayName = _nameController.text.trim().isEmpty
           ? 'there'
           : _nameController.text.trim();
