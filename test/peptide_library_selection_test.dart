@@ -48,9 +48,7 @@ void main() {
   testWidgets('a picked peptide is added to the list on save, as before', (
     tester,
   ) async {
-    // Wide surface: the peptide detail screen opened after saving has its
-    // own overflows at phone widths (separate from the library).
-    await _openAddPeptide(tester, size: const Size(800, 1200));
+    await _openAddPeptide(tester);
     await tester.tap(find.text('Library'));
     await tester.pumpAndSettle();
     final lib = kPeptideLibrary.first;
@@ -95,6 +93,31 @@ void main() {
       // Scroll the list too.
       for (var i = 0; i < 6; i++) {
         await tester.drag(find.byType(ListView).last, const Offset(0, -400));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      }
+    });
+  }
+
+  for (final width in [320.0, 375.0]) {
+    testWidgets('the detail screen opened after saving fits at '
+        '${width.toInt()}px', (tester) async {
+      await _openAddPeptide(tester, size: Size(width, 900));
+      await tester.tap(find.text('Library'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(kPeptideLibrary.first.name).first);
+      await tester.pumpAndSettle();
+      final save = find.widgetWithText(ElevatedButton, 'Add Peptide');
+      await tester.ensureVisible(save);
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      // The detail screen is open (its Take New Scan and Timeline parts).
+      expect(find.text('Take New Scan'), findsWidgets);
+      expect(find.text('Timeline'), findsOneWidget);
+      expect(find.text('· updates your insights'), findsOneWidget);
+      for (var i = 0; i < 12; i++) {
+        await tester.drag(find.byType(Scrollable).first, const Offset(0, -300));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
       }

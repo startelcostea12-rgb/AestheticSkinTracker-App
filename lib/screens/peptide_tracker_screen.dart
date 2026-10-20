@@ -8283,7 +8283,12 @@ class _AddEditSheetState extends State<_AddEditSheet>
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Row(
+                              // Wrap: the badge moves under the label on
+                              // narrow phones instead of overflowing.
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 4,
+                                crossAxisAlignment: WrapCrossAlignment.center,
                                 children: [
                                   const Text(
                                     'Suggested action',
@@ -8294,7 +8299,6 @@ class _AddEditSheetState extends State<_AddEditSheet>
                                       letterSpacing: 0.5,
                                     ),
                                   ),
-                                  const SizedBox(width: 6),
                                   _EvidenceBadge(level: match.evidenceLevel),
                                 ],
                               ),
@@ -9007,20 +9011,33 @@ class _PeptideDetailSheetState extends State<_PeptideDetailSheet> {
               ),
             ],
           ),
-          child: const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          // Wrap: on narrow phones the hint moves under the label instead
+          // of overflowing.
+          child: const Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 6,
+            runSpacing: 2,
             children: [
-              Icon(Icons.camera_alt_outlined, size: 18, color: Colors.white),
-              SizedBox(width: 8),
-              Text(
-                'Take New Scan',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.camera_alt_outlined,
+                    size: 18,
+                    color: Colors.white,
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    'Take New Scan',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
               ),
-              SizedBox(width: 6),
               Text(
                 '· updates your insights',
                 style: TextStyle(fontSize: 11, color: Colors.white70),
@@ -9326,26 +9343,30 @@ class _PeptideDetailSheetState extends State<_PeptideDetailSheet> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Start and end dates share the width beside the day count and
+          // wrap if needed, so the row never overflows on narrow phones.
           Row(
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Started',
-                    style: TextStyle(fontSize: 10, color: _muted),
-                  ),
-                  Text(
-                    fmtDate(e.startDate),
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: _textBrown,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Started',
+                      style: TextStyle(fontSize: 10, color: _muted),
                     ),
-                  ),
-                ],
+                    Text(
+                      fmtDate(e.startDate),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: _textBrown,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
               Column(
                 children: [
                   Text(
@@ -9362,23 +9383,27 @@ class _PeptideDetailSheetState extends State<_PeptideDetailSheet> {
                   ),
                 ],
               ),
-              const Spacer(),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    e.endDate != null ? 'Discontinued' : 'Ongoing',
-                    style: const TextStyle(fontSize: 10, color: _muted),
-                  ),
-                  Text(
-                    e.endDate != null ? fmtDate(e.endDate!) : 'Today',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: _textBrown,
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      e.endDate != null ? 'Discontinued' : 'Ongoing',
+                      textAlign: TextAlign.end,
+                      style: const TextStyle(fontSize: 10, color: _muted),
                     ),
-                  ),
-                ],
+                    Text(
+                      e.endDate != null ? fmtDate(e.endDate!) : 'Today',
+                      textAlign: TextAlign.end,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: _textBrown,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -9394,22 +9419,28 @@ class _PeptideDetailSheetState extends State<_PeptideDetailSheet> {
           ),
           const SizedBox(height: 6),
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text(
                 'Day 0',
                 style: TextStyle(fontSize: 10, color: _muted),
               ),
-              Text(
-                days >= 90
-                    ? '✓ 90-day milestone reached'
-                    : '${90 - days} days to 90-day milestone',
-                style: TextStyle(
-                  fontSize: 10,
-                  color: days >= 90 ? AppColors.kMetricImprovedColor : _muted,
-                  fontWeight: days >= 90 ? FontWeight.w700 : FontWeight.w400,
+              const SizedBox(width: 8),
+              // The milestone text takes the space between the ends and
+              // wraps if needed.
+              Expanded(
+                child: Text(
+                  days >= 90
+                      ? '✓ 90-day milestone reached'
+                      : '${90 - days} days to 90-day milestone',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: days >= 90 ? AppColors.kMetricImprovedColor : _muted,
+                    fontWeight: days >= 90 ? FontWeight.w700 : FontWeight.w400,
+                  ),
                 ),
               ),
+              const SizedBox(width: 8),
               const Text('90d', style: TextStyle(fontSize: 10, color: _muted)),
             ],
           ),
