@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 import '../utils/app_prefs.dart';
+import 'product_lookup_screen.dart';
 import 'routine_editor_screen.dart';
 import '../widgets/from_your_logs.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
@@ -72,6 +73,14 @@ class _RoutinesScreenState extends State<RoutinesScreen> {
         builder: (_) => RoutineEditorScreen(initialRoutine: _routine),
       ),
     );
+    await _loadRoutineState();
+  }
+
+  Future<void> _openProductLookup() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ProductLookupScreen()),
+    );
+    // A product may have been added to the routine.
     await _loadRoutineState();
   }
 
@@ -195,6 +204,13 @@ class _RoutinesScreenState extends State<RoutinesScreen> {
             onPressed: _editRoutine,
             icon: const Icon(Icons.edit_note_rounded),
             label: const Text('Edit routine'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: const ValueKey('routines_product_lookup_button'),
+            onPressed: _openProductLookup,
+            icon: const Icon(Icons.qr_code_scanner_rounded),
+            label: const Text('Scan or search a product'),
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
