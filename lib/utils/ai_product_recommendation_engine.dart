@@ -992,6 +992,40 @@ class AIProductRecommendationEngine {
     return recommendations;
   }
 
+  /// Every product this engine lists for one concern key ('redness',
+  /// 'texture', 'pores', 'darkSpots', ...), the one the metric-based
+  /// selection picks for [currentValue] (0..10, higher = more concern)
+  /// first. Read-only view over the same product data and selection; it
+  /// does not change generateRecommendations. Reasons are the stored text,
+  /// not personalized.
+  static List<AIProductRecommendation> productsForConcern(
+    String metricKey,
+    double currentValue,
+  ) {
+    final products = _productDatabase[metricKey] ?? const [];
+    if (products.isEmpty) return const [];
+    final best = _selectBestProduct(
+      products,
+      metricKey: metricKey,
+      currentValue: currentValue,
+      improvement: 0,
+      highSensitivityOrRedness: false,
+    );
+    return [
+      for (final p in [best, ...products.where((p) => !identical(p, best))])
+        AIProductRecommendation(
+          productName: p['name']!,
+          brand: p['brand']!,
+          clinicalReason: p['reason']!,
+          usageGuidance: p['guidance']!,
+          evidenceLevel: p['evidence']!,
+          affiliateLink: p['link']!,
+          imageUrl: p['image']!,
+          category: p['category']!,
+        ),
+    ];
+  }
+
   /// Identifies priority issues by comparing current vs baseline metrics.
   static List<_MetricPriority> _identifyPriorityIssues(
     SkinMetrics current,
