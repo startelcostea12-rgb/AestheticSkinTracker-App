@@ -1086,6 +1086,10 @@ class CameraScreen extends StatefulWidget {
   /// dismissible ProtocolChecklistCard is shown; it never gates capture.
   final String? protocolChecklistResetToken;
 
+  /// AI Skin Analysis quick scan: one front photo instead of the controlled
+  /// multi-frame burst. Same crop, exposure metadata and analysis path.
+  final bool aiQuickScan;
+
   const CameraScreen({
     this.procedure,
     this.isSkincareScan = false,
@@ -1097,6 +1101,7 @@ class CameraScreen extends StatefulWidget {
     this.initialTrackProcedureBaselineRecord,
     this.markGrayCardAfterCapture = false,
     this.protocolChecklistResetToken,
+    this.aiQuickScan = false,
   }) : assert(
          !aiMultiFrameCapture ||
              capturePurpose == CameraCapturePurpose.aiSkinAnalysis,
@@ -1120,7 +1125,11 @@ class AiSkinAnalysisCaptureResult {
     this.sharpnessFloor,
     this.grayCardRegion,
     this.grayCardPatches = const <Uint8List>[],
+    this.quickScan = false,
   });
+
+  /// True for a single-photo quick scan (see CameraScreen.aiQuickScan).
+  final bool quickScan;
 
   final String primaryImagePath;
 
@@ -1619,6 +1628,8 @@ class _CameraScreenState extends State<CameraScreen>
   @override
   void initState() {
     super.initState();
+    // Quick scan is a front-face photo.
+    if (widget.aiQuickScan) _selectedPoseTemplate = 'Front';
     _loadProtocolChecklist();
     _shimmerController = AnimationController(
       vsync: this,
@@ -5346,7 +5357,9 @@ class _CameraScreenState extends State<CameraScreen>
       await Future<void>.delayed(const Duration(milliseconds: 200));
       // aiScanCaptureFrameCount (5): frames 1-3 feed every metric as
       // before; all five feed the median-of-five metrics.
-      for (var index = 0; index < aiScanCaptureFrameCount; index++) {
+      // A quick scan captures a single frame through the same path.
+      final burstFrameCount = widget.aiQuickScan ? 1 : aiScanCaptureFrameCount;
+      for (var index = 0; index < burstFrameCount; index++) {
         capturedFiles.add(
           await captureAiScanFrameWithFlashOff<XFile>(
             setFlashMode: controller.setFlashMode,
@@ -5356,11 +5369,11 @@ class _CameraScreenState extends State<CameraScreen>
             ),
           ),
         );
-        if (index < aiScanCaptureFrameCount - 1) {
+        if (index < burstFrameCount - 1) {
           await Future<void>.delayed(const Duration(milliseconds: 110));
         }
       }
-      if (!mounted || capturedFiles.length != aiScanCaptureFrameCount) return;
+      if (!mounted || capturedFiles.length != burstFrameCount) return;
 
       // Logging-only: per-frame mean luminance, purely for observability.
       // Must NOT affect frame selection or anything passed to analysis --
@@ -5581,6 +5594,7 @@ class _CameraScreenState extends State<CameraScreen>
           sharpnessFloor: _sharpnessVarianceFloor,
           grayCardRegion: grayCardRegion,
           grayCardPatches: grayCardPatches,
+          quickScan: widget.aiQuickScan,
         ),
       );
     } catch (e) {

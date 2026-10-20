@@ -49,6 +49,7 @@ import 'package:aesthetic_skin_tracker/utils/last_comparable_pair.dart';
 import 'package:aesthetic_skin_tracker/widgets/scan_note_field.dart';
 import 'package:aesthetic_skin_tracker/utils/protocol_checklist.dart';
 import 'package:aesthetic_skin_tracker/widgets/lighting_tip_card.dart';
+import 'package:aesthetic_skin_tracker/utils/ai_scan_mode.dart';
 import 'package:aesthetic_skin_tracker/widgets/paywall_screen.dart';
 import 'free_local_scan_results_screen.dart';
 import 'package:aesthetic_skin_tracker/utils/gray_card_region.dart';
@@ -2395,6 +2396,8 @@ AiBaselineResolution resolveAiBaseline({
     ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
   final eligible = sorted.where((scan) {
     if (!scanPassesSingleScanBaselineGates(scan)) return false;
+    // Never chosen implicitly; an explicit pin (above) still counts.
+    if (isQuickAiScan(scan)) return false;
     return resetAt == null || !scan.timestamp.toUtc().isBefore(resetAt.toUtc());
   }).toList();
 
@@ -2718,6 +2721,14 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// fractions of the full still and [_grayCardPatches] the patch per frame;
   /// both empty when the switch is off (nothing extra is sent).
   bool _markGrayCard = false;
+
+  /// Scan path for the next camera capture: false (default) is the
+  /// controlled multi-frame scan; true is the single-photo quick scan.
+  bool _quickScanMode = false;
+
+  /// Mode of the photo currently selected for analysis: 'controlled' or
+  /// 'quick' for camera captures, null for gallery / latest-scan sources.
+  String? _capturedScanMode;
   GrayCardRegion? _grayCardRegion;
   List<Uint8List> _grayCardPatches = const [];
 
@@ -3030,6 +3041,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             capturePurpose: CameraCapturePurpose.aiSkinAnalysis,
             markGrayCardAfterCapture: _markGrayCard,
             protocolChecklistResetToken: checklistToken,
+            aiQuickScan: _quickScanMode,
           ),
         ),
       );
@@ -3060,6 +3072,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _capturedGuideType = captured.guideType;
           _grayCardRegion = captured.grayCardRegion;
           _grayCardPatches = captured.grayCardPatches;
+          _capturedScanMode = captured.quickScan
+              ? aiScanModeQuick
+              : aiScanModeControlled;
         } else {
           _analysisFrameBytes = const [];
           _analysisFrameExposureMetadata = const [];
@@ -3070,6 +3085,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _capturedGuideType = null;
           _grayCardRegion = null;
           _grayCardPatches = const [];
+          _capturedScanMode = null;
         }
         _explicitBaselineSelection = false;
       });
@@ -3131,6 +3147,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _capturedGuideType = null;
           _grayCardRegion = null;
           _grayCardPatches = const [];
+          _capturedScanMode = null;
         });
         return;
       }
@@ -3149,6 +3166,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         _capturedGuideType = null;
         _grayCardRegion = null;
         _grayCardPatches = const [];
+        _capturedScanMode = null;
       });
     } catch (e) {
       if (!mounted) return;
@@ -3574,6 +3592,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         ],
       );
       backendResponse['rolling_trend'] = rollingAdjustedTrend.rollingTrend;
+      if (_capturedScanMode != null) {
+        backendResponse[aiScanModeKey] = _capturedScanMode;
+      }
       final rednessAdjustedTrend = downgradeRednessTrendForCaptureMismatch(
         trendStatus: rollingAdjustedTrend.trendStatus,
         trendDeltas: rollingAdjustedTrend.trendDeltas,
@@ -4680,6 +4701,64 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     );
   }
 
+  Widget _scanModeChoice() {
+    Widget option({
+      required bool quick,
+      required String title,
+      required String subtitle,
+    }) {
+      final selected = _quickScanMode == quick;
+      return Expanded(
+        child: InkWell(
+          key: ValueKey(quick ? 'scan_mode_quick' : 'scan_mode_controlled'),
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => setState(() => _quickScanMode = quick),
+          child: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: selected ? MyApp.clinicalTeal : AppColors.borders,
+                width: selected ? 1.6 : 1,
+              ),
+              color: selected
+                  ? MyApp.clinicalTeal.withValues(alpha: 0.08)
+                  : Colors.transparent,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 2),
+                Text(subtitle, style: const TextStyle(fontSize: 11.5)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        option(
+          quick: false,
+          title: 'Controlled scan',
+          subtitle: 'Recommended for tracking',
+        ),
+        const SizedBox(width: 8),
+        option(
+          quick: true,
+          title: 'Quick scan',
+          subtitle: 'Single photo, faster',
+        ),
+      ],
+    );
+  }
+
   Widget _photoPickerCard() {
     final hasPhoto = (_imagePath ?? '').isNotEmpty;
     return Container(
@@ -4690,6 +4769,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         children: [
           if (hasPhoto) _selectedPhotoPreview() else _photoPlaceholder(),
           const SizedBox(height: 12),
+          _scanModeChoice(),
+          const SizedBox(height: 8),
           SwitchListTile.adaptive(
             key: const ValueKey('gray_card_switch'),
             contentPadding: EdgeInsets.zero,
@@ -5825,6 +5906,16 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                   _confirmUpdateBaselinePressed();
                 },
               ),
+              if (_capturedScanMode == aiScanModeQuick) ...[
+                const SizedBox(height: 10),
+                const Text(
+                  'Quick scan: single photo. Wrinkle load, pore contraction '
+                  'and under-eye metrics need the controlled scan and are '
+                  'not shown. Comparisons use the same locks.',
+                  key: ValueKey('quick_scan_results_note'),
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+              ],
               if (_savedScanId != null) ...[
                 const SizedBox(height: 14),
                 ScanNoteField(
@@ -7602,6 +7693,16 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// baseline") or a reset.
   Future<void> _registerAiBaselineIfNeeded(ScanHistoryEntry savedEntry) async {
     if (!_aiBaselineResolution.isFirstForKey) return;
+    // A quick scan becomes a baseline only when the user explicitly sets it.
+    if (isQuickAiScan(savedEntry)) {
+      if (!mounted) return;
+      setState(() {
+        _baselineNotSavedReason =
+            'Quick scans are not saved as a baseline automatically. Use '
+            'a controlled scan, or set this one as your baseline.';
+      });
+      return;
+    }
     final rejectionReason = aiBaselineRejectionReason(savedEntry);
     if (rejectionReason != null) {
       // Eligible to be the first baseline for this key, but this scan

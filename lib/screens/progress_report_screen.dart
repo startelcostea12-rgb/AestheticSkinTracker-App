@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io' show File;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import '../utils/ai_scan_mode.dart';
 import '../utils/app_prefs.dart';
 import '../utils/app_logger.dart';
 import '../app_theme.dart';
@@ -838,7 +839,7 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
     final meta = _scanTypeMeta(scan);
     final focus = (scan.focusArea ?? scan.customDescription ?? '').trim();
     final title = scan.isAiAnalysisScan
-        ? 'AI Deep Analysis'
+        ? (isQuickAiScan(scan) ? 'AI Quick Scan' : 'AI Deep Analysis')
         : scan.isSkincareScan
         ? (scan.productName?.trim().isNotEmpty == true
               ? scan.productName!.trim()
@@ -3004,7 +3005,7 @@ class ScanDetailScreen extends StatelessWidget {
       case ScanHistoryEntry.scanTypeAiAnalysis:
         return (
           icon: Icons.auto_awesome_rounded,
-          label: 'AI Deep Analysis',
+          label: isQuickAiScan(scan) ? 'AI Quick Scan' : 'AI Deep Analysis',
           color: AppColors.champagneGold,
         );
       case ScanHistoryEntry.scanTypeSkincare:
@@ -3023,7 +3024,9 @@ class ScanDetailScreen extends StatelessWidget {
   }
 
   String get _title {
-    if (scan.isAiAnalysisScan) return 'AI Deep Analysis';
+    if (scan.isAiAnalysisScan) {
+      return isQuickAiScan(scan) ? 'AI Quick Scan' : 'AI Deep Analysis';
+    }
     if (scan.isSkincareScan) {
       return scan.productName?.trim().isNotEmpty == true
           ? scan.productName!.trim()
@@ -3196,7 +3199,10 @@ class ScanDetailScreen extends StatelessWidget {
           ],
           const SizedBox(height: 18),
           if (scan.isAiAnalysisScan) ...[
-            _sectionTitle(Icons.insights_rounded, 'AI Deep Analysis'),
+            _sectionTitle(
+              Icons.insights_rounded,
+              isQuickAiScan(scan) ? 'AI Quick Scan' : 'AI Deep Analysis',
+            ),
             const SizedBox(height: 10),
             LuxeReportLayout(
               rawPayload: archivedAiPayload,

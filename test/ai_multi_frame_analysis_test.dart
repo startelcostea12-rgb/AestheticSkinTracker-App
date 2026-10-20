@@ -1805,8 +1805,12 @@ void main() {
       expect(
         source,
         contains(
-          'for (var index = 0; index < aiScanCaptureFrameCount; index++)',
+          'final burstFrameCount = widget.aiQuickScan ? 1 : aiScanCaptureFrameCount;',
         ),
+      );
+      expect(
+        source,
+        contains('for (var index = 0; index < burstFrameCount; index++)'),
       );
       expect(source, contains('AiSkinAnalysisCaptureResult('));
     },
