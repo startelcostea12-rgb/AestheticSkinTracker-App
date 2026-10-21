@@ -63,7 +63,7 @@ void main() {
 
   group('catalog', () {
     test('every product has a brand, category and known concern tags', () {
-      expect(_all, hasLength(173));
+      expect(_all, hasLength(205));
       expect(
         _all.map((p) => p.name).toSet(),
         hasLength(_all.length),
@@ -154,12 +154,18 @@ void main() {
     });
 
     test('fewer than 4 matches are topped up with general picks', () {
-      final picks = stylePicksFor({SkincareStyle.korean}, ['pores']);
+      // A tag Korean has only a few products for.
+      final matched = skincareStyleCatalog[SkincareStyle.korean]!
+          .where((p) => p.concerns.contains('firmness'))
+          .toList();
+      expect(
+        matched.length,
+        inInclusiveRange(1, 3),
+        reason: 'pick a sparser tag if the catalog grows',
+      );
+      final picks = stylePicksFor({SkincareStyle.korean}, ['firmness']);
       expect(picks.products, hasLength(4));
-      expect(picks.products.take(2).map((p) => p.name), [
-        'Some By Mi AHA BHA PHA 30 Days Miracle Toner',
-        'Anua Peach 70 Niacinamide Serum',
-      ]);
+      expect(picks.products.take(matched.length), matched);
       expect(picks.products.toSet(), hasLength(4), reason: 'no duplicates');
     });
 

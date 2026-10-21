@@ -35,10 +35,10 @@ void main() {
     test('curated products per style: the original ten first, then the '
         'added ones', () {
       const counts = {
-        SkincareStyle.korean: 43,
-        SkincareStyle.naturalClean: 44,
-        SkincareStyle.westernDrugstore: 43,
-        SkincareStyle.clinical: 43,
+        SkincareStyle.korean: 52,
+        SkincareStyle.naturalClean: 49,
+        SkincareStyle.westernDrugstore: 52,
+        SkincareStyle.clinical: 52,
       };
       for (final style in SkincareStyle.values) {
         final list = skincareStyleCatalog[style]!;
@@ -56,7 +56,7 @@ void main() {
       );
       expect(
         skincareStyleCatalog[SkincareStyle.clinical]!.last.name,
-        'Neocutis Bio-Serum Firm',
+        'Neocutis Lumière Firm Riche',
       );
     });
 
