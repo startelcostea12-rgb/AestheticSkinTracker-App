@@ -52,51 +52,105 @@ class StylePicks {
   bool get isFallback => matchedConcerns.isEmpty;
 }
 
-const int stylePicksMin = 4;
+/// At most this many picks are shown.
 const int stylePicksMax = 6;
 
-/// Picks for [styles] given the current [concernTags] (most important
-/// first). Products matching a concern come first, ordered by their best
-/// concern then by the usual style interleaving; if fewer than
-/// [stylePicksMin] match, general picks fill up to that number. With no
-/// match at all, the general picks for the styles ([stylePicksMax]).
-StylePicks stylePicksFor(Set<SkincareStyle> styles, List<String> concernTags) {
-  final general = styleRecommendations(styles, limit: 1000);
-  int rank(StyleProduct p) {
-    var best = concernTags.length;
-    for (final tag in p.concerns) {
-      final i = concernTags.indexOf(tag);
-      if (i >= 0 && i < best) best = i;
-    }
-    return best;
-  }
+/// Weight of a primary match on the most elevated concern; each lower
+/// concern is worth one step less (see [styleRelevanceScore]).
+const int stylePrimaryMatchWeight = 10;
 
-  final matched = [
-    for (final p in general)
-      if (rank(p) < concernTags.length) p,
-  ];
-  if (matched.isEmpty) {
+/// Supporting (descriptive) tags that relate to each scan concern. Each
+/// adds [styleSupportingMatchWeight], so they only order products within
+/// the same primary score and never outrank a primary match.
+const Map<String, Set<String>> styleSupportingTagsFor = {
+  'redness': {'barrier'},
+  'pigment': {'sun', 'radiance'},
+  'texture': {'hydration', 'aging'},
+  'pores': <String>{},
+};
+
+const int styleSupportingMatchWeight = 1;
+
+/// How well [product] fits this scan. [concernTags] are the elevated scan
+/// concerns, most elevated first.
+///
+/// - Primary: for each of the product's tags that is an elevated concern
+///   at position i (0 = most elevated) of n, add
+///   [stylePrimaryMatchWeight] * (n - i). Matching more elevated concerns
+///   adds up, and the most elevated concern weighs most.
+/// - Supporting: for each distinct supporting tag related to an elevated
+///   concern ([styleSupportingTagsFor]), add [styleSupportingMatchWeight].
+///   The most a product can get this way (5) stays below the smallest
+///   primary match (10).
+///
+/// 0 means the product is not relevant to this scan.
+int styleRelevanceScore(StyleProduct product, List<String> concernTags) {
+  final n = concernTags.length;
+  var score = 0;
+  for (final tag in product.concerns.toSet()) {
+    final i = concernTags.indexOf(tag);
+    if (i >= 0) score += stylePrimaryMatchWeight * (n - i);
+  }
+  final supporting = {
+    for (final concern in concernTags) ...?styleSupportingTagsFor[concern],
+  };
+  for (final tag in product.concerns.toSet()) {
+    if (supporting.contains(tag) && !concernTags.contains(tag)) {
+      score += styleSupportingMatchWeight;
+    }
+  }
+  return score;
+}
+
+/// Picks for [styles] given the current [concernTags] (elevated scan
+/// concerns, most elevated first).
+///
+/// Every product is scored with [styleRelevanceScore] and the relevant
+/// ones (score > 0) are shown highest score first, up to
+/// [stylePicksMax]. Ties keep the usual style interleaving (one product
+/// per selected style in turn, each in catalog order), so the order is
+/// deterministic and every style stays represented among equal scores.
+/// Products with no relevant tag are not shown while something is
+/// elevated.
+///
+/// With nothing elevated, or no product matching any elevated concern,
+/// the general picks for the styles ([stylePicksMax]), as before.
+/// [general] overrides the candidate list (tests).
+StylePicks stylePicksFor(
+  Set<SkincareStyle> styles,
+  List<String> concernTags, {
+  List<StyleProduct>? general,
+}) {
+  final candidates = general ?? styleRecommendations(styles, limit: 1000);
+  final hasPrimaryMatch = candidates.any(
+    (p) => p.concerns.any(concernTags.contains),
+  );
+  if (concernTags.isEmpty || !hasPrimaryMatch) {
     return StylePicks(
-      products: general.take(stylePicksMax).toList(),
+      products: candidates.take(stylePicksMax).toList(),
       matchedConcerns: const [],
     );
   }
-  // Stable sort by best concern keeps the interleaved style order.
-  final indexed = matched.indexed.toList()
-    ..sort((a, b) {
-      final byRank = rank(a.$2).compareTo(rank(b.$2));
-      return byRank != 0 ? byRank : a.$1.compareTo(b.$1);
-    });
-  final picks = [for (final e in indexed) e.$2].take(stylePicksMax).toList();
-  for (final p in general) {
-    if (picks.length >= stylePicksMin) break;
-    if (!picks.contains(p)) picks.add(p);
-  }
+  final scored =
+      [
+          for (final (index, product) in candidates.indexed)
+            (
+              index: index,
+              product: product,
+              score: styleRelevanceScore(product, concernTags),
+            ),
+        ].where((e) => e.score > 0).toList()
+        // Highest score first; ties by interleaved position.
+        ..sort((a, b) {
+          final byScore = b.score.compareTo(a.score);
+          return byScore != 0 ? byScore : a.index.compareTo(b.index);
+        });
+  final picks = [for (final e in scored.take(stylePicksMax)) e.product];
   return StylePicks(
     products: picks,
     matchedConcerns: [
       for (final tag in concernTags)
-        if (matched.any((p) => p.concerns.contains(tag))) tag,
+        if (picks.any((p) => p.concerns.contains(tag))) tag,
     ],
   );
 }

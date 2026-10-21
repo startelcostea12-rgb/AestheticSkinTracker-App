@@ -153,20 +153,14 @@ void main() {
       }
     });
 
-    test('fewer than 4 matches are topped up with general picks', () {
-      // A tag Korean has only a few products for.
-      final matched = skincareStyleCatalog[SkincareStyle.korean]!
-          .where((p) => p.concerns.contains('firmness'))
-          .toList();
-      expect(
-        matched.length,
-        inInclusiveRange(1, 3),
-        reason: 'pick a sparser tag if the catalog grows',
-      );
+    test('no padding with irrelevant products while something is '
+        'elevated', () {
+      // Korean has one firmness product; nothing else relates to it.
       final picks = stylePicksFor({SkincareStyle.korean}, ['firmness']);
-      expect(picks.products, hasLength(4));
-      expect(picks.products.take(matched.length), matched);
-      expect(picks.products.toSet(), hasLength(4), reason: 'no duplicates');
+      expect(picks.products, isNotEmpty);
+      for (final p in picks.products) {
+        expect(p.concerns, contains('firmness'), reason: p.name);
+      }
     });
 
     test('ordered by the most elevated concern, at most 6', () {
@@ -226,6 +220,117 @@ void main() {
         stylePicksFor({SkincareStyle.korean}, ['not_a_tag']).isFallback,
         isTrue,
       );
+    });
+  });
+
+  group('ranking by scan relevance', () {
+    StyleProduct product(String name, List<String> concerns) => StyleProduct(
+      name,
+      'Test product',
+      SkincareStyle.korean,
+      brand: 'Test',
+      category: StyleProductCategory.serum,
+      concerns: concerns,
+    );
+
+    test('a later product matching the elevated concern ranks above an '
+        'earlier one that does not', () {
+      final early = product('Early hydrator', ['hydration', 'barrier']);
+      final late = product('Late texture', ['texture']);
+      final picks = stylePicksFor(
+        {SkincareStyle.korean},
+        ['pores'],
+        general: [
+          early,
+          product('Late pores', ['pores']),
+          late,
+        ],
+      );
+      expect(picks.products.first.name, 'Late pores');
+      expect(
+        picks.products.map((p) => p.name),
+        isNot(contains('Early hydrator')),
+        reason: 'no relevant tag while pores are elevated',
+      );
+    });
+
+    test('scores, not insertion order, decide when scores differ', () {
+      final picks = stylePicksFor(
+        {SkincareStyle.korean},
+        ['texture', 'pores'],
+        general: [
+          product('Pores only', ['pores']), // 10
+          product('Supporting only', ['hydration', 'aging']), // 2
+          product('Texture only', ['texture']), // 20
+          product('Texture and pores', ['texture', 'pores']), // 30
+          product('Texture + hydration', ['texture', 'hydration']), // 21
+        ],
+      );
+      expect(picks.products.map((p) => p.name), [
+        'Texture and pores',
+        'Texture + hydration',
+        'Texture only',
+        'Pores only',
+        'Supporting only',
+      ]);
+    });
+
+    test('primary tags outweigh any number of supporting tags', () {
+      final heavy = product('Every supporting tag', [
+        'barrier',
+        'sun',
+        'radiance',
+        'hydration',
+        'aging',
+      ]);
+      final primary = product('Least elevated concern', ['redness']);
+      final concerns = ['texture', 'pigment', 'redness'];
+      expect(
+        styleRelevanceScore(primary, concerns),
+        greaterThan(styleRelevanceScore(heavy, concerns)),
+      );
+      final picks = stylePicksFor(
+        {SkincareStyle.korean},
+        concerns,
+        general: [heavy, primary],
+      );
+      expect(picks.products.first, primary);
+    });
+
+    test('equal scores keep the style interleave order', () {
+      final a = product('A', ['pores']);
+      final b = product('B', ['pores']);
+      final c = product('C', ['pores']);
+      final picks = stylePicksFor(
+        {SkincareStyle.korean},
+        ['pores'],
+        general: [a, b, c],
+      );
+      expect(picks.products, [a, b, c]);
+    });
+
+    test('at most 6 picks', () {
+      final picks = stylePicksFor(
+        {SkincareStyle.korean},
+        ['pores'],
+        general: [
+          for (var i = 0; i < 10; i++) product('P$i', ['pores']),
+        ],
+      );
+      expect(picks.products, hasLength(stylePicksMax));
+    });
+
+    test('real catalog: the top Western pick for texture matches texture '
+        'even though earlier products do not', () {
+      final picks = stylePicksFor(
+        {SkincareStyle.westernDrugstore},
+        ['texture'],
+      );
+      final catalog = skincareStyleCatalog[SkincareStyle.westernDrugstore]!;
+      expect(catalog.first.concerns, isNot(contains('texture')));
+      for (final p in picks.products) {
+        expect(p.concerns, contains('texture'), reason: p.name);
+      }
     });
   });
 
