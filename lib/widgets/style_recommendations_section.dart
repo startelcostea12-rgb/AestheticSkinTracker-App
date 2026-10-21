@@ -1,8 +1,11 @@
-// "Recommended for your style": curated products from the user's selected
-// skincare styles (skincare_style_catalog.dart). Premium only -- free users
-// see a locked note with a "See your style picks with Premium" link (the
-// same link style as the concerns section's "See N more picks"). Separate from, and leaves
-// unchanged, the metric-based recommendations.
+// "Recommended for your style": 4-6 curated products from the user's
+// selected skincare styles (skincare_style_catalog.dart), filtered to the
+// latest scan's top concerns when any match (style_concern_recommendations
+// .dart), otherwise the general picks for those styles. Premium only --
+// free users see a locked note with a "See your style picks with Premium"
+// link (the same link style as the concerns section's "See N more
+// picks"). Separate from, and leaves unchanged, the metric-based
+// recommendations.
 
 import 'package:flutter/material.dart';
 
@@ -10,7 +13,9 @@ import '../app_theme.dart';
 import 'home_section_style.dart';
 import 'premium_more_picks_link.dart';
 import '../utils/premium_access.dart';
+import '../models/scan_history.dart';
 import '../utils/skincare_style_catalog.dart';
+import '../utils/style_concern_recommendations.dart';
 import 'paywall_screen.dart';
 
 class StyleRecommendationsSection extends StatefulWidget {
@@ -18,12 +23,20 @@ class StyleRecommendationsSection extends StatefulWidget {
     super.key,
     this.loadStyles = loadSkincareStyles,
     this.isPremium = PremiumAccess.isPremiumUser,
-    this.limit = 8,
+    this.scans = const <ScanHistoryEntry>[],
   });
 
   final Future<Set<SkincareStyle>> Function() loadStyles;
   final Future<bool> Function() isPremium;
-  final int limit;
+
+  /// Scan history; the latest AI scan's concerns filter the picks.
+  final List<ScanHistoryEntry> scans;
+
+  static const String generalPicksText = 'Top picks for your style.';
+  static String matchedText(List<String> concerns) {
+    final names = concerns.join(concerns.length == 2 ? ' and ' : ', ');
+    return 'Matched to your $names from your latest scan.';
+  }
 
   static const String title = 'Recommended for your style';
   static const String lockedLinkLabel = 'See your style picks with Premium';
@@ -102,12 +115,27 @@ class _StyleRecommendationsSectionState
         ],
       );
     } else {
-      final picks = styleRecommendations(styles, limit: widget.limit);
+      final result = stylePicksFor(
+        styles,
+        currentStyleConcernTags(widget.scans),
+      );
       body = Column(
         key: const ValueKey('style_recs_list'),
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          for (final product in picks)
+          Text(
+            result.isFallback
+                ? StyleRecommendationsSection.generalPicksText
+                : StyleRecommendationsSection.matchedText(
+                    result.matchedConcerns,
+                  ),
+            key: ValueKey(
+              result.isFallback ? 'style_recs_general' : 'style_recs_matched',
+            ),
+            style: homeSectionMessageStyle(),
+          ),
+          const SizedBox(height: 8),
+          for (final product in result.products)
             Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: Column(
@@ -119,6 +147,10 @@ class _StyleRecommendationsSectionState
                       color: ink,
                       fontWeight: FontWeight.w800,
                     ),
+                  ),
+                  Text(
+                    '${product.brand} · ${product.category.label}',
+                    style: homeSectionSubtleStyle(),
                   ),
                   Text(
                     '${product.description} · ${product.style.label}',

@@ -2748,7 +2748,7 @@ class _HomePageState extends State<HomePage>
                   ConcernRecommendationsSection(scans: sortedScans),
                   const SizedBox(height: homeSectionGap),
                 ],
-                const StyleRecommendationsSection(),
+                StyleRecommendationsSection(scans: sortedScans),
                 const SizedBox(height: homeSectionGap),
                 _buildProtocolHomeCard(),
                 const SizedBox(height: homeSectionGap),

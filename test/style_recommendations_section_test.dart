@@ -35,7 +35,8 @@ void main() {
     await _pump(tester, styles: {SkincareStyle.korean}, premium: true);
     expect(find.text('Recommended for your style'), findsOneWidget);
     expect(find.byKey(const ValueKey('style_recs_list')), findsOneWidget);
-    for (final product in skincareStyleCatalog[SkincareStyle.korean]!.take(8)) {
+    // No scans: the general picks for the style, 6 of them.
+    for (final product in skincareStyleCatalog[SkincareStyle.korean]!.take(6)) {
       expect(find.text(product.name), findsOneWidget, reason: product.name);
     }
     expect(find.text('CeraVe Moisturizing Cream'), findsNothing);
@@ -56,8 +57,8 @@ void main() {
     ]) {
       expect(find.text(name), findsOneWidget, reason: name);
     }
-    expect(find.textContaining('· Natural / Clean'), findsNWidgets(4));
-    expect(find.textContaining('· Clinical'), findsNWidgets(4));
+    expect(find.textContaining('· Natural / Clean'), findsNWidgets(3));
+    expect(find.textContaining('· Clinical'), findsNWidgets(3));
   });
 
   testWidgets('free: locked card with an upgrade prompt, no picks', (
@@ -94,7 +95,7 @@ void main() {
 
   testWidgets('premium: full list, no locked card or upsell', (tester) async {
     await _pump(tester, styles: {SkincareStyle.korean}, premium: true);
-    final all = styleRecommendations({SkincareStyle.korean});
+    final all = styleRecommendations({SkincareStyle.korean}, limit: 6);
     for (final product in all) {
       expect(find.text(product.name), findsOneWidget, reason: product.name);
     }
@@ -115,7 +116,7 @@ void main() {
 
   test('shown on home; metric-based engine left alone', () {
     final home = File('lib/screens/home_screen.dart').readAsStringSync();
-    expect(home, contains('const StyleRecommendationsSection(),'));
+    expect(home, contains('StyleRecommendationsSection(scans: sortedScans),'));
     // The metric-based recommendations are still on home, unchanged.
     expect(home, contains('ScanBasedRecommendationsCard('));
     final engine = File(
