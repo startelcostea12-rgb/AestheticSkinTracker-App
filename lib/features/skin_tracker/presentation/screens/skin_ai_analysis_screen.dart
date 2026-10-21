@@ -1855,6 +1855,31 @@ downgradeRednessTrendForCaptureMismatch({
           _dynamicMap(payload['metrics'])['metric_matrix'],
         )['localized_redness'],
   );
+  // baseline_p95_anchor (follow-up redness read over the whole U-zone
+  // against the baseline's stored U-zone p95; side "both", mask u_zone) is
+  // not tied to one cheek or to the baseline's single-cheek mask, so a side
+  // or mask difference against it only means the measurement method
+  // changed. Payloads without redness_branch are recognised by what only
+  // that method reports: side "both" (cheek check) or mask u_zone (region
+  // and cast checks; side "both" when no mask was recorded).
+  bool branchIsAnchor(Map<String, dynamic> quality) =>
+      quality['redness_branch']?.toString().trim() ==
+      rednessBranchBaselineP95Anchor;
+  bool sideIsAnchor(Map<String, dynamic> quality) =>
+      branchIsAnchor(quality) ||
+      quality['redness_cheek_side']?.toString().trim() == 'both';
+  bool maskIsAnchor(Map<String, dynamic> quality) {
+    if (branchIsAnchor(quality)) return true;
+    final mask = quality['localized_redness_mask_kind']?.toString().trim();
+    // No mask recorded (older payload): fall back to the side label.
+    if (mask == null || mask.isEmpty) return sideIsAnchor(quality);
+    return mask == 'u_zone';
+  }
+
+  final methodChanged =
+      sideIsAnchor(currentQuality) || sideIsAnchor(baselineQuality);
+  final currentMaskAnchored = maskIsAnchor(currentQuality);
+  final baselineMaskAnchored = maskIsAnchor(baselineQuality);
   var cheekLockSkippedLowValues = false;
   if (aiScanHasCheekSideMismatch(
     currentPayload: currentPayload,
@@ -1880,19 +1905,8 @@ downgradeRednessTrendForCaptureMismatch({
         baselineValue != null &&
         (currentValue - baselineValue).abs() <=
             rednessCheekLockMatchingValueTolerance;
-    // baseline_p95_anchor (follow-up redness read over the whole U-zone,
-    // side "both") is not tied to one cheek, so a side difference only
-    // means the measurement method changed. Cheek sides are compared only
-    // when both scans used within_cheek_spread. An older payload without
-    // redness_branch counts as anchored when its side is "both" (only that
-    // method reports "both").
-    bool usedBaselineP95Anchor(Map<String, dynamic> quality) =>
-        quality['redness_branch']?.toString().trim() ==
-            rednessBranchBaselineP95Anchor ||
-        quality['redness_cheek_side']?.toString().trim() == 'both';
-    final methodChanged =
-        usedBaselineP95Anchor(currentQuality) ||
-        usedBaselineP95Anchor(baselineQuality);
+    // Cheek sides are compared only when both scans used
+    // within_cheek_spread (see methodChanged above).
     if (singleVsBoth && bothLow) {
       cheekLockSkippedLowValues = true;
     } else if (singleVsBoth && valuesMatch) {
@@ -1954,10 +1968,18 @@ downgradeRednessTrendForCaptureMismatch({
         baselineValue <= rednessCheekLockLowValueCeiling;
     if (singleCheekVsUZone && bothLow) {
       regionLockSkippedLowValues = true;
+    } else if (currentMaskAnchored || baselineMaskAnchored) {
+      // Measurement method changed: the follow-up already compares U-zone
+      // with the baseline's stored U-zone p95, so the mask label
+      // difference is not a region change (no export field).
     } else {
       reasons.add('region_mismatch');
     }
-  } else if (!skipCastCheck) {
+  } else if (!skipCastCheck && currentMaskAnchored == baselineMaskAnchored) {
+    // Skipped when only one scan is anchored: the other scan's cheek
+    // p10/p95 may come from a single-cheek mask, so comparing them with
+    // U-zone percentiles would report a cast that is really the method
+    // change. Two anchored scans (U-zone vs U-zone) still compare.
     final currentFrameP95 = frameP95Values(currentPayload);
     final baselineFrameP95 = frameP95Values(baselinePayload);
     if (currentFrameP95.length < 2 || baselineFrameP95.length < 2) {

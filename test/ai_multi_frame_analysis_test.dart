@@ -347,7 +347,9 @@ void main() {
           expect(result.regionLockSkippedLowValues, isTrue);
         });
 
-        test('one value above 5.0 still locks as region_mismatch', () {
+        // u_zone means baseline_p95_anchor: no region lock whatever the
+        // values (the low-value flag is only set for the low-value skip).
+        test('one value above 5.0: no region lock (u_zone is anchored)', () {
           final result = compare(
             baselineSide: 'both',
             currentSide: 'both',
@@ -356,14 +358,11 @@ void main() {
             baselineRedness: 1.0,
             currentRedness: 6.0,
           );
-          expect(
-            result.trendLockReasons['localized_redness'],
-            'region_mismatch',
-          );
+          expect(result.rednessLockReasons, isNot(contains('region_mismatch')));
           expect(result.regionLockSkippedLowValues, isFalse);
         });
 
-        test('a missing value still locks as region_mismatch', () {
+        test('a missing value: no region lock (u_zone is anchored)', () {
           final result = compare(
             baselineSide: 'both',
             currentSide: 'both',
@@ -371,10 +370,7 @@ void main() {
             currentRegion: 'left_cheek',
             currentRedness: 2.0,
           );
-          expect(
-            result.trendLockReasons['localized_redness'],
-            'region_mismatch',
-          );
+          expect(result.rednessLockReasons, isNot(contains('region_mismatch')));
           expect(result.regionLockSkippedLowValues, isFalse);
         });
 
@@ -499,7 +495,7 @@ void main() {
         expect(result.trendStatus['localized_redness'], 'improved');
       });
 
-      test('left_cheek vs u_zone locks as region_mismatch, not cast', () {
+      test('left_cheek vs u_zone (method change): neither region nor cast', () {
         // The 12:41:03 scan against the 10:21:11 baseline.
         final result = downgradeRednessTrendForCaptureMismatch(
           trendStatus: status,
@@ -524,10 +520,9 @@ void main() {
           ),
         );
 
-        expect(result.rednessLockReasons, contains('region_mismatch'));
+        expect(result.rednessLockReasons, isNot(contains('region_mismatch')));
         expect(result.rednessLockReasons, isNot(contains('cast_mismatch')));
-        expect(result.trendLockReasons['localized_redness'], 'region_mismatch');
-        expect(result.trendStatus.containsKey('localized_redness'), isFalse);
+        expect(result.trendLockReasons['localized_redness'], isNull);
         expect(trendLockReasonShortLabel('region_mismatch'), isNotNull);
         expect(knownTrendLockReasons, contains('region_mismatch'));
       });
@@ -1943,6 +1938,104 @@ void main() {
       );
       expect(result.rednessLockReasons, isNot(contains('cheek_mismatch')));
       expect(result.cheekLockSkippedLowValues, isTrue);
+    });
+  });
+
+  group('region and cast locks when redness uses baseline_p95_anchor', () {
+    Map<String, dynamic> scan({
+      required String branch,
+      required String mask,
+      required double redness,
+      double p10 = 4.0,
+      double p95 = 10.0,
+      List<double> frameP95 = const [10.0, 10.5, 10.2],
+    }) => rednessPayload(
+      branch: branch,
+      cheekSide: switch (mask) {
+        'left_cheek' => 'left',
+        'right_cheek' => 'right',
+        _ => 'both',
+      },
+      region: mask,
+      redness: redness,
+      frameP95: frameP95,
+      p10: p10,
+      p95: p95,
+    );
+
+    ({
+      Map<String, String> trendStatus,
+      Map<String, double> trendDeltas,
+      Map<String, String> trendLockReasons,
+      Set<String> rednessLockReasons,
+      bool cheekLockSkippedLowValues,
+      bool regionLockSkippedLowValues,
+    })
+    run(Map<String, dynamic> baseline, Map<String, dynamic> current) =>
+        downgradeRednessTrendForCaptureMismatch(
+          trendStatus: const {'localized_redness': 'stable'},
+          trendDeltas: const {'localized_redness': 0.0},
+          trendLockReasons: const {},
+          baselinePayload: baseline,
+          currentPayload: current,
+        );
+
+    test('within_cheek_spread left_cheek baseline vs baseline_p95_anchor '
+        'u_zone current (the 11:26:49 scan): no region or cast lock', () {
+      // Percentiles far apart: would cast-lock if they were compared.
+      final result = run(
+        scan(
+          branch: 'within_cheek_spread',
+          mask: 'left_cheek',
+          redness: 9.3,
+          p10: 4.0,
+          p95: 10.0,
+        ),
+        scan(
+          branch: 'baseline_p95_anchor',
+          mask: 'u_zone',
+          redness: 9.3,
+          p10: 12.0,
+          p95: 22.0,
+          frameP95: const [22.0, 22.4, 22.2],
+        ),
+      );
+      expect(result.rednessLockReasons, isEmpty);
+      expect(result.trendLockReasons['localized_redness'], isNull);
+      expect(result.trendStatus['localized_redness'], 'stable');
+    });
+
+    test('both within_cheek_spread with different masks still locks', () {
+      final result = run(
+        scan(branch: 'within_cheek_spread', mask: 'left_cheek', redness: 9.3),
+        scan(branch: 'within_cheek_spread', mask: 'right_cheek', redness: 9.3),
+      );
+      expect(result.rednessLockReasons, contains('region_mismatch'));
+      expect(result.trendLockReasons['localized_redness'], 'cheek_mismatch');
+    });
+
+    test('the low-value region skip still sets its flag', () {
+      final result = run(
+        scan(branch: 'within_cheek_spread', mask: 'left_cheek', redness: 1.0),
+        scan(branch: 'baseline_p95_anchor', mask: 'u_zone', redness: 3.0),
+      );
+      expect(result.regionLockSkippedLowValues, isTrue);
+      expect(result.rednessLockReasons, isEmpty);
+    });
+
+    test('two anchored scans (U-zone vs U-zone) still cast-lock', () {
+      final result = run(
+        scan(branch: 'baseline_p95_anchor', mask: 'u_zone', redness: 9.3),
+        scan(
+          branch: 'baseline_p95_anchor',
+          mask: 'u_zone',
+          redness: 14.0,
+          p10: 9.0,
+          p95: 16.0,
+          frameP95: const [16.0, 16.4, 16.2],
+        ),
+      );
+      expect(result.trendLockReasons['localized_redness'], 'cast_mismatch');
     });
   });
 }
