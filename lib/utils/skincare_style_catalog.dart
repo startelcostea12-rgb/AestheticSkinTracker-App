@@ -208,7 +208,7 @@ const Map<SkincareStyle, List<StyleProduct>> skincareStyleCatalog = {
       SkincareStyle.naturalClean,
       brand: 'True Botanicals',
       category: StyleProductCategory.moisturizer,
-      concerns: ['hydration'],
+      concerns: ['hydration', 'barrier'],
     ),
     StyleProduct(
       'Tata Harper Regenerating Cleanser',
@@ -364,7 +364,7 @@ const Map<SkincareStyle, List<StyleProduct>> skincareStyleCatalog = {
       SkincareStyle.clinical,
       brand: 'ZO Skin Health',
       category: StyleProductCategory.serum,
-      concerns: ['aging'],
+      concerns: ['aging', 'texture'],
     ),
     StyleProduct(
       'Obagi Nu-Derm',
