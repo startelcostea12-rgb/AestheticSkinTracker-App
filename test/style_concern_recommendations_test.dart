@@ -63,7 +63,7 @@ void main() {
 
   group('catalog', () {
     test('every product has a brand, category and known concern tags', () {
-      expect(_all, hasLength(99));
+      expect(_all, hasLength(137));
       expect(
         _all.map((p) => p.name).toSet(),
         hasLength(_all.length),
@@ -140,7 +140,10 @@ void main() {
       final picks = stylePicksFor({SkincareStyle.korean}, ['redness']);
       expect(picks.isFallback, isFalse);
       expect(picks.matchedConcerns, ['redness']);
-      expect(picks.products, hasLength(5));
+      final redness = skincareStyleCatalog[SkincareStyle.korean]!
+          .where((p) => p.concerns.contains('redness'))
+          .length;
+      expect(picks.products, hasLength(redness.clamp(4, 6)));
       expect(picks.products.take(2).map((p) => p.name), [
         'Anua Heartleaf 77% Soothing Toner',
         'Purito Centella Unscented Serum',

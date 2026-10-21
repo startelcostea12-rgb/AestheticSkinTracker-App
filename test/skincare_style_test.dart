@@ -35,10 +35,10 @@ void main() {
     test('curated products per style: the original ten first, then the '
         'added ones', () {
       const counts = {
-        SkincareStyle.korean: 24,
-        SkincareStyle.naturalClean: 25,
-        SkincareStyle.westernDrugstore: 26,
-        SkincareStyle.clinical: 24,
+        SkincareStyle.korean: 34,
+        SkincareStyle.naturalClean: 35,
+        SkincareStyle.westernDrugstore: 35,
+        SkincareStyle.clinical: 33,
       };
       for (final style in SkincareStyle.values) {
         final list = skincareStyleCatalog[style]!;
@@ -56,7 +56,7 @@ void main() {
       );
       expect(
         skincareStyleCatalog[SkincareStyle.clinical]!.last.name,
-        'SkinMedica HA5 Rejuvenating Hydrator',
+        'Neocutis Bio-Cream',
       );
     });
 

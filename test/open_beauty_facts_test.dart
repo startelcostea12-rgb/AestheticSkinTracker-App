@@ -262,10 +262,14 @@ void main() {
       await _pumpLookup(tester, _offlineClient());
       await _submitSearch(tester, 'vanicream');
       expect(find.text('Vanicream Moisturizing Cream'), findsOneWidget);
-      // Three Vanicream products in the built-in list (cream, cleanser,
-      // SPF moisturizer).
+      // Every Vanicream product in the built-in list is shown.
       expect(find.text('Vanicream Gentle Facial Cleanser'), findsOneWidget);
-      expect(find.text('Vanicream · Built-in list'), findsNWidgets(3));
+      expect(
+        find.text('Vanicream · Built-in list'),
+        findsNWidgets(
+          localProductCatalog.where((p) => p.brand == 'Vanicream').length,
+        ),
+      );
       expect(
         tester
             .widget<Text>(find.byKey(const ValueKey('product_search_notice')))
