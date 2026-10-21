@@ -63,7 +63,7 @@ void main() {
 
   group('catalog', () {
     test('every product has a brand, category and known concern tags', () {
-      expect(_all, hasLength(137));
+      expect(_all, hasLength(173));
       expect(
         _all.map((p) => p.name).toSet(),
         hasLength(_all.length),
