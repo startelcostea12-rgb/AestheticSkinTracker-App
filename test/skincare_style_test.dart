@@ -35,10 +35,10 @@ void main() {
     test('curated products per style: the original ten first, then the '
         'added ones', () {
       const counts = {
-        SkincareStyle.korean: 15,
-        SkincareStyle.naturalClean: 13,
-        SkincareStyle.westernDrugstore: 13,
-        SkincareStyle.clinical: 13,
+        SkincareStyle.korean: 17,
+        SkincareStyle.naturalClean: 18,
+        SkincareStyle.westernDrugstore: 18,
+        SkincareStyle.clinical: 17,
       };
       for (final style in SkincareStyle.values) {
         final list = skincareStyleCatalog[style]!;
@@ -56,7 +56,7 @@ void main() {
       );
       expect(
         skincareStyleCatalog[SkincareStyle.clinical]!.last.name,
-        'Revision Skincare DEJ Face Cream',
+        'SkinCeuticals Blemish + Age Defense',
       );
     });
 

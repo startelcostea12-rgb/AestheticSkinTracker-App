@@ -63,7 +63,7 @@ void main() {
 
   group('catalog', () {
     test('every product has a brand, category and known concern tags', () {
-      expect(_all, hasLength(54));
+      expect(_all, hasLength(70));
       expect(
         _all.map((p) => p.name).toSet(),
         hasLength(_all.length),
@@ -178,8 +178,21 @@ void main() {
       });
     });
 
-    test('no match falls back to the general style picks', () {
-      final picks = stylePicksFor({SkincareStyle.clinical}, ['redness']);
+    test('every style has products for every scan concern', () {
+      for (final style in SkincareStyle.values) {
+        for (final tag in styleTagForScanConcern.values) {
+          expect(
+            skincareStyleCatalog[style]!.any((p) => p.concerns.contains(tag)),
+            isTrue,
+            reason: '${style.label} / $tag',
+          );
+        }
+      }
+    });
+
+    test('nothing elevated (or no matching tag) falls back to the general '
+        'style picks', () {
+      final picks = stylePicksFor({SkincareStyle.clinical}, const []);
       expect(picks.isFallback, isTrue);
       expect(
         picks.products.map((p) => p.name),
@@ -187,8 +200,9 @@ void main() {
           SkincareStyle.clinical,
         }, limit: 6).map((p) => p.name),
       );
+      // A tag no product carries also falls back.
       expect(
-        stylePicksFor({SkincareStyle.korean}, const []).isFallback,
+        stylePicksFor({SkincareStyle.korean}, ['not_a_tag']).isFallback,
         isTrue,
       );
     });
