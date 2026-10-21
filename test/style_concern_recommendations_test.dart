@@ -63,7 +63,7 @@ void main() {
 
   group('catalog', () {
     test('every product has a brand, category and known concern tags', () {
-      expect(_all, hasLength(70));
+      expect(_all, hasLength(99));
       expect(
         _all.map((p) => p.name).toSet(),
         hasLength(_all.length),
@@ -136,14 +136,26 @@ void main() {
   });
 
   group('filtering', () {
-    test('matching products first, topped up to 4 with general picks', () {
+    test('matching products first, in catalog order', () {
       final picks = stylePicksFor({SkincareStyle.korean}, ['redness']);
       expect(picks.isFallback, isFalse);
       expect(picks.matchedConcerns, ['redness']);
-      expect(picks.products, hasLength(4));
+      expect(picks.products, hasLength(5));
       expect(picks.products.take(2).map((p) => p.name), [
         'Anua Heartleaf 77% Soothing Toner',
         'Purito Centella Unscented Serum',
+      ]);
+      for (final p in picks.products) {
+        expect(p.concerns, contains('redness'), reason: p.name);
+      }
+    });
+
+    test('fewer than 4 matches are topped up with general picks', () {
+      final picks = stylePicksFor({SkincareStyle.korean}, ['pores']);
+      expect(picks.products, hasLength(4));
+      expect(picks.products.take(2).map((p) => p.name), [
+        'Some By Mi AHA BHA PHA 30 Days Miracle Toner',
+        'Anua Peach 70 Niacinamide Serum',
       ]);
       expect(picks.products.toSet(), hasLength(4), reason: 'no duplicates');
     });
@@ -229,7 +241,8 @@ void main() {
         find.text('Paula’s Choice 2% BHA Liquid Exfoliant'),
         findsOneWidget,
       );
-      expect(find.text('Paula’s Choice · Treatment'), findsOneWidget);
+      expect(find.text('Paula’s Choice · Treatment'), findsNWidgets(2));
+      expect(find.text('Paula’s Choice 1% Retinol Treatment'), findsOneWidget);
       expect(
         find.text('Neutrogena Rapid Wrinkle Repair Retinol'),
         findsOneWidget,
