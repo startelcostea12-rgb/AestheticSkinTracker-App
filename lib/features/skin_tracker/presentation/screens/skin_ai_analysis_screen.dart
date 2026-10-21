@@ -1133,6 +1133,11 @@ const double rednessCheekLockLowValueCeiling = 5.0;
 /// localized_redness values differ by at most this much: the readings agree,
 /// so the side difference did not change the result.
 const double rednessCheekLockMatchingValueTolerance = 1.0;
+
+/// image_quality.redness_branch for a follow-up whose redness is read over
+/// the whole U-zone against the baseline p95 (side "both"); the cheek lock
+/// is not applied when either scan used it.
+const String rednessBranchBaselineP95Anchor = 'baseline_p95_anchor';
 const String cheekSideConventionSubjectAnatomical = 'subject_anatomical';
 const double provisionalBrightnessValueMismatchLimit = 1.0;
 
@@ -1875,10 +1880,25 @@ downgradeRednessTrendForCaptureMismatch({
         baselineValue != null &&
         (currentValue - baselineValue).abs() <=
             rednessCheekLockMatchingValueTolerance;
+    // baseline_p95_anchor (follow-up redness read over the whole U-zone,
+    // side "both") is not tied to one cheek, so a side difference only
+    // means the measurement method changed. Cheek sides are compared only
+    // when both scans used within_cheek_spread. An older payload without
+    // redness_branch counts as anchored when its side is "both" (only that
+    // method reports "both").
+    bool usedBaselineP95Anchor(Map<String, dynamic> quality) =>
+        quality['redness_branch']?.toString().trim() ==
+            rednessBranchBaselineP95Anchor ||
+        quality['redness_cheek_side']?.toString().trim() == 'both';
+    final methodChanged =
+        usedBaselineP95Anchor(currentQuality) ||
+        usedBaselineP95Anchor(baselineQuality);
     if (singleVsBoth && bothLow) {
       cheekLockSkippedLowValues = true;
     } else if (singleVsBoth && valuesMatch) {
       // Matching values: no lock, and no new export field for this skip.
+    } else if (methodChanged) {
+      // Measurement method changed: not a cheek mismatch (no export field).
     } else {
       reasons.add('cheek_mismatch');
     }

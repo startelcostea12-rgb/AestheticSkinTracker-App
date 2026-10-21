@@ -40,10 +40,12 @@ void main() {
     bool? bothCheeksInDeadZone,
     String? region,
     double? redness,
+    String? branch,
   }) => <String, dynamic>{
     if (redness != null)
       'metric_matrix': <String, dynamic>{'localized_redness': redness},
     'image_quality': <String, dynamic>{
+      if (branch != null) 'redness_branch': branch,
       if (region != null) 'localized_redness_mask_kind': region,
       'redness_cheek_side': cheekSide,
       if (cheekSideConvention != null)
@@ -189,24 +191,26 @@ void main() {
         expect(result.trendStatus['localized_redness'], 'stable');
       });
 
-      test('one value above 5.0 still locks', () {
+      // "both" means baseline_p95_anchor: no cheek lock whatever the
+      // values (the low-value flag is only set for the low-value skip).
+      test('one value above 5.0: no cheek lock ("both" is anchored)', () {
         final result = compare(
           baselineSide: 'left',
           currentSide: 'both',
           baselineRedness: 1.43,
           currentRedness: 5.1,
         );
-        expect(result.trendLockReasons['localized_redness'], 'cheek_mismatch');
+        expect(result.rednessLockReasons, isNot(contains('cheek_mismatch')));
         expect(result.cheekLockSkippedLowValues, isFalse);
       });
 
-      test('a missing value still locks', () {
+      test('a missing value: no cheek lock ("both" is anchored)', () {
         final result = compare(
           baselineSide: 'both',
           currentSide: 'left',
           currentRedness: 2.0,
         );
-        expect(result.trendLockReasons['localized_redness'], 'cheek_mismatch');
+        expect(result.rednessLockReasons, isNot(contains('cheek_mismatch')));
         expect(result.cheekLockSkippedLowValues, isFalse);
       });
 
@@ -246,18 +250,15 @@ void main() {
           expect(result.rednessLockReasons, isNot(contains('cheek_mismatch')));
         });
 
-        test('left vs both, 9.3 vs 12.0: cheek_mismatch', () {
+        test('left vs both, 9.3 vs 12.0: no cheek lock (method changed)', () {
           final result = compare(
             baselineSide: 'left',
             currentSide: 'both',
             baselineRedness: 9.3,
             currentRedness: 12.0,
           );
-          expect(
-            result.trendLockReasons['localized_redness'],
-            'cheek_mismatch',
-          );
-          expect(result.trendStatus.containsKey('localized_redness'), isFalse);
+          expect(result.rednessLockReasons, isNot(contains('cheek_mismatch')));
+          expect(result.cheekLockSkippedLowValues, isFalse);
         });
 
         test('left vs right still locks, even with equal values', () {
@@ -1864,5 +1865,84 @@ void main() {
     expect(fields.containsKey('baseline_pose_template'), isFalse);
     expect(fields.containsKey('guide_type'), isFalse);
     expect(fields.containsKey('baseline_guide_type'), isFalse);
+  });
+
+  group('cheek lock only when both scans used within_cheek_spread', () {
+    Map<String, dynamic> scan({
+      required String branch,
+      required String side,
+      required double redness,
+    }) => rednessPayload(
+      branch: branch,
+      cheekSide: side,
+      redness: redness,
+      region: side == 'both' ? 'u_zone' : '${side}_cheek',
+      frameP95: const [10.0, 10.5, 10.2],
+      p10: 4.0,
+      p95: 10.0,
+    );
+
+    ({
+      Map<String, String> trendStatus,
+      Map<String, double> trendDeltas,
+      Map<String, String> trendLockReasons,
+      Set<String> rednessLockReasons,
+      bool cheekLockSkippedLowValues,
+      bool regionLockSkippedLowValues,
+    })
+    run(Map<String, dynamic> baseline, Map<String, dynamic> current) =>
+        downgradeRednessTrendForCaptureMismatch(
+          trendStatus: const {'localized_redness': 'stable'},
+          trendDeltas: const {'localized_redness': 0.0},
+          trendLockReasons: const {},
+          baselinePayload: baseline,
+          currentPayload: current,
+        );
+
+    test('within_cheek_spread "left" baseline vs baseline_p95_anchor "both" '
+        '(the 18/21 Oct scans): no cheek_mismatch', () {
+      for (final current in const [0.83, 4.33, 9.3, 14.0]) {
+        final result = run(
+          scan(branch: 'within_cheek_spread', side: 'left', redness: 9.3),
+          scan(branch: 'baseline_p95_anchor', side: 'both', redness: current),
+        );
+        expect(
+          result.rednessLockReasons,
+          isNot(contains('cheek_mismatch')),
+          reason: '$current',
+        );
+        expect(
+          result.trendLockReasons['localized_redness'],
+          isNot('cheek_mismatch'),
+          reason: '$current',
+        );
+      }
+    });
+
+    test('anchored by redness_branch even if a side label is single', () {
+      final result = run(
+        scan(branch: 'within_cheek_spread', side: 'left', redness: 9.3),
+        scan(branch: 'baseline_p95_anchor', side: 'right', redness: 14.0),
+      );
+      expect(result.rednessLockReasons, isNot(contains('cheek_mismatch')));
+    });
+
+    test('both within_cheek_spread with different sides still locks', () {
+      final result = run(
+        scan(branch: 'within_cheek_spread', side: 'left', redness: 9.3),
+        scan(branch: 'within_cheek_spread', side: 'right', redness: 9.3),
+      );
+      expect(result.trendLockReasons['localized_redness'], 'cheek_mismatch');
+      expect(result.trendStatus.containsKey('localized_redness'), isFalse);
+    });
+
+    test('the low-value skip still sets its flag', () {
+      final result = run(
+        scan(branch: 'within_cheek_spread', side: 'left', redness: 1.43),
+        scan(branch: 'baseline_p95_anchor', side: 'both', redness: 3.13),
+      );
+      expect(result.rednessLockReasons, isNot(contains('cheek_mismatch')));
+      expect(result.cheekLockSkippedLowValues, isTrue);
+    });
   });
 }
