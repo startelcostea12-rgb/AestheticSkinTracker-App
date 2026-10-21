@@ -44,6 +44,7 @@ import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:aesthetic_skin_tracker/utils/upload_gate.dart';
 import 'package:aesthetic_skin_tracker/utils/free_scan_limit.dart';
+import 'package:aesthetic_skin_tracker/widgets/consistent_setup_guide.dart';
 import 'package:aesthetic_skin_tracker/utils/untrusted_trend_metrics.dart';
 import 'package:aesthetic_skin_tracker/utils/comparable_pair_pdf.dart';
 import 'package:aesthetic_skin_tracker/utils/last_comparable_pair.dart';
@@ -80,7 +81,7 @@ class SkinAiAnalysisScreen extends StatefulWidget {
 
 enum _Stage { capture, analyzing, results }
 
-enum _DebugExportAction { burstLog, scanData, comparisonPdf }
+enum _DebugExportAction { setupGuide, burstLog, scanData, comparisonPdf }
 
 class MultiFrameAnalysisAggregate {
   const MultiFrameAnalysisAggregate({
@@ -3071,6 +3072,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   Future<void> _pickFromCamera() async {
     if (await openPaywallIfFreeScanCapReached(context)) return;
     if (!mounted) return;
+    // First face scan (scans start on the Front pose): the one-time
+    // Consistent Setup guide, before the camera opens.
+    if (!_isBodyProcedure) {
+      await showConsistentSetupGuideIfFirstTime(context);
+      if (!mounted) return;
+    }
     try {
       final selectedProcedureId = (_selectedProcedureId ?? '').trim();
       final checklistToken = await frontBaselineResetToken(
@@ -4378,6 +4385,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               icon: const Icon(Icons.more_vert_rounded),
               onSelected: (action) async {
                 switch (action) {
+                  case _DebugExportAction.setupGuide:
+                    await showConsistentSetupGuide(buttonContext);
                   case _DebugExportAction.burstLog:
                     await _exportBurstLuminanceLog(buttonContext);
                   case _DebugExportAction.scanData:
@@ -4387,6 +4396,17 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 }
               },
               itemBuilder: (_) => const [
+                PopupMenuItem(
+                  key: ValueKey('menu_setup_guide'),
+                  value: _DebugExportAction.setupGuide,
+                  child: Row(
+                    children: [
+                      Icon(Icons.tune_rounded, size: 18),
+                      SizedBox(width: 10),
+                      Text('Setup Guide'),
+                    ],
+                  ),
+                ),
                 PopupMenuItem(
                   value: _DebugExportAction.burstLog,
                   child: Row(
