@@ -125,7 +125,7 @@ final List<LookupProduct> localProductCatalog = [
     for (final p in products)
       LookupProduct(
         name: p.name,
-        brand: brandForProductName(p.name),
+        brand: p.brand,
         description: p.description,
         style: p.style,
       ),

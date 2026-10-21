@@ -32,19 +32,31 @@ void main() {
   });
 
   group('catalog and recommendations', () {
-    test('ten curated products per style', () {
+    test('curated products per style: the original ten first, then the '
+        'added ones', () {
+      const counts = {
+        SkincareStyle.korean: 15,
+        SkincareStyle.naturalClean: 13,
+        SkincareStyle.westernDrugstore: 13,
+        SkincareStyle.clinical: 13,
+      };
       for (final style in SkincareStyle.values) {
         final list = skincareStyleCatalog[style]!;
-        expect(list, hasLength(10), reason: style.label);
+        expect(list, hasLength(counts[style]), reason: style.label);
         expect(list.every((p) => p.style == style), isTrue);
       }
       expect(
         skincareStyleCatalog[SkincareStyle.korean]!.first.name,
         'COSRX Advanced Snail 96 Mucin Power Essence',
       );
+      // The original tenth Clinical product is still in place.
       expect(
-        skincareStyleCatalog[SkincareStyle.clinical]!.last.description,
+        skincareStyleCatalog[SkincareStyle.clinical]![9].description,
         'Vitamin C serum',
+      );
+      expect(
+        skincareStyleCatalog[SkincareStyle.clinical]!.last.name,
+        'Revision Skincare DEJ Face Cream',
       );
     });
 

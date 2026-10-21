@@ -63,11 +63,21 @@ void main() {
 
   group('catalog', () {
     test('every product has a brand, category and known concern tags', () {
-      expect(_all, hasLength(40));
+      expect(_all, hasLength(54));
+      expect(
+        _all.map((p) => p.name).toSet(),
+        hasLength(_all.length),
+        reason: 'no duplicate products',
+      );
       for (final p in _all) {
         expect(p.brand, isNotEmpty, reason: p.name);
-        // Same brand as the product lookup derives from the name.
-        expect(p.brand, brandForProductName(p.name), reason: p.name);
+        // The product lookup shows the catalog's brand; the name-prefix
+        // fallback never disagrees with it.
+        expect(productNamed(p.name)?.brand, p.brand, reason: p.name);
+        final prefixBrand = brandForProductName(p.name);
+        if (prefixBrand != null) {
+          expect(prefixBrand, p.brand, reason: p.name);
+        }
         expect(p.reason, p.description, reason: p.name);
         expect(
           styleConcernTags.containsAll(p.concerns),
