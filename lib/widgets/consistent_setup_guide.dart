@@ -25,8 +25,8 @@ const List<({IconData icon, String text})> consistentSetupPoints = [
   (
     icon: Icons.light_mode_outlined,
     text:
-        'Use the same daylight lamp in front of you at eye level, with the '
-        'blinds closed.',
+        'Use the same daylight lamp (5000–6500K) in front of you at eye '
+        'level, with the blinds closed.',
   ),
   (
     icon: Icons.straighten_rounded,
