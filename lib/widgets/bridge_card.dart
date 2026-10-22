@@ -420,22 +420,6 @@ class BridgeCard extends StatelessWidget {
     return hasTrendStatus || hasBaselineMatrix || payload.containsKey('initial_baseline');
   }
 
-  String _metricPath(
-    Map<String, dynamic> payload,
-    Map<String, dynamic> nestedLuxe,
-    String metricKey, {
-    required bool isBaseline,
-  }) {
-    final extractionPathMap = isBaseline
-        ? _asMap(payload['baseline_metric_extraction_paths'])
-        : _asMap(payload['metric_extraction_paths']);
-    final nestedMap = isBaseline
-        ? _asMap(nestedLuxe['baseline_metric_extraction_paths'])
-        : _asMap(nestedLuxe['metric_extraction_paths']);
-    final path = extractionPathMap[metricKey]?.toString() ?? nestedMap[metricKey]?.toString() ?? '';
-    return path.trim();
-  }
-
   models.Procedure? _inferProcedureFromScans(List<ScanHistoryEntry> scans) {
     final sorted = List<ScanHistoryEntry>.from(scans)
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
