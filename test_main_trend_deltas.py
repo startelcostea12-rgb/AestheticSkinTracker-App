@@ -13,8 +13,6 @@ from main import (
     _body_trend_lock_reason,
     _baseline_formula_versions_for_redness_reference,
     _compute_body_silhouette_trend,
-    _coalesce_personal_lab_baseline,
-    _compute_redness_from_personal_baseline,
     _compute_trend_deltas,
     _compute_trend_lock_reasons,
     _compute_trend_statuses,
@@ -847,24 +845,6 @@ class ComputeTrendDeltasTests(unittest.TestCase):
         )
 
         self.assertEqual(deltas["skin_tone_radiance_evenness"], 0.0)
-
-    def test_personal_lab_baseline_is_used_instead_of_neutral_128(self) -> None:
-        baseline = _coalesce_personal_lab_baseline({
-            "a_mean": 110.0,
-            "b_mean": 118.0,
-            "a_p95": 126.0,
-            "b_p95": 124.0,
-        })
-        current = {
-            "a_mean": 128.0,
-            "b_mean": 121.0,
-            "a_p95": 138.0,
-            "b_p95": 126.0,
-        }
-
-        redness = _compute_redness_from_personal_baseline(current, baseline)
-        self.assertAlmostEqual(redness, 28.05, places=2)
-        self.assertEqual(_compute_redness_from_personal_baseline({"a_p95": 126.0}, {}), 0.0)
 
     def test_request_roi_cache_reuses_masks_within_single_analysis(self) -> None:
         cache = main._RequestRoiCache()

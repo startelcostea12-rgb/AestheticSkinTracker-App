@@ -2563,20 +2563,6 @@ def _is_missing_metric_value(value: float | None) -> bool:
     return value is None or not math.isfinite(value)
 
 
-def is_redness_unset(current_value):
-    """True when localized_redness is missing/invalid/non-positive and is
-    therefore eligible for the mean-based cheek-ROI fallback in
-    _compute_canonical_patch_metrics to fill in. This is the exact guard
-    that was broken before: a valid canonical value must make this False,
-    so the fallback block (gated on this being True) never overwrites it.
-    """
-    return (
-        current_value is None
-        or not math.isfinite(current_value)
-        or current_value <= 0.0
-    )
-
-
 CHEEK_SIDE_CONVENTION = "subject_anatomical"
 
 
@@ -3396,11 +3382,6 @@ def _run_yolo_detection_stats(bgr_face: np.ndarray) -> tuple[int, float]:
     return int(count), float(yolo_max_conf)
 
 
-def _run_yolo_lesion_count(bgr_face: np.ndarray) -> int:
-    count, _ = _run_yolo_detection_stats(bgr_face)
-    return count
-
-
 # wrinkle_load (v3): the face patch is smoothed with a fixed Gaussian before
 # edge detection, so a slight change in focus or sharpening (which the
 # smoothing already dominates) no longer flips fine-texture edges on and
@@ -3504,7 +3485,6 @@ def _compute_canonical_patch_metrics(
     skin_mask_pixels = int(cv2.countNonZero(skin_mask))
     skin_mask_failed = skin_mask_pixels <= 0
     raw_components["full_face_skin_pixels"] = float(full_face_pixels)
-    raw_components["skin_mask_pixels"] = float(skin_mask_pixels)
 
     left_cheek = _as_binary_mask(regions.get("left_cheek", np.zeros((h, w), dtype=np.uint8)), (h, w))
     right_cheek = _as_binary_mask(regions.get("right_cheek", np.zeros((h, w), dtype=np.uint8)), (h, w))
@@ -3643,17 +3623,12 @@ def _compute_canonical_patch_metrics(
     )
 
     fallback_used = large_roi_fallback_used
-    bbox_fallback_used = False
 
-    raw_components["primary_t_zone_skin_pixels_before_fix"] = float(primary_t_zone_pixels_before_fix)
-    raw_components["primary_t_zone_after_expand_pixels"] = float(tzone_meta.get("after_expand_pixels", 0))
-    raw_components["primary_t_zone_after_skin_pixels"] = float(tzone_meta.get("after_skin_pixels", 0))
     raw_components["tzone_landmark_fallback_used"] = 1.0 if tzone_landmark_fallback_used else 0.0
     raw_components["tzone_face_fallback_used"] = 1.0 if tzone_face_fallback_used else 0.0
     raw_components["tzone_primary_used"] = 1.0 if tzone_primary_used else 0.0
 
     raw_components["primary_cheek_roi_pixels"] = float(primary_cheek_pixels)
-    raw_components["primary_cheek_skin_roi_pixels"] = float(primary_cheek_skin_pixels)
     raw_components["cheek_primary_usable"] = 1.0 if cheek_primary_usable else 0.0
     raw_components["cheek_expand_no_skin_used"] = 1.0 if cheek_expand_no_skin_used else 0.0
     raw_components["primary_t_zone_skin_pixels"] = float(primary_t_zone_pixels)
@@ -3661,7 +3636,6 @@ def _compute_canonical_patch_metrics(
     raw_components["primary_pigment_roi_pixels"] = float(primary_pigment_pixels)
     raw_components["fallback_used"] = 1.0 if fallback_used else 0.0
     raw_components["skin_mask_failed"] = 1.0 if skin_mask_failed else 0.0
-    raw_components["bbox_fallback_used"] = 1.0 if bbox_fallback_used else 0.0
     fallback_roi_pixels = int(cv2.countNonZero(texture_mask)) if fallback_used else 0
     raw_components["roi_after_fallback_pixels"] = float(fallback_roi_pixels)
     raw_components["fallback_texture_roi_pixels"] = float(fallback_roi_pixels)
@@ -3670,10 +3644,6 @@ def _compute_canonical_patch_metrics(
     raw_components["localized_redness_cheek_primary_used"] = 1.0 if redness_roi_source == "cheek_primary" else 0.0
     raw_components["localized_redness_cheek_primary_no_skin_mask_used"] = 1.0 if redness_roi_source == "cheek_primary_no_skin_mask" else 0.0
     raw_components["localized_redness_full_face_fallback_used"] = 1.0 if redness_roi_source == "full_face_fallback" else 0.0
-    raw_components["localized_redness_primary_used"] = 1.0 if redness_roi_source == "cheek_primary" else 0.0
-    raw_components["localized_redness_cheek_expand_no_skin_used"] = 1.0 if redness_roi_source == "cheek_primary_no_skin_mask" else 0.0
-    raw_components["localized_redness_bbox_fallback_used"] = 1.0 if (redness_roi_source == "full_face_fallback" and bbox_fallback_used) else 0.0
-    raw_components["localized_redness_large_fallback_used"] = 1.0 if (redness_roi_source == "full_face_fallback" and not bbox_fallback_used) else 0.0
     raw_components["pigment_cheek_primary_used"] = 1.0 if pigment_roi_source == "cheek_primary" else 0.0
     raw_components["pigment_cheek_primary_no_skin_mask_used"] = 1.0 if pigment_roi_source == "cheek_primary_no_skin_mask" else 0.0
     raw_components["pigment_full_face_fallback_used"] = 1.0 if pigment_roi_source == "full_face_fallback" else 0.0
@@ -3681,7 +3651,6 @@ def _compute_canonical_patch_metrics(
     raw_components["texture_forehead_skin_used"] = 1.0 if texture_mask_kind == "forehead_skin" else 0.0
     raw_components["texture_u_zone_used"] = 1.0 if texture_mask_kind == "u_zone" else 0.0
     raw_components["texture_cheek_expand_no_skin_used"] = 1.0 if texture_roi_source == "cheek_expand_no_skin" else 0.0
-    raw_components["texture_bbox_fallback_used"] = 1.0 if texture_roi_source == "approximate_face_bbox" else 0.0
     raw_components["texture_large_fallback_used"] = 1.0 if texture_roi_source == "large_roi_fallback" else 0.0
 
     def _conf(pixel_count: int) -> str:
@@ -3702,14 +3671,6 @@ def _compute_canonical_patch_metrics(
 
     cheek_pixels = int(cv2.countNonZero(cheek_mask))
     raw_components["localized_redness_roi_pixels"] = float(cheek_pixels)
-    if cheek_pixels > 0:
-        cheek_a = a_channel[cheek_mask > 0]
-        mean_a = float(np.mean(cheek_a)) if cheek_a.size > 0 else 128.0
-        redness = ((mean_a - 128.0) / 30.0) * 100.0
-        raw_components["mean_cheek_redness_proxy"] = round(
-            float(np.clip(redness, 0.0, 100.0)),
-            1,
-        )
     confidence["localized_redness"] = _conf(cheek_pixels)
     if cheek_expand_no_skin_used and confidence["localized_redness"] == "high":
         confidence["localized_redness"] = "medium"
@@ -3771,15 +3732,6 @@ def _compute_canonical_patch_metrics(
         raw_components["texture_var_p80"] = round(float(var_p80), 4)
         raw_components["texture_lap_p80"] = round(float(lap_p80), 4)
         raw_components["texture_spread"] = round(float(texture_spread), 4)
-        raw_components["texture_n_energy"] = round(float(n_energy), 4)
-        raw_components["texture_n_var"] = round(float(n_var), 4)
-        raw_components["texture_n_lap"] = round(float(n_lap), 4)
-        raw_components["texture_n_spread"] = round(float(n_spread), 4)
-        raw_components["texture_roughness_index"] = round(float(roughness_index), 4)
-        raw_components["texture_smoothness_value"] = round(
-            float(matrix.get("texture_smoothness", 0.0)),
-            4,
-        )
     else:
         confidence["texture_smoothness"] = "low"
 
@@ -3894,7 +3846,6 @@ def _compute_canonical_patch_metrics(
         points,
         full_face_skin_mask,
     )
-    raw_components["chin_pore_roi_pixels"] = float(chin_pore_roi_pixels)
     raw_components["chin_pore_visibility_mask_kind"] = "chin_pore"
     raw_components["chin_pore_visibility_mask_pixels"] = float(chin_pore_roi_pixels)
     if (
@@ -3922,8 +3873,6 @@ def _compute_canonical_patch_metrics(
             else:
                 chin_confidence = _pore_signal_conf(chin_pore_roi_pixels, chin_spread)
                 confidence["chin_pore_visibility"] = chin_confidence
-                raw_components["chin_pore_hf_energy"] = round(float(chin_response_mean), 4)
-                raw_components["chin_pore_spread"] = round(float(chin_spread), 4)
                 if chin_confidence != "low":
                     pores = 100.0 / (1.0 + math.exp(-(chin_response_mean - 7.5) / 1.9))
                     matrix["chin_pore_visibility"] = round(float(np.clip(pores, 0.0, 100.0)), 1)
@@ -3956,8 +3905,6 @@ def _compute_canonical_patch_metrics(
         )
 
     raw_components["primary_pore_roi_pixels"] = float(pore_roi_pixels)
-    raw_components["fallback_pore_roi_pixels"] = 0.0
-    raw_components["pore_fallback_used"] = 0.0
 
     wrinkle_pixels = int(cv2.countNonZero(wrinkle_mask))
     raw_components["wrinkle_roi_pixels"] = float(wrinkle_pixels)
@@ -4562,18 +4509,12 @@ def _compute_metric_extraction_paths(
     metric_keys: list[str],
 ) -> Dict[str, str]:
     fallback_used = bool(raw_components.get("fallback_used", 0.0) > 0.5)
-    bbox_fallback_used = bool(raw_components.get("bbox_fallback_used", 0.0) > 0.5)
-    pore_fallback_used = bool(raw_components.get("pore_fallback_used", 0.0) > 0.5)
 
     out: Dict[str, str] = {}
     for key in metric_keys:
         status = metric_status.get(key, "unavailable")
         if status != "computed":
             out[key] = "skipped"
-            continue
-
-        if key == "pore_visibility" and pore_fallback_used:
-            out[key] = "fallback"
             continue
 
         if key == "sebum_excess_oil_gloss":
@@ -4594,14 +4535,8 @@ def _compute_metric_extraction_paths(
                 out[key] = "cheek_primary_no_skin_mask"
             elif bool(raw_components.get("localized_redness_full_face_fallback_used", 0.0) > 0.5):
                 out[key] = "full_face_fallback"
-            elif bool(raw_components.get("localized_redness_primary_used", 0.0) > 0.5):
-                out[key] = "cheek_primary"
-            elif bool(raw_components.get("localized_redness_bbox_fallback_used", 0.0) > 0.5):
-                out[key] = "full_face_fallback"
-            elif bool(raw_components.get("localized_redness_large_fallback_used", 0.0) > 0.5):
-                out[key] = "full_face_fallback"
             else:
-                out[key] = "full_face_fallback" if (fallback_used or bbox_fallback_used) else "cheek_primary"
+                out[key] = "full_face_fallback" if fallback_used else "cheek_primary"
             continue
 
         if key == "pigment_load":
@@ -4612,7 +4547,7 @@ def _compute_metric_extraction_paths(
             elif bool(raw_components.get("pigment_full_face_fallback_used", 0.0) > 0.5):
                 out[key] = "full_face_fallback"
             else:
-                out[key] = "full_face_fallback" if (fallback_used or bbox_fallback_used) else "cheek_primary"
+                out[key] = "full_face_fallback" if fallback_used else "cheek_primary"
             continue
 
         if key == "texture_smoothness":
@@ -4623,12 +4558,10 @@ def _compute_metric_extraction_paths(
                 out[key] = "laplacian_fallback"
             elif bool(raw_components.get("texture_primary_used", 0.0) > 0.5):
                 out[key] = "primary_roi"
-            elif bool(raw_components.get("texture_bbox_fallback_used", 0.0) > 0.5):
-                out[key] = "approximate_face_bbox"
             elif bool(raw_components.get("texture_large_fallback_used", 0.0) > 0.5):
                 out[key] = "large_roi_fallback"
             else:
-                out[key] = "fallback" if (fallback_used or bbox_fallback_used) else "primary_roi"
+                out[key] = "fallback" if fallback_used else "primary_roi"
             continue
 
         if key == "wrinkle_load":
@@ -4640,24 +4573,12 @@ def _compute_metric_extraction_paths(
                 out[key] = "large_roi_fallback"
             elif bool(raw_components.get("texture_laplacian_fallback_used", 0.0) > 0.5):
                 out[key] = "laplacian_fallback"
-            elif bool(raw_components.get("texture_bbox_fallback_used", 0.0) > 0.5):
-                out[key] = "approximate_face_bbox"
             else:
-                out[key] = "large_roi_fallback" if (fallback_used or bbox_fallback_used) else "primary_roi"
+                out[key] = "large_roi_fallback" if fallback_used else "primary_roi"
             continue
 
         if key == "breakout_activity":
             out[key] = "full_face_yolo"
-            continue
-
-        if key in {
-            "localized_redness",
-            "texture_smoothness",
-            "pigment_load",
-            "wrinkle_load",
-            "breakout_activity",
-        } and (fallback_used or bbox_fallback_used):
-            out[key] = "fallback"
             continue
 
         out[key] = "primary_roi"
@@ -5105,54 +5026,6 @@ def _coalesce_personal_lab_baseline(baseline: Dict[str, Any] | None) -> Dict[str
                 output[canonical] = value
                 break
     return output
-
-
-def _compute_redness_from_personal_baseline(
-    current_values: Dict[str, Any],
-    baseline: Dict[str, float],
-) -> float:
-    if not baseline:
-        return 0.0
-
-    def _pick(*keys: str) -> float | None:
-        for key in keys:
-            value = safe_float(current_values.get(key))
-            if value is not None:
-                return float(value)
-        return None
-
-    signal = _pick("a_p95", "p95_a", "a_mean", "mean_a")
-    reference = _pick_personal_baseline_reference(baseline)
-    if signal is None or reference is None:
-        return 0.0
-    effective_delta = max(
-        0.0,
-        (signal - reference) - LOCALIZED_REDNESS_FOLLOWUP_DEAD_ZONE_A_UNITS,
-    )
-    return float(
-        np.clip(
-            effective_delta * LOCALIZED_REDNESS_FOLLOWUP_MULTIPLIER,
-            0.0,
-            100.0,
-        )
-    )
-
-
-def _pick_personal_baseline_reference(baseline: Dict[str, float]) -> float | None:
-    for key in (
-        "a_p95",
-        "p95_a",
-        "a_star_p95",
-        "redness_a_p95",
-        "a_mean",
-        "mean_a",
-        "a_star_mean",
-        "redness_a_mean",
-    ):
-        value = safe_float(baseline.get(key))
-        if value is not None:
-            return float(value)
-    return None
 
 
 def _resolve_personal_lab_ctx(baseline_matrix: Dict[str, Any] | None) -> Dict[str, float]:
@@ -6496,9 +6369,6 @@ def analyze_skin_patch(
             if key.startswith("wrinkle_region_box_")
         },
     }
-    raw_components["pore_contraction_roi_pixels"] = float(
-        pore_contraction_roi_pixels
-    )
 
     supplemental_confidence = {
         "sebum_excess_oil_gloss": _conf_from_pixels_and_value(
@@ -6574,16 +6444,6 @@ def analyze_skin_patch(
             "medium",
         )
 
-    raw_components["skin_coverage_ratio"] = round(float(skin_ratio), 4)
-    raw_components["primary_landmark_count"] = float(primary_landmark_count)
-    raw_components["normalized_landmark_count"] = float(norm_landmark_count)
-    if baseline_ssim is not None:
-        raw_components["baseline_ssim"] = round(float(baseline_ssim), 4)
-        if baseline_ssim_face is not None:
-            raw_components["baseline_ssim_face"] = round(float(baseline_ssim_face), 4)
-        if baseline_ssim_global is not None:
-            raw_components["baseline_ssim_global"] = round(float(baseline_ssim_global), 4)
-        raw_components["baseline_landmark_count"] = float(baseline_landmark_count)
 
     face_count = 1 if min(primary_landmark_count, norm_landmark_count) > 0 else 0
     roi_after_fallback_pixels = int(
@@ -6781,8 +6641,6 @@ def analyze_skin_patch(
             1,
         )
 
-    fallback_used = locals().get("fallback_used", False)
-    bbox_fallback_used = locals().get("bbox_fallback_used", False)
     pigment_roi_pixels = int(raw_components.get("pigment_roi_pixels", 0.0))
     force_metric_roi_usable: Dict[str, bool] = {
         "localized_redness": redness_roi_pixels >= 500,
@@ -6847,9 +6705,7 @@ def analyze_skin_patch(
     skin_mask_failed_path = bool(raw_components.get("skin_mask_failed", 0.0) > 0.5)
     cheek_expand_no_skin_path = bool(raw_components.get("cheek_expand_no_skin_used", 0.0) > 0.5)
     radiance_weak_or_fallback_path = bool(
-        fallback_used
-        or bbox_fallback_used
-        or skin_mask_failed_path
+        skin_mask_failed_path
         or cheek_expand_no_skin_path
         or skin_intersected_full_face_pixels < 3000
     )
@@ -7092,23 +6948,6 @@ def analyze_skin_patch(
     normalized_baseline_matrix = _normalize_metric_payload_values(
         baseline_matrix or {}
     )
-    personal_lab_baseline = _coalesce_personal_lab_baseline(baseline_matrix or {})
-    current_lab_reference = {
-        "a_mean": float(np.mean(a_channel)) if a_channel.size > 0 else 128.0,
-        "b_mean": float(np.mean(lab[:, :, 2])) if lab.size > 0 else 128.0,
-        "a_p95": float(np.percentile(a_channel, 95)) if a_channel.size > 0 else 128.0,
-        "b_p95": float(np.percentile(lab[:, :, 2], 95)) if lab.size > 0 else 128.0,
-    }
-    if personal_lab_baseline:
-        baseline_redness = _compute_redness_from_personal_baseline(
-            current_lab_reference,
-            personal_lab_baseline,
-        )
-        if baseline_redness > 0.0:
-            zone_metrics["localized_redness"] = round(
-                float(np.clip(baseline_redness, 0.0, 100.0)),
-                1,
-            )
     metric_extraction_paths = _compute_metric_extraction_paths(
         metric_status,
         raw_components,
@@ -7382,9 +7221,8 @@ def analyze_skin_patch(
     logger.info("METRICS emitted_keys=%s", emitted_metric_keys)
     logger.info("METRICS omitted_keys=%s", omitted_metric_reasons)
     logger.info(
-        "METRICS roi_debug skin_mask_failed=%s bbox_fallback_used=%s roi_after_fallback=%d primary_roi_pixels={cheek:%d,tzone:%d,texture:%d,pigment:%d,pore:%d,breakout:%d} fallback_used=%s fallback_roi_pixels={texture:%d,pigment:%d,pore:%d,breakout:%d} smoothness=%s emitted_keys=%s emitted_paths=%s matrix_keys=%s",
+        "METRICS roi_debug skin_mask_failed=%s roi_after_fallback=%d primary_roi_pixels={cheek:%d,tzone:%d,texture:%d,pigment:%d,pore:%d,breakout:%d} fallback_used=%s fallback_roi_pixels={texture:%d,pigment:%d,breakout:%d} smoothness=%s emitted_keys=%s emitted_paths=%s matrix_keys=%s",
         bool(raw_components.get("skin_mask_failed", 0.0) > 0.5),
-        bool(raw_components.get("bbox_fallback_used", 0.0) > 0.5),
         int(raw_components.get("roi_after_fallback_pixels", 0.0)),
         int(raw_components.get("primary_cheek_roi_pixels", 0.0)),
         int(raw_components.get("primary_t_zone_skin_pixels", 0.0)),
@@ -7395,7 +7233,6 @@ def analyze_skin_patch(
         bool(raw_components.get("fallback_used", 0.0) > 0.5),
         int(raw_components.get("fallback_texture_roi_pixels", 0.0)),
         int(raw_components.get("fallback_pigment_roi_pixels", 0.0)),
-        int(raw_components.get("fallback_pore_roi_pixels", 0.0)),
         int(raw_components.get("fallback_breakout_roi_pixels", 0.0)),
         metric_matrix.get("texture_smoothness"),
         emitted_metric_keys,
@@ -7522,8 +7359,6 @@ def analyze_skin_patch(
             return "u_zone"
         if path in {"cheek_primary", "cheek_primary_no_skin_mask", "cheek_expand_no_skin"}:
             return "cheek_primary"
-        if path == "fallback" and metric_key == "pore_visibility":
-            return "tzone_pore"
         if path in {"primary_roi", "full_face_fallback", "large_roi_fallback", "approximate_face_bbox", "laplacian_fallback"}:
             return "face_skin"
         return None

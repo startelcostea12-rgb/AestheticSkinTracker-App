@@ -185,8 +185,9 @@ def test_pore_visibility_is_omitted_below_5000_pixels_without_fallback():
 
     assert "pore_visibility" not in matrix
     assert raw["primary_pore_roi_pixels"] == 4999
-    assert raw["fallback_pore_roi_pixels"] == 0
-    assert raw["pore_fallback_used"] == 0
+    # There is no pore fallback ROI: nothing else is emitted for it.
+    assert "fallback_pore_roi_pixels" not in raw
+    assert "pore_fallback_used" not in raw
 
 
 def test_chin_pore_visibility_is_separate_from_tzone_and_omitted_under_5000_pixels():

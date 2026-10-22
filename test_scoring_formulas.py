@@ -2,8 +2,8 @@
 
 These target the pure functions extracted from _compute_zone_based_metrics
 and _compute_canonical_patch_metrics (compute_localized_redness_and_rosacea,
-compute_pigment_load, compute_under_eye_dark_circle_density,
-is_redness_unset) — plain scalar in, scalar out, no image/ROI pipeline
+compute_pigment_load, compute_under_eye_dark_circle_density)
+— plain scalar in, scalar out, no image/ROI pipeline
 involved. Each test locks in a specific, already-verified fix so a future
 edit to these formulas can't silently regress it.
 """
@@ -32,7 +32,6 @@ from main import (
     compute_localized_redness_and_rosacea,
     compute_pigment_load,
     compute_under_eye_dark_circle_density,
-    is_redness_unset,
 )
 
 
@@ -290,72 +289,3 @@ class TestUnderEyeDarkCircleDensity:
     def test_output_is_clipped_to_0_100(self):
         assert compute_under_eye_dark_circle_density(-10.0) == 0.0
         assert compute_under_eye_dark_circle_density(1000.0) == 100.0
-
-
-# ── 4. redness canonical-value-wins-over-fallback guard ─────────────────
-
-
-class TestRednessUnsetGuard:
-    def test_a_valid_positive_canonical_value_is_not_unset(self):
-        # This is the exact scenario that was broken before: a valid,
-        # already-computed canonical localized_redness value must make
-        # redness_unset False, so the mean-based cheek-ROI fallback block
-        # (gated entirely on redness_unset being True) is never entered
-        # and therefore can never overwrite it.
-        assert is_redness_unset(42.5) is False
-        assert is_redness_unset(0.1) is False
-        assert is_redness_unset(100.0) is False
-
-    def test_none_is_unset(self):
-        assert is_redness_unset(None) is True
-
-    def test_zero_is_unset(self):
-        # Matches _compute_zone_based_metrics's own "unset" convention:
-        # a canonical value of exactly 0.0 is treated as never having been
-        # computed, not as a genuine "no redness detected" reading.
-        assert is_redness_unset(0.0) is True
-
-    def test_negative_is_unset(self):
-        assert is_redness_unset(-5.0) is True
-
-    def test_nan_is_unset(self):
-        assert is_redness_unset(float("nan")) is True
-
-    def test_infinity_is_unset(self):
-        assert is_redness_unset(float("inf")) is True
-
-    def test_fallback_gating_end_to_end_with_a_valid_canonical_value(self):
-        # Mirrors the real call site's exact branch structure:
-        #   if redness_unset and roi_pixels >= 500: <fallback overwrites>
-        #   elif redness_unset: <mark unavailable>
-        #   (else: canonical_metric_matrix is left untouched)
-        canonical_metric_matrix = {"localized_redness": 42.5}
-        redness_current = canonical_metric_matrix.get("localized_redness")
-        redness_unset = is_redness_unset(redness_current)
-        redness_roi_pixels = 5000  # plenty of pixels available for the fallback
-
-        ran_fallback = False
-        if redness_unset and redness_roi_pixels >= 500:
-            ran_fallback = True
-            canonical_metric_matrix["localized_redness"] = 99.9  # would-be overwrite
-        elif redness_unset:
-            canonical_metric_matrix["localized_redness"] = None
-
-        assert ran_fallback is False
-        assert canonical_metric_matrix["localized_redness"] == 42.5
-
-    def test_fallback_gating_end_to_end_with_an_unset_canonical_value(self):
-        # Sanity check the opposite branch still works: when there is no
-        # valid canonical value, the fallback IS allowed to run.
-        canonical_metric_matrix = {"localized_redness": 0.0}
-        redness_current = canonical_metric_matrix.get("localized_redness")
-        redness_unset = is_redness_unset(redness_current)
-        redness_roi_pixels = 5000
-
-        ran_fallback = False
-        if redness_unset and redness_roi_pixels >= 500:
-            ran_fallback = True
-            canonical_metric_matrix["localized_redness"] = 55.0
-
-        assert ran_fallback is True
-        assert canonical_metric_matrix["localized_redness"] == 55.0

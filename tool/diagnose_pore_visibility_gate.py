@@ -69,8 +69,6 @@ def run_one(path: Path) -> dict:
         and abs(raw_components.get("pore_pose_yaw", 999.0)) <= 18.0,
         "pore_roi_pixels": raw_components.get("pores_roi_pixels"),
         "primary_pore_roi_pixels": raw_components.get("primary_pore_roi_pixels"),
-        "fallback_pore_roi_pixels": raw_components.get("fallback_pore_roi_pixels"),
-        "pore_fallback_used": bool(raw_components.get("pore_fallback_used", 0.0) > 0.5),
         "pore_hf_energy": raw_components.get("pore_hf_energy"),
         "pore_spread": raw_components.get("pore_spread"),
         "pore_confidence": confidence.get("pore_visibility"),
