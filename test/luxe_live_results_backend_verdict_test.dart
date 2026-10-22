@@ -1340,14 +1340,14 @@ void main() {
     testWidgets('every floored metric: below is Stable, at the floor keeps '
         'its verdict', (tester) async {
       const floors = <String, double>{
-        'pigment_load': 2.5,
-        'pore_visibility': 2.5,
-        'skin_tone_radiance_evenness': 4.5,
+        'pigment_load': 3.0,
+        'pore_visibility': 3.0,
+        'skin_tone_radiance_evenness': 4.0,
         'diffuse_flushing_erythema': 2.0,
         'glabellar_wrinkle_depth': 3.5,
         'structural_firmness_elasticity': 5.0,
         'sebum_excess_oil_gloss': 4.0,
-        'texture_smoothness': 3.0,
+        'texture_smoothness': 2.5,
       };
       expect(displayVerdictNoiseFloors, floors);
       expect(displayStableFloorMetrics, floors.keys.toSet());
@@ -1411,14 +1411,14 @@ void main() {
       }
     });
 
-    testWidgets('texture: 2.9 points stays Stable, 3.0 keeps its verdict', (
+    testWidgets('texture: 2.4 points stays Stable, 2.5 keeps its verdict', (
       tester,
     ) async {
       await tester.pumpWidget(
         liveHarness(
           basePayload(
             baseline: 50.0,
-            current: 52.9,
+            current: 52.4,
             metricKey: 'texture_smoothness',
             trendStatus: {'texture_smoothness': 'improved'},
             trendDeltas: {'texture_smoothness': 5.8},
@@ -1443,10 +1443,10 @@ void main() {
         liveHarness(
           basePayload(
             baseline: 50.0,
-            current: 53.0,
+            current: 52.5,
             metricKey: 'texture_smoothness',
             trendStatus: {'texture_smoothness': 'improved'},
-            trendDeltas: {'texture_smoothness': 6.0},
+            trendDeltas: {'texture_smoothness': 5.0},
           ),
         ),
       );
@@ -1458,14 +1458,14 @@ void main() {
       );
     });
 
-    testWidgets('radiance: 4.4 points stays Stable, 4.5 keeps its verdict', (
+    testWidgets('radiance: 3.9 points stays Stable, 4.0 keeps its verdict', (
       tester,
     ) async {
       await tester.pumpWidget(
         liveHarness(
           basePayload(
             baseline: 30.0,
-            current: 34.4,
+            current: 33.9,
             metricKey: 'skin_tone_radiance_evenness',
             trendStatus: {'skin_tone_radiance_evenness': 'improved'},
             trendDeltas: {'skin_tone_radiance_evenness': 14.7},
@@ -1493,7 +1493,7 @@ void main() {
         liveHarness(
           basePayload(
             baseline: 30.0,
-            current: 34.5,
+            current: 34.0,
             metricKey: 'skin_tone_radiance_evenness',
             trendStatus: {'skin_tone_radiance_evenness': 'improved'},
             trendDeltas: {'skin_tone_radiance_evenness': 15.0},
@@ -1556,12 +1556,12 @@ void main() {
       );
     });
 
-    testWidgets('pores and pigment: 2.3 stays Stable, 2.6 keeps its verdict', (
+    testWidgets('pores and pigment: 2.9 stays Stable, 3.0 keeps its verdict', (
       tester,
     ) async {
       for (final key in const ['pore_visibility', 'pigment_load']) {
         for (final status in const ['improved', 'worsened']) {
-          final current = status == 'improved' ? 30.0 - 2.3 : 30.0 + 2.3;
+          final current = status == 'improved' ? 30.0 - 2.9 : 30.0 + 2.9;
           await tester.pumpWidget(
             liveHarness(
               basePayload(
@@ -1577,7 +1577,7 @@ void main() {
           expect(
             inCard(key, find.text('Stable - change within tracking noise')),
             findsWidgets,
-            reason: '$key $status 2.3',
+            reason: '$key $status 2.9',
           );
           for (final label in const ['Improved', 'Worsened']) {
             expect(inCard(key, find.text(label)), findsNothing, reason: key);
@@ -1590,7 +1590,7 @@ void main() {
         liveHarness(
           basePayload(
             baseline: 30.0,
-            current: 27.4,
+            current: 27.0,
             metricKey: 'pore_visibility',
             trendStatus: {'pore_visibility': 'improved'},
             trendDeltas: {'pore_visibility': 8.7},
@@ -1601,9 +1601,9 @@ void main() {
       expect(inCard('pore_visibility', find.text('Improved')), findsWidgets);
     });
 
-    test('only pores, pigment and firmness floors moved', () {
-      expect(displayVerdictNoiseFloors['texture_smoothness'], 3.0);
-      expect(displayVerdictNoiseFloors['skin_tone_radiance_evenness'], 4.5);
+    test('unlisted display floors are unchanged', () {
+      expect(displayVerdictNoiseFloors['texture_smoothness'], 2.5);
+      expect(displayVerdictNoiseFloors['skin_tone_radiance_evenness'], 4.0);
       expect(displayVerdictNoiseFloors['diffuse_flushing_erythema'], 2.0);
       expect(displayVerdictNoiseFloors['glabellar_wrinkle_depth'], 3.5);
       expect(displayVerdictNoiseFloors['sebum_excess_oil_gloss'], 4.0);
@@ -1784,14 +1784,15 @@ void main() {
       final values = rows[1].split(',');
       String cell(String column) => values[header.indexOf(column)];
 
-      expect(cell('pigment_load_noise_floor'), '2.5');
-      expect(cell('pore_visibility_noise_floor'), '2.5');
-      expect(cell('skin_tone_radiance_evenness_noise_floor'), '4.5');
+      expect(cell('pigment_load_noise_floor'), '3.0');
+      expect(cell('pore_visibility_noise_floor'), '3.0');
+      expect(cell('skin_tone_radiance_evenness_noise_floor'), '4.0');
       expect(cell('diffuse_flushing_erythema_noise_floor'), '2.0');
       expect(cell('glabellar_wrinkle_depth_noise_floor'), '3.5');
       expect(cell('structural_firmness_elasticity_noise_floor'), '5.0');
       expect(cell('sebum_excess_oil_gloss_noise_floor'), '4.0');
-      expect(cell('texture_smoothness_noise_floor'), '3.0');
+      expect(cell('texture_smoothness_noise_floor'), '2.5');
+      expect(cell('under_eye_dark_circle_density_noise_floor'), isEmpty);
       expect(cell('localized_redness_noise_floor'), isEmpty);
       expect(cell('wrinkle_load_noise_floor'), isEmpty);
     });

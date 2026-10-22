@@ -5,6 +5,7 @@ import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_scan_data_csv_exporter.dart';
 import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 import 'package:flutter/material.dart';
+import 'package:aesthetic_skin_tracker/utils/display_noise_floors.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 ({
@@ -28,13 +29,27 @@ _apply(
 );
 
 void main() {
-  test('the four floors are as specified', () {
+  test('the floors are as specified', () {
     expect(measuredStableNoiseFloors, {
-      'texture_smoothness': 2.0,
-      'pigment_load': 1.5,
-      'pore_visibility': 1.5,
+      'texture_smoothness': 2.5,
+      'pigment_load': 3.0,
+      'skin_tone_radiance_evenness': 4.0,
+      'pore_visibility': 3.0,
       'structural_firmness_elasticity': 2.0,
     });
+    // Same floors on the live cards and in the export.
+    for (final key in const [
+      'texture_smoothness',
+      'pigment_load',
+      'skin_tone_radiance_evenness',
+      'pore_visibility',
+    ]) {
+      expect(
+        displayVerdictNoiseFloors[key],
+        measuredStableNoiseFloors[key],
+        reason: key,
+      );
+    }
   });
 
   test('a 1.0-point texture move is stable with no percentage', () {
@@ -62,16 +77,17 @@ void main() {
       _apply(
         'texture_smoothness',
         57.0,
-        59.0,
+        59.5,
       ).trendStatus['texture_smoothness'],
       'improved',
     );
   });
 
-  test('pigment, pores, and firmness follow the same rule', () {
+  test('pigment, radiance, pores, and firmness follow the same rule', () {
     for (final (key, below, above) in const [
-      ('pigment_load', 1.0, 2.0),
-      ('pore_visibility', 1.2, 1.6),
+      ('pigment_load', 2.9, 3.0),
+      ('skin_tone_radiance_evenness', 3.9, 4.0),
+      ('pore_visibility', 2.9, 3.0),
       ('structural_firmness_elasticity', 1.5, 2.5),
     ]) {
       final under = _apply(key, 20.0, 20.0 + below, status: 'worsened');
@@ -108,11 +124,47 @@ void main() {
     expect(weak.trendStatus['pigment_load'], 'insufficient_signal');
   });
 
+  test('a lock on any floored metric wins: not forced to stable, and the '
+      'status and delta are cleared with the lock', () {
+    for (final key in const [
+      'texture_smoothness',
+      'pigment_load',
+      'skin_tone_radiance_evenness',
+      'pore_visibility',
+    ]) {
+      for (final lock in const [
+        'lighting_mismatch',
+        'formula_version_mismatch',
+        'cheek_mismatch',
+      ]) {
+        final locked = _apply(
+          key,
+          30.0,
+          30.5,
+          status: 'improved',
+          delta: 1.7,
+          lockReason: lock,
+        );
+        expect(locked.trendStatus[key], 'improved', reason: '$key $lock');
+        expect(locked.trendLockReasons[key], lock, reason: '$key $lock');
+        final cleared = clearLockedTrendVerdicts(
+          trendStatus: locked.trendStatus,
+          trendDeltas: locked.trendDeltas,
+          trendLockReasons: locked.trendLockReasons,
+        );
+        expect(cleared.trendStatus.containsKey(key), isFalse, reason: key);
+        expect(cleared.trendDeltas.containsKey(key), isFalse, reason: key);
+        expect(cleared.trendLockReasons[key], lock, reason: key);
+      }
+    }
+  });
+
   test('other metrics are unchanged', () {
     final redness = _apply('localized_redness', 10.0, 10.5);
     expect(redness.trendStatus['localized_redness'], 'improved');
-    final radiance = _apply('skin_tone_radiance_evenness', 30.0, 30.5);
-    expect(radiance.trendStatus['skin_tone_radiance_evenness'], 'improved');
+    // No floor invented for unlisted metrics.
+    final undereye = _apply('under_eye_dark_circle_density', 30.0, 30.5);
+    expect(undereye.trendStatus['under_eye_dark_circle_density'], 'improved');
   });
 
   test('chained before the backend-floor gate and the lighting lock', () {
