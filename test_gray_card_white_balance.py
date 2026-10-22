@@ -17,8 +17,9 @@ import main
 REPO_ROOT = Path(__file__).resolve().parent
 FACE_PHOTO = REPO_ROOT / "test_fixtures" / "metric_regression" / "clear_face.jfif"
 
-# A neutral card photographed under a warm cast (BGR).
-WARM_CARD_BGR = (100, 125, 150)
+# A neutral card photographed under a warm cast (BGR): a* +7, b* +7,
+# chroma offset ~9.9, inside the 12-unit acceptance limit.
+WARM_CARD_BGR = (124, 132, 154)
 
 
 def _png(image: np.ndarray) -> bytes:

@@ -43,6 +43,7 @@ import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
 import 'package:aesthetic_skin_tracker/utils/upload_gate.dart';
 import 'package:aesthetic_skin_tracker/utils/free_scan_limit.dart';
 import 'package:aesthetic_skin_tracker/widgets/consistent_setup_guide.dart';
+import 'package:aesthetic_skin_tracker/widgets/gray_card_sample_card.dart';
 import 'package:aesthetic_skin_tracker/utils/untrusted_trend_metrics.dart';
 import 'package:aesthetic_skin_tracker/utils/comparable_pair_pdf.dart';
 import 'package:aesthetic_skin_tracker/utils/last_comparable_pair.dart';
@@ -505,6 +506,8 @@ Map<String, dynamic> summarizeGrayCardFrames(
     'gray_card_mean_L': mean('gray_card_mean_L'),
     'gray_card_mean_a': mean('gray_card_mean_a'),
     'gray_card_mean_b': mean('gray_card_mean_b'),
+    'gray_card_chroma_offset': mean('gray_card_chroma_offset'),
+    'gray_card_scene_disagreement': mean('gray_card_scene_disagreement'),
     'gray_card_correction_applied': applied == qualities.length,
     'gray_card_frames_applied': applied,
     'gray_card_reason': reason,
@@ -1705,6 +1708,9 @@ List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
       'gray_card_correction_applied':
           imageQuality['gray_card_correction_applied'],
       'gray_card_reason': imageQuality['gray_card_reason'],
+      'gray_card_chroma_offset': imageQuality['gray_card_chroma_offset'],
+      'gray_card_scene_disagreement':
+          imageQuality['gray_card_scene_disagreement'],
       for (final field in grayCardRegionFields) field: imageQuality[field],
       'face_skin_pixels': imageQuality['face_skin_pixels'],
       'pore_roi_pixels': imageQuality['pore_roi_pixels'],
@@ -5741,6 +5747,22 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     );
   }
 
+  /// The sampled gray-card region for a scan marked as having a card, so
+  /// the user can see whether the box caught the card or skin. Null when no
+  /// card was marked.
+  Widget? _grayCardSampleCard() {
+    final quality =
+        _asDynamicMap(_latestBackendAnalysisPayload?['image_quality']) ??
+        const <String, dynamic>{};
+    if (_grayCardPatches.isEmpty || quality['gray_card_marked'] != true) {
+      return null;
+    }
+    return GrayCardSampleCard(
+      patch: _grayCardPatches.first,
+      imageQuality: quality,
+    );
+  }
+
   Widget _multiFrameConfidenceCard() {
     final entries = _metricContributorCounts.entries.toList()
       ..sort((a, b) => a.key.compareTo(b.key));
@@ -5920,6 +5942,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               if (_requestedAnalysisFrameCount > 1) ...[
                 const SizedBox(height: 14),
                 _multiFrameConfidenceCard(),
+              ],
+              if (_grayCardSampleCard() case final card?) ...[
+                const SizedBox(height: 14),
+                card,
               ],
               const SizedBox(height: 14),
               isFollowUpPhase

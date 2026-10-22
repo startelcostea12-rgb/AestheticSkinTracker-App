@@ -31,6 +31,8 @@ const _grayCardColumns = [
   'image_quality.gray_card_mean_L',
   'image_quality.gray_card_mean_a',
   'image_quality.gray_card_mean_b',
+  'image_quality.gray_card_chroma_offset',
+  'image_quality.gray_card_scene_disagreement',
   'image_quality.gray_card_correction_applied',
   'image_quality.gray_card_frames_applied',
   'image_quality.gray_card_reason',
@@ -48,6 +50,8 @@ Map<String, dynamic> _frame({
   double? a,
   double? b,
   String? reason,
+  double? offset,
+  double? disagreement,
   double redness = 10.0,
 }) => <String, dynamic>{
   'metric_matrix': <String, dynamic>{'localized_redness': redness},
@@ -63,6 +67,8 @@ Map<String, dynamic> _frame({
     'gray_card_mean_b': b,
     'gray_card_correction_applied': applied,
     'gray_card_reason': reason,
+    'gray_card_chroma_offset': offset,
+    'gray_card_scene_disagreement': disagreement,
     if (marked) ..._regionQuality,
   },
 };
@@ -78,15 +84,41 @@ const _regionQuality = <String, dynamic>{
 void main() {
   test('summary: marked, applied on every frame, mean of the raw samples', () {
     final summary = summarizeGrayCardFrames([
-      _frame(marked: true, applied: true, l: 120, a: 6.0, b: 9.0),
-      _frame(marked: true, applied: true, l: 122, a: 5.0, b: 8.0),
-      _frame(marked: true, applied: true, l: 124, a: 4.0, b: 10.0),
+      _frame(
+        marked: true,
+        applied: true,
+        l: 120,
+        a: 6.0,
+        b: 9.0,
+        offset: 10.8,
+        disagreement: 2.0,
+      ),
+      _frame(
+        marked: true,
+        applied: true,
+        l: 122,
+        a: 5.0,
+        b: 8.0,
+        offset: 9.4,
+        disagreement: 3.0,
+      ),
+      _frame(
+        marked: true,
+        applied: true,
+        l: 124,
+        a: 4.0,
+        b: 10.0,
+        offset: 10.8,
+        disagreement: 4.0,
+      ),
     ]);
     expect(summary, {
       'gray_card_marked': true,
       'gray_card_mean_L': 122.0,
       'gray_card_mean_a': 5.0,
       'gray_card_mean_b': 9.0,
+      'gray_card_chroma_offset': 10.333,
+      'gray_card_scene_disagreement': 3.0,
       'gray_card_correction_applied': true,
       'gray_card_frames_applied': 3,
       'gray_card_reason': null,
@@ -215,6 +247,47 @@ void main() {
     expect(row['image_quality.gray_card_reason'], 'implausible_card_color');
     expect(row['frame1_gray_card_reason'], 'implausible_card_color');
     expect(row['image_quality.gray_card_region_x'], '0.3');
+  });
+
+  test('a card that disagrees with the scene exports offset and reason', () {
+    final frames = [
+      for (var i = 0; i < 3; i++)
+        _frame(
+          marked: true,
+          l: 140,
+          a: 3.0,
+          b: 8.0,
+          reason: 'disagrees_with_scene',
+          offset: 8.5,
+          disagreement: 14.3,
+        ),
+    ];
+    final aggregate = averageBackendAnalysisFrames(frames, requestedFrames: 3);
+    final row = _parse(
+      AiScanDataCsvExporter.format([
+        ScanHistoryEntry(
+          id: 'scan-scene',
+          timestamp: DateTime.parse('2026-10-16T10:00:00'),
+          scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+          estimatedSkinAge: 0,
+          metrics: const <String, double>{},
+          rawPayload: <String, dynamic>{
+            ...aggregate.response,
+            aiScanPerFrameDiagnosticsKey: buildAiScanPerFrameDiagnostics(
+              frameResponses: frames,
+              frameExposureMetadata: const [],
+              frameCount: 3,
+            ),
+          },
+        ),
+      ], registryBaselineScanIds: const {}),
+    ).single;
+    expect(row['image_quality.gray_card_correction_applied'], 'false');
+    expect(row['image_quality.gray_card_reason'], 'disagrees_with_scene');
+    expect(row['image_quality.gray_card_chroma_offset'], '8.5');
+    expect(row['image_quality.gray_card_scene_disagreement'], '14.3');
+    expect(row['frame2_gray_card_scene_disagreement'], '14.3');
+    expect(row['frame3_gray_card_chroma_offset'], '8.5');
   });
 
   test('no mark: gray_card_marked is false and samples are empty', () {

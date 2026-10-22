@@ -773,36 +773,11 @@ def normalize_lighting_and_shadows(bgr_image: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
 
 
-def _apply_capture_white_balance_correction(
-    bgr_image: np.ndarray, gray_card_sample: Dict[str, Any] | None = None
-) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """Apply a restrained LAB neutral-axis correction before metric extraction.
-
-    With an accepted gray-card sample (see _sample_gray_card), the card's
-    measured a*/b* replace the automatic neutral-pixel estimate: the same
-    a*/b* shift is applied so the card lands on neutral (128). L* is not
-    changed. Without one, this is the automatic path unchanged."""
-    if bgr_image is None or bgr_image.size == 0:
-        return bgr_image, {
-            "applied": False,
-            "reason": "empty_image",
-        }
-
-    lab = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2LAB)
-    if gray_card_sample is not None and gray_card_sample.get("accepted"):
-        a_adjustment = float(gray_card_sample["mean_a"]) - 128.0
-        b_adjustment = float(gray_card_sample["mean_b"]) - 128.0
-        corrected_lab = lab.copy().astype(np.float32)
-        corrected_lab[:, :, 1] = np.clip(corrected_lab[:, :, 1] - a_adjustment, 0.0, 255.0)
-        corrected_lab[:, :, 2] = np.clip(corrected_lab[:, :, 2] - b_adjustment, 0.0, 255.0)
-        corrected_bgr = cv2.cvtColor(corrected_lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
-        return corrected_bgr, {
-            "applied": True,
-            "method": "gray_card_reference",
-            "a_adjustment": round(a_adjustment, 3),
-            "b_adjustment": round(b_adjustment, 3),
-        }
-
+def _automatic_neutral_estimate(lab: np.ndarray) -> Dict[str, Any]:
+    """The scene's neutral a*/b* offset from 128: the median of the image's
+    low-chroma, mid-to-bright pixels (the automatic white balance's own
+    estimate, before its 0.70 scale and +/-8 clip). "available" is False
+    when too few such pixels exist."""
     l_channel = lab[:, :, 0]
     a_channel = lab[:, :, 1].astype(np.float32)
     b_channel = lab[:, :, 2].astype(np.float32)
@@ -819,20 +794,106 @@ def _apply_capture_white_balance_correction(
         ]
     )
 
-    minimum_pixels = max(800, int(bgr_image.shape[0] * bgr_image.shape[1] * 0.01))
+    minimum_pixels = max(800, int(lab.shape[0] * lab.shape[1] * 0.01))
     candidate_count = int(np.count_nonzero(candidates))
     if candidate_count < minimum_pixels:
-        return bgr_image.copy(), {
-            "applied": False,
-            "reason": "insufficient_neutral_pixels",
+        return {
+            "available": False,
             "candidate_pixels": candidate_count,
             "minimum_pixels": minimum_pixels,
         }
+    return {
+        "available": True,
+        "candidate_pixels": candidate_count,
+        "a_offset": float(np.median(a_channel[candidates]) - 128.0),
+        "b_offset": float(np.median(b_channel[candidates]) - 128.0),
+    }
 
-    a_offset = float(np.median(a_channel[candidates]) - 128.0)
-    b_offset = float(np.median(b_channel[candidates]) - 128.0)
-    a_adjustment = float(np.clip(a_offset * 0.70, -8.0, 8.0))
-    b_adjustment = float(np.clip(b_offset * 0.70, -8.0, 8.0))
+
+def _gray_card_scene_disagreement(
+    gray_card_sample: Dict[str, Any], neutral: Dict[str, Any]
+) -> float | None:
+    """Distance in a*/b* units between the sampled card and the scene's
+    automatic neutral estimate; None when the scene has no estimate."""
+    if not neutral.get("available"):
+        return None
+    card_a = float(gray_card_sample["mean_a"]) - 128.0
+    card_b = float(gray_card_sample["mean_b"]) - 128.0
+    return float(
+        math.hypot(card_a - neutral["a_offset"], card_b - neutral["b_offset"])
+    )
+
+
+def _apply_capture_white_balance_correction(
+    bgr_image: np.ndarray, gray_card_sample: Dict[str, Any] | None = None
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Apply a restrained LAB neutral-axis correction before metric extraction.
+
+    With an accepted gray-card sample (see _sample_gray_card) that also
+    agrees with the scene's automatic neutral estimate (within
+    GRAY_CARD_MAX_SCENE_DISAGREEMENT), the card's measured a*/b* replace the
+    automatic estimate: the same a*/b* shift is applied so the card lands on
+    neutral (128). L* is not changed. A card that disagrees with the scene
+    is ignored ("gray_card_rejected_reason": "disagrees_with_scene") and the
+    automatic path runs exactly as it does without a card."""
+    if bgr_image is None or bgr_image.size == 0:
+        return bgr_image, {
+            "applied": False,
+            "reason": "empty_image",
+        }
+
+    lab = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2LAB)
+    neutral = _automatic_neutral_estimate(lab)
+    card_fields: Dict[str, Any] = {}
+    if gray_card_sample is not None and gray_card_sample.get("accepted"):
+        disagreement = _gray_card_scene_disagreement(gray_card_sample, neutral)
+        card_fields["gray_card_scene_disagreement"] = (
+            None if disagreement is None else round(disagreement, 2)
+        )
+        if disagreement is not None and disagreement > GRAY_CARD_MAX_SCENE_DISAGREEMENT:
+            card_fields["gray_card_rejected_reason"] = "disagrees_with_scene"
+            logger.info(
+                "GRAY_CARD rejected reason=disagrees_with_scene card_a=%.2f card_b=%.2f "
+                "scene_a=%.2f scene_b=%.2f disagreement=%.2f limit=%.1f",
+                float(gray_card_sample["mean_a"]) - 128.0,
+                float(gray_card_sample["mean_b"]) - 128.0,
+                neutral["a_offset"],
+                neutral["b_offset"],
+                disagreement,
+                GRAY_CARD_MAX_SCENE_DISAGREEMENT,
+            )
+        else:
+            a_adjustment = float(gray_card_sample["mean_a"]) - 128.0
+            b_adjustment = float(gray_card_sample["mean_b"]) - 128.0
+            logger.info(
+                "GRAY_CARD accepted card_a=%.2f card_b=%.2f scene_disagreement=%s",
+                a_adjustment,
+                b_adjustment,
+                "n/a" if disagreement is None else f"{disagreement:.2f}",
+            )
+            corrected_lab = lab.copy().astype(np.float32)
+            corrected_lab[:, :, 1] = np.clip(corrected_lab[:, :, 1] - a_adjustment, 0.0, 255.0)
+            corrected_lab[:, :, 2] = np.clip(corrected_lab[:, :, 2] - b_adjustment, 0.0, 255.0)
+            corrected_bgr = cv2.cvtColor(corrected_lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
+            return corrected_bgr, {
+                "applied": True,
+                "method": "gray_card_reference",
+                "a_adjustment": round(a_adjustment, 3),
+                "b_adjustment": round(b_adjustment, 3),
+                **card_fields,
+            }
+
+    if not neutral["available"]:
+        return bgr_image.copy(), {
+            "applied": False,
+            "reason": "insufficient_neutral_pixels",
+            "candidate_pixels": neutral["candidate_pixels"],
+            "minimum_pixels": neutral["minimum_pixels"],
+            **card_fields,
+        }
+
+    a_adjustment = float(np.clip(neutral["a_offset"] * 0.70, -8.0, 8.0))
+    b_adjustment = float(np.clip(neutral["b_offset"] * 0.70, -8.0, 8.0))
 
     corrected_lab = lab.copy().astype(np.float32)
     corrected_lab[:, :, 1] = np.clip(corrected_lab[:, :, 1] - a_adjustment, 0.0, 255.0)
@@ -842,9 +903,10 @@ def _apply_capture_white_balance_correction(
     return corrected_bgr, {
         "applied": abs(a_adjustment) >= 0.25 or abs(b_adjustment) >= 0.25,
         "method": "lab_low_chroma_neutral_axis",
-        "candidate_pixels": candidate_count,
+        "candidate_pixels": neutral["candidate_pixels"],
         "a_adjustment": round(a_adjustment, 3),
         "b_adjustment": round(b_adjustment, 3),
+        **card_fields,
     }
 
 
@@ -872,17 +934,20 @@ GRAY_CARD_NEUTRAL_TARGET = 128.0
 # unreasonably large card mark.
 GRAY_CARD_MIN_REGION_PIXELS = 200
 
-# _apply_capture_white_balance_correction caps ITS correction at ±8 a*/b*
-# units because it only nudges gently for ordinary ambient variation. A
-# gray-card correction is meant to fix stronger casts than that pass already
-# handles, so it must tolerate a much bigger measured offset. But it still
-# needs a ceiling to reject a region that isn't a neutral card at all: skin
-# tone commonly reads well off neutral (a*~140-150, b*~145-160 in this
-# encoding, i.e. offset magnitude ~30-48), so 45 sits just below typical
-# mis-marked-skin offsets while still accepting strong-but-real colored-light
-# casts on an actual gray card (published incandescent/mixed-lighting neutral
-# shifts commonly stay within this range).
-GRAY_CARD_MAX_CHROMA_OFFSET = 45.0
+# Ceiling on how far a sampled card may read from neutral before it is
+# rejected as "not a gray card". It was 45, which accepted lit neck/chin skin
+# caught by the fixed under-chin box (measured a* ~ +16-17, offset ~19) and
+# applied a correction that erased real redness. A gray card under the
+# recommended daylight lamp reads within a few units of neutral, so 12 keeps
+# real cards and rejects skin.
+GRAY_CARD_MAX_CHROMA_OFFSET = 12.0
+
+# A card is also rejected when its colour is more than this many a*/b* units
+# from the scene's own automatic neutral estimate (the median of the image's
+# low-chroma pixels, see _automatic_neutral_estimate): a real card under the
+# same light should agree with the scene, while skin in the box does not.
+# When rejected, the automatic white balance is used instead.
+GRAY_CARD_MAX_SCENE_DISAGREEMENT = 12.0
 
 # Reject a region that reads as crushed-black or blown-out-white: the mean
 # color in either extreme is unreliable/clipped, and any gain computed from
@@ -1028,13 +1093,26 @@ def _sample_gray_card(
     card_lab = cv2.cvtColor(image_bgr[y0:y1, x0:x1], cv2.COLOR_BGR2LAB)
     flat = card_lab.reshape(-1, 3).astype(np.float64)
     check = compute_gray_card_correction(card_lab)
+    mean_a = float(flat[:, 1].mean())
+    mean_b = float(flat[:, 2].mean())
+    chroma_offset = float(
+        math.hypot(mean_a - GRAY_CARD_NEUTRAL_TARGET, mean_b - GRAY_CARD_NEUTRAL_TARGET)
+    )
+    logger.info(
+        "GRAY_CARD sample accepted=%s reason=%s chroma_offset=%.2f limit=%.1f",
+        bool(check.get("accepted")),
+        None if check.get("accepted") else check.get("reason", "rejected"),
+        chroma_offset,
+        GRAY_CARD_MAX_CHROMA_OFFSET,
+    )
     return {
         "marked": True,
         "accepted": bool(check.get("accepted")),
         "reason": None if check.get("accepted") else str(check.get("reason", "rejected")),
         "mean_l": float(flat[:, 0].mean()),
-        "mean_a": float(flat[:, 1].mean()),
-        "mean_b": float(flat[:, 2].mean()),
+        "mean_a": mean_a,
+        "mean_b": mean_b,
+        "chroma_offset": chroma_offset,
         "region_pixels": int(flat.shape[0]),
     }
 
@@ -1079,6 +1157,11 @@ def _gray_card_quality_fields(sample: Dict[str, Any], applied: bool) -> Dict[str
         "gray_card_mean_b": _signed_lab_value(sample.get("mean_b")),
         "gray_card_correction_applied": bool(applied),
         "gray_card_reason": sample.get("reason") if marked else None,
+        "gray_card_chroma_offset": (
+            round(float(sample["chroma_offset"]), 2)
+            if marked and "chroma_offset" in sample
+            else None
+        ),
     }
 
 
@@ -1313,8 +1396,21 @@ def _assess_and_normalize_image_with_pre_white_balance(
         "wb_a_adjustment_post_clip": round(wb_a_post_clip, 3),
         "wb_b_adjustment_post_clip": round(wb_b_post_clip, 3),
         **_gray_card_quality_fields(
-            gray_card_sample,
+            {
+                **gray_card_sample,
+                **(
+                    {
+                        "accepted": False,
+                        "reason": white_balance_profile["gray_card_rejected_reason"],
+                    }
+                    if white_balance_profile.get("gray_card_rejected_reason")
+                    else {}
+                ),
+            },
             applied=white_balance_profile.get("method") == "gray_card_reference",
+        ),
+        "gray_card_scene_disagreement": white_balance_profile.get(
+            "gray_card_scene_disagreement"
         ),
     }, pre_white_balance_bgr
 
