@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/product_tracker.dart';
 import '../app_theme.dart';
 import '../utils/app_prefs.dart';
+import '../widgets/removable_tracked_product.dart';
 import '../utils/metric_trend.dart';
 import '../models/scan_history.dart';
 import '../models/journal_entry.dart';
@@ -927,6 +928,31 @@ class _ActiveSkincareDetailsScreenState
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context, 'journal_updated'),
         ),
+        actions: [
+          PopupMenuButton<String>(
+            key: const ValueKey('tracked_product_menu'),
+            tooltip: 'Product options',
+            onSelected: (_) async {
+              final removed = await confirmAndRemoveTrackedProduct(
+                context,
+                widget.product,
+              );
+              if (removed && context.mounted) {
+                Navigator.pop(context, 'product_removed');
+              }
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: 'remove',
+                child: ListTile(
+                  leading: Icon(Icons.delete_outline),
+                  title: Text('Remove from my skincare'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),

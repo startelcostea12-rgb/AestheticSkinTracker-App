@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../app_theme.dart';
 import '../models/scan_history.dart';
 import '../utils/app_prefs.dart';
+import '../widgets/removable_tracked_product.dart';
 import '../utils/skincare_streak.dart';
 import 'progress_report_screen.dart';
 import '../models/product_tracker.dart';
@@ -2930,19 +2931,32 @@ class _HomePageState extends State<HomePage>
                   )
                 else
                   ..._trackedProducts.map(
-                    (product) => _procedureCard(
-                      product.name,
-                      product.brand.isNotEmpty ? product.brand : 'No brand',
-                      onTap: () async {
-                        await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                ActiveSkincareDetailsScreen(product: product),
-                          ),
+                    // Swipe left to remove (see RemovableTrackedProduct).
+                    (product) => RemovableTrackedProduct(
+                      product: product,
+                      onRemoved: () {
+                        setState(
+                          () => _trackedProducts = [
+                            for (final p in _trackedProducts)
+                              if (p.id != product.id) p,
+                          ],
                         );
-                        if (mounted) await _refreshData();
+                        _refreshData();
                       },
+                      child: _procedureCard(
+                        product.name,
+                        product.brand.isNotEmpty ? product.brand : 'No brand',
+                        onTap: () async {
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  ActiveSkincareDetailsScreen(product: product),
+                            ),
+                          );
+                          if (mounted) await _refreshData();
+                        },
+                      ),
                     ),
                   ),
 
