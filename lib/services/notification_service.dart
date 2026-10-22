@@ -217,7 +217,7 @@ class NotificationService {
     if (consistentScanCount >= kBodyTrendRequiredConsistentScans) return;
     if (!_initialized) await initialize();
 
-    final notificationId = 'body_trend_$procedureId'.hashCode.abs();
+    final notificationId = bodyTrendReminderId(procedureId);
     const androidDetails = AndroidNotificationDetails(
       'procedure_reminders',
       'Procedure Reminders',
@@ -251,8 +251,30 @@ class NotificationService {
   }
 
   Future<void> cancelBodyTrendReminder(String procedureId) async {
-    final notificationId = 'body_trend_$procedureId'.hashCode.abs();
-    await _notifications.cancel(notificationId);
+    await _notifications.cancel(bodyTrendReminderId(procedureId));
+  }
+
+  /// Notification IDs for a procedure's reminders, shared by the schedule
+  /// and cancel calls so they always match.
+  static int recoveryPlanReminderId(String procedureId, int day) =>
+      'recovery_plan_${procedureId}_$day'.hashCode.abs();
+  static int appointmentReminderId(String procedureId) =>
+      'appointment_$procedureId'.hashCode.abs();
+  static int bodyTrendReminderId(String procedureId) =>
+      'body_trend_$procedureId'.hashCode.abs();
+
+  /// Recovery-plan days whose reminders are cancelled. Plans are 7 days
+  /// today; cancelling a missing ID is a no-op, so this leaves headroom for
+  /// longer plans.
+  static const int recoveryPlanReminderMaxDays = 30;
+
+  /// Cancels every reminder scheduled for [procedureId]: its recovery-plan
+  /// days, its appointment reminder and its body-trend reminder. Used when
+  /// the procedure is deleted (see procedure_deletion.dart).
+  Future<void> cancelProcedureReminders(String procedureId) async {
+    await cancelRecoveryPlanReminders(procedureId);
+    await cancelAppointmentReminder(procedureId);
+    await cancelBodyTrendReminder(procedureId);
   }
 
   Future<void> scheduleRecoveryPlanReminders({
@@ -296,7 +318,7 @@ class NotificationService {
       ).add(Duration(days: day.day - 1));
       if (localDate.isBefore(now)) continue;
       await _notifications.zonedSchedule(
-        'recovery_plan_${procedureId}_${day.day}'.hashCode.abs(),
+        recoveryPlanReminderId(procedureId, day.day),
         reminder.title,
         '$name day ${day.day}: ${reminder.body}',
         tz.TZDateTime.from(localDate, tz.local),
@@ -309,8 +331,8 @@ class NotificationService {
   }
 
   Future<void> cancelRecoveryPlanReminders(String procedureId) async {
-    for (var day = 1; day <= 7; day++) {
-      await _notifications.cancel('recovery_plan_${procedureId}_$day'.hashCode.abs());
+    for (var day = 1; day <= recoveryPlanReminderMaxDays; day++) {
+      await _notifications.cancel(recoveryPlanReminderId(procedureId, day));
     }
   }
 
@@ -348,7 +370,7 @@ class NotificationService {
     final name = procedure.type.trim().isEmpty ? 'procedure' : procedure.type.trim();
     final dateLabel = '${date.month}/${date.day}/${date.year}';
     await _notifications.zonedSchedule(
-      'appointment_${procedure.id}'.hashCode.abs(),
+      appointmentReminderId(procedure.id),
       '📅 Upcoming $name appointment',
       'Your next $name appointment is on $dateLabel.',
       tz.TZDateTime.from(date, tz.local),
@@ -360,7 +382,7 @@ class NotificationService {
   }
 
   Future<void> cancelAppointmentReminder(String procedureId) async {
-    await _notifications.cancel('appointment_$procedureId'.hashCode.abs());
+    await _notifications.cancel(appointmentReminderId(procedureId));
   }
 
   /// Schedule a daily/weekly reminder for an active peptide routine.

@@ -16,6 +16,7 @@ import '../main.dart' show RestartWidget;
 import '../providers/procedure_logs_provider.dart';
 import '../services/notification_service.dart';
 import '../utils/app_prefs.dart';
+import '../utils/procedure_deletion.dart';
 import '../widgets/skincare_style_picker.dart';
 import '../utils/premium_access.dart';
 import '../widgets/clinical_metric_label.dart';
@@ -932,6 +933,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     debugPrint('🔥 User confirmed nuclear clear - executing...');
 
     // Execute nuclear clear
+    await cancelRemindersForAllProcedures();
     await AppPrefs.clearAllDataAggressively();
 
     // Reset the Riverpod procedure-logs provider so no cached logs remain in
@@ -1132,6 +1134,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     if (confirmed != true) return;
+    await cancelRemindersForAllProcedures();
     await AppPrefs.clearProcedureHistory();
     final remaining = await AppPrefs.getProcedureEntries();
     debugPrint(

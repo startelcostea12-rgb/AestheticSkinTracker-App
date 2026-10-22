@@ -26,6 +26,7 @@ import 'package:aesthetic_skin_tracker/utils/trend_lock_reason.dart';
 import 'package:aesthetic_skin_tracker/utils/landmark_assessment.dart';
 import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
+import 'package:aesthetic_skin_tracker/utils/procedure_deletion.dart';
 import 'package:aesthetic_skin_tracker/utils/capture_consistency.dart';
 import 'package:aesthetic_skin_tracker/utils/procedure_intelligence.dart';
 import 'package:aesthetic_skin_tracker/utils/ocr_service.dart';
@@ -2046,7 +2047,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     );
 
     if (confirmed != true) return;
-    await AppPrefs.removeProcedureFromHistory(_procedure.id);
+    await deleteProcedureAndReminders(_procedure.id);
     if (!mounted) return;
     Navigator.of(context).pop();
   }
