@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_theme.dart';
 import '../utils/app_prefs.dart';
 import '../utils/product_routine_builder.dart';
+import '../utils/skincare_name_suggestions.dart';
 import '../widgets/home_section_style.dart';
 
 /// Edit the morning and evening routine by hand: a plain list of product
@@ -24,6 +25,8 @@ class _RoutineEditorScreenState extends State<RoutineEditorScreen> {
   late final List<String> _evening = _steps('eveningSteps');
   final _morningInput = TextEditingController();
   final _eveningInput = TextEditingController();
+  final _morningFocus = FocusNode();
+  final _eveningFocus = FocusNode();
   late final _notes = TextEditingController(
     text: widget.initialRoutine?['notes']?.toString() ?? '',
   );
@@ -41,6 +44,8 @@ class _RoutineEditorScreenState extends State<RoutineEditorScreen> {
   void dispose() {
     _morningInput.dispose();
     _eveningInput.dispose();
+    _morningFocus.dispose();
+    _eveningFocus.dispose();
     _notes.dispose();
     super.dispose();
   }
@@ -97,6 +102,7 @@ class _RoutineEditorScreenState extends State<RoutineEditorScreen> {
     required IconData icon,
     required List<String> steps,
     required TextEditingController input,
+    required FocusNode focus,
   }) {
     final muted = AppColors.textStructure.withValues(alpha: 0.7);
     final count = steps.length;
@@ -146,22 +152,12 @@ class _RoutineEditorScreenState extends State<RoutineEditorScreen> {
           Row(
             children: [
               Expanded(
-                child: TextField(
-                  key: ValueKey('routine_${period}_input'),
-                  controller: input,
-                  textCapitalization: TextCapitalization.words,
-                  textInputAction: TextInputAction.done,
-                  decoration: InputDecoration(
-                    hintText: 'Add a ${title.toLowerCase()} product',
-                    isDense: true,
-                    filled: true,
-                    fillColor: AppColors.warmAlabaster,
-                    prefixIcon: const Icon(Icons.edit_outlined, size: 18),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  onSubmitted: (_) => _add(steps, input),
+                child: _productNameField(
+                  period: period,
+                  title: title,
+                  steps: steps,
+                  input: input,
+                  focus: focus,
                 ),
               ),
               const SizedBox(width: 8),
@@ -178,6 +174,68 @@ class _RoutineEditorScreenState extends State<RoutineEditorScreen> {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  /// The product-name field with suggestions from
+  /// skincareNameSuggestionList as the user types. Picking one fills the
+  /// field; anything else can still be typed and added.
+  Widget _productNameField({
+    required String period,
+    required String title,
+    required List<String> steps,
+    required TextEditingController input,
+    required FocusNode focus,
+  }) {
+    return RawAutocomplete<String>(
+      textEditingController: input,
+      focusNode: focus,
+      optionsBuilder: (value) => skincareNameSuggestions(value.text),
+      fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) =>
+          TextField(
+            key: ValueKey('routine_${period}_input'),
+            controller: controller,
+            focusNode: focusNode,
+            textCapitalization: TextCapitalization.words,
+            textInputAction: TextInputAction.done,
+            decoration: InputDecoration(
+              hintText: 'Add a ${title.toLowerCase()} product',
+              isDense: true,
+              filled: true,
+              fillColor: AppColors.warmAlabaster,
+              prefixIcon: const Icon(Icons.edit_outlined, size: 18),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            onSubmitted: (_) => _add(steps, input),
+          ),
+      optionsViewBuilder: (context, onSelected, options) => Align(
+        alignment: Alignment.topLeft,
+        child: Material(
+          key: ValueKey('routine_${period}_suggestions'),
+          elevation: 4,
+          color: AppColors.cardBackground,
+          borderRadius: BorderRadius.circular(12),
+          clipBehavior: Clip.antiAlias,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 240, maxWidth: 320),
+            child: ListView(
+              padding: EdgeInsets.zero,
+              shrinkWrap: true,
+              children: [
+                for (final option in options)
+                  ListTile(
+                    key: ValueKey('routine_suggestion_$option'),
+                    dense: true,
+                    title: Text(option),
+                    onTap: () => onSelected(option),
+                  ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -264,6 +322,7 @@ class _RoutineEditorScreenState extends State<RoutineEditorScreen> {
             icon: Icons.wb_sunny_outlined,
             steps: _morning,
             input: _morningInput,
+            focus: _morningFocus,
           ),
           const SizedBox(height: homeSectionGap),
           _section(
@@ -272,6 +331,7 @@ class _RoutineEditorScreenState extends State<RoutineEditorScreen> {
             icon: Icons.nights_stay_outlined,
             steps: _evening,
             input: _eveningInput,
+            focus: _eveningFocus,
           ),
           const SizedBox(height: homeSectionGap),
           Container(
