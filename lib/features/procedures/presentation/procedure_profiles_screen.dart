@@ -6960,11 +6960,11 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     return relevant.take(4).map((metric) {
       return BeforeAfterMetricTag(
         label: metric.name,
-        value: LuxeMetricParser.formatDisplayDelta(
+        // No leading minus: the tag's side shows the direction.
+        value: LuxeMetricParser.formatDisplayDeltaWithoutMinus(
           baseline: metric.baselineScore,
           current: metric.currentScore,
           deltaPct: metric.improvementPercent,
-          includeSign: true,
         ),
         side: metric.improvementPercent <= 0
             ? BeforeAfterTagSide.left
@@ -7046,11 +7046,11 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     final accent = isUnchanged
         ? const Color(0xFF6B7280)
         : (isImproved ? const Color(0xFF166534) : const Color(0xFF991B1B));
-    final deltaText = LuxeMetricParser.formatDisplayDelta(
+    // No leading minus: the card's colour shows the direction.
+    final deltaText = LuxeMetricParser.formatDisplayDeltaWithoutMinus(
       baseline: metric.baselineScore,
       current: metric.currentScore,
       deltaPct: metric.improvementPercent,
-      includeSign: true,
     );
     final currentScoreText = metric.currentScore.toStringAsFixed(1);
     final baselineScoreText = metric.baselineScore.toStringAsFixed(1);

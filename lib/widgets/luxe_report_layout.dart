@@ -256,6 +256,21 @@ class LuxeMetricParser {
     return '${capped.toStringAsFixed(1)}%';
   }
 
+  /// [formatDisplayDelta] with a sign for display: "+" on a rise, and no
+  /// leading minus on a fall ("6.0 pts", "17.3%"), since the verdict word,
+  /// colour or side already shows the direction. The delta itself is
+  /// unchanged.
+  static String formatDisplayDeltaWithoutMinus({
+    required double baseline,
+    required double current,
+    required double deltaPct,
+  }) => formatDisplayDelta(
+    baseline: baseline,
+    current: current,
+    deltaPct: deltaPct,
+    includeSign: true,
+  ).replaceFirst(RegExp(r'^-'), '');
+
   static double displayDeltaMagnitude({
     required double baseline,
     required double current,
@@ -2522,12 +2537,11 @@ class _MetricCard extends StatelessWidget {
     if (directionalStatus && assessment.deltaPct != null) {
       // The status word carries the direction; a worsening value is shown
       // without a leading minus.
-      badgeValueText = LuxeMetricParser.formatDisplayDelta(
+      badgeValueText = LuxeMetricParser.formatDisplayDeltaWithoutMinus(
         baseline: baselineValue,
         current: currentValue,
         deltaPct: assessment.deltaPct!,
-        includeSign: true,
-      ).replaceFirst(RegExp(r'^-'), '');
+      );
       badgePercent = LuxeMetricParser.displayDeltaMagnitude(
         baseline: baselineValue,
         current: currentValue,
