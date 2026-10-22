@@ -343,6 +343,18 @@ Future<bool> requestAiBurstExposureLock(
   }
 }
 
+/// Locks focus for the AI burst, like [requestAiBurstExposureLock]; false
+/// (and the burst still runs) when the camera does not support it.
+Future<bool> requestAiBurstFocusLock(Future<void> Function() setLocked) async {
+  try {
+    await setLocked();
+    return true;
+  } catch (error) {
+    debugPrint('AI burst focus lock unsupported: $error');
+    return false;
+  }
+}
+
 Future<T> captureAiScanFrameWithFlashOff<T>({
   required Future<void> Function(FlashMode mode) setFlashMode,
   required Future<T> Function() capture,
@@ -3665,6 +3677,7 @@ class _CameraScreenState extends State<CameraScreen>
   _burstFrameExifAndStillSize(
     Uint8List bytes, {
     required bool exposureLockSucceeded,
+    required bool focusLockSucceeded,
   }) {
     img.Image? decoded;
     try {
@@ -3711,6 +3724,7 @@ class _CameraScreenState extends State<CameraScreen>
           'exposure_bias=$exposureBias brightness_value=$brightnessValue '
           'flash=$flash flash_fired=$flashFired '
           'exposure_lock_succeeded=$exposureLockSucceeded '
+          'focus_lock_succeeded=$focusLockSucceeded '
           'lens_position=null white_balance_temperature=null '
           'white_balance_red_gain=null white_balance_green_gain=null '
           'white_balance_blue_gain=null',
@@ -3729,6 +3743,7 @@ class _CameraScreenState extends State<CameraScreen>
             exifRationalAsDouble(brightnessValue),
         flashFired: flashFired,
         exposureLockSucceeded: exposureLockSucceeded,
+        focusLockSucceeded: focusLockSucceeded,
       ),
     );
   }
@@ -5350,8 +5365,14 @@ class _CameraScreenState extends State<CameraScreen>
         _lightingStreamActive = false;
       }
 
+      // Exposure and focus are locked before frame 1 and held for the
+      // whole burst, so every frame shares the same ISO, shutter and focus;
+      // both are released in the finally block below.
       final exposureLockSucceeded = await requestAiBurstExposureLock(
         () => controller.setExposureMode(ExposureMode.locked),
+      );
+      final focusLockSucceeded = await requestAiBurstFocusLock(
+        () => controller.setFocusMode(FocusMode.locked),
       );
 
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -5391,12 +5412,21 @@ class _CameraScreenState extends State<CameraScreen>
         final exifAndSize = _burstFrameExifAndStillSize(
           bytes,
           exposureLockSucceeded: exposureLockSucceeded,
+          focusLockSucceeded: focusLockSucceeded,
         );
         burstExifFields.add(exifAndSize.fields);
         burstExposureMetadata.add(exifAndSize.exposure);
         burstStillWidths.add(exifAndSize.stillWidth);
         burstStillHeights.add(exifAndSize.stillHeight);
       }
+      // The locked ISO / exposure time and whether every frame kept them.
+      debugPrint(
+        aiBurstLockLogLine(
+          exposureLockSucceeded: exposureLockSucceeded,
+          focusLockSucceeded: focusLockSucceeded,
+          frames: burstExposureMetadata,
+        ),
+      );
 
       final firstBytes = await capturedFiles.first.readAsBytes();
       if (!mounted) return;
@@ -5608,6 +5638,11 @@ class _CameraScreenState extends State<CameraScreen>
         await controller.setExposureMode(ExposureMode.auto);
       } catch (e) {
         debugPrint('AI burst exposure reset unsupported: $e');
+      }
+      try {
+        await controller.setFocusMode(FocusMode.auto);
+      } catch (e) {
+        debugPrint('AI burst focus reset unsupported: $e');
       }
       _startLightingStream(controller);
       // Keep the shutter disabled (_capturing stays true) until the restart

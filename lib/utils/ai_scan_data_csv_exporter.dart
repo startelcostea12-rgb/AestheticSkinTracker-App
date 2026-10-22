@@ -175,6 +175,7 @@ class AiScanDataCsvExporter {
     'brightness_value',
     'flash_fired',
     'exposure_lock_succeeded',
+    'focus_lock_succeeded',
     'lens_position',
     'white_balance_temperature',
     'white_balance_red_gain',
