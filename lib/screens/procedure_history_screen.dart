@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../app_theme.dart';
 import '../models/procedure_log.dart';
 import '../providers/procedure_logs_provider.dart';
+import '../services/notification_service.dart';
 import '../widgets/local_image_preview.dart';
 import 'at_home_procedure_log_screen.dart';
 
@@ -58,6 +59,58 @@ class _ProcedureHistoryScreenState
       });
       _generateAiInsights();
     });
+  }
+
+  /// Opens the log in the Track Procedure form; saving updates this entry.
+  Future<void> _editLog(ProcedureLog log) async {
+    final updated = await Navigator.of(context).push<ProcedureLog>(
+      MaterialPageRoute(
+        builder: (_) => AtHomeProcedureLogScreen(existingLog: log),
+      ),
+    );
+    if (!mounted || updated == null) return;
+    _insightsCachedAt = null;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Procedure log updated.')));
+  }
+
+  /// Deletes only this log (after confirming) and cancels its reminder.
+  Future<void> _deleteLog(ProcedureLog log) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete this log?'),
+        content: Text(
+          'This removes the ${log.procedureType} entry from '
+          '${DateFormat('MMMM d, yyyy').format(log.dateTime)}. '
+          'Other logs are not affected.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('procedure_log_delete_confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await ref.read(procedureLogsProvider.notifier).deleteLog(log.id);
+    try {
+      await NotificationService().cancelReminder(log.id);
+    } catch (_) {
+      // The log is already deleted; a failed cancel must not block that.
+    }
+    if (!mounted) return;
+    _insightsCachedAt = null;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Procedure log deleted.')));
   }
 
   Future<void> _generateAiInsights() async {
@@ -205,9 +258,13 @@ class _ProcedureHistoryScreenState
               size: 26,
             ),
             const SizedBox(width: 10),
-            Text(
-              'Procedure History',
-              style: MyApp.pageTitleStyle(color: MyApp.textBrown),
+            Flexible(
+              child: Text(
+                'Procedure History',
+                style: MyApp.pageTitleStyle(color: MyApp.textBrown),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           ],
         ),
@@ -249,7 +306,11 @@ class _ProcedureHistoryScreenState
                       delegate: SliverChildBuilderDelegate(
                         (_, i) => Padding(
                           padding: const EdgeInsets.only(bottom: 14),
-                          child: _ProcedureCard(log: displayed[i]),
+                          child: _ProcedureCard(
+                            log: displayed[i],
+                            onEdit: () => _editLog(displayed[i]),
+                            onDelete: () => _deleteLog(displayed[i]),
+                          ),
                         ),
                         childCount: displayed.length,
                       ),
@@ -756,12 +817,16 @@ class _MetricPill extends StatelessWidget {
             children: [
               Icon(icon, size: 12, color: MyApp.clinicalMuted),
               const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  color: MyApp.clinicalMuted,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
+              Flexible(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: MyApp.clinicalMuted,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
@@ -785,8 +850,14 @@ class _MetricPill extends StatelessWidget {
 
 class _ProcedureCard extends StatelessWidget {
   final ProcedureLog log;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
 
-  const _ProcedureCard({required this.log});
+  const _ProcedureCard({
+    required this.log,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
   /// This log's labeled photos with duplicate paths removed, so a single
   /// uploaded photo never renders more than once.
@@ -827,6 +898,31 @@ class _ProcedureCard extends StatelessWidget {
                   const SizedBox(width: 8),
                   _CategoryBadge(category: log.category!),
                 ],
+                PopupMenuButton<String>(
+                  key: ValueKey('procedure_log_menu_${log.id}'),
+                  tooltip: 'Log options',
+                  icon: Icon(Icons.more_vert, color: MyApp.clinicalMuted),
+                  onSelected: (value) =>
+                      value == 'edit' ? onEdit() : onDelete(),
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(
+                      value: 'edit',
+                      child: ListTile(
+                        leading: Icon(Icons.edit_outlined),
+                        title: Text('Edit'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: ListTile(
+                        leading: Icon(Icons.delete_outline),
+                        title: Text('Delete'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                  ],
+                ),
               ],
             ),
             const SizedBox(height: 10),

@@ -18,7 +18,11 @@ import 'ai_recovery_coach_screen.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 
 class AtHomeProcedureLogScreen extends ConsumerStatefulWidget {
-  const AtHomeProcedureLogScreen({super.key});
+  const AtHomeProcedureLogScreen({super.key, this.existingLog});
+
+  /// When set, the form opens pre-filled with this log and saving updates
+  /// it in place (same id) instead of adding a new log.
+  final ProcedureLog? existingLog;
 
   @override
   ConsumerState<AtHomeProcedureLogScreen> createState() =>
@@ -123,10 +127,76 @@ class _AtHomeProcedureLogScreenState
   String? _selectedExpectedDuration;
   bool _reminderEnabled = true;
 
+  bool get _isEditing => widget.existingLog != null;
+
   @override
   void initState() {
     super.initState();
     _reminderEnabled = true;
+    final log = widget.existingLog;
+    if (log != null) _prefillFrom(log);
+  }
+
+  /// The value after "[key]:" on its own line in a log's combined
+  /// settings (see [_combinedSettings]), or null.
+  static String? _settingsValue(String? settings, String key) {
+    if (settings == null) return null;
+    final prefix = '${key.toLowerCase()}:';
+    for (final line in settings.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.toLowerCase().startsWith(prefix)) {
+        final value = trimmed.substring(prefix.length).trim();
+        return value.isEmpty ? null : value;
+      }
+    }
+    return null;
+  }
+
+  /// Fills the form from [log] so it can be edited.
+  void _prefillFrom(ProcedureLog log) {
+    final category =
+        log.category ?? _settingsValue(log.settings, 'Category');
+    _selectedCategory = _procedureCategories.contains(category)
+        ? category!
+        : _atHomeCategory;
+    if (_usesProfessionalFields) {
+      _professionalProcedureController.text = log.procedureType;
+      _clinicNameController.text = _settingsValue(log.settings, 'Clinic') ?? '';
+      _providerNameController.text =
+          _settingsValue(log.settings, 'Provider') ?? '';
+      _costController.text = _settingsValue(log.settings, 'Cost') ?? '';
+      final duration = log.expectedDuration;
+      if (duration != null && duration.isNotEmpty) {
+        if (_expectedDurationOptions.contains(duration)) {
+          _selectedExpectedDuration = duration;
+        } else {
+          _selectedExpectedDuration = 'Other';
+          _customDurationController.text = duration;
+        }
+      }
+      _reminderEnabled = log.reminderEnabled;
+    } else if (_atHomeProcedureTypes.contains(log.procedureType)) {
+      _selectedProcedureType = log.procedureType;
+    } else {
+      _selectedProcedureType = 'Custom Procedure';
+      _customProcedureController.text = log.procedureType;
+    }
+    _settingsController.text = _settingsValue(log.settings, 'Settings') ?? '';
+    _notesController.text = log.notes ?? '';
+    _dateTime = log.dateTime;
+    _intensity = (log.intensity ?? _intensity).clamp(0, 10).toDouble();
+    _reactionScore = (log.reactionScore ?? _reactionScore)
+        .clamp(1, 10)
+        .toDouble();
+    _selectedProducts
+      ..clear()
+      ..addAll(log.productsUsed);
+    _photos
+      ..clear()
+      ..addAll([
+        for (final photo in log.labeledPhotos)
+          _ProcedurePhoto(label: photo.label, path: photo.path),
+      ]);
   }
 
   @override
@@ -152,7 +222,7 @@ class _AtHomeProcedureLogScreenState
     return Scaffold(
       backgroundColor: MyApp.champagne,
       appBar: AppBar(
-        title: const Text('Track Procedure'),
+        title: Text(_isEditing ? 'Edit Procedure Log' : 'Track Procedure'),
         actions: [
           TextButton.icon(
             onPressed: canSave ? _saveLog : null,
@@ -289,7 +359,12 @@ class _AtHomeProcedureLogScreenState
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
-                    children: _commonProducts.map(_buildProductChip).toList(),
+                    children: [
+                      ..._commonProducts,
+                      ..._selectedProducts.where(
+                        (p) => !_commonProducts.contains(p),
+                      ),
+                    ].map(_buildProductChip).toList(),
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -362,7 +437,7 @@ class _AtHomeProcedureLogScreenState
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.check_circle_outline),
-              label: const Text('Save Procedure Log'),
+              label: Text(_isEditing ? 'Save Changes' : 'Save Procedure Log'),
             ),
           ],
         ),
@@ -417,12 +492,18 @@ class _AtHomeProcedureLogScreenState
       children: [
         DropdownButtonFormField<String>(
           initialValue: _selectedProcedureType,
+          isExpanded: true,
           decoration: const InputDecoration(
             labelText: 'Procedure type',
             prefixIcon: Icon(Icons.spa_outlined),
           ),
           items: _atHomeProcedureTypes
-              .map((type) => DropdownMenuItem(value: type, child: Text(type)))
+              .map(
+                (type) => DropdownMenuItem(
+                  value: type,
+                  child: Text(type, overflow: TextOverflow.ellipsis),
+                ),
+              )
               .toList(),
           onChanged: (value) {
             if (value == null) return;
@@ -822,7 +903,12 @@ class _AtHomeProcedureLogScreenState
       expectedDuration = _customDurationController.text.trim();
     }
 
+    final existing = widget.existingLog;
     final log = ProcedureLog(
+      id: existing?.id,
+      createdAt: existing?.createdAt,
+      aiFeedback: existing?.aiFeedback,
+      photoCalibrationByPath: existing?.photoCalibrationByPath ?? const {},
       procedureType: _procedureName,
       dateTime: _dateTime,
       notes: _emptyToNull(_notesController.text),
@@ -837,6 +923,11 @@ class _AtHomeProcedureLogScreenState
       nextReminderDate: nextReminderDate,
       reminderEnabled: _reminderEnabled && _usesProfessionalFields,
     );
+
+    if (existing != null) {
+      await _saveEditedLog(log);
+      return;
+    }
 
     // ── Freemium gate: free tier capped at 8 procedure logs ──────────────
     try {
@@ -885,6 +976,33 @@ class _AtHomeProcedureLogScreenState
       if (!mounted) return;
       setState(() => _saving = false);
       _showSnackBar('Could not save procedure log: $error');
+    }
+  }
+
+  /// Saves an edited log over the existing entry (same id) and replaces its
+  /// reminder: the old one is cancelled and, if still enabled, rescheduled
+  /// for the new date. Not counted against the free log limit.
+  Future<void> _saveEditedLog(ProcedureLog log) async {
+    try {
+      await ref.read(procedureLogsProvider.notifier).updateLog(log);
+      if (!kIsWeb) {
+        try {
+          final notifications = NotificationService();
+          await notifications.cancelReminder(log.id);
+          if (log.reminderEnabled && log.nextReminderDate != null) {
+            await notifications.scheduleReminderForProcedure(log);
+          }
+        } catch (_) {
+          // Reminders are optional; the edit is already saved.
+        }
+      }
+      if (!mounted) return;
+      setState(() => _saving = false);
+      Navigator.of(context).pop(log);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      _showSnackBar('Could not save changes: $error');
     }
   }
 
@@ -1229,7 +1347,7 @@ class _FormSection extends StatelessWidget {
             children: [
               Icon(icon, color: AppColors.champagneGold, size: 20),
               const SizedBox(width: 8),
-              Text(title, style: MyApp.cardTitleStyle()),
+              Expanded(child: Text(title, style: MyApp.cardTitleStyle())),
             ],
           ),
           const SizedBox(height: 14),
