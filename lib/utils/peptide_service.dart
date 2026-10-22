@@ -818,39 +818,4 @@ class PeptideService {
     return '${months[l.month - 1]} ${l.day}';
   }
 
-  /// For each `[label, [aliasKeys...]]` row, emits `Label: baseline → latest`
-  /// using the first non-null alias found in each scan map. Returns a single
-  /// comma-separated line, or '' when nothing matched.
-  static String _summarizeMetrics(
-    Map<String, double> baseline,
-    Map<String, double> latest,
-    List<List<Object>> rows,
-  ) {
-    double? pick(Map<String, double> m, List<String> aliases) {
-      for (final k in aliases) {
-        final v = m[k];
-        if (v != null) return v;
-      }
-      return null;
-    }
-
-    final out = <String>[];
-    for (final r in rows) {
-      final label = r[0] as String;
-      final aliases = (r[1] as List).cast<String>();
-      final b = pick(baseline, aliases);
-      final l = pick(latest, aliases);
-      if (b == null && l == null) continue;
-      if (b != null && l != null && (b - l).abs() < 0.0001) {
-        out.add('$label ${l.toStringAsFixed(1)}');
-      } else if (b != null && l != null) {
-        out.add('$label ${b.toStringAsFixed(1)} → ${l.toStringAsFixed(1)}');
-      } else if (l != null) {
-        out.add('$label ${l.toStringAsFixed(1)}');
-      } else {
-        out.add('$label baseline ${b!.toStringAsFixed(1)}');
-      }
-    }
-    return out.join(', ');
-  }
 }
