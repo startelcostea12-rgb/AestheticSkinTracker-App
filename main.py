@@ -6743,7 +6743,7 @@ def analyze_skin_patch(
                 forced_metric_values["localized_redness"],
                 redness_path,
                 redness_roi_pixels,
-                primary_cheek_pixels,
+                int(raw_components.get("primary_cheek_roi_pixels", 0)),
             )
         else:
             metric_status["localized_redness"] = "unavailable"
