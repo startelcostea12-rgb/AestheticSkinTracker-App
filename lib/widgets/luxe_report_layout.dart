@@ -867,10 +867,51 @@ class LuxeMetricParser {
     return null;
   }
 
+  /// Extraction-path labels the backend reports (main.py
+  /// _normalize_extraction_path_label and the pore omission paths). Old
+  /// labels such as approximate_face_bbox and fallback stay recognised so
+  /// saved scans keep their meaning.
+  static const Set<String> _knownExtractionPaths = {
+    'primary_roi',
+    'fallback',
+    'skipped',
+    'cheek_primary',
+    'cheek_primary_no_skin_mask',
+    'cheek_expand_no_skin',
+    'full_face_fallback',
+    'full_face_yolo',
+    'laplacian_fallback',
+    'large_roi_fallback',
+    'approximate_face_bbox',
+    'tzone_landmark_fallback',
+    'tzone_face_fallback',
+    'pose',
+    'crop',
+    'dog_spread',
+  };
+
   static String _normalizeExtractionPath(dynamic value) {
-    final text = value?.toString().trim().toLowerCase() ?? 'unknown';
-    if (text == 'primary_roi' || text == 'fallback' || text == 'skipped') {
-      return text;
+    final text =
+        value?.toString().trim().toLowerCase().replaceAll(
+          RegExp(r'[-\s]'),
+          '_',
+        ) ??
+        'unknown';
+    if (_knownExtractionPaths.contains(text)) return text;
+    // Same aliases as the backend's label parser.
+    if (const {'primary', 'roi', 'primaryroi'}.contains(text)) {
+      return 'primary_roi';
+    }
+    if (const {'fallback_roi', 'bbox_fallback', 'fallbackroi'}.contains(text)) {
+      return 'fallback';
+    }
+    if (const {
+      'omit',
+      'omitted',
+      'not_computed',
+      'unavailable',
+    }.contains(text)) {
+      return 'skipped';
     }
     return 'unknown';
   }
@@ -2637,8 +2678,7 @@ class _MetricCard extends StatelessWidget {
     final showPrecisionDetail =
         _showVerdict &&
         !(applyDisplayNoiseFloors &&
-            (liveLocked ||
-                precision.detailText == 'Confidence unavailable'));
+            (liveLocked || precision.detailText == 'Confidence unavailable'));
 
     return Material(
       key: ValueKey('result_metric_${metric.key}'),
