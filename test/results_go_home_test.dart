@@ -102,7 +102,7 @@ void main() {
     expect(find.text('page:scan'), findsNothing);
   });
 
-  test('results stage shows Done and a prominent Home, both going home', () {
+  test('results stage shows Done, which goes home', () {
     final source = File(
       'lib/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart',
     ).readAsStringSync();
@@ -113,11 +113,6 @@ void main() {
     expect(doneBlock, contains('onPressed: _goHome'));
     expect(doneBlock, contains("'Done'"));
 
-    final home = source.indexOf("ValueKey('results_home_button')");
-    expect(home, isNonNegative);
-    final homeBlock = source.substring(home, home + 200);
-    expect(homeBlock, contains('onPressed: _goHome'));
-    expect(homeBlock, contains('prominent: true'));
     expect(
       source,
       contains('void _goHome() => navigateHomeFrom(Navigator.of(context));'),
