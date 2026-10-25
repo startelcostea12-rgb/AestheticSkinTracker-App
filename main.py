@@ -1631,6 +1631,16 @@ def _landmarks_to_points(landmarks, width: int, height: int) -> np.ndarray:
     return np.array(pts, dtype=np.float32)
 
 
+# Every downstream scorer runs on this fixed 512 x 512 face crop (kernel sizes,
+# ROI pixel counts, DoG/Laplacian scales are all tuned in crop pixels).
+_CANONICAL_FACE_CROP_SIZE = 512
+# EXPERIMENT (milder resolution test): a face crop whose longest source side
+# exceeds this many pixels is first area-averaged (INTER_AREA) down to
+# this x this, then resampled to the 512 working crop. Crops at or below it
+# are untouched (identical to main's single bilinear resample to 512).
+_CANONICAL_ANALYSIS_CROP_SIZE = 384
+
+
 def _align_and_crop_face(bgr: np.ndarray, points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     left_eye = np.mean(points[[33, 133]], axis=0)
     right_eye = np.mean(points[[362, 263]], axis=0)
@@ -1650,7 +1660,18 @@ def _align_and_crop_face(bgr: np.ndarray, points: np.ndarray) -> Tuple[np.ndarra
     x1, y1 = int(min(w, max_xy[0] + pad_x)), int(min(h, max_xy[1] + pad_y))
     if x1 <= x0 or y1 <= y0:
         raise ValueError("Face crop failed due to invalid bounds")
-    crop = cv2.resize(aligned[y0:y1, x0:x1], (512, 512), interpolation=cv2.INTER_LINEAR)
+    face_crop = aligned[y0:y1, x0:x1]
+    if max(face_crop.shape[:2]) > _CANONICAL_ANALYSIS_CROP_SIZE:
+        face_crop = cv2.resize(
+            face_crop,
+            (_CANONICAL_ANALYSIS_CROP_SIZE, _CANONICAL_ANALYSIS_CROP_SIZE),
+            interpolation=cv2.INTER_AREA,
+        )
+    crop = cv2.resize(
+        face_crop,
+        (_CANONICAL_FACE_CROP_SIZE, _CANONICAL_FACE_CROP_SIZE),
+        interpolation=cv2.INTER_LINEAR,
+    )
     return crop, aligned_points
 
 
