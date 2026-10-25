@@ -56,7 +56,7 @@ def nikki3_inputs():
 
 def test_version_and_constants():
     # v3 introduced the pre-smoothed Canny; v4 is the five-frame median.
-    assert main._metric_formula_version("wrinkle_load") == 4
+    assert main._metric_formula_version("wrinkle_load") == 5
     assert main.WRINKLE_PRESMOOTH_SIGMA == 2.0
     assert (main.WRINKLE_CANNY_LOW, main.WRINKLE_CANNY_HIGH) == (20, 40)
 

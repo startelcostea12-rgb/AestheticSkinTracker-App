@@ -1631,6 +1631,20 @@ def _landmarks_to_points(landmarks, width: int, height: int) -> np.ndarray:
     return np.array(pts, dtype=np.float32)
 
 
+# Every downstream scorer runs on this fixed 512 x 512 face crop (kernel sizes,
+# ROI pixel counts, DoG/Laplacian scales are all tuned in crop pixels).
+_CANONICAL_FACE_CROP_SIZE = 512
+# Resolution invariance (see test_resolution_invariance.py): a crop cut from a
+# high-resolution upload carries real fine detail that the SAME face captured
+# at lower resolution never had, so texture/pore/wrinkle signals rose with
+# upload size (texture_smoothness moved up to ~24 points across 512-1536 px
+# uploads of one face). Any crop whose source side exceeds this many pixels is
+# first area-averaged down to this canonical analysis resolution (~175 px face
+# width), then resampled to the 512 working crop. Sources already at or below
+# it are untouched, so low-resolution input is not blurred further.
+_CANONICAL_ANALYSIS_CROP_SIZE = 256
+
+
 def _align_and_crop_face(bgr: np.ndarray, points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     left_eye = np.mean(points[[33, 133]], axis=0)
     right_eye = np.mean(points[[362, 263]], axis=0)
@@ -1650,7 +1664,18 @@ def _align_and_crop_face(bgr: np.ndarray, points: np.ndarray) -> Tuple[np.ndarra
     x1, y1 = int(min(w, max_xy[0] + pad_x)), int(min(h, max_xy[1] + pad_y))
     if x1 <= x0 or y1 <= y0:
         raise ValueError("Face crop failed due to invalid bounds")
-    crop = cv2.resize(aligned[y0:y1, x0:x1], (512, 512), interpolation=cv2.INTER_LINEAR)
+    face_crop = aligned[y0:y1, x0:x1]
+    if max(face_crop.shape[:2]) > _CANONICAL_ANALYSIS_CROP_SIZE:
+        face_crop = cv2.resize(
+            face_crop,
+            (_CANONICAL_ANALYSIS_CROP_SIZE, _CANONICAL_ANALYSIS_CROP_SIZE),
+            interpolation=cv2.INTER_AREA,
+        )
+    crop = cv2.resize(
+        face_crop,
+        (_CANONICAL_FACE_CROP_SIZE, _CANONICAL_FACE_CROP_SIZE),
+        interpolation=cv2.INTER_LINEAR,
+    )
     return crop, aligned_points
 
 
@@ -4380,7 +4405,13 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     # are not comparable with the single-path metric.
     # v4: var_p80 / lap_p80 contribute to the roughness blend once (through
     # texture_energy) instead of twice, so v3 and v4 scores are not comparable.
-    "texture_smoothness": 4,
+    # v5: the face crop is band-limited to a canonical analysis resolution
+    # (_CANONICAL_ANALYSIS_CROP_SIZE) so scores no longer rise with upload
+    # resolution. The same bump applies to the other metrics whose measured
+    # values moved by about their noise floor or more: wrinkle_load,
+    # glabellar_wrinkle_depth, pore_visibility, chin_pore_visibility and
+    # pore_contraction_index.
+    "texture_smoothness": 5,
     "pigment_load": 2,
     # v3: Canny on a sigma-2.0 Gaussian-smoothed patch (20, 40) instead of the
     # raw patch (70, 140), so focus/sharpening changes no longer flip edges.
@@ -4388,7 +4419,7 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     # median of five frames (omitted unless all five produced a value)
     # instead of the mean of three, so v3 and v4 scan values are not
     # comparable. Same for pore_contraction_index v3 and the under-eye v5s.
-    "wrinkle_load": 4,
+    "wrinkle_load": 5,
     # v3: fixed V >= 220 plus a local-contrast condition (V over its sigma-5
     # local mean >= 15), so clipped flat highlights no longer count as oil.
     "sebum_excess_oil_gloss": 3,
@@ -4397,16 +4428,16 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     # recomputation from emitted redness + diffuse flushing is gone, so a
     # scan whose zone formula did not emit now omits rosacea instead.
     "rosacea_severity": 3,
-    "pore_visibility": 3,
-    "chin_pore_visibility": 1,
-    "pore_contraction_index": 3,
+    "pore_visibility": 4,
+    "chin_pore_visibility": 2,
+    "pore_contraction_index": 4,
     # v2: fixed avg_width quantization (boundingRect integer px -> minAreaRect
     # continuous size) and the 26-32%-of-photos zero-out (82nd-percentile
     # threshold + (3,5) opening kernel erasing thin-but-real furrow
     # responses entirely). See the GLABELLAR_ZERO_OUT_FIX /
     # GLABELLAR_WIDTH_QUANTIZATION_FIX comments in
     # _compute_structural_opencv_metrics.
-    "glabellar_wrinkle_depth": 2,
+    "glabellar_wrinkle_depth": 3,
     # v2 omitted both below a 1500 px under-eye mask; v3 removed that gate.
     # v4: both read a lash-free band (0.15-0.45 eye widths below the lower
     # lid) instead of the lid-hugging polygon. Dark circles compare the

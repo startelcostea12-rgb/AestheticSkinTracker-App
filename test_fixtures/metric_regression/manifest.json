@@ -26,7 +26,7 @@
         "sebum_excess_oil_gloss": {"confirmed": 4.4, "min": 0.0, "max": 9.4, "note": "Re-pinned to the v3 local-contrast formula output (not human-reviewed). Was 3.4 on v2."},
         "under_eye_texture_density": {"confirmed": 88.1, "min": 83.1, "max": 93.1, "note": "v4 lash-free band, DoG ratio vs same-height cheek strip (50 = same as cheek). High because this retouched stock cheek is unnaturally smooth. Was 21.0 on the v3 lid polygon."},
         "under_eye_dark_circle_density": {"confirmed": 16.8, "min": 11.8, "max": 21.8, "note": "v4 lash-free band vs same-height cheek strip. Was 17.8 on v3."},
-        "texture_smoothness": {"confirmed": 65.0, "min": 59.6, "max": 70.4, "note": "Re-pinned for the texture double-count fix (var_p80/lap_p80 counted once); was 63.6/17.4/44.8/11.5 for clear_face/nikki2/nikki3/st1. Pinned to current output +/-5.4, not human-reviewed."},
+        "texture_smoothness": {"confirmed": 66.8, "min": 61.4, "max": 72.2, "note": "Re-pinned for the texture double-count fix and canonical-resolution face crop; was 63.6/17.4/44.8/11.5 for clear_face/nikki2/nikki3/st1. Pinned to current output +/-5.4, not human-reviewed."},
         "glabellar_wrinkle_depth": {"confirmed": 15.1, "min": 8.7, "max": 21.5},
         "wrinkle_load": {"confirmed": 14.4, "min": 10.7, "max": 18.1, "note": "v3 smoothed-edge formula, pinned to current output +/-3.7. Was 10.6 on v2."}
       }
@@ -39,7 +39,7 @@
       "strict": true,
       "metrics": {
         "localized_redness": {"confirmed": 13.5, "min": 8.5, "max": 18.5},
-        "texture_smoothness": {"confirmed": 31.2, "min": 25.8, "max": 36.6, "note": "Re-pinned for the texture double-count fix (var_p80/lap_p80 counted once); was 63.6/17.4/44.8/11.5 for clear_face/nikki2/nikki3/st1. Pinned to current output +/-5.4, not human-reviewed."},
+        "texture_smoothness": {"confirmed": 58.9, "min": 53.5, "max": 64.3, "note": "Re-pinned for the texture double-count fix and canonical-resolution face crop; was 63.6/17.4/44.8/11.5 for clear_face/nikki2/nikki3/st1. Pinned to current output +/-5.4, not human-reviewed."},
         "glabellar_wrinkle_depth": {"confirmed": 19.2, "min": 12.8, "max": 25.6},
         "wrinkle_load": {"confirmed": 34.6, "min": 30.9, "max": 38.3, "note": "v3 smoothed-edge formula, pinned to current output +/-3.7. Was 75.5 on v2."}
       }
@@ -57,7 +57,7 @@
         "pore_visibility": {"confirmed": 11.7, "min": 6.7, "max": 16.7},
         "under_eye_texture_density": {"confirmed": 49.4, "min": 44.4, "max": 54.4, "note": "v4 lash-free band DoG ratio. Was 96.0 (near-saturated) on the v3 lid polygon."},
         "under_eye_dark_circle_density": {"confirmed": 70.8, "min": 65.8, "max": 75.8, "note": "v4 lash-free band vs same-height cheek strip. Was 72.6 on v3."},
-        "texture_smoothness": {"confirmed": 45.4, "min": 40.0, "max": 50.8, "note": "Re-pinned for the texture double-count fix (var_p80/lap_p80 counted once); was 63.6/17.4/44.8/11.5 for clear_face/nikki2/nikki3/st1. Pinned to current output +/-5.4, not human-reviewed."},
+        "texture_smoothness": {"confirmed": 61.3, "min": 55.9, "max": 66.7, "note": "Re-pinned for the texture double-count fix and canonical-resolution face crop; was 63.6/17.4/44.8/11.5 for clear_face/nikki2/nikki3/st1. Pinned to current output +/-5.4, not human-reviewed."},
         "glabellar_wrinkle_depth": {"confirmed": 18.4, "min": 12.0, "max": 24.8},
         "wrinkle_load": {"confirmed": 32.8, "min": 29.1, "max": 36.5, "note": "v3 smoothed-edge formula, pinned to current output +/-3.7. Was 61.5 on v2."}
       }
@@ -75,7 +75,7 @@
         "sebum_excess_oil_gloss": {"confirmed": 6.5, "min": 1.5, "max": 11.5, "note": "Re-pinned to the v3 local-contrast formula output (not human-reviewed). Was 0.6 on v2."},
         "under_eye_texture_density": {"confirmed": 48.1, "min": 43.1, "max": 53.1, "note": "v4 lash-free band DoG ratio. Was 100.0 (saturated) on the v3 lid polygon."},
         "under_eye_dark_circle_density": {"expected_missing": true, "measured": 0.0, "omit_reason": "insufficient_signal"},
-        "texture_smoothness": {"confirmed": 8.4, "min": 3.0, "max": 13.8, "note": "Re-pinned for the texture double-count fix (var_p80/lap_p80 counted once); was 63.6/17.4/44.8/11.5 for clear_face/nikki2/nikki3/st1. Pinned to current output +/-5.4, not human-reviewed."},
+        "texture_smoothness": {"confirmed": 50.6, "min": 45.2, "max": 56.0, "note": "Re-pinned for the texture double-count fix and canonical-resolution face crop; was 63.6/17.4/44.8/11.5 for clear_face/nikki2/nikki3/st1. Pinned to current output +/-5.4, not human-reviewed."},
         "glabellar_wrinkle_depth": {"confirmed": 33.5, "min": 27.1, "max": 39.9},
         "wrinkle_load": {"confirmed": 42.6, "min": 38.9, "max": 46.3, "note": "v3 smoothed-edge formula, pinned to current output +/-3.7. Was 84.2 on v2."}
       }
