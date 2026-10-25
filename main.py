@@ -2442,6 +2442,30 @@ def _extract_native_resolution_chin_pore_roi(
     return l_crop, mask_crop, int(cv2.countNonZero(mask_crop))
 
 
+def _texture_roughness_index(var_p80: float, lap_p80: float, spread: float) -> float:
+    """Roughness in [0, 1] (higher = rougher) from three raw signals.
+
+    Each underlying signal contributes exactly once. var_p80 and lap_p80 enter
+    only through texture_energy = 0.65*sqrt(var_p80) + 0.35*lap_p80; earlier
+    versions ALSO added them directly (n_var, n_lap) next to n_energy, so each
+    was counted twice and three separately clipped, collinear terms stacked.
+    The energy weight is 0.85 (the 0.45 + 0.20 + 0.20 the three terms shared)
+    and pixel spread keeps its 0.15, so the family weight and the score's
+    slope per unit of sqrt(var_p80) / lap_p80 stay within ~10% of the old
+    formula in the unclipped range; the score is NOT made less steep (that
+    would be a recalibration, not a double-count fix).
+    """
+    energy = (0.65 * math.sqrt(max(float(var_p80), 0.0))) + (0.35 * float(lap_p80))
+    n_energy = float(np.clip((energy - 8.0) / 22.0, 0.0, 1.0))
+    n_spread = float(np.clip((float(spread) - 18.0) / 32.0, 0.0, 1.0))
+    return float(np.clip((0.85 * n_energy) + (0.15 * n_spread), 0.0, 1.0))
+
+
+def _texture_smoothness_from_roughness(roughness_index: float) -> float:
+    """0-100 smoothness (higher = smoother) from a [0, 1] roughness index."""
+    return float(np.clip(100.0 * (1.0 - math.pow(roughness_index, 1.10)), 0.0, 100.0))
+
+
 def _signal_conf(
     pixel_count: int,
     spread: float,
@@ -3786,17 +3810,14 @@ def _compute_canonical_patch_metrics(
         texture_energy = (0.65 * np.sqrt(max(var_p80, 0.0))) + (0.35 * lap_p80)
 
         # Calibrated monotonic roughness blend to keep healthy skin in a
-        # practical mid-band while still allowing low/high extremes.
+        # practical mid-band while still allowing low/high extremes. var_p80
+        # and lap_p80 reach the score only once, through texture_energy.
         n_energy = float(np.clip((texture_energy - 8.0) / 22.0, 0.0, 1.0))
-        n_var = float(np.clip((math.sqrt(max(var_p80, 0.0)) - 6.0) / 14.0, 0.0, 1.0))
-        n_lap = float(np.clip((lap_p80 - 14.0) / 32.0, 0.0, 1.0))
 
         texture_spread = float(np.std(texture_vals)) if texture_vals.size > 0 else 0.0
-        n_spread = float(np.clip((texture_spread - 18.0) / 32.0, 0.0, 1.0))
 
-        roughness_index = (0.45 * n_energy) + (0.20 * n_var) + (0.20 * n_lap) + (0.15 * n_spread)
-        roughness_index = float(np.clip(roughness_index, 0.0, 1.0))
-        smoothness = 100.0 * (1.0 - math.pow(roughness_index, 1.10))
+        roughness_index = _texture_roughness_index(var_p80, lap_p80, texture_spread)
+        smoothness = _texture_smoothness_from_roughness(roughness_index)
         if not math.isfinite(smoothness):
             smoothness = 100.0 * (1.0 - n_energy)
         matrix["texture_smoothness"] = round(float(np.clip(smoothness, 0.0, 100.0)), 1)
@@ -4357,7 +4378,9 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     "localized_redness": 3,
     # v3 uses the Laplacian fallback path exclusively; v2 primary-ROI values
     # are not comparable with the single-path metric.
-    "texture_smoothness": 3,
+    # v4: var_p80 / lap_p80 contribute to the roughness blend once (through
+    # texture_energy) instead of twice, so v3 and v4 scores are not comparable.
+    "texture_smoothness": 4,
     "pigment_load": 2,
     # v3: Canny on a sigma-2.0 Gaussian-smoothed patch (20, 40) instead of the
     # raw patch (70, 140), so focus/sharpening changes no longer flip edges.
@@ -5947,13 +5970,8 @@ def _compute_zone_analysis(
         var_p80 = float(np.percentile(local_var, 80))
         lap_p80 = float(np.percentile(lap_values, 80))
         spread = float(np.std(pixels))
-        energy = (0.65 * math.sqrt(max(var_p80, 0.0))) + (0.35 * lap_p80)
-        n_energy = float(np.clip((energy - 8.0) / 22.0, 0.0, 1.0))
-        n_var = float(np.clip((math.sqrt(max(var_p80, 0.0)) - 6.0) / 14.0, 0.0, 1.0))
-        n_lap = float(np.clip((lap_p80 - 14.0) / 32.0, 0.0, 1.0))
-        n_spread = float(np.clip((spread - 18.0) / 32.0, 0.0, 1.0))
-        roughness = (0.45 * n_energy) + (0.20 * n_var) + (0.20 * n_lap) + (0.15 * n_spread)
-        return round(float(np.clip(100.0 * (1.0 - math.pow(roughness, 1.10)), 0.0, 100.0)), 1)
+        roughness = _texture_roughness_index(var_p80, lap_p80, spread)
+        return round(_texture_smoothness_from_roughness(roughness), 1)
 
     output: Dict[str, Any] = {}
     for zone_name, raw_mask in raw_zones.items():
@@ -6617,13 +6635,14 @@ def analyze_skin_patch(
         texture_energy = (0.65 * np.sqrt(max(var_p80, 0.0))) + (0.35 * lap_p80)
         texture_spread = float(np.std(texture_vals)) if texture_vals.size > 0 else 0.0
 
-        roughness_terms = [
-            float(np.clip(math.sqrt(max(var_p80, 0.0)) / 45.0, 0.0, 1.0)),
-            float(np.clip(max(lap_p80, 0.0) / 180.0, 0.0, 1.0)),
-            float(np.clip(max(texture_energy, 0.0) / 95.0, 0.0, 1.0)),
-            float(np.clip(max(texture_spread, 0.0) / 70.0, 0.0, 1.0)),
-        ]
-        roughness = sum(roughness_terms) / len(roughness_terms)
+        # var_p80 / lap_p80 reach the roughness only through texture_energy
+        # (previously also as their own terms, i.e. counted twice); the
+        # energy term takes the 0.75 those three terms shared, spread keeps
+        # its 0.25.
+        roughness = (
+            0.75 * float(np.clip(max(texture_energy, 0.0) / 95.0, 0.0, 1.0))
+            + 0.25 * float(np.clip(max(texture_spread, 0.0) / 70.0, 0.0, 1.0))
+        )
         smoothness = float(np.clip(95.0 - (90.0 * roughness), 0.0, 100.0))
 
         fallback_smoothness = smoothness
