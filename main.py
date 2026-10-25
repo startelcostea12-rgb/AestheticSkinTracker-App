@@ -2189,6 +2189,55 @@ def _compute_pose_pitch_yaw_from_landmarks(points: np.ndarray) -> tuple[float, f
     return pitch, yaw
 
 
+# Frontal-pose limits for the pose proxy above. Shared by pore_visibility and
+# structural_firmness_elasticity so both gate on the same definition.
+FRONTAL_POSE_MAX_ABS_PITCH = 20.0
+FRONTAL_POSE_MAX_ABS_YAW = 18.0
+
+# Landmark ids structural_firmness_elasticity reads, plus the ids the pose
+# proxy needs to be meaningful.
+FIRMNESS_UPPER_LANDMARK_IDS = (6, 168, 197)
+FIRMNESS_JAW_LANDMARK_IDS = (152, 149, 176, 377, 400)
+FIRMNESS_NASOLABIAL_LANDMARK_IDS = (61, 291)
+_FIRMNESS_REQUIRED_LANDMARK_IDS = tuple(
+    sorted(
+        set(FIRMNESS_UPPER_LANDMARK_IDS)
+        | set(FIRMNESS_JAW_LANDMARK_IDS)
+        | set(FIRMNESS_NASOLABIAL_LANDMARK_IDS)
+        | {1, 10, 33, 152, 263}
+    )
+)
+
+
+def _pose_is_frontal(pitch: float, yaw: float) -> bool:
+    return abs(pitch) <= FRONTAL_POSE_MAX_ABS_PITCH and abs(yaw) <= FRONTAL_POSE_MAX_ABS_YAW
+
+
+def _firmness_gate_reason(points: np.ndarray | None) -> str | None:
+    """Why structural_firmness_elasticity must be omitted, or None if usable.
+
+    The score is a landmark-ratio formula, so it is only meaningful when every
+    landmark it reads is present and the head is frontal: yaw/pitch move the
+    nose/jaw/mouth landmarks it compares. A missing-landmark case used to fall
+    back to 0.0, which reads as a genuine (worst-possible) score.
+    """
+    if points is None:
+        return "landmarks_missing"
+    arr = np.asarray(points)
+    if arr.ndim != 2 or arr.shape[1] < 2 or arr.shape[0] <= max(_FIRMNESS_REQUIRED_LANDMARK_IDS):
+        return "landmarks_missing"
+    needed = arr[list(_FIRMNESS_REQUIRED_LANDMARK_IDS), :2].astype(np.float64)
+    if not np.all(np.isfinite(needed)):
+        return "landmarks_missing"
+    # Degenerate geometry (e.g. every landmark at one point) is not a face.
+    if float(np.ptp(needed[:, 0])) < 1e-6 or float(np.ptp(needed[:, 1])) < 1e-6:
+        return "landmarks_missing"
+    pitch, yaw = _compute_pose_pitch_yaw_from_landmarks(arr)
+    if not _pose_is_frontal(pitch, yaw):
+        return "pose_not_frontal"
+    return None
+
+
 def _landmark_bbox_mask(
     shape: Tuple[int, int],
     points: np.ndarray,
@@ -3166,7 +3215,6 @@ def _compute_structural_opencv_metrics(
         return {
             "glabellar_wrinkle_depth": 0.0,
             "pore_contraction_index": 0.0,
-            "structural_firmness_elasticity": 0.0,
         }
 
     gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
@@ -3282,29 +3330,29 @@ def _compute_structural_opencv_metrics(
     else:
         pore_contraction_index = None
 
-    # 3) Structural firmness / elasticity (benefit)
-    upper_ids = [6, 168, 197]
-    jaw_ids = [152, 149, 176, 377, 400]
-    nasolabial_ids = [61, 291]
-    upper_pts = np.array([points[i] for i in upper_ids if 0 <= i < points.shape[0]], dtype=np.float32)
-    jaw_pts = np.array([points[i] for i in jaw_ids if 0 <= i < points.shape[0]], dtype=np.float32)
-    nasolabial_pts = np.array([points[i] for i in nasolabial_ids if 0 <= i < points.shape[0]], dtype=np.float32)
-
-    face_height = max(float(np.max(points[:, 1]) - np.min(points[:, 1])), 1.0)
-    if upper_pts.size > 0 and jaw_pts.size > 0 and nasolabial_pts.size > 0:
+    # 3) Structural firmness / elasticity (benefit). Omitted (key absent, like
+    # pore_contraction_index), never 0.0, when landmarks are missing or the
+    # head is not frontal -- see _firmness_gate_reason.
+    structural_firmness: float | None = None
+    if _firmness_gate_reason(points) is None:
+        upper_pts = points[list(FIRMNESS_UPPER_LANDMARK_IDS)].astype(np.float32)
+        jaw_pts = points[list(FIRMNESS_JAW_LANDMARK_IDS)].astype(np.float32)
+        nasolabial_pts = points[list(FIRMNESS_NASOLABIAL_LANDMARK_IDS)].astype(np.float32)
+        face_height = max(float(np.max(points[:, 1]) - np.min(points[:, 1])), 1.0)
         upper_y = float(np.mean(upper_pts[:, 1]))
         jaw_y = float(np.mean(jaw_pts[:, 1]))
         nasolabial_y = float(np.mean(nasolabial_pts[:, 1]))
         gravity_drift_ratio = ((jaw_y - upper_y) * 0.65 + (nasolabial_y - upper_y) * 0.35) / face_height
         # Lower drift ratio implies tighter support; convert to higher-is-better score.
-        structural_firmness = np.clip(((0.72 - gravity_drift_ratio) / 0.34) * 100.0, 0.0, 100.0)
-    else:
-        structural_firmness = 0.0
+        structural_firmness = float(np.clip(((0.72 - gravity_drift_ratio) / 0.34) * 100.0, 0.0, 100.0))
 
     result = {
         "glabellar_wrinkle_depth": round(float(np.clip(glabellar_wrinkle_depth, 0.0, 100.0)), 1),
-        "structural_firmness_elasticity": round(float(np.clip(structural_firmness, 0.0, 100.0)), 1),
     }
+    if structural_firmness is not None:
+        result["structural_firmness_elasticity"] = round(
+            float(np.clip(structural_firmness, 0.0, 100.0)), 1
+        )
     if pore_contraction_index is not None:
         result["pore_contraction_index"] = round(
             float(np.clip(pore_contraction_index, 0.0, 100.0)), 1
@@ -3900,7 +3948,7 @@ def _compute_canonical_patch_metrics(
 
     # Pore extraction: ROI-locked, scale-normalized, and high-confidence gated.
     pose_pitch, pose_yaw = _compute_pose_pitch_yaw_from_landmarks(points)
-    pose_ok = abs(pose_pitch) <= 20.0 and abs(pose_yaw) <= 18.0
+    pose_ok = _pose_is_frontal(pose_pitch, pose_yaw)
     face_detected = points.shape[0] > 0
     pore_visibility_detected = False
 
@@ -6453,6 +6501,8 @@ def analyze_skin_patch(
             return "medium"
         return "low"
 
+    firmness_gate_reason = _firmness_gate_reason(norm_points)
+    raw_components["firmness_gate_open"] = 1.0 if firmness_gate_reason is None else 0.0
     glabella_pixels = int(cv2.countNonZero(_glabella_region_mask(norm.shape[:2], norm_points, mask)))
     glabella_pitch = float(_compute_pose_pitch_yaw_from_landmarks(norm_points)[0])
     left_under_eye = _under_eye_region_mask(norm.shape[:2], norm_points, mask, side="left")
@@ -7026,6 +7076,12 @@ def analyze_skin_patch(
             metric_status.setdefault(metric_key, "unavailable")
             omitted_metric_reasons[metric_key] = "formula_not_available"
             fallback_reason.setdefault(metric_key, "formula_not_available")
+            continue
+
+        if metric_key == "structural_firmness_elasticity" and firmness_gate_reason is not None:
+            metric_status.setdefault(metric_key, "unavailable")
+            omitted_metric_reasons[metric_key] = firmness_gate_reason
+            fallback_reason.setdefault(metric_key, firmness_gate_reason)
             continue
 
         if metric_key == "pore_visibility" and not pore_visibility_detected:
