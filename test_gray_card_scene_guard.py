@@ -53,7 +53,7 @@ def test_skin_in_the_box_is_rejected_by_the_offset_limit(caplog):
     normalized, profile, _ = _run(image)
 
     assert np.array_equal(normalized, plain)
-    assert profile["white_balance_profile"]["method"] == "lab_low_chroma_neutral_axis"
+    assert profile["white_balance_profile"]["method"] == "linear_srgb_low_chroma_reference"
     assert profile["gray_card_marked"] is True
     assert profile["gray_card_correction_applied"] is False
     assert profile["gray_card_reason"] == "implausible_card_color"
@@ -83,7 +83,7 @@ def test_card_disagreeing_with_the_scene_falls_back_to_automatic(caplog):
 
     assert np.array_equal(normalized, plain)
     wb = profile["white_balance_profile"]
-    assert wb["method"] == "lab_low_chroma_neutral_axis"
+    assert wb["method"] == "linear_srgb_low_chroma_reference"
     assert wb["a_adjustment"] == plain_profile["white_balance_profile"]["a_adjustment"]
     assert wb["b_adjustment"] == plain_profile["white_balance_profile"]["b_adjustment"]
     assert profile["gray_card_marked"] is True
@@ -104,7 +104,7 @@ def test_card_agreeing_with_the_scene_is_applied(caplog):
 
     card = cv2.cvtColor(normalized[CARD], cv2.COLOR_BGR2LAB).reshape(-1, 3).mean(axis=0)
     assert abs(card[1] - 128) < 1.5 and abs(card[2] - 128) < 1.5
-    assert profile["white_balance_profile"]["method"] == "gray_card_reference"
+    assert profile["white_balance_profile"]["method"] == "linear_srgb_gray_card_reference"
     assert profile["gray_card_correction_applied"] is True
     assert profile["gray_card_reason"] is None
     assert profile["gray_card_scene_disagreement"] < 12

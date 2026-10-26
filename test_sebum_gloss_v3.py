@@ -34,7 +34,7 @@ def _add_specular_points(val, count=40, seed=7):
 
 
 def test_version_and_constants():
-    assert main._metric_formula_version("sebum_excess_oil_gloss") == 3
+    assert main._metric_formula_version("sebum_excess_oil_gloss") == 4
     assert main.SEBUM_HIGHLIGHT_MIN_V == 220.0
     assert main.SEBUM_HIGHLIGHT_MAX_SATURATION == 70
     assert main.SEBUM_HIGHLIGHT_LOCAL_SIGMA == 5.0

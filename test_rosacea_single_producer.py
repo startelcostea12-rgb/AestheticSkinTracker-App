@@ -83,7 +83,7 @@ def test_post_emission_recomputation_is_gone():
 
 
 def test_rosacea_formula_version_bumped():
-    assert main._metric_formula_version("rosacea_severity") == 3
+    assert main._metric_formula_version("rosacea_severity") == 4
 
 
 def test_empty_crop_returns_no_rosacea():

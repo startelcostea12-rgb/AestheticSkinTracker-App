@@ -17,7 +17,7 @@ import main
 REPO_ROOT = Path(__file__).resolve().parent
 CLEAR_FACE_PHOTO = REPO_ROOT / "test_fixtures" / "metric_regression" / "clear_face.jfif"
 UNDER_EYE_KEYS = ("under_eye_texture_density", "under_eye_dark_circle_density")
-CURRENT_VERSION = 5
+CURRENT_VERSION = 6
 
 
 @pytest.fixture(scope="module")
@@ -67,7 +67,7 @@ def _compare(scan, baseline_paths, baseline_version, *, baseline_matrix=None, em
             patch.stop()
 
 
-def test_current_under_eye_version_is_five():
+def test_current_under_eye_version_is_six():
     for key in UNDER_EYE_KEYS:
         assert main._metric_formula_version(key) == CURRENT_VERSION
 

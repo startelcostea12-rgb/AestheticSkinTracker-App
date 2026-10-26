@@ -824,18 +824,89 @@ def _gray_card_scene_disagreement(
     )
 
 
+def _srgb_to_linear(encoded: np.ndarray) -> np.ndarray:
+    return np.where(
+        encoded <= 0.04045,
+        encoded / 12.92,
+        ((encoded + 0.055) / 1.055) ** 2.4,
+    )
+
+
+def _linear_to_srgb(linear: np.ndarray) -> np.ndarray:
+    return np.where(
+        linear <= 0.0031308,
+        12.92 * linear,
+        1.055 * np.maximum(linear, 0.0) ** (1.0 / 2.4) - 0.055,
+    )
+
+
+def _apply_linear_white_balance_gains(
+    bgr_image: np.ndarray, gains_bgr: np.ndarray
+) -> np.ndarray:
+    linear = _srgb_to_linear(bgr_image.astype(np.float64) / 255.0)
+    luminance_weights = np.array([0.0722, 0.7152, 0.2126])
+    luminance = (linear @ luminance_weights)[..., None]
+    balanced = linear * gains_bgr
+    balanced_luminance = (balanced @ luminance_weights)[..., None]
+    balanced *= np.divide(
+        luminance,
+        balanced_luminance,
+        out=np.ones_like(luminance),
+        where=balanced_luminance > 0.0,
+    )
+    chroma = balanced - luminance
+    gamut_scale = np.minimum(
+        np.divide(
+            1.0 - luminance,
+            chroma,
+            out=np.ones_like(chroma),
+            where=chroma > 0.0,
+        ),
+        np.divide(
+            -luminance,
+            chroma,
+            out=np.ones_like(chroma),
+            where=chroma < 0.0,
+        ),
+    ).min(axis=2, keepdims=True).clip(0.0, 1.0)
+    balanced = np.clip(luminance + gamut_scale * chroma, 0.0, 1.0)
+    return np.rint(_linear_to_srgb(balanced) * 255.0).clip(0, 255).astype(np.uint8)
+
+
+def _capture_white_balance_from_lab_reference(
+    bgr_image: np.ndarray,
+    reference_l: float,
+    reference_a: float,
+    reference_b: float,
+    a_adjustment: float,
+    b_adjustment: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    reference_lab = np.array(
+        [[[reference_l * 100.0 / 255.0, reference_a, reference_b],
+          [reference_l * 100.0 / 255.0,
+           reference_a - a_adjustment, reference_b - b_adjustment]]],
+        dtype=np.float32,
+    )
+    reference_bgr = cv2.cvtColor(reference_lab, cv2.COLOR_LAB2BGR).astype(np.float64)
+    reference_linear = _srgb_to_linear(reference_bgr)
+    gains = np.divide(
+        reference_linear[0, 1],
+        reference_linear[0, 0],
+        out=np.ones(3),
+        where=reference_linear[0, 0] > 0.0,
+    )
+    return _apply_linear_white_balance_gains(bgr_image, gains), gains
+
+
 def _apply_capture_white_balance_correction(
     bgr_image: np.ndarray, gray_card_sample: Dict[str, Any] | None = None
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """Apply a restrained LAB neutral-axis correction before metric extraction.
+    """Apply reference-derived gains in linear sRGB, preserving luminance.
 
-    With an accepted gray-card sample (see _sample_gray_card) that also
-    agrees with the scene's automatic neutral estimate (within
-    GRAY_CARD_MAX_SCENE_DISAGREEMENT), the card's measured a*/b* replace the
-    automatic estimate: the same a*/b* shift is applied so the card lands on
-    neutral (128). L* is not changed. A card that disagrees with the scene
-    is ignored ("gray_card_rejected_reason": "disagrees_with_scene") and the
-    automatic path runs exactly as it does without a card."""
+    Reference selection, restrained automatic adjustments, and card acceptance
+    remain LAB-based. Exposure is preserved per pixel before sRGB encoding;
+    out-of-gamut colors lose chroma rather than gaining or losing luminance.
+    """
     if bgr_image is None or bgr_image.size == 0:
         return bgr_image, {
             "applied": False,
@@ -871,13 +942,18 @@ def _apply_capture_white_balance_correction(
                 b_adjustment,
                 "n/a" if disagreement is None else f"{disagreement:.2f}",
             )
-            corrected_lab = lab.copy().astype(np.float32)
-            corrected_lab[:, :, 1] = np.clip(corrected_lab[:, :, 1] - a_adjustment, 0.0, 255.0)
-            corrected_lab[:, :, 2] = np.clip(corrected_lab[:, :, 2] - b_adjustment, 0.0, 255.0)
-            corrected_bgr = cv2.cvtColor(corrected_lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
+            corrected_bgr, gains = _capture_white_balance_from_lab_reference(
+                bgr_image,
+                float(gray_card_sample["mean_l"]),
+                a_adjustment,
+                b_adjustment,
+                a_adjustment,
+                b_adjustment,
+            )
             return corrected_bgr, {
                 "applied": True,
-                "method": "gray_card_reference",
+                "method": "linear_srgb_gray_card_reference",
+                "linear_gains_bgr": gains.tolist(),
                 "a_adjustment": round(a_adjustment, 3),
                 "b_adjustment": round(b_adjustment, 3),
                 **card_fields,
@@ -895,14 +971,19 @@ def _apply_capture_white_balance_correction(
     a_adjustment = float(np.clip(neutral["a_offset"] * 0.70, -8.0, 8.0))
     b_adjustment = float(np.clip(neutral["b_offset"] * 0.70, -8.0, 8.0))
 
-    corrected_lab = lab.copy().astype(np.float32)
-    corrected_lab[:, :, 1] = np.clip(corrected_lab[:, :, 1] - a_adjustment, 0.0, 255.0)
-    corrected_lab[:, :, 2] = np.clip(corrected_lab[:, :, 2] - b_adjustment, 0.0, 255.0)
-    corrected_bgr = cv2.cvtColor(corrected_lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
+    corrected_bgr, gains = _capture_white_balance_from_lab_reference(
+        bgr_image,
+        float(np.median(lab[:, :, 0])),
+        neutral["a_offset"],
+        neutral["b_offset"],
+        a_adjustment,
+        b_adjustment,
+    )
 
     return corrected_bgr, {
         "applied": abs(a_adjustment) >= 0.25 or abs(b_adjustment) >= 0.25,
-        "method": "lab_low_chroma_neutral_axis",
+        "method": "linear_srgb_low_chroma_reference",
+        "linear_gains_bgr": gains.tolist(),
         "candidate_pixels": neutral["candidate_pixels"],
         "a_adjustment": round(a_adjustment, 3),
         "b_adjustment": round(b_adjustment, 3),
@@ -911,13 +992,9 @@ def _apply_capture_white_balance_correction(
 
 
 # Optional gray-card calibration. A user-marked card region is sampled from
-# the decoded image before any white balance (_sample_gray_card); when
-# compute_gray_card_correction() accepts it, its mean a*/b* replace the
-# automatic neutral-pixel estimate in _apply_capture_white_balance_correction
-# -- the same a*/b* shift, no other pixel change. L* is never corrected, so
-# lighting_mean_l and the low-light confidence gate keep describing the true
-# exposure; chroma_cast is measured after the shift, as it already is for the
-# automatic correction (whole_image_mean_*_before_wb keep the raw cast).
+# the decoded image before any white balance (_sample_gray_card). Accepted
+# card chroma replaces the automatic reference for linear-light gains.
+# Luminance is preserved before quantization; exposure is normalized separately.
 #
 # Target: OpenCV's 8-bit LAB encodes neutral chroma as a*=b*=128 by
 # definition. A standard 18%-reflectance gray card measures L*≈49-50 under
@@ -1407,7 +1484,7 @@ def _assess_and_normalize_image_with_pre_white_balance(
                     else {}
                 ),
             },
-            applied=white_balance_profile.get("method") == "gray_card_reference",
+            applied=white_balance_profile.get("method") == "linear_srgb_gray_card_reference",
         ),
         "gray_card_scene_disagreement": white_balance_profile.get(
             "gray_card_scene_disagreement"
@@ -4375,50 +4452,52 @@ TREND_NOISE_FLOOR_EXCLUDED_MULTIPLIER = 3.0
 # NOT itself change any formula; it only lets the trend gate react once a
 # future change bumps an entry.
 METRIC_FORMULA_VERSION: Dict[str, int] = {
-    "localized_redness": 3,
+    "localized_redness": 4,
     # v3 uses the Laplacian fallback path exclusively; v2 primary-ROI values
     # are not comparable with the single-path metric.
     # v4: var_p80 / lap_p80 contribute to the roughness blend once (through
     # texture_energy) instead of twice, so v3 and v4 scores are not comparable.
-    "texture_smoothness": 4,
-    "pigment_load": 2,
+    "texture_smoothness": 5,
+    "pigment_load": 3,
     # v3: Canny on a sigma-2.0 Gaussian-smoothed patch (20, 40) instead of the
     # raw patch (70, 140), so focus/sharpening changes no longer flip edges.
     # v4: per-frame formula unchanged; the app's saved scan value is now the
     # median of five frames (omitted unless all five produced a value)
     # instead of the mean of three, so v3 and v4 scan values are not
     # comparable. Same for pore_contraction_index v3 and the under-eye v5s.
-    "wrinkle_load": 4,
+    "wrinkle_load": 5,
     # v3: fixed V >= 220 plus a local-contrast condition (V over its sigma-5
     # local mean >= 15), so clipped flat highlights no longer count as oil.
-    "sebum_excess_oil_gloss": 3,
-    "diffuse_flushing_erythema": 2,
+    "sebum_excess_oil_gloss": 4,
+    "diffuse_flushing_erythema": 3,
     # v3: the U-zone formula is the only producer. The post-emission
     # recomputation from emitted redness + diffuse flushing is gone, so a
     # scan whose zone formula did not emit now omits rosacea instead.
-    "rosacea_severity": 3,
-    "pore_visibility": 3,
-    "chin_pore_visibility": 1,
-    "pore_contraction_index": 3,
+    "rosacea_severity": 4,
+    "pore_visibility": 4,
+    "chin_pore_visibility": 2,
+    "pore_contraction_index": 4,
     # v2: fixed avg_width quantization (boundingRect integer px -> minAreaRect
     # continuous size) and the 26-32%-of-photos zero-out (82nd-percentile
     # threshold + (3,5) opening kernel erasing thin-but-real furrow
     # responses entirely). See the GLABELLAR_ZERO_OUT_FIX /
     # GLABELLAR_WIDTH_QUANTIZATION_FIX comments in
     # _compute_structural_opencv_metrics.
-    "glabellar_wrinkle_depth": 2,
+    "glabellar_wrinkle_depth": 3,
     # v2 omitted both below a 1500 px under-eye mask; v3 removed that gate.
     # v4: both read a lash-free band (0.15-0.45 eye widths below the lower
     # lid) instead of the lid-hugging polygon. Dark circles compare the
     # band's median L to a same-height cheek strip directly below it;
     # texture is fine-scale DoG energy on the band over the same strip.
     # v5: median of five frames in the app (see wrinkle_load v4).
-    "under_eye_texture_density": 5,
-    "under_eye_dark_circle_density": 5,
+    "under_eye_texture_density": 6,
+    "under_eye_dark_circle_density": 6,
     # v2: only boxes kept at YOLO_CONF_THRESHOLD contribute. v1 also added
     # 22 x the strongest rejected box, so zero kept boxes still scored
     # 0.7-3.6 on the regression fixtures; v1 and v2 are not comparable.
-    "breakout_activity": 2,
+    "breakout_activity": 3,
+    "skin_tone_radiance_evenness": 2,
+    "structural_firmness_elasticity": 2,
 }
 
 

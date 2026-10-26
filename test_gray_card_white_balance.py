@@ -41,6 +41,92 @@ def _card_lab_mean(image_bgr: np.ndarray) -> np.ndarray:
     return lab.reshape(-1, 3).astype(np.float64).mean(axis=0)
 
 
+def _linear_luminance(image: np.ndarray) -> np.ndarray:
+    encoded = image.astype(np.float64) / 255.0
+    linear = np.where(
+        encoded <= 0.04045,
+        encoded / 12.92,
+        ((encoded + 0.055) / 1.055) ** 2.4,
+    )
+    return linear @ np.array([0.0722, 0.7152, 0.2126])
+
+
+@pytest.mark.parametrize("gains", [(1.0, 1.0, 1.0), (0.7, 1.0, 1.4), (2.0, 0.5, 1.1)])
+def test_linear_gains_preserve_luminance_even_at_gamut_limits(gains):
+    image = np.random.default_rng(90).integers(0, 256, (100, 100, 3), dtype=np.uint8)
+    image[0, :4] = [(0, 0, 0), (255, 255, 255), (0, 255, 0), (255, 0, 255)]
+    original = image.copy()
+    corrected = main._apply_linear_white_balance_gains(image, np.array(gains))
+    before = _linear_luminance(image)
+    after = _linear_luminance(corrected)
+    assert abs(after.mean() - before.mean()) < 0.0001
+    assert np.max(np.abs(after - before)) < 0.0045
+    assert np.array_equal(image, original)
+    assert corrected.dtype == np.uint8
+    if gains == (1.0, 1.0, 1.0):
+        assert np.array_equal(corrected, image)
+
+
+def test_gains_are_applied_after_srgb_decode_not_to_encoded_values():
+    image = np.array([[[40, 85, 125], [75, 105, 155]]], dtype=np.uint8)
+    gains = np.array([1.2, 1.0, 0.8])
+    encoded = image.astype(np.float64) / 255.0
+    linear = ((encoded + 0.055) / 1.055) ** 2.4
+    weighted = linear * gains
+    weighted *= (_linear_luminance(image) / (weighted @ [0.0722, 0.7152, 0.2126]))[..., None]
+    expected = np.rint((1.055 * weighted ** (1.0 / 2.4) - 0.055) * 255).astype(np.uint8)
+    actual = main._apply_linear_white_balance_gains(image, gains)
+    np.testing.assert_array_equal(actual, expected)
+    gamma_scaled = image.astype(np.float64) * gains
+    gamma_scaled *= (_linear_luminance(image) / _linear_luminance(np.rint(gamma_scaled).astype(np.uint8)))[..., None]
+    assert not np.array_equal(actual, np.rint(gamma_scaled).astype(np.uint8))
+
+
+@pytest.mark.parametrize("marked", [False, True])
+def test_active_capture_wb_preserves_mean_linear_luminance(marked):
+    image, region = _scene_with_card()
+    sample = main._sample_gray_card(image, region) if marked else None
+    corrected, profile = main._apply_capture_white_balance_correction(image, sample)
+    assert profile["method"].startswith("linear_srgb_")
+    before = _linear_luminance(image)
+    encoded = corrected.astype(np.float64) / 255.0
+    low = main._srgb_to_linear(np.maximum(encoded - 0.5 / 255.0, 0.0)) @ [0.0722, 0.7152, 0.2126]
+    high = main._srgb_to_linear(np.minimum(encoded + 0.5 / 255.0, 1.0)) @ [0.0722, 0.7152, 0.2126]
+    assert np.all(before >= low - 1e-12)
+    assert np.all(before <= high + 1e-12)
+    assert abs(_linear_luminance(corrected).mean() - before.mean()) <= (high - low).mean()
+
+
+@pytest.mark.parametrize("metric,previous", [
+    ("localized_redness", 3),
+    ("pigment_load", 2),
+    ("diffuse_flushing_erythema", 2),
+    ("texture_smoothness", 4),
+    ("pore_visibility", 3),
+    ("chin_pore_visibility", 1),
+    ("wrinkle_load", 4),
+    ("sebum_excess_oil_gloss", 3),
+    ("rosacea_severity", 3),
+    ("pore_contraction_index", 3),
+    ("glabellar_wrinkle_depth", 2),
+    ("under_eye_texture_density", 5),
+    ("under_eye_dark_circle_density", 5),
+    ("breakout_activity", 2),
+    ("skin_tone_radiance_evenness", 1),
+    ("structural_firmness_elasticity", 1),
+])
+def test_linear_wb_refuses_each_previous_image_metric_version(metric, previous):
+    assert main._metric_formula_version(metric) == previous + 1
+    assert main._trend_lock_reason(
+        "primary_roi", "primary_roi", "normal", "normal",
+        512, 512, 512, 512,
+        current_formula_version=main._metric_formula_version(metric),
+        baseline_formula_version=previous,
+        current_pose_template="Front", baseline_pose_template="Front",
+        current_guide_type="facial", baseline_guide_type="facial",
+    ) == "formula_version_mismatch"
+
+
 def test_marked_card_shifts_white_balance_toward_neutral():
     image, region = _scene_with_card()
     raw = _card_lab_mean(image)
@@ -52,7 +138,7 @@ def test_marked_card_shifts_white_balance_toward_neutral():
     assert abs(raw[1] - 128) > 4 and abs(raw[2] - 128) > 4
     assert abs(after[1] - 128) < 1.5
     assert abs(after[2] - 128) < 1.5
-    assert profile["white_balance_profile"]["method"] == "gray_card_reference"
+    assert profile["white_balance_profile"]["method"] == "linear_srgb_gray_card_reference"
     assert profile["gray_card_marked"] is True
     assert profile["gray_card_correction_applied"] is True
     assert profile["gray_card_reason"] is None

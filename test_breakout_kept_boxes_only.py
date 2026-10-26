@@ -60,8 +60,8 @@ def test_kept_boxes_below_high_confidence_are_medium():
     assert confidence["breakout_activity"] == "medium"
 
 
-def test_breakout_formula_version_is_two():
-    assert main._metric_formula_version("breakout_activity") == 2
+def test_breakout_formula_version_is_three():
+    assert main._metric_formula_version("breakout_activity") == 3
 
 
 @pytest.mark.parametrize("baseline_version", [None, 1])
@@ -123,5 +123,5 @@ def test_pipeline_locks_a_v1_breakout_baseline_against_v2(clear_face):
         )
 
     assert result["metric_matrix"]["breakout_activity"] == pytest.approx(22.8)
-    assert result["metric_formula_versions"]["breakout_activity"] == 2
+    assert result["metric_formula_versions"]["breakout_activity"] == 3
     assert result["trend_lock_reasons"]["breakout_activity"] == "formula_version_mismatch"
