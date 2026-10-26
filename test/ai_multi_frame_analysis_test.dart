@@ -65,6 +65,42 @@ void main() {
   };
 
   group('redness capture mismatch trend lock', () {
+    for (final flaggedScan in const ['current', 'baseline']) {
+      test('$flaggedScan dead-zone flag prevents cheek mismatch', () {
+        final current = rednessPayload(
+          cheekSide: 'left',
+          p10: 4.0,
+          p95: 10.0,
+          frameP95: const [10.0, 10.0],
+          bothCheeksInDeadZone: flaggedScan == 'current',
+        );
+        final baseline = rednessPayload(
+          cheekSide: 'right',
+          p10: 4.0,
+          p95: 10.0,
+          frameP95: const [10.0, 10.0],
+          bothCheeksInDeadZone: flaggedScan == 'baseline',
+        );
+        expect(
+          aiScanHasCheekSideMismatch(
+            currentPayload: current,
+            baselinePayload: baseline,
+          ),
+          isFalse,
+        );
+        final result = downgradeRednessTrendForCaptureMismatch(
+          trendStatus: const {'localized_redness': 'stable'},
+          trendDeltas: const {'localized_redness': 0.0},
+          trendLockReasons: const {},
+          currentPayload: current,
+          baselinePayload: baseline,
+        );
+        expect(result.rednessLockReasons, isNot(contains('cheek_mismatch')));
+        expect(result.trendLockReasons['localized_redness'], isNull);
+        expect(result.trendStatus['localized_redness'], 'stable');
+      });
+    }
+
     test(
       'cheek-side matcher requires two known, different physical cheeks',
       () {

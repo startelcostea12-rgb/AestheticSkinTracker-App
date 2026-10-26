@@ -103,24 +103,40 @@ void main() {
       }
     });
 
-    test('any existing lock reason clears status and delta', () {
-      final result = clearLockedTrendVerdicts(
-        trendStatus: const {
-          'localized_redness': 'stable',
-          'texture_smoothness': 'improved',
-        },
-        trendDeltas: const {
-          'localized_redness': 0.0,
-          'texture_smoothness': 12.0,
-        },
-        trendLockReasons: const {'localized_redness': 'cheek_mismatch'},
-      );
+    for (final lockReason in const [
+      'lighting_mismatch',
+      'formula_version_mismatch',
+      'cast_mismatch',
+      'cheek_mismatch',
+      'path_mismatch',
+      'region_mismatch',
+      'future_lock_reason',
+    ]) {
+      test(
+        '$lockReason clears status and delta without changing unlocked metrics',
+        () {
+          final statuses = {
+            'localized_redness': 'stable',
+            'texture_smoothness': 'improved',
+          };
+          final deltas = {'localized_redness': 0.0, 'texture_smoothness': 12.0};
+          final locks = {'localized_redness': lockReason};
+          final result = clearLockedTrendVerdicts(
+            trendStatus: statuses,
+            trendDeltas: deltas,
+            trendLockReasons: locks,
+          );
 
-      expect(result.trendStatus.containsKey('localized_redness'), isFalse);
-      expect(result.trendDeltas.containsKey('localized_redness'), isFalse);
-      expect(result.trendStatus['texture_smoothness'], 'improved');
-      expect(result.trendDeltas['texture_smoothness'], 12.0);
-    });
+          expect(result.trendStatus.containsKey('localized_redness'), isFalse);
+          expect(result.trendDeltas.containsKey('localized_redness'), isFalse);
+          expect(result.trendStatus['texture_smoothness'], 'improved');
+          expect(result.trendDeltas['texture_smoothness'], 12.0);
+          expect(result.trendLockReasons, locks);
+          expect(statuses['localized_redness'], 'stable');
+          expect(deltas['localized_redness'], 0.0);
+        },
+      );
+    }
 
     test('exactly one Bv unit remains comparable', () {
       final result = lockTrendsForLightingMismatch(
