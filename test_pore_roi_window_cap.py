@@ -49,10 +49,8 @@ def test_pore_mask_unchanged_on_a_normal_face():
     l_crop, mask_crop, pixels = main._extract_native_resolution_pore_roi(
         norm, points, face_skin_mask
     )
-    # Same count as before the dead branch was removed (verified old vs new
-    # on every regression fixture: clear_face 7954, nikki2 9200, nikki3
-    # 9180, st1 6665, portrait_09 3956).
-    assert pixels == 7954
+    # Current-pipeline snapshot after linear-light WB, not a clinical correction.
+    assert pixels == 7905
     assert pixels == int(cv2.countNonZero(window_mask))
     assert l_crop is not None and mask_crop is not None
     assert l_crop.shape == mask_crop.shape

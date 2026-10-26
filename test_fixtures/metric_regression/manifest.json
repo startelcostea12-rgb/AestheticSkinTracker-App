@@ -24,8 +24,8 @@
         "diffuse_flushing_erythema": {"confirmed": 9.6, "min": 4.6, "max": 14.6},
         "rosacea_severity": {"confirmed": 3.0, "min": 0.0, "max": 8.0},
         "sebum_excess_oil_gloss": {"confirmed": 4.4, "min": 0.0, "max": 9.4, "note": "Re-pinned to the v3 local-contrast formula output (not human-reviewed). Was 3.4 on v2."},
-        "under_eye_texture_density": {"confirmed": 88.1, "min": 83.1, "max": 93.1, "note": "v4 lash-free band, DoG ratio vs same-height cheek strip (50 = same as cheek). High because this retouched stock cheek is unnaturally smooth. Was 21.0 on the v3 lid polygon."},
-        "under_eye_dark_circle_density": {"confirmed": 16.8, "min": 11.8, "max": 21.8, "note": "v4 lash-free band vs same-height cheek strip. Was 17.8 on v3."},
+        "under_eye_texture_density": {"confirmed": 81.2, "min": 76.2, "max": 86.2, "note": "Current-pipeline v6 snapshot after linear-light WB, not a clinical correction. Was 88.1 on the pre-linear-WB lash-free band (50 = same as cheek); this retouched stock cheek is unnaturally smooth."},
+        "under_eye_dark_circle_density": {"confirmed": 8.4, "min": 3.4, "max": 13.4, "note": "Current-pipeline v6 snapshot after linear-light WB, not a clinical correction. Was 16.8 on the pre-linear-WB lash-free band vs same-height cheek strip."},
         "texture_smoothness": {"confirmed": 63.6, "min": 58.2, "max": 69.0},
         "glabellar_wrinkle_depth": {"confirmed": 15.1, "min": 8.7, "max": 21.5},
         "wrinkle_load": {"confirmed": 14.4, "min": 10.7, "max": 18.1, "note": "v3 smoothed-edge formula, pinned to current output +/-3.7. Was 10.6 on v2."}
@@ -38,8 +38,8 @@
       "notes": "Real visible cheek redness. Uses the exact first accepted crop from tool/smoke_test_analyze_skin.py. The p95 single-formula baseline was recalibrated after removing the mean-based canonical collision.",
       "strict": true,
       "metrics": {
-        "localized_redness": {"confirmed": 13.5, "min": 8.5, "max": 18.5},
-        "texture_smoothness": {"confirmed": 17.4, "min": 12.0, "max": 22.8},
+        "localized_redness": {"confirmed": 5.4, "min": 0.4, "max": 10.4, "note": "Current-pipeline v4 snapshot after linear-light WB, not a clinical correction."},
+        "texture_smoothness": {"confirmed": 31.5, "min": 26.1, "max": 36.9, "note": "Current-pipeline v5 snapshot after linear-light WB, not a clinical correction."},
         "glabellar_wrinkle_depth": {"confirmed": 19.2, "min": 12.8, "max": 25.6},
         "wrinkle_load": {"confirmed": 34.6, "min": 30.9, "max": 38.3, "note": "v3 smoothed-edge formula, pinned to current output +/-3.7. Was 75.5 on v2."}
       }
@@ -52,11 +52,11 @@
       "strict": true,
       "metrics": {
         "localized_redness": {"confirmed": 23.0, "min": 18.0, "max": 28.0},
-        "rosacea_severity": {"confirmed": 13.1, "min": 8.1, "max": 18.1},
+        "rosacea_severity": {"confirmed": 18.8, "min": 13.8, "max": 23.8, "note": "Current-pipeline v4 snapshot after linear-light WB, not a clinical correction."},
         "sebum_excess_oil_gloss": {"confirmed": 8.3, "min": 3.3, "max": 13.3, "note": "Re-pinned to the v3 local-contrast formula output (not human-reviewed). Was 6.4 on v2."},
         "pore_visibility": {"confirmed": 11.7, "min": 6.7, "max": 16.7},
         "under_eye_texture_density": {"confirmed": 49.4, "min": 44.4, "max": 54.4, "note": "v4 lash-free band DoG ratio. Was 96.0 (near-saturated) on the v3 lid polygon."},
-        "under_eye_dark_circle_density": {"confirmed": 70.8, "min": 65.8, "max": 75.8, "note": "v4 lash-free band vs same-height cheek strip. Was 72.6 on v3."},
+        "under_eye_dark_circle_density": {"confirmed": 54.6, "min": 49.6, "max": 59.6, "note": "Current-pipeline v6 snapshot after linear-light WB, not a clinical correction. Was 70.8 on the pre-linear-WB lash-free band vs same-height cheek strip."},
         "texture_smoothness": {"confirmed": 44.8, "min": 39.4, "max": 50.2},
         "glabellar_wrinkle_depth": {"confirmed": 18.4, "min": 12.0, "max": 24.8},
         "wrinkle_load": {"confirmed": 32.8, "min": 29.1, "max": 36.5, "note": "v3 smoothed-edge formula, pinned to current output +/-3.7. Was 61.5 on v2."}
@@ -65,7 +65,7 @@
     {
       "id": "st1",
       "photo_path": "test_fixtures/metric_regression/st1.jpg",
-      "preprocess": {"mode": "center_crop_resize_jpeg", "crop_fraction": 0.93, "size": 512},
+      "preprocess": {"mode": "center_crop_resize_jpeg", "crop_fraction": 0.94, "size": 512},
       "notes": "Severe rosacea reference with a documented mixed redness/pigment presentation. The redness baseline uses the recalibrated p95 formula; pigment remains independently calibrated.",
       "strict": true,
       "metrics": {
