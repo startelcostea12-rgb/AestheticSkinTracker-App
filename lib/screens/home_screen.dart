@@ -1015,7 +1015,7 @@ class _HomePageState extends State<HomePage>
                       ('texture_smoothness', 'Texture'),
                       ('pigment_load', 'Pigment'),
                       ('skin_tone_radiance_evenness', 'Radiance'),
-                      ('structural_firmness_elasticity', 'Firmness'),
+                      ('structural_firmness_elasticity', 'Face Shape Stability'),
                       ('pore_visibility', 'Pore visibility'),
                       ('localized_redness', 'Redness'),
                     ])

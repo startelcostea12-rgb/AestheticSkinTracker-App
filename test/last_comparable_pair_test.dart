@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_comparison_baseline.dart';
 import 'package:aesthetic_skin_tracker/utils/last_comparable_pair.dart';
+import 'package:aesthetic_skin_tracker/utils/skin_metric_labels.dart';
+import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 import 'package:aesthetic_skin_tracker/widgets/last_comparable_pair_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -38,6 +40,22 @@ ScanHistoryEntry _scan(
 );
 
 void main() {
+  test('face shape label preserves its canonical key and measured value', () {
+    const key = 'structural_firmness_elasticity';
+    expect(comparablePairMetricLabels[key], 'Face Shape Stability');
+    expect(SkinMetricRegistry.skinLaxity.clinicalName, 'Face Shape Stability');
+    expect(SkinMetricRegistry.skinLaxity.key, 'elasticity');
+    final metrics = LuxeMetricParser.parseTimelinePayload({
+      'metric_matrix': {key: 53.2},
+      'baseline_metric_matrix': {key: 52.0},
+    });
+    final metric = metrics.singleWhere((metric) => metric.key == key);
+    expect(metric.name, 'Face Shape Stability');
+    expect(metric.currentScore, 53.2);
+    expect(metric.baselineScore, 52.0);
+    expect(metricCardLabel(metric, liveDisplay: true), 'Face Shape Stability');
+  });
+
   group('lastComparablePair', () {
     test('picks the newest compared pair with the same pose and no lock '
         'on the six metrics', () {

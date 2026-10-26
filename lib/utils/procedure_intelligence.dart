@@ -1352,7 +1352,7 @@ final List<ClinicalMetricDef> _laserPeelMetrics = [
         'Discuss additional sessions or RF microneedling if no change at 3 months.',
   ),
   const ClinicalMetricDef(
-    label: 'Elasticity / Firmness',
+    label: 'Face Shape Stability',
     sourceKey: 'elasticity',
     lowerIsBetter: false,
     clinicalContext:
@@ -1464,7 +1464,7 @@ final List<ClinicalMetricDef> _injectablesMetrics = [
         'Persistent nodules beyond 4 weeks may need massage or hyaluronidase.',
   ),
   const ClinicalMetricDef(
-    label: 'Skin Firmness & Support',
+    label: 'Face Shape Stability',
     sourceKey: 'elasticity',
     lowerIsBetter: false,
     clinicalContext:
@@ -1677,7 +1677,7 @@ final List<ClinicalMetricDef> _generalSkincareMetrics = [
     suggestionWorsening: 'Layer tranexamic acid or HQ under provider guidance.',
   ),
   const ClinicalMetricDef(
-    label: 'Skin Laxity',
+    label: 'Face Shape Stability',
     sourceKey: 'elasticity',
     lowerIsBetter: false,
     clinicalContext: 'Dermal collagen and elastin support (higher = better).',

@@ -332,7 +332,7 @@ void main() {
       findsNothing,
     );
     expect(
-      find.textContaining('Structural Firmness & Elasticity: Stable'),
+      find.textContaining('Face Shape Stability: Stable'),
       findsOneWidget,
     );
   });

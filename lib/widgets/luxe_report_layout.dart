@@ -63,7 +63,7 @@ const Map<String, String> liveResultsShortLabels = <String, String>{
   'texture_smoothness': 'Texture',
   'pigment_load': 'Pigment',
   'skin_tone_radiance_evenness': 'Radiance',
-  'structural_firmness_elasticity': 'Firmness',
+  'structural_firmness_elasticity': 'Face Shape Stability',
   'pore_visibility': 'Pores',
   'localized_redness': 'Redness',
   'wrinkle_load': 'Wrinkles',
@@ -549,7 +549,7 @@ class LuxeMetricParser {
       ),
       _ServerMetricSpec(
         deltaKey: 'structural_firmness_elasticity',
-        name: 'Structural Firmness & Elasticity',
+        name: 'Face Shape Stability',
         currentKeys: [
           'structural_firmness_elasticity',
           'firmness',
@@ -2798,7 +2798,7 @@ class _MetricCard extends StatelessWidget {
       case 'skin_tone_radiance_evenness':
         return 'Represents overall tone uniformity and brightness balance for a smoother, more radiant look.';
       case 'structural_firmness_elasticity':
-        return 'Compares facial support geometry trends to indicate tighter, more lifted visual structure.';
+        return 'Tracks facial landmark geometry across comparable scans.';
       case 'texture_smoothness':
         return 'Measures surface uniformity signals associated with smoother visual skin texture.';
       case 'breakout_activity':

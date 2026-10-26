@@ -3027,7 +3027,7 @@ class ReportService {
                             style: pw.TextStyle(fontSize: 9, color: textBrown),
                           ),
                           pw.Text(
-                            'Skin Laxity: ${metrics.elasticity.toStringAsFixed(1)}',
+                            'Face Shape Stability: ${metrics.elasticity.toStringAsFixed(1)}',
                             style: pw.TextStyle(fontSize: 9, color: textBrown),
                           ),
                         ],

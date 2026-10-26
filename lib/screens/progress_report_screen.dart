@@ -3818,7 +3818,7 @@ class ScanDetailScreen extends StatelessWidget {
               label: 'Dark Spots',
               keys: ['darkSpots', 'pigment', 'pigmentation'],
             ),
-            (key: 'elasticity', label: 'Elasticity', keys: ['elasticity']),
+            (key: 'elasticity', label: 'Face Shape Stability', keys: ['elasticity']),
             (
               key: 'fatRetention',
               label: 'Fat Retention',
@@ -4211,6 +4211,9 @@ class ScanDetailScreen extends StatelessWidget {
   }
 
   static String _metricLabel(String key) {
+    if (key == 'structural_firmness_elasticity') {
+      return 'Face Shape Stability';
+    }
     final spaced = key
         .replaceAll('_', ' ')
         .replaceAllMapped(

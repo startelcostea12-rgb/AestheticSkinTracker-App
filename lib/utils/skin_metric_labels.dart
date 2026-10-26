@@ -143,14 +143,13 @@ class SkinMetricRegistry {
 
   static const skinLaxity = SkinMetricSpec(
     key: 'elasticity',
-    clinicalName: 'Skin Laxity',
-    shortName: 'Skin Laxity',
-    plainName: 'firmness & elasticity',
+    clinicalName: 'Face Shape Stability',
+    shortName: 'Face Shape Stability',
+    plainName: 'face shape stability',
     description:
-        "Dermal collagen and elastin integrity — the skin's capacity to "
-        'recoil after deformation. Higher scores indicate firmer support.',
-    shortExplanation: 'firmness',
-    friendlyDescription: 'firmness / elasticity',
+      'Facial landmark geometry across comparable scans.',
+    shortExplanation: 'face shape',
+    friendlyDescription: 'face shape stability',
     lowerIsBetter: false,
     icon: Icons.fitness_center_outlined,
   );
