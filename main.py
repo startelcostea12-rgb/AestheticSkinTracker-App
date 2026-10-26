@@ -1041,6 +1041,58 @@ GRAY_CARD_MAX_MEASURED_L = 240.0
 GRAY_CARD_MIN_L_GAIN = 0.5
 GRAY_CARD_MAX_L_GAIN = 2.0
 
+# --- Gray-card plausibility summary (documentation only; no new thresholds) --
+# A marked box is trusted as a neutral reference only when ALL of these hold,
+# checked in this order:
+#   1. size      : >= GRAY_CARD_MIN_REGION_PIXELS pixels (compute_gray_card_correction)
+#   2. exposure  : GRAY_CARD_MIN_MEASURED_L <= mean L <= GRAY_CARD_MAX_MEASURED_L
+#                  (8-bit L, 0-255), i.e. not crushed-black / clipped-white
+#   3. neutral   : hypot(a*-128, b*-128) <= GRAY_CARD_MAX_CHROMA_OFFSET
+#                  (skin and shadow read well above this)
+#   4. scene     : within GRAY_CARD_MAX_SCENE_DISAGREEMENT a*/b* units of the
+#                  scene's own neutral estimate (_apply_capture_white_balance_correction)
+# A card failing any check is NOT used; the automatic white balance runs
+# instead (unchanged behaviour). The status below only reports that outcome.
+
+# Machine-readable `gray_card_status` values (image_quality and top level).
+GRAY_CARD_STATUS_NOT_MARKED = "not_marked"
+GRAY_CARD_STATUS_APPLIED = "applied"
+# Box reads coloured (skin/shadow): implausible_card_color.
+GRAY_CARD_STATUS_REJECTED_WRONG_AREA = "rejected_wrong_area"
+# Box reads neutral-ish but disagrees with the scene: disagrees_with_scene.
+GRAY_CARD_STATUS_REJECTED_SCENE_MISMATCH = "rejected_scene_mismatch"
+# Box is crushed-black or blown-out: implausible_exposure.
+GRAY_CARD_STATUS_REJECTED_BAD_EXPOSURE = "rejected_bad_exposure"
+# Box could not be read (out of bounds, too few pixels, missing/corrupt patch).
+GRAY_CARD_STATUS_REJECTED_UNREADABLE = "rejected_unreadable"
+
+_GRAY_CARD_REASON_TO_STATUS = {
+    "implausible_card_color": GRAY_CARD_STATUS_REJECTED_WRONG_AREA,
+    "disagrees_with_scene": GRAY_CARD_STATUS_REJECTED_SCENE_MISMATCH,
+    "implausible_exposure": GRAY_CARD_STATUS_REJECTED_BAD_EXPOSURE,
+}
+
+# User-facing text for each rejected status.
+GRAY_CARD_STATUS_MESSAGES = {
+    GRAY_CARD_STATUS_REJECTED_WRONG_AREA: (
+        "The gray card box looks like it is on skin or shadow, so it was not "
+        "used. Please retake with the box on the card."
+    ),
+    GRAY_CARD_STATUS_REJECTED_SCENE_MISMATCH: (
+        "The gray card color does not match the lighting in the rest of the "
+        "photo, so it was not used. Please retake with the card flat, in the "
+        "same light as your face, and the box on the card."
+    ),
+    GRAY_CARD_STATUS_REJECTED_BAD_EXPOSURE: (
+        "The gray card box is too dark or too bright to read, so it was not "
+        "used. Please retake with the card evenly lit and the box on the card."
+    ),
+    GRAY_CARD_STATUS_REJECTED_UNREADABLE: (
+        "The gray card box could not be read, so it was not used. Please "
+        "retake with the box on the card."
+    ),
+}
+
 
 def compute_gray_card_correction(card_region_lab: np.ndarray) -> Dict[str, Any]:
     """Measures a user-marked gray-card region's mean LAB (OpenCV's 0-255
@@ -1213,6 +1265,47 @@ def _sample_gray_card_patch(patch_bytes: bytes | None) -> Dict[str, Any] | None:
     return _sample_gray_card(patch_bgr, _FULL_IMAGE_REGION)
 
 
+def _gray_card_status_fields(
+    marked: bool, applied: bool, reason: str | None
+) -> Dict[str, Any]:
+    """User-facing outcome of the gray card: a machine-readable status, a
+    short message for a rejected card, a retake flag, and whether the scan is
+    fit to become a baseline. A marked card that was not applied is
+    rejected, and that scan should be retaken rather than silently saved as
+    the baseline (the automatic white balance ran instead). Reporting only:
+    never changes the image or any score."""
+    if not marked:
+        status = GRAY_CARD_STATUS_NOT_MARKED
+    elif applied:
+        status = GRAY_CARD_STATUS_APPLIED
+    else:
+        status = _GRAY_CARD_REASON_TO_STATUS.get(
+            reason or "", GRAY_CARD_STATUS_REJECTED_UNREADABLE
+        )
+    rejected = status.startswith("rejected_")
+    return {
+        "gray_card_status": status,
+        "gray_card_message": GRAY_CARD_STATUS_MESSAGES.get(status),
+        "gray_card_retake_recommended": rejected,
+        "gray_card_baseline_eligible": not rejected,
+    }
+
+
+GRAY_CARD_TOP_LEVEL_KEYS = (
+    "gray_card_status",
+    "gray_card_message",
+    "gray_card_retake_recommended",
+    "gray_card_baseline_eligible",
+)
+
+
+def _gray_card_top_level_fields(image_quality: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Copies the gray-card outcome from image_quality to the response top
+    level so the app can read it without digging into image_quality."""
+    quality = image_quality or {}
+    return {key: quality.get(key) for key in GRAY_CARD_TOP_LEVEL_KEYS}
+
+
 def _gray_card_quality_fields(sample: Dict[str, Any], applied: bool) -> Dict[str, Any]:
     """image_quality fields for the gray card: the raw pre-white-balance
     sample (L* in 8-bit 0-255 like lighting_mean_l; a*/b* signed like the
@@ -1223,6 +1316,7 @@ def _gray_card_quality_fields(sample: Dict[str, Any], applied: bool) -> Dict[str
     marked = bool(sample.get("marked"))
     region = sample.get("drawn_region") or {}
     return {
+        **_gray_card_status_fields(marked, applied, sample.get("reason")),
         "gray_card_region_space": sample.get("region_space") if marked else None,
         "gray_card_region_x": region.get("x"),
         "gray_card_region_y": region.get("y"),
@@ -1448,6 +1542,22 @@ def _assess_and_normalize_image_with_pre_white_balance(
         warnings.append("Lighting too bright. Avoid harsh direct light.")
     if chroma_cast > 20.0:
         warnings.append("Strong color cast detected. Use neutral white lighting.")
+    gray_card_fields = _gray_card_quality_fields(
+        {
+            **gray_card_sample,
+            **(
+                {
+                    "accepted": False,
+                    "reason": white_balance_profile["gray_card_rejected_reason"],
+                }
+                if white_balance_profile.get("gray_card_rejected_reason")
+                else {}
+            ),
+        },
+        applied=white_balance_profile.get("method") == "linear_srgb_gray_card_reference",
+    )
+    if gray_card_fields["gray_card_message"]:
+        warnings.append(gray_card_fields["gray_card_message"])
 
     # Diagnostic-only: the a*/b* shift _apply_capture_white_balance_correction
     # subtracted (after its +/-8 clip), 0.0 when it skipped correction.
@@ -1472,20 +1582,7 @@ def _assess_and_normalize_image_with_pre_white_balance(
         "whole_image_mean_b_after_wb": _signed_lab_value(float(np.mean(b_channel))),
         "wb_a_adjustment_post_clip": round(wb_a_post_clip, 3),
         "wb_b_adjustment_post_clip": round(wb_b_post_clip, 3),
-        **_gray_card_quality_fields(
-            {
-                **gray_card_sample,
-                **(
-                    {
-                        "accepted": False,
-                        "reason": white_balance_profile["gray_card_rejected_reason"],
-                    }
-                    if white_balance_profile.get("gray_card_rejected_reason")
-                    else {}
-                ),
-            },
-            applied=white_balance_profile.get("method") == "linear_srgb_gray_card_reference",
-        ),
+        **gray_card_fields,
         "gray_card_scene_disagreement": white_balance_profile.get(
             "gray_card_scene_disagreement"
         ),
@@ -7650,6 +7747,7 @@ def analyze_skin_patch(
         "confidence_score": confidence_score,
         "confidence_hints": confidence_hints if confidence_score < 0.65 else [],
         "image_quality": image_quality_payload,
+        **_gray_card_top_level_fields(image_quality_payload),
         "fingerprint": fingerprint,
         "calibration": calibration,
         "metric_matrix": metric_matrix,
@@ -8534,6 +8632,9 @@ async def analyze_skin_single(
             "confidence_score": results.get("confidence_score", 0.0),
             "confidence_hints": results.get("confidence_hints", []),
             "image_quality": results.get("image_quality", quality_profile),
+            **_gray_card_top_level_fields(
+                results.get("image_quality", quality_profile)
+            ),
             "face_detected": bool(results.get("model_debug", {}).get("face_detected", True)),
             "metrics": results,
             "metric_confidence": results.get("metric_confidence", {}),
