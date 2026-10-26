@@ -48,6 +48,8 @@ class AiScanDataCsvExporter {
     'redness_region_lock_skipped_low_values',
     'image_width',
     'image_height',
+    'baseline_source_image_width',
+    'baseline_source_image_height',
     'a_p95',
     'image_quality.lighting_mean_l',
     'image_quality.lighting_std_l',
@@ -317,6 +319,10 @@ class AiScanDataCsvExporter {
       'image_height':
           scan.sourceImageHeight ??
           _storedValue(payload, const ['source_image_height']),
+      'baseline_source_image_width':
+          _storedValue(payload, const ['baseline_source_image_width']),
+      'baseline_source_image_height':
+          _storedValue(payload, const ['baseline_source_image_height']),
       ...flattenedQuality,
       'a_p95': _payloadMap(payload, 'metric_matrix')['a_p95'],
     };

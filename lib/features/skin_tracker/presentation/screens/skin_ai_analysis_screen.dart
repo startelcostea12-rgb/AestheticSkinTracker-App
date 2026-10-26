@@ -386,6 +386,10 @@ Map<String, String> buildAiSkinAnalysisBackendFields({
   String? baselinePoseTemplate,
   String? guideType,
   String? baselineGuideType,
+  int? sourceImageWidth,
+  int? sourceImageHeight,
+  int? baselineSourceImageWidth,
+  int? baselineSourceImageHeight,
   ({double x, double y, double w, double h})? grayCardRegion,
 }) {
   return {
@@ -406,6 +410,14 @@ Map<String, String> buildAiSkinAnalysisBackendFields({
     if ((guideType ?? '').trim().isNotEmpty) 'guide_type': guideType!.trim(),
     if ((baselineGuideType ?? '').trim().isNotEmpty)
       'baseline_guide_type': baselineGuideType!.trim(),
+    if (sourceImageWidth != null && sourceImageWidth > 0)
+      'source_image_width': '$sourceImageWidth',
+    if (sourceImageHeight != null && sourceImageHeight > 0)
+      'source_image_height': '$sourceImageHeight',
+    if (baselineSourceImageWidth != null && baselineSourceImageWidth > 0)
+      'baseline_source_image_width': '$baselineSourceImageWidth',
+    if (baselineSourceImageHeight != null && baselineSourceImageHeight > 0)
+      'baseline_source_image_height': '$baselineSourceImageHeight',
     // Optional gray-card white balance: the marked box as fractions of the
     // full still (logged and exported; the card's pixels travel separately
     // as gray_card_image). Omitted unless a card was marked.
@@ -417,6 +429,20 @@ Map<String, String> buildAiSkinAnalysisBackendFields({
         'h': grayCardRegion.h,
       }),
   };
+}
+
+Map<String, int> aiScanSourceResolutionMetadata(Map<String, String> fields) {
+  final metadata = <String, int>{};
+  for (final key in const [
+    'source_image_width',
+    'source_image_height',
+    'baseline_source_image_width',
+    'baseline_source_image_height',
+  ]) {
+    final value = int.tryParse(fields[key] ?? '');
+    if (value != null && value > 0) metadata[key] = value;
+  }
+  return metadata;
 }
 
 /// Reads a per-frame `trend_deltas` / `trend_status` / `trend_lock_reasons`
@@ -2798,6 +2824,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   Uint8List? _croppedBytes;
   List<Uint8List> _analysisFrameBytes = const [];
   List<AiScanFrameExposure> _analysisFrameExposureMetadata = const [];
+  int? _capturedSourceImageWidth;
+  int? _capturedSourceImageHeight;
 
   /// The user must explicitly accept the pre-analysis disclaimer before the
   /// "Run AI Analysis" button unlocks. This is a hard gate, not a checkbox
@@ -3216,6 +3244,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           );
           _capturedPoseTemplate = captured.poseTemplate;
           _capturedGuideType = captured.guideType;
+          _capturedSourceImageWidth = captured.sourceImageWidth;
+          _capturedSourceImageHeight = captured.sourceImageHeight;
           _grayCardRegion = captured.grayCardRegion;
           _grayCardPatches = captured.grayCardPatches;
           _capturedScanMode = captured.quickScan
@@ -3229,6 +3259,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _currentCaptureSharpness = (crop: null, fullStill: null, floor: null);
           _capturedPoseTemplate = null;
           _capturedGuideType = null;
+          _capturedSourceImageWidth = null;
+          _capturedSourceImageHeight = null;
           _grayCardRegion = null;
           _grayCardPatches = const [];
           _capturedScanMode = null;
@@ -3291,6 +3323,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _analysisFrameExposureMetadata = const [];
           _capturedPoseTemplate = null;
           _capturedGuideType = null;
+          _capturedSourceImageWidth = null;
+          _capturedSourceImageHeight = null;
           _grayCardRegion = null;
           _grayCardPatches = const [];
           _capturedScanMode = null;
@@ -3310,6 +3344,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         // -- must not be guessed from the focus-area/procedure selection.
         _capturedPoseTemplate = null;
         _capturedGuideType = null;
+        _capturedSourceImageWidth = null;
+        _capturedSourceImageHeight = null;
         _grayCardRegion = null;
         _grayCardPatches = const [];
         _capturedScanMode = null;
@@ -3616,7 +3652,14 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         baselinePoseTemplate: _previousFocusAreaScan?.poseTemplate,
         guideType: _capturedGuideType,
         baselineGuideType: _previousFocusAreaScan?.guideType,
+        sourceImageWidth: _capturedSourceImageWidth,
+        sourceImageHeight: _capturedSourceImageHeight,
+        baselineSourceImageWidth: _previousFocusAreaScan?.sourceImageWidth,
+        baselineSourceImageHeight: _previousFocusAreaScan?.sourceImageHeight,
         grayCardRegion: _grayCardRegion,
+      );
+      final sourceResolutionMetadata = aiScanSourceResolutionMetadata(
+        backendFields,
       );
 
       final frames = _analysisFrameBytes.isNotEmpty
@@ -3822,7 +3865,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       final persistencePayload = _mergePayloadForPersistence(
         backendResponse: backendResponse,
         luxePayload: luxePayload,
-      );
+      )..addAll(sourceResolutionMetadata);
       // The baseline whose metrics/paths were actually sent with this
       // scan's frames -- none when no baseline matrix was sent.
       recordAiComparisonBaseline(
@@ -3878,6 +3921,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           estimatedSkinAge:
               estimateVisualSkinAgeFromAiMetrics(timelineMetrics) ?? 0,
           rawPayload: persistencePayload,
+          sourceImageWidth: sourceResolutionMetadata['source_image_width'],
+          sourceImageHeight: sourceResolutionMetadata['source_image_height'],
         );
         savedToHistory = true;
       } catch (e) {
@@ -3902,6 +3947,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                 estimateVisualSkinAgeFromAiMetrics(timelineMetrics) ?? 0,
             metrics: rawMetricScores,
             rawPayload: persistencePayload,
+            sourceImageWidth: sourceResolutionMetadata['source_image_width'],
+            sourceImageHeight: sourceResolutionMetadata['source_image_height'],
             scanEngine: ScanHistoryEntry.resolveScanEngine(
               persistencePayload,
               fallback: ScanHistoryEntry.engineBackendOpencv,
@@ -4421,6 +4468,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       _croppedBytes = null;
       _analysisFrameBytes = const [];
       _analysisFrameExposureMetadata = const [];
+      _capturedSourceImageWidth = null;
+      _capturedSourceImageHeight = null;
       _result = null;
       _analysisError = null;
       _fullMetrics = const {};
@@ -5008,6 +5057,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                     _croppedBytes = null;
                     _analysisFrameBytes = const [];
                     _analysisFrameExposureMetadata = const [];
+                    _capturedSourceImageWidth = null;
+                    _capturedSourceImageHeight = null;
                   }),
                   style: TextButton.styleFrom(
                     foregroundColor: MyApp.clinicalSlate,

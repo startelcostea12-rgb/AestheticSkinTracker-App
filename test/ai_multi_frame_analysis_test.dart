@@ -12,6 +12,77 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('each missing source dimension is omitted independently', () {
+    final keys = [
+      'source_image_width', 'source_image_height',
+      'baseline_source_image_width', 'baseline_source_image_height',
+    ];
+    for (var missingIndex = 0; missingIndex < keys.length; missingIndex++) {
+      final dimensions = <int?>[4032, 3024, 4000, 3000];
+      dimensions[missingIndex] = null;
+      final fields = buildAiSkinAnalysisBackendFields(
+        focusArea: 'Full face',
+        sourceImageWidth: dimensions[0],
+        sourceImageHeight: dimensions[1],
+        baselineSourceImageWidth: dimensions[2],
+        baselineSourceImageHeight: dimensions[3],
+      );
+      expect(fields.containsKey(keys[missingIndex]), isFalse);
+      final metadata = aiScanSourceResolutionMetadata(fields);
+      expect(metadata, hasLength(3));
+      expect(metadata.containsKey(keys[missingIndex]), isFalse);
+      expect(metadata.values, isNot(contains(0)));
+    }
+  });
+
+  test('AI uploads send only available stored source dimensions', () {
+    final fields = buildAiSkinAnalysisBackendFields(
+      focusArea: 'Full face',
+      sourceImageWidth: 4032,
+      sourceImageHeight: 3024,
+      baselineSourceImageWidth: 4000,
+      baselineSourceImageHeight: 3000,
+    );
+    expect(aiScanSourceResolutionMetadata(fields), {
+      'source_image_width': 4032,
+      'source_image_height': 3024,
+      'baseline_source_image_width': 4000,
+      'baseline_source_image_height': 3000,
+    });
+    for (final entry in aiScanSourceResolutionMetadata(fields).entries) {
+      expect(fields[entry.key], '${entry.value}');
+    }
+    expect(
+      aiScanSourceResolutionMetadata(buildAiSkinAnalysisBackendFields(
+        focusArea: 'Full face', sourceImageWidth: 0, sourceImageHeight: -1,
+      )),
+      isEmpty,
+    );
+    expect(
+      buildAiSkinAnalysisBackendFields(focusArea: 'Full face').keys,
+      isNot(contains('source_image_width')),
+    );
+  });
+
+  test(
+    'AI capture result carries original still dimensions without decoding the crop',
+    () {
+      final capture = AiSkinAnalysisCaptureResult(
+        primaryImagePath: 'crop.jpg',
+        croppedFrames: [
+          Uint8List.fromList([1, 2, 3]),
+        ],
+        captureQuality: 'normal',
+        poseTemplate: 'Front',
+        guideType: 'facial',
+        sourceImageWidth: 4032,
+        sourceImageHeight: 3024,
+      );
+      expect(capture.sourceImageWidth, 4032);
+      expect(capture.sourceImageHeight, 3024);
+    },
+  );
+
   group('AI baseline metric matrix source', () {
     test('matrix value wins over a conflicting metrics value', () {
       final baseline = aiBaselineMetricMatrixFromPayload({

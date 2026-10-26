@@ -1138,12 +1138,16 @@ class AiSkinAnalysisCaptureResult {
     this.grayCardRegion,
     this.grayCardPatches = const <Uint8List>[],
     this.quickScan = false,
+    this.sourceImageWidth,
+    this.sourceImageHeight,
   });
 
   /// True for a single-photo quick scan (see CameraScreen.aiQuickScan).
   final bool quickScan;
 
   final String primaryImagePath;
+  final int? sourceImageWidth;
+  final int? sourceImageHeight;
 
   /// The fixed gray-card target as fractions of the full still (it lies
   /// below the face crop), or null when the gray-card switch was off.
@@ -5625,6 +5629,8 @@ class _CameraScreenState extends State<CameraScreen>
           grayCardRegion: grayCardRegion,
           grayCardPatches: grayCardPatches,
           quickScan: widget.aiQuickScan,
+          sourceImageWidth: decodedStillWidth,
+          sourceImageHeight: decodedStillHeight,
         ),
       );
     } catch (e) {

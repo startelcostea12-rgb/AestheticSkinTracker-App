@@ -25,6 +25,65 @@ from main import (
 )
 
 
+class SourceResolutionGateContractTests(unittest.TestCase):
+    def test_missing_any_dimension_remains_comparable(self) -> None:
+        for missing_index in range(4):
+            dimensions = [4000, 3000, 1000, 750]
+            dimensions[missing_index] = None
+            with self.subTest(missing_index=missing_index):
+                self.assertTrue(main._source_resolutions_comparable(*dimensions))
+                self.assertIsNone(_trend_lock_reason(
+                    "primary_roi", "primary_roi", "normal", "normal",
+                    *dimensions,
+                    current_formula_version=1,
+                    baseline_formula_version=1,
+                    current_pose_template="Front",
+                    baseline_pose_template="Front",
+                    current_guide_type="facial",
+                    baseline_guide_type="facial",
+                ))
+
+    def test_within_and_exactly_twenty_percent_remain_comparable(self) -> None:
+        self.assertEqual(main.SOURCE_RESOLUTION_MISMATCH_RATIO, 0.20)
+        for dimensions in (
+            (1100, 820, 1000, 750),
+            (1200, 900, 1000, 750),
+            (800, 600, 1000, 750),
+        ):
+            with self.subTest(dimensions=dimensions):
+                self.assertTrue(main._source_resolutions_comparable(*dimensions))
+                self.assertIsNone(_trend_lock_reason(
+                    "primary_roi", "primary_roi", "normal", "normal",
+                    *dimensions,
+                    current_formula_version=1,
+                    baseline_formula_version=1,
+                    current_pose_template="Front",
+                    baseline_pose_template="Front",
+                    current_guide_type="facial",
+                    baseline_guide_type="facial",
+                ))
+
+    def test_more_than_twenty_percent_on_either_axis_locks(self) -> None:
+        for dimensions in (
+            (1201, 750, 1000, 750),
+            (1000, 901, 1000, 750),
+            (799, 750, 1000, 750),
+            (1000, 599, 1000, 750),
+        ):
+            with self.subTest(dimensions=dimensions):
+                self.assertFalse(main._source_resolutions_comparable(*dimensions))
+                self.assertEqual(_trend_lock_reason(
+                    "primary_roi", "primary_roi", "normal", "normal",
+                    *dimensions,
+                    current_formula_version=1,
+                    baseline_formula_version=1,
+                    current_pose_template="Front",
+                    baseline_pose_template="Front",
+                    current_guide_type="facial",
+                    baseline_guide_type="facial",
+                ), "resolution_mismatch")
+
+
 class BodyConsistentScanCountTests(unittest.TestCase):
     @staticmethod
     def _result(scale: float = 200.0) -> dict[str, float]:

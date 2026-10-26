@@ -84,6 +84,8 @@ class SkinHistoryRepository {
     String? captureQuality,
     String? focusArea,
     String? customDescription,
+    int? sourceImageWidth,
+    int? sourceImageHeight,
     double estimatedSkinAge = 0,
     Map<String, dynamic>? rawPayload,
   }) async {
@@ -191,6 +193,8 @@ class SkinHistoryRepository {
           : computedSkinAge ?? 0,
       metrics: stored,
       rawPayload: rawPayload,
+      sourceImageWidth: sourceImageWidth,
+      sourceImageHeight: sourceImageHeight,
       scanEngine: resolvedScanEngine,
     );
 

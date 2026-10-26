@@ -109,6 +109,7 @@ void main() {
       'cast_mismatch',
       'cheek_mismatch',
       'path_mismatch',
+      'resolution_mismatch',
       'region_mismatch',
       'future_lock_reason',
     ]) {
