@@ -4441,114 +4441,127 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.warmAlabaster,
-      appBar: AppBar(
-        backgroundColor: AppColors.cardBackground,
-        elevation: 0.5,
-        iconTheme: IconThemeData(color: MyApp.clinicalNavy),
-        title: Text(
-          'Skin Scan',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: MyApp.clinicalNavy,
-            fontWeight: FontWeight.w900,
-            fontSize: 16,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _goHome();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.warmAlabaster,
+        appBar: AppBar(
+          automaticallyImplyLeading: false,
+          leading: BackButton(
+            key: const ValueKey('scan_back_home_button'),
+            onPressed: _goHome,
           ),
-        ),
-        actions: [
-          Builder(
-            builder: (buttonContext) => PopupMenuButton<_DebugExportAction>(
-              tooltip: 'Debug exports',
-              icon: const Icon(Icons.more_vert_rounded),
-              onSelected: (action) async {
-                switch (action) {
-                  case _DebugExportAction.setupGuide:
-                    await showConsistentSetupGuide(buttonContext);
-                  case _DebugExportAction.burstLog:
-                    await _exportBurstLuminanceLog(buttonContext);
-                  case _DebugExportAction.scanData:
-                    await _exportScanData(buttonContext);
-                  case _DebugExportAction.comparisonPdf:
-                    await _exportComparisonPdf(buttonContext);
-                }
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(
-                  key: ValueKey('menu_setup_guide'),
-                  value: _DebugExportAction.setupGuide,
-                  child: Row(
-                    children: [
-                      Icon(Icons.tune_rounded, size: 18),
-                      SizedBox(width: 10),
-                      Text('Setup Guide'),
-                    ],
+          backgroundColor: AppColors.cardBackground,
+          elevation: 0.5,
+          iconTheme: IconThemeData(color: MyApp.clinicalNavy),
+          title: Text(
+            'Skin Scan',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: MyApp.clinicalNavy,
+              fontWeight: FontWeight.w900,
+              fontSize: 16,
+            ),
+          ),
+          actions: [
+            Builder(
+              builder: (buttonContext) => PopupMenuButton<_DebugExportAction>(
+                tooltip: 'Debug exports',
+                icon: const Icon(Icons.more_vert_rounded),
+                onSelected: (action) async {
+                  switch (action) {
+                    case _DebugExportAction.setupGuide:
+                      await showConsistentSetupGuide(buttonContext);
+                    case _DebugExportAction.burstLog:
+                      await _exportBurstLuminanceLog(buttonContext);
+                    case _DebugExportAction.scanData:
+                      await _exportScanData(buttonContext);
+                    case _DebugExportAction.comparisonPdf:
+                      await _exportComparisonPdf(buttonContext);
+                  }
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                    key: ValueKey('menu_setup_guide'),
+                    value: _DebugExportAction.setupGuide,
+                    child: Row(
+                      children: [
+                        Icon(Icons.tune_rounded, size: 18),
+                        SizedBox(width: 10),
+                        Text('Setup Guide'),
+                      ],
+                    ),
                   ),
-                ),
-                PopupMenuItem(
-                  value: _DebugExportAction.burstLog,
-                  child: Row(
-                    children: [
-                      Icon(Icons.bug_report_outlined, size: 18),
-                      SizedBox(width: 10),
-                      Text('Export Burst Log'),
-                    ],
+                  PopupMenuItem(
+                    value: _DebugExportAction.burstLog,
+                    child: Row(
+                      children: [
+                        Icon(Icons.bug_report_outlined, size: 18),
+                        SizedBox(width: 10),
+                        Text('Export Burst Log'),
+                      ],
+                    ),
                   ),
-                ),
-                PopupMenuItem(
-                  value: _DebugExportAction.scanData,
-                  child: Row(
-                    children: [
-                      Icon(Icons.table_view_outlined, size: 18),
-                      SizedBox(width: 10),
-                      Text('Export Scan Data'),
-                    ],
+                  PopupMenuItem(
+                    value: _DebugExportAction.scanData,
+                    child: Row(
+                      children: [
+                        Icon(Icons.table_view_outlined, size: 18),
+                        SizedBox(width: 10),
+                        Text('Export Scan Data'),
+                      ],
+                    ),
                   ),
-                ),
-                PopupMenuItem(
-                  value: _DebugExportAction.comparisonPdf,
-                  child: Row(
-                    children: [
-                      Icon(Icons.picture_as_pdf_outlined, size: 18),
-                      SizedBox(width: 10),
-                      Flexible(
-                        child: Text(
-                          'Export Comparison PDF',
-                          overflow: TextOverflow.ellipsis,
+                  PopupMenuItem(
+                    value: _DebugExportAction.comparisonPdf,
+                    child: Row(
+                      children: [
+                        Icon(Icons.picture_as_pdf_outlined, size: 18),
+                        SizedBox(width: 10),
+                        Flexible(
+                          child: Text(
+                            'Export Comparison PDF',
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
-          if (_stage == _Stage.results)
-            IconButton(
-              tooltip: 'New progress report',
-              icon: const Icon(Icons.refresh_rounded),
-              onPressed: _startOver,
-            ),
-          if (_stage == _Stage.results)
-            TextButton.icon(
-              key: const ValueKey('results_done_button'),
-              onPressed: _goHome,
-              icon: const Icon(Icons.home_rounded, size: 18),
-              label: const Text(
-                'Done',
-                style: TextStyle(fontWeight: FontWeight.w900),
+                ],
               ),
-              style: TextButton.styleFrom(foregroundColor: MyApp.clinicalTeal),
             ),
-        ],
-      ),
-      body: SafeArea(
-        child: switch (_stage) {
-          _Stage.capture => _buildCaptureStage(),
-          _Stage.analyzing => _buildAnalyzingStage(),
-          _Stage.results => _buildResultsStage(),
-        },
+            if (_stage == _Stage.results)
+              IconButton(
+                tooltip: 'New progress report',
+                icon: const Icon(Icons.refresh_rounded),
+                onPressed: _startOver,
+              ),
+            if (_stage == _Stage.results)
+              TextButton.icon(
+                key: const ValueKey('results_done_button'),
+                onPressed: _goHome,
+                icon: const Icon(Icons.home_rounded, size: 18),
+                label: const Text(
+                  'Done',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+                style: TextButton.styleFrom(
+                  foregroundColor: MyApp.clinicalTeal,
+                ),
+              ),
+          ],
+        ),
+        body: SafeArea(
+          child: switch (_stage) {
+            _Stage.capture => _buildCaptureStage(),
+            _Stage.analyzing => _buildAnalyzingStage(),
+            _Stage.results => _buildResultsStage(),
+          },
+        ),
       ),
     );
   }

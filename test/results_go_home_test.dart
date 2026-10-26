@@ -118,4 +118,24 @@ void main() {
       contains('void _goHome() => navigateHomeFrom(Navigator.of(context));'),
     );
   });
+
+  test('Skin Scan back arrow and blocked system back go home', () {
+    final source = File(
+      'lib/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart',
+    ).readAsStringSync();
+    expect(source, contains("ValueKey('scan_back_home_button')"));
+    expect(source, contains('BackButton('));
+    expect(source, contains('onPopInvokedWithResult'));
+    final build = source.substring(
+      source.indexOf('  // ── Build ──'),
+      source.indexOf('  // ── Stage 1: capture'),
+    );
+    expect(build, contains('return PopScope('));
+    expect(build, contains('canPop: false'));
+    expect(build, contains('if (!didPop) _goHome();'));
+    expect(build, contains('automaticallyImplyLeading: false'));
+    final back = build.indexOf('leading: BackButton(');
+    final title = build.indexOf('title: Text(', back);
+    expect(build.substring(back, title), contains('onPressed: _goHome'));
+  });
 }
