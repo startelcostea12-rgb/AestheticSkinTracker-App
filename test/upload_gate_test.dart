@@ -162,7 +162,9 @@ void main() {
       expect(at('AcneRosaceaPhotoAnalyzer.analyze('), lessThan(gate));
       expect(at('aiScanPreUploadLightingCheck('), lessThan(gate));
       expect(at('analyzeBackendFrames('), greaterThan(gate));
-      final blocked = source.substring(gate, at('analyzeBackendFrames('));
+      final backendPath = at('final backendBytes =');
+      expect(at('SkinAnalysisService.uploadSingleImageFile('), greaterThan(backendPath));
+      final blocked = source.substring(gate, backendPath);
       expect(blocked, contains('const PaywallScreen()'));
       expect(blocked, contains('FreeLocalScanResultsScreen('));
       expect(blocked, contains('return;'));

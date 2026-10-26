@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
@@ -82,6 +83,135 @@ const _regionQuality = <String, dynamic>{
 };
 
 void main() {
+  for (final scenario in const [
+    (passed: 1, read: 5, status: 'partial'),
+    (passed: 2, read: 5, status: 'partial'),
+    (passed: 3, read: 5, status: 'applied'),
+    (passed: 0, read: 5, status: 'rejected_wrong_area'),
+    (passed: 1, read: 1, status: 'applied'),
+  ]) {
+    test(
+      '${scenario.passed} of ${scenario.read} card readings: ${scenario.status}',
+      () async {
+        final frames = [
+          for (var index = 0; index < scenario.read; index++)
+            Uint8List.fromList([index, 42]),
+        ];
+        final retries = <int>[];
+        final aggregate = await analyzeBackendFrames(
+          frames,
+          photoUploadAccepted: true,
+          uploadFrame: (frame, number) async {
+            final passed = number <= scenario.passed;
+            final response = _frame(
+              marked: true,
+              applied: passed,
+              l: 131,
+              a: passed ? 0 : 19.0 + number,
+              b: passed ? 0 : 9,
+              reason: passed ? null : 'implausible_card_color',
+              redness: passed ? 20 : 10,
+            )..['preprocessed_pixels'] = passed ? [1, 2, 3] : frame.toList();
+            return response;
+          },
+          uploadFrameWithoutGrayCard: (frame, number) async {
+            retries.add(number);
+            expect(frame, orderedEquals(frames[number - 1]));
+            return _frame(marked: false, redness: 10)
+              ..['preprocessed_pixels'] = frame.toList();
+          },
+        );
+        final payload = aggregate.response;
+        final quality = payload['image_quality'] as Map<String, dynamic>;
+        expect(quality['gray_card_status'], scenario.status);
+        expect(quality['gray_card_frames_applied'], scenario.passed);
+        expect(quality['gray_card_frames_read'], scenario.read);
+        final applied = scenario.status == 'applied';
+        expect(quality['gray_card_correction_applied'], applied);
+        expect(quality['gray_card_retake_recommended'], !applied);
+        expect(quality['gray_card_baseline_eligible'], applied);
+        expect(payload['gray_card_status'], scenario.status);
+        expect(
+          (payload['metrics'] as Map)['gray_card_status'],
+          scenario.status,
+        );
+        if (scenario.status == 'partial') {
+          expect(retries, [1, 2, 3, 4, 5]);
+          expect(payload['preprocessed_pixels'], frames.first.toList());
+          expect((payload['metric_matrix'] as Map)['localized_redness'], 10);
+          expect(
+            quality['gray_card_message'],
+            contains('not steady across the burst'),
+          );
+        } else {
+          expect(retries, isEmpty);
+          if (applied) {
+            expect(payload['preprocessed_pixels'], [1, 2, 3]);
+            expect(
+              (payload['metric_matrix'] as Map)['localized_redness'],
+              greaterThan(10),
+            );
+          } else {
+            expect(payload['preprocessed_pixels'], frames.first.toList());
+            expect(quality['gray_card_reason'], 'implausible_card_color');
+          }
+        }
+        final saved = ScanHistoryEntry(
+          id: 'burst',
+          timestamp: DateTime(2026, 10, 26),
+          estimatedSkinAge: 0,
+          metrics: const {},
+          poseTemplate: 'Front',
+          guideType: 'facial',
+          scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+          captureQuality: 'normal',
+          rawPayload: {
+            ...payload,
+            'metric_formula_versions': {'localized_redness': 4},
+          },
+        );
+        expect(scanPassesSingleScanBaselineGates(saved), applied);
+        final row = _parse(
+          AiScanDataCsvExporter.format([
+            saved,
+          ], registryBaselineScanIds: const {}),
+        ).single;
+        expect(row['image_quality.gray_card_status'], scenario.status);
+        expect(
+          row['image_quality.gray_card_frames_applied'],
+          '${scenario.passed}',
+        );
+        expect(row['image_quality.gray_card_frames_read'], '${scenario.read}');
+        expect(row['image_quality.gray_card_baseline_eligible'], '$applied');
+      },
+    );
+  }
+
+  for (final missingCallback in const [true, false]) {
+    test(
+      'partial burst never uses corrected frames if no-card retry fails ($missingCallback)',
+      () async {
+        await expectLater(
+          analyzeBackendFrames(
+            [Uint8List(1), Uint8List(1)],
+            photoUploadAccepted: true,
+            uploadFrame: (_, number) async => _frame(
+              marked: true,
+              applied: number == 1,
+              l: 131,
+              a: number == 1 ? 0 : 25,
+              b: 0,
+            ),
+            uploadFrameWithoutGrayCard: missingCallback
+                ? null
+                : (_, _) async => throw StateError('retry failed'),
+          ),
+          throwsStateError,
+        );
+      },
+    );
+  }
+
   test('summary: marked, applied on every frame, mean of the raw samples', () {
     final summary = summarizeGrayCardFrames([
       _frame(
@@ -121,19 +251,25 @@ void main() {
       'gray_card_scene_disagreement': 3.0,
       'gray_card_correction_applied': true,
       'gray_card_frames_applied': 3,
+      'gray_card_frames_read': 3,
+      'gray_card_status': 'applied',
+      'gray_card_message': null,
+      'gray_card_retake_recommended': false,
+      'gray_card_baseline_eligible': true,
       'gray_card_reason': null,
       ..._regionQuality,
     });
   });
 
-  test('summary: applied only if every frame applied it', () {
+  test('summary: unreadable frames do not count as card readings', () {
     final summary = summarizeGrayCardFrames([
       _frame(marked: true, applied: true, l: 120, a: 6.0, b: 9.0),
       _frame(marked: true, reason: 'region_out_of_bounds'),
     ]);
-    expect(summary['gray_card_correction_applied'], isFalse);
+    expect(summary['gray_card_correction_applied'], isTrue);
     expect(summary['gray_card_frames_applied'], 1);
-    expect(summary['gray_card_reason'], 'region_out_of_bounds');
+    expect(summary['gray_card_frames_read'], 1);
+    expect(summary['gray_card_reason'], isNull);
     expect(summary['gray_card_mean_a'], 6.0);
   });
 

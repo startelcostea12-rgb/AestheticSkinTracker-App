@@ -40,7 +40,9 @@ class GrayCardSampleCard extends StatelessWidget {
   Widget build(BuildContext context) {
     const ink = AppColors.textStructure;
     final applied = imageQuality['gray_card_correction_applied'] == true;
-    final reason = grayCardIgnoredReasonText(imageQuality['gray_card_reason']);
+    final reason = imageQuality['gray_card_status'] == 'partial'
+        ? imageQuality['gray_card_message']?.toString()
+        : grayCardIgnoredReasonText(imageQuality['gray_card_reason']);
     final offset = imageQuality['gray_card_chroma_offset'];
     return Container(
       key: const ValueKey('gray_card_sample_card'),

@@ -367,6 +367,12 @@ String? aiBaselineRejectionReason(ScanHistoryEntry scan) {
     return 'Not saved as baseline: no scoring formula version was '
         'recorded for this scan.';
   }
+  final payload = scan.rawPayload ?? const <String, dynamic>{};
+  final cardQuality = _dynamicMap(payload['image_quality']);
+  if (payload['gray_card_baseline_eligible'] == false ||
+      cardQuality['gray_card_baseline_eligible'] == false) {
+    return 'Not saved as baseline: ${cardQuality['gray_card_message'] ?? payload['gray_card_message'] ?? 'the gray card could not be used. Please retake.'}';
+  }
   return null;
 }
 
@@ -468,7 +474,7 @@ const List<String> grayCardRegionFields = <String>[
 
 /// Scan-level gray-card summary over the frames' image_quality (main.py
 /// logs it per frame): marked if any frame was marked, correction applied
-/// only if every frame applied it, and the mean of the frames' raw card
+/// only if a strict majority of readable frames applied it, and the mean of the frames' raw card
 /// samples. Empty when no frame reports gray-card fields (older backend).
 Map<String, dynamic> summarizeGrayCardFrames(
   List<Map<String, dynamic>> responses,
@@ -495,22 +501,62 @@ Map<String, dynamic> summarizeGrayCardFrames(
   final applied = qualities
       .where((q) => q['gray_card_correction_applied'] == true)
       .length;
+  final read = qualities
+      .where(
+        (q) =>
+            q['gray_card_correction_applied'] == true ||
+            (q['gray_card_mean_L'] is num &&
+                (q['gray_card_mean_L'] as num).isFinite &&
+                q['gray_card_mean_a'] is num &&
+                (q['gray_card_mean_a'] as num).isFinite &&
+                q['gray_card_mean_b'] is num &&
+                (q['gray_card_mean_b'] as num).isFinite),
+      )
+      .length;
+  final marked = qualities.any((q) => q['gray_card_marked'] == true);
+  final majority = applied > 0 && applied * 2 > read;
+  final partial = applied > 0 && !majority;
   final reason = qualities
       .map((q) => q['gray_card_reason'])
       .firstWhere(
         (r) => r != null && r.toString().isNotEmpty,
         orElse: () => null,
       );
+  final status = !marked
+      ? 'not_marked'
+      : majority
+      ? 'applied'
+      : partial
+      ? 'partial'
+      : switch (reason) {
+          'implausible_card_color' => 'rejected_wrong_area',
+          'disagrees_with_scene' => 'rejected_scene_mismatch',
+          'implausible_exposure' => 'rejected_bad_exposure',
+          _ => 'rejected_unreadable',
+        };
+  final rejectedQuality = qualities.firstWhere(
+    (q) => q['gray_card_reason'] == reason,
+    orElse: () => const <String, dynamic>{},
+  );
   return <String, dynamic>{
-    'gray_card_marked': qualities.any((q) => q['gray_card_marked'] == true),
+    'gray_card_marked': marked,
     'gray_card_mean_L': mean('gray_card_mean_L'),
     'gray_card_mean_a': mean('gray_card_mean_a'),
     'gray_card_mean_b': mean('gray_card_mean_b'),
     'gray_card_chroma_offset': mean('gray_card_chroma_offset'),
     'gray_card_scene_disagreement': mean('gray_card_scene_disagreement'),
-    'gray_card_correction_applied': applied == qualities.length,
+    'gray_card_correction_applied': majority,
     'gray_card_frames_applied': applied,
-    'gray_card_reason': reason,
+    'gray_card_frames_read': read,
+    'gray_card_status': status,
+    'gray_card_message': partial
+        ? 'The gray card was not steady across the burst. Please retake with the card held steady.'
+        : majority || !marked
+        ? null
+        : rejectedQuality['gray_card_message'],
+    'gray_card_retake_recommended': marked && !majority,
+    'gray_card_baseline_eligible': !marked || majority,
+    'gray_card_reason': majority ? null : reason,
     // The same box is sent with every frame; take the first frame's.
     for (final field in grayCardRegionFields)
       field: qualities
@@ -817,6 +863,19 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
       ...firstQuality,
       ...grayCardSummary,
     };
+    metricsNode['image_quality'] = response['image_quality'];
+    for (final key in const [
+      'gray_card_status',
+      'gray_card_message',
+      'gray_card_retake_recommended',
+      'gray_card_baseline_eligible',
+      'gray_card_correction_applied',
+      'gray_card_frames_applied',
+      'gray_card_frames_read',
+    ]) {
+      response[key] = grayCardSummary[key];
+      metricsNode[key] = grayCardSummary[key];
+    }
   }
   response['multi_frame_analysis'] = <String, dynamic>{
     'requested_frames': requestedFrames,
@@ -2049,6 +2108,8 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
     int frameNumber,
   )
   uploadFrame,
+  Future<Map<String, dynamic>> Function(Uint8List frame, int frameNumber)?
+  uploadFrameWithoutGrayCard,
   List<AiScanFrameExposure> frameExposureMetadata =
       const <AiScanFrameExposure>[],
 }) async {
@@ -2098,12 +2159,43 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
       }
     }
   }
+  final grayCardSummary = summarizeGrayCardFrames(responses);
+  if (grayCardSummary['gray_card_status'] == 'partial') {
+    if (uploadFrameWithoutGrayCard == null) {
+      throw StateError(
+        'A partial gray-card burst must be reprocessed without the card.',
+      );
+    }
+    final uncorrected = <Map<String, dynamic>>[];
+    for (final frameNumber in responseFrameNumbers) {
+      uncorrected.add(
+        await uploadFrameWithoutGrayCard(frames[frameNumber - 1], frameNumber),
+      );
+    }
+    responses
+      ..clear()
+      ..addAll(uncorrected);
+  }
   try {
     final aggregate = averageBackendAnalysisFrames(
       responses,
       requestedFrames: frames.length,
       frameNumbers: responseFrameNumbers,
     );
+    if (grayCardSummary.isNotEmpty) {
+      aggregate.response['image_quality'] = {
+        ..._dynamicMap(aggregate.response['image_quality']),
+        ...grayCardSummary,
+      };
+      _dynamicMap(aggregate.response['metrics'])['image_quality'] =
+          aggregate.response['image_quality'];
+      for (final key in grayCardSummary.keys.where(
+        (key) => key.startsWith('gray_card_'),
+      )) {
+        aggregate.response[key] = grayCardSummary[key];
+        _dynamicMap(aggregate.response['metrics'])[key] = grayCardSummary[key];
+      }
+    }
     aggregate.response[aiScanPerFrameDiagnosticsKey] =
         buildAiScanPerFrameDiagnostics(
           frameResponses: responsesByFrame,
@@ -3541,28 +3633,37 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       final storedBaselineFormulaVersions = _previousFocusAreaScan == null
           ? const <String, int>{}
           : aiScanFormulaVersions(_previousFocusAreaScan!);
+      Future<Map<String, dynamic>> uploadFrame(
+        Uint8List frame,
+        int frameNumber, {
+        bool withGrayCard = true,
+      }) => remote_analysis.SkinAnalysisService.uploadSingleImageFile(
+        image: XFile.fromData(
+          frame,
+          name: 'skin_ai_analysis_frame_$frameNumber.jpg',
+          mimeType: 'image/jpeg',
+        ),
+        fields: withGrayCard
+            ? backendFields
+            : (Map<String, String>.from(backendFields)
+                ..removeWhere((key, _) => key.startsWith('gray_card_'))),
+        baselineMetricMatrix: baselineMetricMatrixForTrend,
+        baselineExtractionPaths: _buildLuxeBaselineExtractionPaths(),
+        baselineFormulaVersions: storedBaselineFormulaVersions.isEmpty
+            ? null
+            : storedBaselineFormulaVersions,
+        grayCardPatch: withGrayCard && frameNumber - 1 < _grayCardPatches.length
+            ? _grayCardPatches[frameNumber - 1]
+            : null,
+        allowBackend: true,
+      );
       final aggregate = await analyzeBackendFrames(
         frames,
         photoUploadAccepted: _consentAccepted,
         frameExposureMetadata: _analysisFrameExposureMetadata,
-        uploadFrame: (frame, frameNumber) =>
-            remote_analysis.SkinAnalysisService.uploadSingleImageFile(
-              image: XFile.fromData(
-                frame,
-                name: 'skin_ai_analysis_frame_$frameNumber.jpg',
-                mimeType: 'image/jpeg',
-              ),
-              fields: backendFields,
-              baselineMetricMatrix: baselineMetricMatrixForTrend,
-              baselineExtractionPaths: _buildLuxeBaselineExtractionPaths(),
-              baselineFormulaVersions: storedBaselineFormulaVersions.isEmpty
-                  ? null
-                  : storedBaselineFormulaVersions,
-              grayCardPatch: frameNumber - 1 < _grayCardPatches.length
-                  ? _grayCardPatches[frameNumber - 1]
-                  : null,
-              allowBackend: true,
-            ),
+        uploadFrame: uploadFrame,
+        uploadFrameWithoutGrayCard: (frame, frameNumber) =>
+            uploadFrame(frame, frameNumber, withGrayCard: false),
       );
       final backendResponse = aggregate.response;
       debugPrint(

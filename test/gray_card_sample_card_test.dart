@@ -76,6 +76,26 @@ void main() {
     expect(find.text('Colour offset 19.2 (limit 12)'), findsOneWidget);
   });
 
+  testWidgets('partial burst explains the card was not steady and uses no card', (
+    tester,
+  ) async {
+    await _pump(tester, {
+      'gray_card_marked': true,
+      'gray_card_status': 'partial',
+      'gray_card_correction_applied': false,
+      'gray_card_reason': 'implausible_card_color',
+      'gray_card_message':
+          'The gray card was not steady across the burst. Please retake with the card held steady.',
+    });
+    expect(find.text('Gray card ignored'), findsOneWidget);
+    expect(find.textContaining('not steady across the burst'), findsOneWidget);
+    expect(
+      find.textContaining('Automatic colour balance was used'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   test('every backend rejection reason has wording', () {
     for (final reason in [
       'disagrees_with_scene',
