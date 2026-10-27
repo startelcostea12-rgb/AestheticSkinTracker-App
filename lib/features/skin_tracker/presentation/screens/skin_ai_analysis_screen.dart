@@ -1184,6 +1184,7 @@ forceStableWithinMeasuredNoiseFloors({
     final current = _parseFiniteDouble(averagedMetricMatrix[key]);
     final baseline = _parseFiniteDouble(baselineMetricMatrix[key]);
     if (current == null || baseline == null) continue;
+    if (baseline == 0.0 && current != 0.0) continue;
     if ((current - baseline).abs() < entry.value) {
       updatedStatus[key] = 'stable';
       updatedDeltas[key] = 0.0;
@@ -1216,7 +1217,7 @@ forceStableWithinLiveDisplayNoiseFloors({
     final median = medianOf(values.map(_parseFiniteDouble).whereType<double>());
     if (median != null) displayedValues[key] = median;
   }
-  return forceStableWithinMeasuredNoiseFloors(
+  final trend = forceStableWithinMeasuredNoiseFloors(
     trendStatus: trendStatus,
     trendDeltas: trendDeltas,
     trendLockReasons: trendLockReasons,
@@ -1227,6 +1228,15 @@ forceStableWithinLiveDisplayNoiseFloors({
         if (displayVerdictNoiseFloors[key] case final double floor) key: floor,
     },
   );
+  for (final entry in baselineMetricMatrix.entries) {
+    final baseline = _parseFiniteDouble(entry.value);
+    final current = _parseFiniteDouble(displayedValues[entry.key]);
+    if (baseline == 0.0 && current != null && current != 0.0) {
+      trend.trendStatus.remove(entry.key);
+      trend.trendDeltas.remove(entry.key);
+    }
+  }
+  return trend;
 }
 
 /// Debug-only, per-frame diagnostic string for a failed or unusable backend
@@ -3942,10 +3952,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             serverTrendLockReasons;
         backendResponse['metrics'] = backendResponseMetricsNode;
       }
-      final luxePayload = _buildLuxeResultsPayload(
-        report,
-        backendResponse: backendResponse,
-      );
+      final luxePayload =
+          _buildLuxeResultsPayload(report, backendResponse: backendResponse)
+            ..['trend_status'] = serverTrendStatus
+            ..['trend_deltas'] = serverTrendDeltas
+            ..['trend_lock_reasons'] = serverTrendLockReasons;
       final persistencePayload = _mergePayloadForPersistence(
         backendResponse: backendResponse,
         luxePayload: luxePayload,

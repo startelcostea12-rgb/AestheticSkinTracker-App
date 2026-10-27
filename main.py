@@ -4939,9 +4939,9 @@ def _trend_delta_and_status(
     baseline_pose_template: str | None = None,
     current_guide_type: str | None = None,
     baseline_guide_type: str | None = None,
-) -> tuple[float, str]:
-    if abs(baseline) < 1e-9:
-        return 0.0, "stable"
+) -> tuple[float | None, str | None]:
+    if baseline == 0.0:
+        return (0.0, "stable") if current == 0.0 else (None, None)
 
     current_quality = (
         _normalize_capture_quality(current_capture_quality)
@@ -5437,7 +5437,8 @@ def _compute_trend_deltas(
             current_guide_type,
             baseline_guide_type,
         )
-        deltas[key] = delta_pct
+        if delta_pct is not None:
+            deltas[key] = delta_pct
     return deltas
 
 
@@ -5520,7 +5521,8 @@ def _compute_trend_statuses(
             current_guide_type,
             baseline_guide_type,
         )
-        out[key] = status
+        if status is not None:
+            out[key] = status
     return out
 
 

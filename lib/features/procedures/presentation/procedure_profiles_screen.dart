@@ -188,6 +188,7 @@ class ProcedurePhotoComparisonEligibility {
 String? procedureMetricDeltaText(LuxeMetric metric) {
   if (!metric.hasBaselineValue ||
       !metric.hasStoredBaselineValue ||
+      metric.baselineScore == 0.0 ||
       !metric.hasComparableCurrentValue) {
     return null;
   }
@@ -1687,9 +1688,10 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     final baselineMetrics = summarize(baselineImage);
     final currentMetrics = summarize(afterImage);
 
-    double trendDelta(String key, {required bool lowerIsBetter}) {
+    double? trendDelta(String key, {required bool lowerIsBetter}) {
       final baseline = baselineMetrics[key] ?? 0;
       final current = currentMetrics[key] ?? 0;
+      if (baseline == 0.0) return current == 0.0 ? 0.0 : null;
       if (baseline <= 0) return 0.0;
       final raw = ((current - baseline) / baseline) * 100.0;
       return lowerIsBetter ? -raw : raw;
@@ -1717,6 +1719,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       ),
     };
 
+    trendDeltas.removeWhere((key, value) => value == null);
     return {'metric_matrix': metricMatrix, 'trend_deltas': trendDeltas};
   }
 

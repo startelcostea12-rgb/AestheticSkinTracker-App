@@ -54,6 +54,18 @@ Map<String, dynamic> _zonePayload({
 }
 
 void main() {
+  test('stored zero baseline has no percent for zero or nonzero current', () {
+    for (final current in [0.0, 40.0]) {
+      final metric = LuxeMetricParser.parseTimelinePayload({
+        'metric_matrix': {'texture_smoothness': current},
+        'baseline_metric_matrix': {'texture_smoothness': 0.0},
+        'trend_deltas': {'texture_smoothness': 0.0},
+        'trend_status': {'texture_smoothness': 'stable'},
+      }).single;
+      expect(procedureMetricDeltaText(metric), isNull);
+    }
+  });
+
   test('placeholder baseline never formats a fake -82.7 percent', () {
     const placeholder = LuxeMetric(
       key: 'texture_smoothness',

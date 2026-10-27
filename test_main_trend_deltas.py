@@ -25,6 +25,35 @@ from main import (
 )
 
 
+class ZeroBaselineTrendTests(unittest.TestCase):
+    def test_exact_zero_to_nonzero_has_no_delta_or_status(self) -> None:
+        self.assertEqual(_trend_delta_and_status(
+            "texture_smoothness", 40.0, 0.0, "primary_roi", "primary_roi", 8.0
+        ), (None, None))
+        self.assertEqual(_compute_trend_deltas(
+            {"texture_smoothness": 40.0}, {"texture_smoothness": 0.0}
+        ), {})
+        self.assertEqual(_compute_trend_statuses(
+            {"texture_smoothness": 40.0}, {"texture_smoothness": 0.0}
+        ), {})
+
+    def test_exact_zero_to_zero_has_no_percent_change(self) -> None:
+        self.assertEqual(_trend_delta_and_status(
+            "texture_smoothness", 0.0, 0.0, "primary_roi", "primary_roi", 8.0
+        ), (0.0, "stable"))
+
+    def test_nonzero_baseline_is_not_treated_as_zero(self) -> None:
+        delta, status = _trend_delta_and_status(
+            "texture_smoothness", 40.0, 1e-10, "primary_roi", "primary_roi", 8.0,
+            current_capture_quality="normal", baseline_capture_quality="normal",
+            current_formula_version=5, baseline_formula_version=5,
+            current_pose_template="Front", baseline_pose_template="Front",
+            current_guide_type="facial", baseline_guide_type="facial",
+        )
+        self.assertGreater(delta, 0.0)
+        self.assertEqual(status, "improved")
+
+
 class SourceResolutionGateContractTests(unittest.TestCase):
     def test_missing_any_dimension_remains_comparable(self) -> None:
         for missing_index in range(4):
@@ -810,7 +839,7 @@ class ComputeTrendDeltasTests(unittest.TestCase):
 
         self.assertEqual(deltas["structural_firmness_elasticity"], 10.0)
 
-    def test_zero_baseline_returns_zero_delta(self) -> None:
+    def test_zero_baseline_to_nonzero_omits_delta(self) -> None:
         current = {
             "texture_smoothness": 75.0,
             "localized_redness": 10.0,
@@ -843,14 +872,7 @@ class ComputeTrendDeltasTests(unittest.TestCase):
             baseline_guide_type='facial',
         )
 
-        self.assertEqual(deltas["texture_smoothness"], 0.0)
-        self.assertEqual(deltas["localized_redness"], 0.0)
-        self.assertEqual(deltas["sebum_excess_oil_gloss"], 0.0)
-        self.assertEqual(deltas["diffuse_flushing_erythema"], 0.0)
-        self.assertEqual(deltas["skin_tone_radiance_evenness"], 0.0)
-        self.assertEqual(deltas["glabellar_wrinkle_depth"], 0.0)
-        self.assertEqual(deltas["pore_contraction_index"], 0.0)
-        self.assertEqual(deltas["structural_firmness_elasticity"], 0.0)
+        self.assertEqual(deltas, {})
 
     def test_normalize_capture_quality_accepts_blurry_and_guidance_tags(self) -> None:
         self.assertEqual(_normalize_capture_quality("blurry"), "blurry")

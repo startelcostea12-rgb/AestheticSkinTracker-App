@@ -1350,6 +1350,19 @@ _HonestyAssessment _assessMetricHonesty({
     trendDeltaPct: backendTrendDeltaPct,
   );
   final normalizedLockReason = backendTrendLockReason?.trim();
+  if (hasComparableCurrentValue &&
+      hasRealBaseline &&
+      baseline == 0.0 &&
+      !(normalizedLockReason?.isNotEmpty ?? false)) {
+    return _HonestyAssessment(
+      status: current == 0.0 ? _HonestyStatus.stable : _HonestyStatus.noVerdict,
+      reason: current == 0.0
+          ? 'Stable - change within tracking noise'
+          : 'No percentage comparison for a zero baseline',
+      deltaPct: null,
+      hasRealBaseline: true,
+    );
+  }
   if (resolvedFromBackend == null &&
       normalizedLockReason != null &&
       normalizedLockReason.isNotEmpty) {

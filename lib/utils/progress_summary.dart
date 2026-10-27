@@ -31,6 +31,7 @@ String? progressTrendLabel(ComparablePair pair, String key) {
   final current = pair.latestValue(key);
   final previous = pair.baselineValue(key);
   if (current == null || previous == null) return null;
+  if (previous == 0.0 && current != 0.0) return null;
   if (status == 'stable') return 'Stable';
   final floor = displayVerdictNoiseFloors[key];
   if (floor != null &&
