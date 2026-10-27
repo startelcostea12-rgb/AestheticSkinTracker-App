@@ -35,7 +35,7 @@ void main() {
       'pigment_load': 3.0,
       'skin_tone_radiance_evenness': 4.0,
       'pore_visibility': 3.0,
-      'structural_firmness_elasticity': 2.0,
+      'structural_firmness_elasticity': 5.0,
     });
     // Same floors on the live cards and in the export.
     for (final key in const [
@@ -43,6 +43,7 @@ void main() {
       'pigment_load',
       'skin_tone_radiance_evenness',
       'pore_visibility',
+      'structural_firmness_elasticity',
     ]) {
       expect(
         displayVerdictNoiseFloors[key],
@@ -88,7 +89,7 @@ void main() {
       ('pigment_load', 2.9, 3.0),
       ('skin_tone_radiance_evenness', 3.9, 4.0),
       ('pore_visibility', 2.9, 3.0),
-      ('structural_firmness_elasticity', 1.5, 2.5),
+      ('structural_firmness_elasticity', 4.0, 5.0),
     ]) {
       final under = _apply(key, 20.0, 20.0 + below, status: 'worsened');
       expect(under.trendStatus[key], 'stable', reason: key);

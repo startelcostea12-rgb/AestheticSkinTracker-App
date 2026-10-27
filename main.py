@@ -4446,9 +4446,8 @@ HONESTY_STABLE_BAND_PCT = 8.0
 
 # Metrics whose own measured noise floor alone decides "stable": once a
 # move reaches the floor, the shared relative band above is not applied.
-# structural_firmness_elasticity's 3.0 floor is ~5.4% of a typical ~56
-# baseline, so the 8% band (~4.5 points) labeled real floor-clearing moves
-# "stable". Every other metric still uses the band unchanged.
+# Firmness uses the live card's 5.0-point floor without a second relative
+# band. Every other metric still uses the shared band unchanged.
 TREND_FLOOR_ONLY_METRICS = {"structural_firmness_elasticity"}
 
 # PROVISIONAL, two-session calibration. Measured via
@@ -4486,7 +4485,7 @@ METRIC_NOISE_FLOOR_2SD: Dict[str, float] = {
     "wrinkle_load": 3.7,
     "under_eye_dark_circle_density": 14.1,
     "under_eye_texture_density": 6.0,
-    "structural_firmness_elasticity": 3.0,
+    "structural_firmness_elasticity": 5.0,
     "pigment_load": 2.0,
     "skin_tone_radiance_evenness": 1.1,
     "pore_visibility": 1.0,

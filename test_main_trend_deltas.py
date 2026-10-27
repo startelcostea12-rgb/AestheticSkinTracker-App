@@ -25,6 +25,21 @@ from main import (
 )
 
 
+class FirmnessLiveFloorTests(unittest.TestCase):
+    def test_four_point_move_is_stable_and_five_clears_the_floor(self) -> None:
+        for current, expected in ((94.0, "stable"), (95.0, "improved")):
+            delta, status = _trend_delta_and_status(
+            "structural_firmness_elasticity", current, 90.0,
+                "primary_roi", "primary_roi", 8.0,
+                current_capture_quality="normal", baseline_capture_quality="normal",
+                current_formula_version=2, baseline_formula_version=2,
+                current_pose_template="Front", baseline_pose_template="Front",
+                current_guide_type="facial", baseline_guide_type="facial",
+            )
+            self.assertEqual(status, expected)
+            self.assertEqual(delta, 0.0 if expected == "stable" else 5.6)
+
+
 class ZeroBaselineTrendTests(unittest.TestCase):
     def test_exact_zero_to_nonzero_has_no_delta_or_status(self) -> None:
         self.assertEqual(_trend_delta_and_status(
@@ -966,7 +981,7 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
                 "wrinkle_load": 3.7,
                 "under_eye_dark_circle_density": 14.1,
                 "under_eye_texture_density": 6.0,
-                "structural_firmness_elasticity": 3.0,
+                "structural_firmness_elasticity": 5.0,
                 "pigment_load": 2.0,
                 "skin_tone_radiance_evenness": 1.1,
                 "pore_visibility": 1.0,

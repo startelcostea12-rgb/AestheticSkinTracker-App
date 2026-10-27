@@ -1151,7 +1151,7 @@ const Map<String, double> measuredStableNoiseFloors = <String, double>{
   'pigment_load': 3.0,
   'skin_tone_radiance_evenness': 4.0,
   'pore_visibility': 3.0,
-  'structural_firmness_elasticity': 2.0,
+  'structural_firmness_elasticity': 5.0,
 };
 
 /// For the metrics in [measuredStableNoiseFloors]: when the averaged value's

@@ -1198,7 +1198,7 @@ String? _repeatNoiseHideReason({
     case 'structural_firmness_elasticity':
       return status != _HonestyStatus.stable &&
               hasRealBaseline &&
-              (current - baseline).abs() < 4.0
+              (current - baseline).abs() < 5.0
           ? _hideReasonFirmnessSmallMove
           : null;
     default:
@@ -1222,7 +1222,7 @@ String _noVerdictReasonText(LuxeMetric metric, String reason) {
     case _hideReasonRednessZero:
       return 'Redness at 0';
     case _hideReasonFirmnessSmallMove:
-      return 'Within ±4 measurement noise';
+      return 'Within ±5 measurement noise';
     case _noVerdictReasonFrameSpread:
       return "Frames varied more than this metric's measurement noise";
   }

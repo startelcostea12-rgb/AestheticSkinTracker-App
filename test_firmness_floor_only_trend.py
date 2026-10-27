@@ -32,24 +32,24 @@ def _status(metric_key: str, current: float, baseline: float) -> tuple[float, st
 def test_band_constant_and_floor_only_set_are_as_expected():
     assert main.HONESTY_STABLE_BAND_PCT == 8.0
     assert main.TREND_FLOOR_ONLY_METRICS == {"structural_firmness_elasticity"}
-    assert main.METRIC_NOISE_FLOOR_2SD["structural_firmness_elasticity"] == 3.0
+    assert main.METRIC_NOISE_FLOOR_2SD["structural_firmness_elasticity"] == 5.0
 
 
 @pytest.mark.parametrize(
     ("current", "expected"),
     [
-        (52.2, "worsened"),  # -3.6 points, -6.5%: past the floor, under 8%
-        (51.9, "worsened"),  # the 12:49:15 frame: -3.93 points, -7.0%
-        (58.8, "improved"),  # +3.0 points: exactly at the floor
+        (75.0, "worsened"),
+        (74.9, "worsened"),
+        (85.0, "improved"),
     ],
 )
 def test_firmness_move_at_or_past_its_floor_is_not_stable(current, expected):
-    delta, status = _status("structural_firmness_elasticity", current, 55.8)
+    delta, status = _status("structural_firmness_elasticity", current, 80.0)
     assert status == expected
     assert delta != 0.0
 
 
-@pytest.mark.parametrize("current", [53.8, 54.3, 57.7, 58.7])
+@pytest.mark.parametrize("current", [53.8, 54.3, 57.7, 58.7, 52.2, 51.9, 58.8, 51.8, 59.8])
 def test_firmness_move_inside_its_floor_stays_stable(current):
     assert _status("structural_firmness_elasticity", current, 55.8) == (0.0, "stable")
 
