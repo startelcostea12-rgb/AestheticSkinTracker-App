@@ -39,8 +39,15 @@ class GrayCardSampleCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const ink = AppColors.textStructure;
-    final applied = imageQuality['gray_card_correction_applied'] == true;
-    final reason = imageQuality['gray_card_status'] == 'partial'
+    final status = imageQuality['gray_card_status']?.toString();
+    final applied = status == null
+        ? imageQuality['gray_card_correction_applied'] == true
+        : status == 'applied';
+    final partial = status == 'partial';
+    final rejected = status == null
+        ? !applied && imageQuality['gray_card_reason'] != null
+        : status.startsWith('rejected');
+    final reason = partial
         ? imageQuality['gray_card_message']?.toString()
         : grayCardIgnoredReasonText(imageQuality['gray_card_reason']);
     final offset = imageQuality['gray_card_chroma_offset'];
@@ -73,7 +80,13 @@ class GrayCardSampleCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  applied ? 'Gray card used' : 'Gray card ignored',
+                  applied
+                      ? 'Gray card used'
+                      : partial
+                      ? 'Gray card partially used'
+                      : rejected
+                      ? 'Gray card rejected'
+                      : 'Gray card not applied',
                   key: const ValueKey('gray_card_sample_status'),
                   style: const TextStyle(
                     color: ink,
@@ -85,6 +98,9 @@ class GrayCardSampleCard extends StatelessWidget {
                   applied
                       ? 'This is the area sampled for colour balance. '
                             'It should show only the gray card, not skin.'
+                      : partial
+                      ? '${reason ?? 'The gray card was used on only some frames.'} '
+                            'This is the area that was sampled.'
                       : '${reason ?? 'It could not be used.'} '
                             'Automatic colour balance was used instead. '
                             'This is the area that was sampled.',

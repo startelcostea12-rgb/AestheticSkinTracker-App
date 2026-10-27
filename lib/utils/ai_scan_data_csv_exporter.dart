@@ -94,6 +94,7 @@ class AiScanDataCsvExporter {
     'image_quality.gray_card_correction_applied',
     'image_quality.gray_card_frames_applied',
     'image_quality.gray_card_frames_read',
+    'image_quality.gray_card_frames_required',
     'image_quality.gray_card_status',
     'image_quality.gray_card_message',
     'image_quality.gray_card_retake_recommended',

@@ -525,11 +525,12 @@ const List<String> grayCardRegionFields = <String>[
 
 /// Scan-level gray-card summary over the frames' image_quality (main.py
 /// logs it per frame): marked if any frame was marked, correction applied
-/// only if a strict majority of readable frames applied it, and the mean of the frames' raw card
+/// only if every required frame applied it, and the mean of the frames' raw card
 /// samples. Empty when no frame reports gray-card fields (older backend).
 Map<String, dynamic> summarizeGrayCardFrames(
-  List<Map<String, dynamic>> responses,
-) {
+  List<Map<String, dynamic>> responses, {
+  int? requiredFrames,
+}) {
   final qualities = [
     for (final response in responses)
       _dynamicMap(response['image_quality']).isNotEmpty
@@ -565,8 +566,9 @@ Map<String, dynamic> summarizeGrayCardFrames(
       )
       .length;
   final marked = qualities.any((q) => q['gray_card_marked'] == true);
-  final majority = applied > 0 && applied * 2 > read;
-  final partial = applied > 0 && !majority;
+  final required = requiredFrames ?? responses.length;
+  final allApplied = applied > 0 && applied == required;
+  final partial = applied > 0 && !allApplied;
   final reason = qualities
       .map((q) => q['gray_card_reason'])
       .firstWhere(
@@ -575,16 +577,13 @@ Map<String, dynamic> summarizeGrayCardFrames(
       );
   final status = !marked
       ? 'not_marked'
-      : majority
+      : allApplied
       ? 'applied'
       : partial
       ? 'partial'
-      : switch (reason) {
-          'implausible_card_color' => 'rejected_wrong_area',
-          'disagrees_with_scene' => 'rejected_scene_mismatch',
-          'implausible_exposure' => 'rejected_bad_exposure',
-          _ => 'rejected_unreadable',
-        };
+      : reason != null
+      ? 'rejected'
+      : 'not_applied';
   final rejectedQuality = qualities.firstWhere(
     (q) => q['gray_card_reason'] == reason,
     orElse: () => const <String, dynamic>{},
@@ -596,18 +595,19 @@ Map<String, dynamic> summarizeGrayCardFrames(
     'gray_card_mean_b': mean('gray_card_mean_b'),
     'gray_card_chroma_offset': mean('gray_card_chroma_offset'),
     'gray_card_scene_disagreement': mean('gray_card_scene_disagreement'),
-    'gray_card_correction_applied': majority,
+    'gray_card_correction_applied': allApplied,
     'gray_card_frames_applied': applied,
     'gray_card_frames_read': read,
+    'gray_card_frames_required': required,
     'gray_card_status': status,
     'gray_card_message': partial
         ? 'The gray card was not steady across the burst. Please retake with the card held steady.'
-        : majority || !marked
+        : allApplied || !marked
         ? null
         : rejectedQuality['gray_card_message'],
-    'gray_card_retake_recommended': marked && !majority,
-    'gray_card_baseline_eligible': !marked || majority,
-    'gray_card_reason': majority ? null : reason,
+    'gray_card_retake_recommended': marked && !allApplied,
+    'gray_card_baseline_eligible': !marked || allApplied,
+    'gray_card_reason': allApplied ? null : reason,
     // The same box is sent with every frame; take the first frame's.
     for (final field in grayCardRegionFields)
       field: qualities
@@ -905,7 +905,10 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     ..['metric_extraction_paths'] = resolvedExtractionPaths
     ..['baseline_metric_extraction_paths'] = resolvedBaselineExtractionPaths;
   response['metrics'] = metricsNode;
-  final grayCardSummary = summarizeGrayCardFrames(successfulResponses);
+  final grayCardSummary = summarizeGrayCardFrames(
+    successfulResponses,
+    requiredFrames: requestedFrames,
+  );
   if (grayCardSummary.isNotEmpty) {
     final firstQuality = _dynamicMap(first['image_quality']).isNotEmpty
         ? _dynamicMap(first['image_quality'])
@@ -923,6 +926,7 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
       'gray_card_correction_applied',
       'gray_card_frames_applied',
       'gray_card_frames_read',
+      'gray_card_frames_required',
     ]) {
       response[key] = grayCardSummary[key];
       metricsNode[key] = grayCardSummary[key];
@@ -2210,8 +2214,18 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
       }
     }
   }
-  final grayCardSummary = summarizeGrayCardFrames(responses);
-  if (grayCardSummary['gray_card_status'] == 'partial') {
+  final grayCardSummary = summarizeGrayCardFrames(
+    responses,
+    requiredFrames: frames.length,
+  );
+  final cardFramesApplied =
+      grayCardSummary['gray_card_frames_applied'] as int? ?? 0;
+  final cardFramesRead = grayCardSummary['gray_card_frames_read'] as int? ?? 0;
+  final retryWithoutCard =
+      grayCardSummary['gray_card_marked'] == true &&
+      cardFramesApplied > 0 &&
+      cardFramesApplied * 2 <= cardFramesRead;
+  if (retryWithoutCard) {
     if (uploadFrameWithoutGrayCard == null) {
       throw StateError(
         'A partial gray-card burst must be reprocessed without the card.',

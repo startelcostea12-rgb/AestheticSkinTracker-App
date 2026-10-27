@@ -36,6 +36,7 @@ const _grayCardColumns = [
   'image_quality.gray_card_scene_disagreement',
   'image_quality.gray_card_correction_applied',
   'image_quality.gray_card_frames_applied',
+  'image_quality.gray_card_frames_required',
   'image_quality.gray_card_reason',
   'image_quality.gray_card_region_space',
   'image_quality.gray_card_region_x',
@@ -86,8 +87,10 @@ void main() {
   for (final scenario in const [
     (passed: 1, read: 5, status: 'partial'),
     (passed: 2, read: 5, status: 'partial'),
-    (passed: 3, read: 5, status: 'applied'),
-    (passed: 0, read: 5, status: 'rejected_wrong_area'),
+    (passed: 3, read: 5, status: 'partial'),
+    (passed: 4, read: 5, status: 'partial'),
+    (passed: 5, read: 5, status: 'applied'),
+    (passed: 0, read: 5, status: 'rejected'),
     (passed: 1, read: 1, status: 'applied'),
   ]) {
     test(
@@ -126,6 +129,7 @@ void main() {
         expect(quality['gray_card_status'], scenario.status);
         expect(quality['gray_card_frames_applied'], scenario.passed);
         expect(quality['gray_card_frames_read'], scenario.read);
+        expect(quality['gray_card_frames_required'], scenario.read);
         final applied = scenario.status == 'applied';
         expect(quality['gray_card_correction_applied'], applied);
         expect(quality['gray_card_retake_recommended'], !applied);
@@ -135,7 +139,9 @@ void main() {
           (payload['metrics'] as Map)['gray_card_status'],
           scenario.status,
         );
-        if (scenario.status == 'partial') {
+        final retriedWithoutCard =
+            scenario.passed > 0 && scenario.passed * 2 <= scenario.read;
+        if (retriedWithoutCard) {
           expect(retries, [1, 2, 3, 4, 5]);
           expect(payload['preprocessed_pixels'], frames.first.toList());
           expect((payload['metric_matrix'] as Map)['localized_redness'], 10);
@@ -145,7 +151,7 @@ void main() {
           );
         } else {
           expect(retries, isEmpty);
-          if (applied) {
+          if (scenario.passed > 0) {
             expect(payload['preprocessed_pixels'], [1, 2, 3]);
             expect(
               (payload['metric_matrix'] as Map)['localized_redness'],
@@ -156,6 +162,10 @@ void main() {
             expect(quality['gray_card_reason'], 'implausible_card_color');
           }
         }
+        expect(
+          (payload['metric_matrix'] as Map)['localized_redness'],
+          scenario.passed > 0 && !retriedWithoutCard ? 20 : 10,
+        );
         final saved = ScanHistoryEntry(
           id: 'burst',
           timestamp: DateTime(2026, 10, 26),
@@ -182,6 +192,10 @@ void main() {
           '${scenario.passed}',
         );
         expect(row['image_quality.gray_card_frames_read'], '${scenario.read}');
+        expect(
+          row['image_quality.gray_card_frames_required'],
+          '${scenario.read}',
+        );
         expect(row['image_quality.gray_card_baseline_eligible'], '$applied');
       },
     );
@@ -252,6 +266,7 @@ void main() {
       'gray_card_correction_applied': true,
       'gray_card_frames_applied': 3,
       'gray_card_frames_read': 3,
+      'gray_card_frames_required': 3,
       'gray_card_status': 'applied',
       'gray_card_message': null,
       'gray_card_retake_recommended': false,
@@ -266,14 +281,21 @@ void main() {
       _frame(marked: true, applied: true, l: 120, a: 6.0, b: 9.0),
       _frame(marked: true, reason: 'region_out_of_bounds'),
     ]);
-    expect(summary['gray_card_correction_applied'], isTrue);
+    expect(summary['gray_card_correction_applied'], isFalse);
     expect(summary['gray_card_frames_applied'], 1);
     expect(summary['gray_card_frames_read'], 1);
-    expect(summary['gray_card_reason'], isNull);
+    expect(summary['gray_card_frames_required'], 2);
+    expect(summary['gray_card_status'], 'partial');
+    expect(summary['gray_card_baseline_eligible'], isFalse);
+    expect(summary['gray_card_reason'], 'region_out_of_bounds');
     expect(summary['gray_card_mean_a'], 6.0);
   });
 
   test('summary: no mark and older backends', () {
+    final notApplied = summarizeGrayCardFrames([_frame(marked: true)]);
+    expect(notApplied['gray_card_status'], 'not_applied');
+    expect(notApplied['gray_card_baseline_eligible'], isFalse);
+    expect(notApplied['gray_card_correction_applied'], isFalse);
     final unmarked = summarizeGrayCardFrames([
       _frame(marked: false),
       _frame(marked: false),
@@ -291,6 +313,44 @@ void main() {
       isEmpty,
     );
   });
+
+  test('missing required responses cannot turn a burst into fully applied', () {
+    final aggregate = averageBackendAnalysisFrames([
+      for (var index = 0; index < 3; index++)
+        _frame(marked: true, applied: true, l: 120, a: 0, b: 0),
+    ], requestedFrames: 5);
+    final payload = aggregate.response;
+    expect(payload['gray_card_status'], 'partial');
+    expect(payload['gray_card_frames_applied'], 3);
+    expect(payload['gray_card_frames_read'], 3);
+    expect(payload['gray_card_frames_required'], 5);
+    expect(payload['gray_card_baseline_eligible'], isFalse);
+    expect((payload['metric_matrix'] as Map)['localized_redness'], 10);
+    expect((payload['metrics'] as Map)['gray_card_status'], 'partial');
+  });
+
+  test(
+    'failed upload counts against full card use without changing metrics or retries',
+    () async {
+      final aggregate = await analyzeBackendFrames(
+        [for (var index = 0; index < 5; index++) Uint8List(1)],
+        photoUploadAccepted: true,
+        uploadFrame: (_, number) async {
+          if (number == 5) throw StateError('upload failed');
+          return _frame(marked: true, applied: true, redness: 20);
+        },
+        uploadFrameWithoutGrayCard: (_, _) async =>
+            throw StateError('unexpected retry'),
+      );
+      expect(aggregate.response['gray_card_status'], 'partial');
+      expect(aggregate.response['gray_card_frames_applied'], 4);
+      expect(aggregate.response['gray_card_frames_required'], 5);
+      expect(
+        (aggregate.response['metric_matrix'] as Map)['localized_redness'],
+        20,
+      );
+    },
+  );
 
   test('aggregate and export: scan summary and per-frame columns', () {
     final aggregate = averageBackendAnalysisFrames([

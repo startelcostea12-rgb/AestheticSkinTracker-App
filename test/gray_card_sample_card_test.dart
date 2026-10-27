@@ -52,7 +52,7 @@ void main() {
       'gray_card_reason': 'disagrees_with_scene',
       'gray_card_chroma_offset': 8.5,
     });
-    expect(find.text('Gray card ignored'), findsOneWidget);
+    expect(find.text('Gray card rejected'), findsOneWidget);
     expect(
       find.textContaining("didn't match the rest of the scene"),
       findsOneWidget,
@@ -71,30 +71,54 @@ void main() {
       'gray_card_reason': 'implausible_card_color',
       'gray_card_chroma_offset': 19.2,
     });
-    expect(find.text('Gray card ignored'), findsOneWidget);
+    expect(find.text('Gray card rejected'), findsOneWidget);
     expect(find.textContaining('often skin in the box'), findsOneWidget);
     expect(find.text('Colour offset 19.2 (limit 12)'), findsOneWidget);
   });
 
-  testWidgets('partial burst explains the card was not steady and uses no card', (
-    tester,
-  ) async {
-    await _pump(tester, {
-      'gray_card_marked': true,
-      'gray_card_status': 'partial',
-      'gray_card_correction_applied': false,
-      'gray_card_reason': 'implausible_card_color',
-      'gray_card_message':
-          'The gray card was not steady across the burst. Please retake with the card held steady.',
-    });
-    expect(find.text('Gray card ignored'), findsOneWidget);
-    expect(find.textContaining('not steady across the burst'), findsOneWidget);
-    expect(
-      find.textContaining('Automatic colour balance was used'),
-      findsOneWidget,
+  testWidgets(
+    'partial burst explains the card was not steady without claiming no card was used',
+    (tester) async {
+      await _pump(tester, {
+        'gray_card_marked': true,
+        'gray_card_status': 'partial',
+        'gray_card_correction_applied': false,
+        'gray_card_reason': 'implausible_card_color',
+        'gray_card_message':
+            'The gray card was not steady across the burst. Please retake with the card held steady.',
+      });
+      expect(find.text('Gray card partially used'), findsOneWidget);
+      expect(
+        find.textContaining('not steady across the burst'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Automatic colour balance was used'),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final scenario in const [
+    (status: 'partial', label: 'Gray card partially used'),
+    (status: 'not_applied', label: 'Gray card not applied'),
+    (status: 'rejected', label: 'Gray card rejected'),
+  ]) {
+    testWidgets(
+      '${scenario.status} never displays fully used despite a stale flag',
+      (tester) async {
+        await _pump(tester, {
+          'gray_card_marked': true,
+          'gray_card_status': scenario.status,
+          'gray_card_correction_applied': true,
+        });
+        expect(find.text(scenario.label), findsOneWidget);
+        expect(find.text('Gray card used'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
     );
-    expect(tester.takeException(), isNull);
-  });
+  }
 
   test('every backend rejection reason has wording', () {
     for (final reason in [
