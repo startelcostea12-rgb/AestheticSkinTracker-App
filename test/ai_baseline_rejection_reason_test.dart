@@ -24,12 +24,14 @@ void main() {
     String? captureQuality = 'normal',
     bool withExtractionPaths = true,
     bool withFormulaVersions = true,
+    Map<String, dynamic> extraPayload = const {},
   }) {
     final rawPayload = <String, dynamic>{
       if (withExtractionPaths)
         'metric_extraction_paths': const {'localized_redness': 'primary_roi'},
       if (withFormulaVersions)
         'metric_formula_versions': const {'localized_redness': 1},
+      ...extraPayload,
     };
     return ScanHistoryEntry(
       id: 'scan_1',
@@ -44,6 +46,41 @@ void main() {
   }
 
   group('aiBaselineRejectionReason', () {
+    for (final topLevel in [false, true]) {
+      for (final scenario in const [
+        (marked: true, applied: false, count: 0, required: 5, status: 'rejected', accepted: false),
+        (marked: true, applied: true, count: 3, required: 5, status: 'applied', accepted: false),
+        (marked: true, applied: true, count: 5, required: 5, status: 'applied', accepted: true),
+        (marked: true, applied: true, count: 1, required: 1, status: 'applied', accepted: true),
+        (marked: false, applied: false, count: 0, required: 5, status: 'not_marked', accepted: true),
+        (marked: true, applied: true, count: 5, required: 5, status: 'rejected', accepted: false),
+      ]) {
+        test('marked=${scenario.marked} flag=${scenario.applied} ${scenario.count}/${scenario.required} ${scenario.status} baseline=${scenario.accepted} topLevel=$topLevel', () {
+          final card = <String, dynamic>{
+            'gray_card_marked': scenario.marked,
+            'gray_card_correction_applied': scenario.applied,
+            'gray_card_frames_applied': scenario.count,
+            'gray_card_frames_read': scenario.count,
+            'gray_card_status': scenario.status,
+            'gray_card_baseline_eligible': true,
+          };
+          final candidate = scan(extraPayload: {
+            if (topLevel) ...card else 'image_quality': card,
+            'multi_frame_analysis': {'requested_frames': scenario.required},
+          });
+          expect(scanPassesSingleScanBaselineGates(candidate), scenario.accepted);
+          expect(aiBaselineRejectionReason(candidate) == null, scenario.accepted);
+        });
+      }
+    }
+
+    test('a marked card without an acceptance flag cannot become a baseline', () {
+      expect(scanPassesSingleScanBaselineGates(scan(extraPayload: {
+        'image_quality': {'gray_card_marked': true, 'gray_card_frames_applied': 5},
+        'multi_frame_analysis': {'requested_frames': 5},
+      })), isFalse);
+    });
+
     test('a well-formed normal scan has no rejection reason', () {
       expect(aiBaselineRejectionReason(scan()), isNull);
     });

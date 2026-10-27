@@ -369,6 +369,31 @@ String? aiBaselineRejectionReason(ScanHistoryEntry scan) {
   }
   final payload = scan.rawPayload ?? const <String, dynamic>{};
   final cardQuality = _dynamicMap(payload['image_quality']);
+  final cardMarked = cardQuality['gray_card_marked'] == true ||
+      payload['gray_card_marked'] == true;
+  if (cardMarked) {
+    final cardStatus = (cardQuality['gray_card_status'] ??
+            payload['gray_card_status'] ?? '')
+        .toString();
+    final framesApplied = _parseFiniteDouble(
+          cardQuality['gray_card_frames_applied'] ??
+              payload['gray_card_frames_applied'],
+        ) ??
+        0;
+    final framesRequired = _parseFiniteDouble(
+          _dynamicMap(payload['multi_frame_analysis'])['requested_frames'],
+        ) ??
+        _parseFiniteDouble(cardQuality['gray_card_frames_required'] ??
+            payload['gray_card_frames_required']) ??
+        (payload['scan_mode'] == 'quick' ? 1 : aiScanCaptureFrameCount);
+    final correctionApplied = cardQuality['gray_card_correction_applied'] ??
+        payload['gray_card_correction_applied'];
+    if (cardStatus.startsWith('rejected') ||
+        correctionApplied != true ||
+        framesApplied < framesRequired) {
+      return 'Not saved as baseline: the gray card was not accepted on every required frame.';
+    }
+  }
   if (payload['gray_card_baseline_eligible'] == false ||
       cardQuality['gray_card_baseline_eligible'] == false) {
     return 'Not saved as baseline: ${cardQuality['gray_card_message'] ?? payload['gray_card_message'] ?? 'the gray card could not be used. Please retake.'}';
