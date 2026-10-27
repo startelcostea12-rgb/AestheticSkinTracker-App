@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 CLEAR_FACE_PHOTO = REPO_ROOT / "test_fixtures" / "metric_regression" / "clear_face.jfif"
 
 
-def _canonical(yolo_kept: int, yolo_max_conf: float):
+def _canonical(yolo_kept: int, yolo_max_conf: float, *, measured: bool = True):
     image = np.full((200, 200, 3), 128, dtype=np.uint8)
     skin = np.full((200, 200), 255, dtype=np.uint8)
     points = np.zeros((468, 2), dtype=np.float32)
@@ -28,21 +28,26 @@ def _canonical(yolo_kept: int, yolo_max_conf: float):
         "left_cheek": skin.copy(),
         "right_cheek": skin.copy(),
     }
-    matrix, confidence, raw = main._compute_canonical_patch_metrics(
-        image,
-        skin,
-        regions,
-        points,
-        yolo_kept=yolo_kept,
-        yolo_max_conf=yolo_max_conf,
-    )
+    measured_mask = skin if measured else np.zeros_like(skin)
+    with mock.patch.object(
+        main, "_build_face_skin_mask", return_value=(measured_mask, measured_mask)
+    ):
+        matrix, confidence, raw = main._compute_canonical_patch_metrics(
+            image,
+            skin,
+            regions,
+            points,
+            yolo_kept=yolo_kept,
+            yolo_max_conf=yolo_max_conf,
+        )
     return matrix, confidence, raw
 
 
 @pytest.mark.parametrize("sub_threshold_conf", [0.0326, 0.1616, 0.17])
-def test_zero_kept_boxes_with_sub_threshold_confidence_emit_nothing(sub_threshold_conf):
-    matrix, _confidence, raw = _canonical(0, sub_threshold_conf)
-    assert "breakout_activity" not in matrix
+def test_zero_kept_boxes_with_sub_threshold_confidence_emit_measured_zero(sub_threshold_conf):
+    matrix, confidence, raw = _canonical(0, sub_threshold_conf)
+    assert matrix["breakout_activity"] == 0.0
+    assert confidence["breakout_activity"] == "medium"
     # The raw diagnostic still records what the detector saw.
     assert raw["yolo_kept"] == 0
     assert raw["yolo_max_conf"] == pytest.approx(sub_threshold_conf, abs=1e-4)
@@ -60,8 +65,14 @@ def test_kept_boxes_below_high_confidence_are_medium():
     assert confidence["breakout_activity"] == "medium"
 
 
-def test_breakout_formula_version_is_three():
-    assert main._metric_formula_version("breakout_activity") == 3
+def test_unmeasured_region_omits_breakout():
+    matrix, _confidence, raw = _canonical(0, 0.0, measured=False)
+    assert raw["breakout_roi_pixels"] == 0
+    assert "breakout_activity" not in matrix
+
+
+def test_breakout_formula_version_is_four():
+    assert main._metric_formula_version("breakout_activity") == 4
 
 
 @pytest.mark.parametrize("baseline_version", [None, 1])
@@ -91,12 +102,12 @@ def clear_face():
     return normalized, profile
 
 
-def test_real_photo_with_zero_kept_boxes_omits_breakout(clear_face):
+def test_real_photo_with_zero_kept_boxes_keeps_measured_breakout_zero(clear_face):
     normalized, profile = clear_face
     result = main.analyze_skin_patch(normalized, quality_profile=dict(profile))
 
     assert result["model_debug"]["yolo_boxes"] == 0
-    assert "breakout_activity" not in result["metric_matrix"]
+    assert result["metric_matrix"]["breakout_activity"] == 0.0
     # Legacy top-level fields stay, unchanged, and are not the card score.
     assert result["acne_activity_score"] == 100.0
     assert result["raw_pore_density"] == 0.0
@@ -123,5 +134,5 @@ def test_pipeline_locks_a_v1_breakout_baseline_against_v2(clear_face):
         )
 
     assert result["metric_matrix"]["breakout_activity"] == pytest.approx(22.8)
-    assert result["metric_formula_versions"]["breakout_activity"] == 3
+    assert result["metric_formula_versions"]["breakout_activity"] == 4
     assert result["trend_lock_reasons"]["breakout_activity"] == "formula_version_mismatch"

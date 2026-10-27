@@ -4254,12 +4254,11 @@ def _compute_canonical_patch_metrics(
     # Only boxes kept at YOLO_CONF_THRESHOLD contribute. yolo_max_conf is the
     # strongest RAW box, which may be one the keep threshold rejected; when at
     # least one box is kept, the strongest raw box clears that threshold and
-    # so is itself the strongest kept box. With zero kept boxes no confidence
-    # is added, so the score is 0 and breakout_activity is not emitted.
+    # so is itself the strongest kept box.
     kept_max_conf = yolo_max_conf if yolo_kept > 0 else 0.0
     breakout = (yolo_kept * 14.0) + (kept_max_conf * 22.0)
     breakout_clamped = round(float(np.clip(breakout, 0.0, 100.0)), 1)
-    if breakout_clamped > 0.0:
+    if full_face_pixels > 0:
         matrix["breakout_activity"] = breakout_clamped
         confidence["breakout_activity"] = "high" if kept_max_conf >= 0.35 else "medium"
     raw_components["yolo_kept"] = float(yolo_kept)
@@ -4592,7 +4591,7 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     # v2: only boxes kept at YOLO_CONF_THRESHOLD contribute. v1 also added
     # 22 x the strongest rejected box, so zero kept boxes still scored
     # 0.7-3.6 on the regression fixtures; v1 and v2 are not comparable.
-    "breakout_activity": 3,
+    "breakout_activity": 4,
     "skin_tone_radiance_evenness": 2,
     "structural_firmness_elasticity": 2,
 }

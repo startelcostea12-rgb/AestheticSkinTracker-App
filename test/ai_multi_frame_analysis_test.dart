@@ -12,10 +12,69 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('measured breakout zero counts but a missing value does not', () {
+    for (final missing in [false, true]) {
+      final aggregate = averageBackendAnalysisFrames([
+        {
+          'metric_matrix': {
+            'breakout_activity': 12.0,
+            'texture_smoothness': 30.0,
+          },
+        },
+        {
+          'metric_matrix': {
+            'breakout_activity': missing ? null : 0.0,
+            'texture_smoothness': 30.0,
+          },
+        },
+        {
+          'metric_matrix': {
+            'breakout_activity': 24.0,
+            'texture_smoothness': 30.0,
+          },
+        },
+        {
+          'metric_matrix': {
+            'breakout_activity': 99.0,
+            'texture_smoothness': 30.0,
+          },
+        },
+        {
+          'metric_matrix': {
+            'breakout_activity': 99.0,
+            'texture_smoothness': 30.0,
+          },
+        },
+      ], requestedFrames: 5);
+      expect(
+        (aggregate.response['metric_matrix'] as Map)['breakout_activity'],
+        missing ? 18.0 : 12.0,
+      );
+      expect(
+        aggregate.metricContributorCounts['breakout_activity'],
+        missing ? 2 : 3,
+      );
+    }
+    final absent = averageBackendAnalysisFrames([
+      for (var index = 0; index < 3; index++)
+        {
+          'metric_matrix': {'texture_smoothness': 30.0},
+        },
+    ], requestedFrames: 3);
+    expect(
+      (absent.response['metric_matrix'] as Map).containsKey(
+        'breakout_activity',
+      ),
+      isFalse,
+    );
+  });
+
   test('each missing source dimension is omitted independently', () {
     final keys = [
-      'source_image_width', 'source_image_height',
-      'baseline_source_image_width', 'baseline_source_image_height',
+      'source_image_width',
+      'source_image_height',
+      'baseline_source_image_width',
+      'baseline_source_image_height',
     ];
     for (var missingIndex = 0; missingIndex < keys.length; missingIndex++) {
       final dimensions = <int?>[4032, 3024, 4000, 3000];
@@ -53,9 +112,13 @@ void main() {
       expect(fields[entry.key], '${entry.value}');
     }
     expect(
-      aiScanSourceResolutionMetadata(buildAiSkinAnalysisBackendFields(
-        focusArea: 'Full face', sourceImageWidth: 0, sourceImageHeight: -1,
-      )),
+      aiScanSourceResolutionMetadata(
+        buildAiSkinAnalysisBackendFields(
+          focusArea: 'Full face',
+          sourceImageWidth: 0,
+          sourceImageHeight: -1,
+        ),
+      ),
       isEmpty,
     );
     expect(

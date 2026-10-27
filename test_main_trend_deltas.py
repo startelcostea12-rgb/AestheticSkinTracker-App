@@ -1272,7 +1272,7 @@ class MetricFormulaVersionRegistryTests(unittest.TestCase):
                 "glabellar_wrinkle_depth": 3,
                 "under_eye_texture_density": 6,
                 "under_eye_dark_circle_density": 6,
-                "breakout_activity": 3,
+                "breakout_activity": 4,
                 "skin_tone_radiance_evenness": 2,
                 "structural_firmness_elasticity": 2,
             },

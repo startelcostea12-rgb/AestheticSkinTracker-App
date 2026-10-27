@@ -116,7 +116,8 @@ def test_active_capture_wb_preserves_mean_linear_luminance(marked):
     ("structural_firmness_elasticity", 1),
 ])
 def test_linear_wb_refuses_each_previous_image_metric_version(metric, previous):
-    assert main._metric_formula_version(metric) == previous + 1
+    expected_current = 4 if metric == "breakout_activity" else previous + 1
+    assert main._metric_formula_version(metric) == expected_current
     assert main._trend_lock_reason(
         "primary_roi", "primary_roi", "normal", "normal",
         512, 512, 512, 512,
