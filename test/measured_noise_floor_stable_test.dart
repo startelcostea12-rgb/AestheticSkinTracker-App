@@ -315,7 +315,7 @@ void main() {
       String status = 'improved',
       String? lockReason,
     }) {
-      final trend = forceStableWithinMeasuredNoiseFloors(
+      final trend = forceStableWithinLiveDisplayNoiseFloors(
         trendStatus: {key: status},
         trendDeltas: {key: 4.0},
         trendLockReasons: {if (lockReason != null) key: lockReason},
@@ -400,7 +400,7 @@ void main() {
       for (final (key, move) in const [
         ('pigment_load', 1.0),
         ('pore_visibility', 1.2),
-        ('structural_firmness_elasticity', 1.5),
+        ('structural_firmness_elasticity', 4.0),
       ]) {
         final payload = savedPayload(
           key,
@@ -409,6 +409,7 @@ void main() {
           status: 'worsened',
         );
         expect(exportedStatus(payload, key), 'stable', reason: key);
+        expect((payload['trend_deltas'] as Map)[key], 0.0);
         await tester.pumpWidget(liveCard(payload));
         await tester.pumpAndSettle();
         expect(
@@ -416,7 +417,52 @@ void main() {
           findsWidgets,
           reason: key,
         );
+        expect(inCard(key, find.textContaining('%')), findsNothing);
       }
+    });
+
+    test('every live display floor saves and exports stable without a percent', () {
+      for (final key in displayStableFloorMetrics) {
+        final payload = savedPayload(key, 20, 20 + displayVerdictNoiseFloors[key]! / 2);
+        expect((payload['trend_status'] as Map)[key], 'stable', reason: key);
+        expect((payload['trend_deltas'] as Map)[key], 0, reason: key);
+        expect(exportedStatus(payload, key), 'stable', reason: key);
+      }
+    });
+
+    test('display floor boundaries retain the existing verdict and percent', () {
+      for (final key in displayStableFloorMetrics) {
+        final floor = displayVerdictNoiseFloors[key]!;
+        final payload = savedPayload(key, 20, 20 + floor);
+        expect((payload['trend_status'] as Map)[key], 'improved', reason: key);
+        expect((payload['trend_deltas'] as Map)[key], 4.0, reason: key);
+      }
+      final texture = savedPayload('texture_smoothness', 50, 54);
+      expect((texture['trend_status'] as Map)['texture_smoothness'], 'improved');
+    });
+
+    test('median display values decide status without changing saved values', () {
+      final matrix = <String, dynamic>{'diffuse_flushing_erythema': 30.0};
+      final trend = forceStableWithinLiveDisplayNoiseFloors(
+        trendStatus: {'diffuse_flushing_erythema': 'worsened'},
+        trendDeltas: {'diffuse_flushing_erythema': 50},
+        trendLockReasons: {},
+        averagedMetricMatrix: matrix,
+        baselineMetricMatrix: {'diffuse_flushing_erythema': 20},
+        metricFrameValues: {'diffuse_flushing_erythema': [21, 21, 48]},
+      );
+      expect(trend.trendStatus['diffuse_flushing_erythema'], 'stable');
+      expect(trend.trendDeltas['diffuse_flushing_erythema'], 0);
+      expect(matrix['diffuse_flushing_erythema'], 30);
+    });
+
+    test('live display floor is finalized after locks and before persistence', () {
+      final source = File('lib/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart').readAsStringSync();
+      final run = source.indexOf('Future<void> _runAnalysis() async {');
+      final display = source.indexOf('= forceStableWithinLiveDisplayNoiseFloors(', run);
+      expect(display, greaterThan(source.indexOf('= lockTrendsForRegionPositionMismatch(', run)));
+      expect(source.indexOf('= clearLockedTrendVerdicts(', display), greaterThan(display));
+      expect(source.indexOf('= _mergePayloadForPersistence(', run), greaterThan(display));
     });
 
     testWidgets('a locked metric inside the floor still shows the lock', (
@@ -430,6 +476,7 @@ void main() {
         lockReason: 'lighting_mismatch',
       );
       expect(exportedStatus(payload, 'texture_smoothness'), isEmpty);
+      expect((payload['trend_deltas'] as Map).containsKey('texture_smoothness'), isFalse);
       await tester.pumpWidget(liveCard(payload));
       await tester.pumpAndSettle();
       expect(

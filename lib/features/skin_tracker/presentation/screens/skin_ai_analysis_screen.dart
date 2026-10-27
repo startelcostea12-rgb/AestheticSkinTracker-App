@@ -36,6 +36,7 @@ import 'package:aesthetic_skin_tracker/utils/acne_rosacea_photo_analysis.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_comparison_baseline.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_capture_sharpness.dart';
 import 'package:aesthetic_skin_tracker/utils/display_aggregation.dart';
+import 'package:aesthetic_skin_tracker/utils/display_noise_floors.dart';
 import 'package:aesthetic_skin_tracker/utils/ai/skin_analysis_model.dart';
 import 'package:aesthetic_skin_tracker/utils/ai/skin_analysis_runner.dart';
 import 'package:aesthetic_skin_tracker/utils/ai/skin_detections.dart';
@@ -1171,10 +1172,11 @@ forceStableWithinMeasuredNoiseFloors({
   required Map<String, String> trendLockReasons,
   required Map<String, dynamic> averagedMetricMatrix,
   required Map<String, dynamic> baselineMetricMatrix,
+  Map<String, double> stableNoiseFloors = measuredStableNoiseFloors,
 }) {
   final updatedStatus = Map<String, String>.from(trendStatus);
   final updatedDeltas = Map<String, double>.from(trendDeltas);
-  for (final entry in measuredStableNoiseFloors.entries) {
+  for (final entry in stableNoiseFloors.entries) {
     final key = entry.key;
     final status = trendStatus[key]?.trim().toLowerCase();
     if (status == null || status == 'insufficient_signal') continue;
@@ -1191,6 +1193,39 @@ forceStableWithinMeasuredNoiseFloors({
     trendStatus: updatedStatus,
     trendDeltas: updatedDeltas,
     trendLockReasons: Map<String, String>.from(trendLockReasons),
+  );
+}
+
+({
+  Map<String, String> trendStatus,
+  Map<String, double> trendDeltas,
+  Map<String, String> trendLockReasons,
+})
+forceStableWithinLiveDisplayNoiseFloors({
+  required Map<String, String> trendStatus,
+  required Map<String, double> trendDeltas,
+  required Map<String, String> trendLockReasons,
+  required Map<String, dynamic> averagedMetricMatrix,
+  required Map<String, dynamic> baselineMetricMatrix,
+  Map<String, dynamic> metricFrameValues = const {},
+}) {
+  final displayedValues = Map<String, dynamic>.from(averagedMetricMatrix);
+  for (final key in medianDisplayMetricKeys) {
+    final values = metricFrameValues[key];
+    if (values is! List) continue;
+    final median = medianOf(values.map(_parseFiniteDouble).whereType<double>());
+    if (median != null) displayedValues[key] = median;
+  }
+  return forceStableWithinMeasuredNoiseFloors(
+    trendStatus: trendStatus,
+    trendDeltas: trendDeltas,
+    trendLockReasons: trendLockReasons,
+    averagedMetricMatrix: displayedValues,
+    baselineMetricMatrix: baselineMetricMatrix,
+    stableNoiseFloors: {
+      for (final key in displayStableFloorMetrics)
+        if (displayVerdictNoiseFloors[key] case final double floor) key: floor,
+    },
   );
 }
 
@@ -3861,10 +3896,20 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         baselinePayload:
             _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
       );
-      final unlockedVerdictsOnly = clearLockedTrendVerdicts(
+      final displayFloorTrend = forceStableWithinLiveDisplayNoiseFloors(
         trendStatus: regionAdjustedTrend.trendStatus,
         trendDeltas: regionAdjustedTrend.trendDeltas,
         trendLockReasons: regionAdjustedTrend.trendLockReasons,
+        averagedMetricMatrix: _dynamicMap(backendResponse['metric_matrix']),
+        baselineMetricMatrix: baselineMetricMatrixForTrend ?? const {},
+        metricFrameValues: _dynamicMap(
+          _dynamicMap(backendResponse['multi_frame_analysis'])['metric_frame_values'],
+        ),
+      );
+      final unlockedVerdictsOnly = clearLockedTrendVerdicts(
+        trendStatus: displayFloorTrend.trendStatus,
+        trendDeltas: displayFloorTrend.trendDeltas,
+        trendLockReasons: displayFloorTrend.trendLockReasons,
       );
       final Map<String, double> serverTrendDeltas =
           unlockedVerdictsOnly.trendDeltas;
