@@ -185,6 +185,19 @@ class ProcedurePhotoComparisonEligibility {
   final String? caveat;
 }
 
+String? procedureMetricDeltaText(LuxeMetric metric) {
+  if (!metric.hasBaselineValue ||
+      !metric.hasStoredBaselineValue ||
+      !metric.hasComparableCurrentValue) {
+    return null;
+  }
+  return LuxeMetricParser.formatDisplayDeltaWithoutMinus(
+    baseline: metric.baselineScore,
+    current: metric.currentScore,
+    deltaPct: metric.improvementPercent,
+  );
+}
+
 class ProcedureZoneComparison {
   const ProcedureZoneComparison({
     required this.key,
@@ -5016,10 +5029,12 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     final relevant =
         metrics
             .where(
-              (metric) => ProcedureIntelligence.isMetricRelevant(
-                metric.key,
-                procedureType,
-              ),
+              (metric) =>
+                  ProcedureIntelligence.isMetricRelevant(
+                    metric.key,
+                    procedureType,
+                  ) &&
+                  procedureMetricDeltaText(metric) != null,
             )
             .toList()
           ..sort(
@@ -5041,11 +5056,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       return BeforeAfterMetricTag(
         label: metric.name,
         // No leading minus: the tag's side shows the direction.
-        value: LuxeMetricParser.formatDisplayDeltaWithoutMinus(
-          baseline: metric.baselineScore,
-          current: metric.currentScore,
-          deltaPct: metric.improvementPercent,
-        ),
+        value: procedureMetricDeltaText(metric)!,
         side: metric.improvementPercent <= 0
             ? BeforeAfterTagSide.left
             : BeforeAfterTagSide.right,
@@ -5117,7 +5128,9 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
 
   Widget _localMetricCard({required LuxeMetric metric}) {
     const double threshold = 0.0001;
-    final isUnchanged = metric.improvementPercent.abs() < threshold;
+    final deltaText = procedureMetricDeltaText(metric);
+    final isUnchanged =
+        deltaText == null || metric.improvementPercent.abs() < threshold;
     final isImproved = isUnchanged
         ? false
         : (metric.lowerIsBetter
@@ -5127,11 +5140,6 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
         ? const Color(0xFF6B7280)
         : (isImproved ? const Color(0xFF166534) : const Color(0xFF991B1B));
     // No leading minus: the card's colour shows the direction.
-    final deltaText = LuxeMetricParser.formatDisplayDeltaWithoutMinus(
-      baseline: metric.baselineScore,
-      current: metric.currentScore,
-      deltaPct: metric.improvementPercent,
-    );
     final currentScoreText = metric.currentScore.toStringAsFixed(1);
     final baselineScoreText = metric.baselineScore.toStringAsFixed(1);
 
@@ -5202,25 +5210,26 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
                 ),
               ),
               const SizedBox(height: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: accent.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  deltaText,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
-                    color: accent,
-                    letterSpacing: 0.2,
+              if (deltaText != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    deltaText,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                      color: accent,
+                      letterSpacing: 0.2,
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
         ],

@@ -67,8 +67,14 @@ void main() {
     expect(procedure, isNot(contains('includeSign: true')));
     expect(
       'formatDisplayDeltaWithoutMinus('.allMatches(procedure),
-      hasLength(2),
+      hasLength(1),
     );
+    expect(
+      'procedureMetricDeltaText(metric)'.allMatches(procedure),
+      hasLength(3),
+    );
+    expect(procedure, contains('!metric.hasStoredBaselineValue'));
+    expect(procedure, contains('if (deltaText != null)'));
     final layout = File(
       'lib/widgets/luxe_report_layout.dart',
     ).readAsStringSync();

@@ -9,6 +9,7 @@ import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/widgets/before_after_split_slider.dart';
 import 'package:aesthetic_skin_tracker/widgets/image_crop_dialog.dart';
 import 'package:aesthetic_skin_tracker/widgets/skin_heatmap_overlay.dart';
+import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 
 ScanHistoryEntry _scan({
   required Map<String, dynamic> rawPayload,
@@ -53,6 +54,69 @@ Map<String, dynamic> _zonePayload({
 }
 
 void main() {
+  test('placeholder baseline never formats a fake -82.7 percent', () {
+    const placeholder = LuxeMetric(
+      key: 'texture_smoothness',
+      name: 'Texture',
+      baselineScore: 50,
+      currentScore: 8.65,
+      improvementPercent: -82.7,
+      lowerIsBetter: false,
+      hasBaselineValue: false,
+      hasStoredBaselineValue: false,
+    );
+    expect(procedureMetricDeltaText(placeholder), isNull);
+    expect(placeholder.improvementPercent, -82.7);
+  });
+
+  test(
+    'comparison-shaped fallback without stored provenance has no percent',
+    () {
+      const placeholder = LuxeMetric(
+        key: 'texture_smoothness',
+        name: 'Texture',
+        baselineScore: 50,
+        currentScore: 8.65,
+        improvementPercent: -82.7,
+        lowerIsBetter: false,
+        hasBaselineValue: true,
+        hasStoredBaselineValue: false,
+      );
+      expect(procedureMetricDeltaText(placeholder), isNull);
+    },
+  );
+
+  test('missing parsed baseline has no percent even with a backend delta', () {
+    final metric = LuxeMetricParser.parseTimelinePayload({
+      'metric_matrix': {'texture_smoothness': 8.65},
+      'trend_deltas': {'texture_smoothness': -82.7},
+      'trend_status': {'texture_smoothness': 'worsened'},
+    }).single;
+    expect(procedureMetricDeltaText(metric), isNull);
+  });
+
+  test('real stored baseline retains the existing formatted comparison', () {
+    for (final (current, delta) in [(55.0, 10.0), (8.65, -82.7)]) {
+      final metric = LuxeMetricParser.parseTimelinePayload({
+        'metric_matrix': {'texture_smoothness': current},
+        'baseline_metric_matrix': {'texture_smoothness': 50},
+        'trend_deltas': {'texture_smoothness': delta},
+        'trend_status': {
+          'texture_smoothness': delta > 0 ? 'improved' : 'worsened',
+        },
+      }).single;
+      expect(
+        procedureMetricDeltaText(metric),
+        LuxeMetricParser.formatDisplayDeltaWithoutMinus(
+          baseline: metric.baselineScore,
+          current: metric.currentScore,
+          deltaPct: metric.improvementPercent,
+        ),
+      );
+      expect(procedureMetricDeltaText(metric), contains('%'));
+    }
+  });
+
   test(
     'face-anchored chin zone follows a face high in the square viewport',
     () {
