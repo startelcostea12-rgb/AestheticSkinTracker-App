@@ -8649,8 +8649,7 @@ async def analyze_skin_single(
             )
 
         # 3) Vascular stabilizer.
-        has_rosacea_note = "rosacea" in note
-        if has_rosacea_note or (75.0 <= redness_score <= 85.0):
+        if 75.0 <= redness_score <= 85.0:
             _append_product(
                 brand="La Roche-Posay",
                 name="Rosaliac AR Intense Localized Redness Serum",

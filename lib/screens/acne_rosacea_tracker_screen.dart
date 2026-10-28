@@ -6973,7 +6973,7 @@ class _PhotoAnalysisResultScreenState
         Expanded(
           child: _detectionTile(
             icon: Icons.local_florist_outlined,
-            label: 'ROSACEA',
+            label: 'REDNESS',
             value: PhotoAnalysisUi.rosaceaPatternLabel(result.rosaceaPattern),
             color: AppColors.mutedSage,
             textColor: textColor,
