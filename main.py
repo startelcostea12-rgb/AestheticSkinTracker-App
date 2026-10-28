@@ -8454,6 +8454,28 @@ async def analyze_skin(request: Request):
         raise _analysis_http_exception(e) from None
 
 
+def _reject_non_finite_safety_score(field_name: str, raw_value: str | None) -> None:
+    """400 when a client-supplied safety score parses to nan/inf/-inf.
+
+    Values that parse to a finite float, or that do not parse at all, are left
+    to the existing handling in analyze_skin_single (unchanged).
+    """
+    if raw_value is None or not str(raw_value).strip():
+        return
+    try:
+        parsed = float(str(raw_value).strip())
+    except Exception:
+        return
+    if not math.isfinite(parsed):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{field_name} must be a finite number; "
+                f"received a non-finite value (nan or infinity)."
+            ),
+        )
+
+
 @app.post("/api/skin/analyze-single")
 async def analyze_skin_single(
     image: UploadFile = File(...),
@@ -8483,6 +8505,8 @@ async def analyze_skin_single(
     gray_card_still_region: str | None = Form(None),
 ):
     try:
+        _reject_non_finite_safety_score("rosacea_score", rosacea_score)
+        _reject_non_finite_safety_score("sensitivity_score", sensitivity_score)
         parsed_baseline_matrix = _parse_baseline_metric_matrix(baseline_metric_matrix)
         parsed_baseline_paths = _normalize_metric_extraction_paths(
             baseline_extraction_paths,
