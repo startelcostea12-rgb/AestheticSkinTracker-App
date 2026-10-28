@@ -28,7 +28,7 @@ class BackendConfig {
   /// an unauthenticated backend never sends an empty header.
   static Map<String, String> get apiKeyHeaders => apiKeyHeadersFor(apiKey);
 
-  static const String aiCoachEndpoint = '/api/coach';
+  static const String aiCoachEndpoint = '/api/ai-coach';
   static const String analyzeSkinEndpoint = '/api/analyze-skin';
   static const String analyzeSingleSkinEndpoint = '/api/skin/analyze-single';
   static const String analyzeBodySilhouetteEndpoint =
@@ -47,6 +47,31 @@ class BackendConfig {
   }
 
   static Uri get aiCoachUri => buildUri(aiCoachEndpoint);
+
+  /// Error text from a backend JSON error body. Reads the app's own `error`
+  /// field first, then FastAPI's `detail` field (a string, or a list of
+  /// validation entries whose `msg` values are joined). Null when neither is
+  /// present or usable.
+  static String? errorMessageFromBody(Map<dynamic, dynamic>? body) {
+    if (body == null) return null;
+    final error = body['error'];
+    if (error is String && error.trim().isNotEmpty) return error;
+    final detail = body['detail'];
+    if (detail is String && detail.trim().isNotEmpty) return detail;
+    if (detail is List) {
+      final parts = <String>[];
+      for (final item in detail) {
+        if (item is Map && item['msg'] is String) {
+          parts.add(item['msg'] as String);
+        } else if (item is String) {
+          parts.add(item);
+        }
+      }
+      final joined = parts.where((p) => p.trim().isNotEmpty).join('; ');
+      if (joined.isNotEmpty) return joined;
+    }
+    return null;
+  }
 
   static Uri get analyzeSkinUri => buildUri(analyzeSkinEndpoint);
 

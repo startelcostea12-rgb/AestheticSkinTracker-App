@@ -8723,7 +8723,7 @@ async def ai_coach(request: Request):
                 unescaped = raw_text.encode("utf-8").decode("unicode_escape")
                 body = json.loads(unescaped)
             except Exception:
-                logger.exception("JSON decode failed for /api/coach")
+                logger.exception("JSON decode failed for /api/ai-coach")
                 logger.error("Raw body preview (first 1000 chars): %s", raw_text[:1000])
                 raise HTTPException(
                     status_code=400,
@@ -8778,15 +8778,15 @@ async def ai_coach(request: Request):
         # Extract system & user string markers securely
         system_prompt = str(_pick("systemPrompt", "system_prompt", "system", "instructions", default="")).strip()
         user_prompt = str(_pick("userPrompt", "user_prompt", "prompt", "query", "message", default="")).strip()
-        gemini_api_key = str(_pick("geminiApiKey", "gemini_api_key", "apiKey", "api_key", default="")).strip()
 
         if not system_prompt and not user_prompt:
             raise HTTPException(status_code=400, detail="Either systemPrompt or userPrompt data is required.")
 
-        # Resolve authentication key safely
-        api_key = os.getenv("GEMINI_API_KEY", "").strip() or gemini_api_key
+        # Resolve authentication key safely. Only the server's GEMINI_API_KEY
+        # is used; any key supplied in the request body is ignored.
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
         if not api_key:
-            logger.warning("/api/coach fallback: GEMINI_API_KEY missing; returning non-LLM guidance response")
+            logger.warning("/api/ai-coach fallback: GEMINI_API_KEY missing; returning non-LLM guidance response")
             fallback_text = (
                 "AI coach is running in fallback mode because GEMINI_API_KEY is not configured. "
                 "You can still continue tracking scans and trends. "
@@ -8850,7 +8850,7 @@ async def ai_coach(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Catastrophic interception on /api/coach scope framework processing block.")
+        logger.exception("Catastrophic interception on /api/ai-coach scope framework processing block.")
         logger.error("Internal Traceback Context Info Dump:\n%s", traceback.format_exc())
         raise HTTPException(status_code=502, detail=f"AI Engine extraction layer failure proxy error context: {str(e)}")
 

@@ -10,11 +10,6 @@ import 'package:google_generative_ai/google_generative_ai.dart';
 import '../utils/backend_config.dart';
 import '../utils/upload_gate.dart';
 
-const String _geminiApiKeyForBackend = String.fromEnvironment(
-  'GEMINI_API_KEY',
-  defaultValue: '',
-);
-
 /// Small LLM gateway for AI coaching features.
 ///
 /// The app does not call Gemini directly or bundle API keys. It calls the local
@@ -73,10 +68,6 @@ class AiService {
             body: jsonEncode({
               'systemPrompt': systemPrompt,
               'userPrompt': userPrompt,
-              // Dev bridge: lets the local backend use the same key supplied
-              // to Flutter via --dart-define without separate env setup.
-              if (_geminiApiKeyForBackend.isNotEmpty)
-                'geminiApiKey': _geminiApiKeyForBackend,
             }),
           )
           .timeout(const Duration(seconds: 60));
@@ -85,7 +76,7 @@ class AiService {
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final message =
-            _stringField(body, 'error') ??
+            BackendConfig.errorMessageFromBody(body) ??
             'Backend AI coach request failed with HTTP ${response.statusCode}.';
         throw AiLlmException(message);
       }
