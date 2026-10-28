@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 
 import 'backend_config.dart';
 import 'app_prefs.dart';
+import 'safety_signal_defaults.dart';
 import 'upload_gate.dart';
 import '../models/skin_profile.dart';
 
@@ -421,7 +422,6 @@ class SkinAnalysisService {
   }
 
   static Future<Map<String, String>> _inferSafetySignalFields() async {
-    const defaultRosacea = 2.5;
     const defaultSensitivity = 4.5;
 
     final profile = await AppPrefs.getSkinProfileOrNull();
@@ -434,13 +434,6 @@ class SkinAnalysisService {
       profile?.notes ?? '',
     ].join(' ').toLowerCase();
 
-    final rosaceaConcern = _containsAnyToken(concernText, const [
-      'rosacea',
-      'flushing',
-      'persistent redness',
-      'redness',
-      'vascular',
-    ]);
     final barrierConcern = _containsAnyToken(concernText, const [
       'barrier',
       'compromised',
@@ -455,9 +448,9 @@ class SkinAnalysisService {
         ? null
         : _sensitivityFromProfile(profile.sensitivityLevel);
 
-    final rosacea = (recentRosacea ?? (rosaceaConcern ? 6.0 : null) ??
-            defaultRosacea)
-        .clamp(0.0, 10.0);
+    // Only a stored rosaceaSeverity (or the 2.5 default) feeds this field;
+    // profile words never infer a rosacea score.
+    final rosacea = resolveRosaceaSafetyScore(recentRosacea);
     final sensitivity =
         (recentSensitivity ?? profileSensitivity ?? defaultSensitivity)
             .clamp(0.0, 10.0);
