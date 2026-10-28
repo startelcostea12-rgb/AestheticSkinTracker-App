@@ -765,14 +765,14 @@ class ComputeTrendDeltasTests(unittest.TestCase):
         current = {
             "localized_redness": 5.0,
             "diffuse_flushing_erythema": 11.0,
-            "sebum_excess_oil_gloss": 9.0,
+            "sebum_excess_oil_gloss": 12.0,
             "glabellar_wrinkle_depth": 10.0,
             "pore_contraction_index": 10.0,
         }
         baseline = {
             "localized_redness": 30.0,
             "diffuse_flushing_erythema": 22.0,
-            "sebum_excess_oil_gloss": 12.0,
+            "sebum_excess_oil_gloss": 16.0,
             "glabellar_wrinkle_depth": 20.0,
             "pore_contraction_index": 12.5,
         }
@@ -986,6 +986,8 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
                 "skin_tone_radiance_evenness": 1.1,
                 "pore_visibility": 1.0,
                 "breakout_activity": 13.1,
+                "sebum_excess_oil_gloss": 4.0,
+                "diffuse_flushing_erythema": 2.0,
             },
         )
         self.assertEqual(
@@ -1045,15 +1047,9 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         self.assertEqual(delta, 50.0)
 
     def test_a_metric_with_no_measured_floor_is_unaffected(self) -> None:
-        # diffuse_flushing_erythema has never been part of a repeatability
-        # session (unlike pore_visibility and breakout_activity, which now
-        # have measured floors from the second session -- see
-        # METRIC_NOISE_FLOOR_2SD), so a tiny absolute move (0.5) that
-        # nonetheless clears the relative band must still report a
-        # direction exactly as before this feature existed.
-        self.assertNotIn("diffuse_flushing_erythema", METRIC_NOISE_FLOOR_2SD)
+        self.assertNotIn("skin_hydration", METRIC_NOISE_FLOOR_2SD)
         delta, status = _trend_delta_and_status(
-            "diffuse_flushing_erythema", 1.5, 1.0, "primary_roi", "primary_roi", 8.0,
+            "skin_hydration", 1.5, 1.0, "primary_roi", "primary_roi", 8.0,
             "normal", "normal", 1000, 750, 1000, 750,
             current_formula_version=2,
             baseline_formula_version=2,
@@ -1062,8 +1058,54 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
             current_guide_type='facial',
             baseline_guide_type='facial',
         )
-        self.assertEqual(status, "worsened")
-        self.assertEqual(delta, -50.0)
+        self.assertEqual(status, "improved")
+        self.assertEqual(delta, 50.0)
+
+    def test_sebum_and_flushing_below_display_floors_are_stable(self) -> None:
+        for metric, move in (
+            ("sebum_excess_oil_gloss", 1.1),
+            ("diffuse_flushing_erythema", 1.9),
+        ):
+            with self.subTest(metric=metric):
+                self.assertEqual(_trend_delta_and_status(
+                    metric, 10.0 + move, 10.0, "primary_roi", "primary_roi", 8.0,
+                    "normal", "normal",
+                    current_formula_version=_metric_formula_version(metric),
+                    baseline_formula_version=_metric_formula_version(metric),
+                    current_pose_template="Front", baseline_pose_template="Front",
+                    current_guide_type="facial", baseline_guide_type="facial",
+                ), (0.0, "stable"))
+
+    def test_sebum_and_flushing_at_display_floors_can_report_direction(self) -> None:
+        for metric, floor in (
+            ("sebum_excess_oil_gloss", 4.0),
+            ("diffuse_flushing_erythema", 2.0),
+        ):
+            with self.subTest(metric=metric):
+                self.assertNotIn(metric, TREND_NOISE_FLOOR_EXCEEDS_USEFUL_RANGE)
+                self.assertEqual(_trend_delta_and_status(
+                    metric, 10.0 + floor, 10.0, "primary_roi", "primary_roi", 8.0,
+                    "normal", "normal",
+                    current_formula_version=_metric_formula_version(metric),
+                    baseline_formula_version=_metric_formula_version(metric),
+                    current_pose_template="Front", baseline_pose_template="Front",
+                    current_guide_type="facial", baseline_guide_type="facial",
+                ), (-floor * 10.0, "worsened"))
+
+    def test_sebum_and_flushing_at_display_floors_still_require_eight_percent(self) -> None:
+        for metric, floor in (
+            ("sebum_excess_oil_gloss", 4.0),
+            ("diffuse_flushing_erythema", 2.0),
+        ):
+            with self.subTest(metric=metric):
+                self.assertEqual(_trend_delta_and_status(
+                    metric, 90.0 + floor, 90.0, "primary_roi", "primary_roi", 8.0,
+                    "normal", "normal",
+                    current_formula_version=_metric_formula_version(metric),
+                    baseline_formula_version=_metric_formula_version(metric),
+                    current_pose_template="Front", baseline_pose_template="Front",
+                    current_guide_type="facial", baseline_guide_type="facial",
+                ), (0.0, "stable"))
 
     def test_excluded_metric_below_3x_floor_is_insufficient_signal_not_stable(
         self,

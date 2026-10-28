@@ -4490,6 +4490,8 @@ METRIC_NOISE_FLOOR_2SD: Dict[str, float] = {
     "skin_tone_radiance_evenness": 1.1,
     "pore_visibility": 1.0,
     "breakout_activity": 13.1,
+    "sebum_excess_oil_gloss": 4.0,
+    "diffuse_flushing_erythema": 2.0,
 }
 
 # Human-judgment call, not derived from a formula: these metrics' measured
