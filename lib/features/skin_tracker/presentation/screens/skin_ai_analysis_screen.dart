@@ -5879,7 +5879,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
                   ),
                   const SizedBox(width: 7),
                   Text(
-                    'On-device AI · private & secure',
+                    'Analyzed on our server · cosmetic, not a diagnosis',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w800,

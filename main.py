@@ -8690,7 +8690,7 @@ async def analyze_skin_single(
             "yolo_max_conf": float(results.get("model_debug", {}).get("yolo_max_conf", 0.0)),
             "opencv_metrics": opencv_metrics,
             "calibration": results.get("calibration", {}),
-            "smart_narrative": "Your single skin scan analysis has successfully loaded. Metrics show healthy, compliant cellular maturation trajectories.",
+            "smart_narrative": "Your single skin scan analysis has successfully loaded. Your scan photo was analyzed on our server, and these cosmetic metrics are for tracking only, not a diagnosis.",
             "recommended_products": [
                 {
                     "brand": p.get("brand", ""),
