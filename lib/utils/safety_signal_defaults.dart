@@ -8,5 +8,7 @@ const double kDefaultRosaceaSafetyScore = 2.5;
 /// "vascular" must not raise the score. With nothing stored this returns the
 /// existing [kDefaultRosaceaSafetyScore] default; no score is invented.
 double resolveRosaceaSafetyScore(double? storedSeverity) {
-  return (storedSeverity ?? kDefaultRosaceaSafetyScore).clamp(0.0, 10.0).toDouble();
+  return (storedSeverity ?? kDefaultRosaceaSafetyScore)
+      .clamp(0.0, 10.0)
+      .toDouble();
 }
