@@ -279,7 +279,7 @@ class AIProductRecommendationEngine {
       'name': 'Minoxidil 5% Topical Solution',
       'brand': 'Kirkland / Rogaine',
       'reason':
-          'Minoxidil reduces shock loss duration and supports new growth after transplant. Clinically proven to accelerate the recovery of transplanted and native follicles.',
+          'Minoxidil reduces shock loss duration and supports new growth after transplant. Studied for supporting recovery of transplanted and native follicles; results vary.',
       'guidance':
           'Apply 1ml to recipient area twice daily. Begin only when cleared by your surgeon (typically month 1–2). Consistent daily use required for results.',
       'evidence': 'Proven efficacy',
@@ -383,7 +383,7 @@ class AIProductRecommendationEngine {
         'name': 'Medical-Grade Silicone Gel Sheeting',
         'brand': 'Scar Away',
         'reason':
-            'With elevated redness, medical-grade silicone provides hydration and occlusion to accelerate healing. Clinically proven to reduce erythema and improve scar appearance.',
+            'With elevated redness, medical-grade silicone provides hydration and occlusion to accelerate healing. Studied for reducing redness and improving scar appearance; results vary.',
         'guidance':
             'Apply to affected areas for 12+ hours daily. Replace sheets every 12 hours. Results visible in 4–8 weeks.',
         'evidence': 'Proven efficacy',

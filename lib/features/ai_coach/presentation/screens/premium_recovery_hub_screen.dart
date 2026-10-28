@@ -448,7 +448,7 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
             runSpacing: 8,
             children: [
               _miniPill(Icons.verified_outlined, 'Premium Suite'),
-              _miniPill(Icons.lock_outline, 'Private & Secure'),
+              _miniPill(Icons.info_outline, 'Processed on our server · not a diagnosis'),
               _miniPill(Icons.auto_graph_outlined, 'Outcome Intelligence'),
             ],
           ),

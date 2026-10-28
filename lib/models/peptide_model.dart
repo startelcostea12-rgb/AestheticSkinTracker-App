@@ -585,7 +585,7 @@ const List<PeptideLibraryEntry> kPeptideLibrary = [
     name: 'Tesamorelin',
     inci: 'Tesamorelin (GHRH analog)',
     mechanism:
-        'Stabilized GHRH analog clinically proven to reduce visceral adipose tissue and improve lipid profile.',
+        'Stabilized GHRH analog studied for reducing visceral adipose tissue and improving lipid profile; results vary.',
     evidenceLevel: 'Tier 1',
     primaryMetrics: ['Texture'],
     category: 'body-composition',
