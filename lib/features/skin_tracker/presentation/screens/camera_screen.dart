@@ -20,6 +20,7 @@ import 'package:aesthetic_skin_tracker/utils/landmark_assessment.dart';
 import 'package:aesthetic_skin_tracker/utils/local_image_bytes.dart';
 import 'package:aesthetic_skin_tracker/utils/premium_access.dart';
 import 'package:aesthetic_skin_tracker/utils/premium_recovery_service.dart';
+import 'package:aesthetic_skin_tracker/utils/safety_signal_defaults.dart';
 import 'package:aesthetic_skin_tracker/services/skin_analysis_service.dart'
     as local_skin_analysis;
 import 'package:aesthetic_skin_tracker/utils/web_upload_image_utils.dart';
@@ -1394,7 +1395,6 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Future<Map<String, String>> _buildSafetySignalFields() async {
-    const defaultRosacea = 2.5;
     const defaultSensitivity = 4.5;
 
     final profile = await AppPrefs.getSkinProfileOrNull();
@@ -1409,13 +1409,6 @@ class _CameraScreenState extends State<CameraScreen>
       _focusAreaForSave ?? '',
     ].join(' ').toLowerCase();
 
-    final rosaceaConcern = _containsAnyToken(concernText, const [
-      'rosacea',
-      'flushing',
-      'persistent redness',
-      'redness',
-      'vascular',
-    ]);
     final barrierConcern = _containsAnyToken(concernText, const [
       'barrier',
       'compromised',
@@ -1430,9 +1423,9 @@ class _CameraScreenState extends State<CameraScreen>
         ? null
         : _sensitivityFromProfile(profile.sensitivityLevel);
 
-    final rosacea =
-        (recentRosacea ?? (rosaceaConcern ? 6.0 : null) ?? defaultRosacea)
-            .clamp(0.0, 10.0);
+    // Only a stored rosaceaSeverity (or the 2.5 default) feeds this field;
+    // profile words never infer a rosacea score.
+    final rosacea = resolveRosaceaSafetyScore(recentRosacea);
     final sensitivity =
         (recentSensitivity ?? profileSensitivity ?? defaultSensitivity).clamp(
           0.0,
