@@ -930,8 +930,9 @@ class PhotoAnalysisResult {
           'a more accurate read.';
     }
     if (isClear) {
-      return 'Great progress — no significant acne or rosacea signs '
-          'detected in this photo.';
+      return 'Great progress — no significant acne-like marks or visible '
+          'redness detected in this photo. This is a cosmetic estimate, '
+          'not a diagnosis.';
     }
     return subheadline;
   }
@@ -1154,17 +1155,15 @@ class AcneRosaceaPhotoAnalyzer {
       'rosaceaSeverity': MetricDerivation(
         metricKey: 'rosaceaSeverity',
         score: detected['rosaceaSeverity'],
-        methodLabel: 'NRS-adapted erythema',
+        methodLabel: 'Cosmetic redness estimate',
         methodDetail: hasFeatures
-            ? 'Persistent central-face erythema reads '
-                  '${pct(feats.persistentErythemaScore)}; overall erythema '
-                  '${pct(feats.rednessMean)}. The National Rosacea Society '
-                  'Standard Classification identifies persistent centrofacial '
-                  'erythema as the cardinal diagnostic feature; mild '
-                  'ruddiness alone is not diagnostic.'
-            : 'National Rosacea Society criteria: persistent '
-                  'centrofacial erythema, papules/pustules, visible vessels, '
-                  'and sensitivity — weighted toward standing redness.',
+            ? 'Persistent central-face redness reads '
+                  '${pct(feats.persistentErythemaScore)}; overall redness '
+                  '${pct(feats.rednessMean)}. This is a cosmetic estimate '
+                  'from a single photo, not a diagnosis.'
+            : 'Cosmetic redness estimate: persistent central-face redness, '
+                  'raised bumps, visible vessels, and sensitivity — weighted '
+                  'toward standing redness. Not a diagnosis.',
         confidence: conf(rosaceaDriver),
       ),
       'rosaceaFlushing': MetricDerivation(
@@ -1172,13 +1171,13 @@ class AcneRosaceaPhotoAnalyzer {
         score: detected['rosaceaFlushing'],
         methodLabel: 'Erythema-distribution variance',
         methodDetail: hasFeatures
-            ? 'Flushing is fundamentally a HISTORY (NRS criterion 2) — '
+            ? 'Flushing is fundamentally a HISTORY — '
                   'a single photo can only hint at it. Erythema variance '
                   '${pct(feats.rednessVariance)}, mean redness '
                   '${pct(feats.rednessMean)}, zone asymmetry '
                   '${pct((feats.jawZoneErythema - feats.centralFaceErythema).abs())}. '
                   'Treat this score as a low-confidence estimate.'
-            : 'Approximates the NRS transient-flushing criterion from '
+            : 'Approximates transient flushing from '
                   'redness distribution + zone asymmetry in a single photo. '
                   'Inherently low-confidence from one image.',
         confidence: conf(flushDriver) * 0.65,
@@ -1354,7 +1353,7 @@ class AcneRosaceaPhotoAnalyzer {
       parts.add('mixed inflammatory + comedonal load present');
     }
     if (ros == DetectedRosaceaPattern.papulopustular) {
-      parts.add('papulopustular rosacea features overlap with acne lesions');
+      parts.add('redness with raised bumps overlaps with acne-like lesions');
     } else if (ros == DetectedRosaceaPattern.erythematotelangiectatic) {
       parts.add('persistent central redness with visible capillaries');
     } else if (ros == DetectedRosaceaPattern.transientFlushing) {
@@ -1425,7 +1424,7 @@ class AcneRosaceaPhotoAnalyzer {
           icon: Icons.shield_moon_rounded,
           title: 'Compromised barrier — simplify before adding actives',
           detail:
-              'Active rosacea features plus stinging suggest barrier '
+              'Visible redness plus stinging suggest barrier '
               'disruption. Two to four weeks of a stripped-down ceramide + '
               'niacinamide routine, with strict avoidance of fragrance, '
               'menthol, and high-strength acids, will outperform any new '
@@ -1512,7 +1511,7 @@ class AcneRosaceaPhotoAnalyzer {
           icon: Icons.spa_rounded,
           title: 'Maintenance phase — protect what you\'ve built',
           detail:
-              'No dominant acne or rosacea pattern is currently expressed. '
+              'No dominant acne-like or redness pattern is currently shown. '
               'Keep daily SPF 30+, a gentle barrier routine, and a single '
               'evidence-based active (retinoid or azelaic acid) to maintain.',
           accent: teal,
@@ -1585,7 +1584,7 @@ class AcneRosaceaPhotoAnalyzer {
           ],
           cons: const [
             'Requires SPF and active-pause for 5–7 days after',
-            'Not appropriate during active rosacea flare',
+            'Not appropriate during an active redness flare',
           ],
           expectedSessions: '3–6 sessions, 2–4 weeks apart',
           timelineWeeks: '4–10 weeks to clear visible congestion',
@@ -1615,7 +1614,7 @@ class AcneRosaceaPhotoAnalyzer {
           pros: const [
             'Very low irritation profile',
             'Addresses both PIH and mild texture',
-            'Safe on rosacea-prone skin (lower concentrations)',
+            'Generally gentle on redness-prone skin (lower concentrations)',
           ],
           cons: const [
             'Slower visible results vs. salicylic',
@@ -1674,7 +1673,7 @@ class AcneRosaceaPhotoAnalyzer {
           category: ProcedureCategory.light,
           intensity: ProcedureIntensity.gentle,
           indication:
-              'Anti-inflammatory wavelengths that calm rosacea-prone skin and '
+              'Anti-inflammatory wavelengths that calm redness-prone skin and '
               'support barrier recovery without irritation.',
           pros: const [
             'Reduces persistent erythema in 6–10 weeks',
@@ -1944,13 +1943,13 @@ class AcneRosaceaPhotoAnalyzer {
   static String _rosaceaLabel(DetectedRosaceaPattern p) {
     switch (p) {
       case DetectedRosaceaPattern.none:
-        return 'no rosacea features';
+        return 'no visible redness pattern';
       case DetectedRosaceaPattern.transientFlushing:
-        return 'transient flushing';
+        return 'episodic redness';
       case DetectedRosaceaPattern.erythematotelangiectatic:
-        return 'persistent rosacea';
+        return 'persistent redness';
       case DetectedRosaceaPattern.papulopustular:
-        return 'papulopustular rosacea';
+        return 'redness with raised bumps';
     }
   }
 }

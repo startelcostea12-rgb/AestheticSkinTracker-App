@@ -426,8 +426,8 @@ class _RecoveryMetricDetailScreenState
           _PhaseRow(
             'Week 3–6',
             'Prescription topicals (azelaic acid, '
-                'ivermectin, metronidazole) reach steady state. Papulopustular '
-                'lesions visibly reduce.',
+                'ivermectin, metronidazole) reach steady state. Raised, '
+                'bump-like lesions visibly reduce.',
             isCurrent(15, 42),
           ),
           _PhaseRow(
@@ -648,7 +648,7 @@ class _RecoveryMetricDetailScreenState
         }
         if (d <= 84) {
           return 'Prescription topicals (azelaic acid, ivermectin, '
-              'metronidazole) are reaching steady state. Papulopustular '
+              'metronidazole) are reaching steady state. Raised, bump-like '
               'lesions should be visibly reducing. Trigger logging is '
               'amplifying the result.';
         }

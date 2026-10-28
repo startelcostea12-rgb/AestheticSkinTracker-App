@@ -762,8 +762,9 @@ List<ProductRecommendation> _subtypeRecommendations(AcneRosaceaSubtype s) {
           name: 'Azelaic acid 15% gel',
           activeIngredient: 'Azelaic acid',
           rationale:
-              'FDA-approved for papulopustular rosacea — calms '
-              'inflammation and evens tone.',
+              'A common over-the-counter and prescription option for '
+              'persistent redness and bumps — calms inflammation and evens '
+              'tone. Ask a clinician whether it suits you.',
           priority: RecommendationPriority.foundational,
         ),
         ProductRecommendation(
@@ -1089,7 +1090,7 @@ SubtypePlan _planForSubtype(
     case AcneRosaceaSubtype.rosacea:
       return SubtypePlan(
         subtype: s,
-        subtypeLabel: 'Rosacea (Papulopustular)',
+        subtypeLabel: 'Persistent redness & bumps',
         overview:
             'Barrier-first care + a single targeted active. Strong actives '
             'flare rosacea — slow, calm, and consistent wins.',
