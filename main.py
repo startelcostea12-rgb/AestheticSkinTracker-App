@@ -8864,15 +8864,15 @@ async def ai_coach(request: Request):
         # Extract system & user string markers securely
         system_prompt = str(_pick("systemPrompt", "system_prompt", "system", "instructions", default="")).strip()
         user_prompt = str(_pick("userPrompt", "user_prompt", "prompt", "query", "message", default="")).strip()
-        gemini_api_key = str(_pick("geminiApiKey", "gemini_api_key", "apiKey", "api_key", default="")).strip()
 
         if not system_prompt and not user_prompt:
             raise HTTPException(status_code=400, detail="Either systemPrompt or userPrompt data is required.")
 
-        # Resolve authentication key safely
-        api_key = os.getenv("GEMINI_API_KEY", "").strip() or gemini_api_key
+        # Resolve authentication key safely. Only the server's GEMINI_API_KEY
+        # is used; any key supplied in the request body is ignored.
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
         if not api_key:
-            logger.warning("/api/coach fallback: GEMINI_API_KEY missing; returning non-LLM guidance response")
+            logger.warning("/api/ai-coach fallback: GEMINI_API_KEY missing; returning non-LLM guidance response")
             fallback_text = (
                 "AI coach is running in fallback mode because GEMINI_API_KEY is not configured. "
                 "You can still continue tracking scans and trends. "

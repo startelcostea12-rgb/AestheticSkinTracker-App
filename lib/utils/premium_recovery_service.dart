@@ -606,10 +606,7 @@ class PremiumRecoveryService {
       'contextSummary': context.summaryForPrompt,
     };
 
-    final endpoints = <Uri>[
-      BackendConfig.buildUri('/api/ai-coach'),
-      BackendConfig.aiCoachUri,
-    ];
+    final endpoints = <Uri>[BackendConfig.aiCoachUri];
 
     final client = http.Client();
     try {
@@ -638,7 +635,7 @@ class PremiumRecoveryService {
 
           if (response.statusCode < 200 || response.statusCode >= 300) {
             final message =
-                body['error']?.toString() ??
+                BackendConfig.errorMessageFromBody(body) ??
                 body['message']?.toString() ??
                 'Backend request failed with HTTP ${response.statusCode}.';
             lastError = message;
