@@ -1,5 +1,7 @@
 import hashlib
+import asyncio
 import base64
+import binascii
 import hmac
 from dotenv import load_dotenv
 load_dotenv(override=True)
@@ -8,14 +10,15 @@ import logging
 import math
 import os
 import random
-import traceback
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
+from io import BytesIO
 from typing import Any, Dict, Tuple
 
 import cv2
 import numpy as np
+from PIL import Image, UnidentifiedImageError
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,6 +39,16 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+COACH_MODELS = ("gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash")
+MAX_IMAGE_BYTES = 20 * 1024 * 1024
+MAX_IMAGE_EDGE = 12000
+MAX_IMAGE_PIXELS = 60_000_000
+ANALYSIS_UNAVAILABLE_DETAIL = "Skin analysis is temporarily unavailable. Try again."
+
+class ImageInputLimitError(HTTPException):
+    def __init__(self, detail: str):
+        super().__init__(status_code=400, detail=detail)
 
 MIN_USABLE_CHEEK_PIXELS = 2000
 MIN_USABLE_TEXTURE_ROI_PIXELS = MIN_USABLE_CHEEK_PIXELS
@@ -337,8 +350,7 @@ def ensure_body_pipeline_ready() -> Dict[str, str]:
     if _BODY_PIPELINE_READY:
         return {"status": "ready"}
 
-    if _BODY_PIPELINE_ERROR:
-        raise RuntimeError(_BODY_PIPELINE_ERROR)
+    _BODY_PIPELINE_ERROR = ""
 
     if mp is None:
         _BODY_PIPELINE_ERROR = "MediaPipe is not installed. Run 'pip install mediapipe'."
@@ -448,8 +460,7 @@ def ensure_pipeline_ready() -> Dict[str, str]:
     with _PIPELINE_LOCK:
         if _PIPELINE_READY:
             return {"status": "ready"}
-        if _PIPELINE_ERROR:
-            raise RuntimeError(_PIPELINE_ERROR)
+        _PIPELINE_ERROR = ""
 
         _seed_everything()
         _ASSETS.ensure_models_dir()
@@ -1258,6 +1269,8 @@ def _sample_gray_card_patch(patch_bytes: bytes | None) -> Dict[str, Any] | None:
         return None
     try:
         patch_bgr = _decode_image_bytes(patch_bytes)
+    except ImageInputLimitError:
+        raise
     except Exception:
         patch_bgr = None
     if patch_bgr is None or patch_bgr.size == 0:
@@ -7831,7 +7844,7 @@ def analyze_skin_patch(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        ensure_pipeline_ready()
+        await asyncio.to_thread(ensure_pipeline_ready)
         logger.info("Deterministic analysis pipeline initialized (YOLO + MediaPipe + OpenCV)")
     except FileNotFoundError as exc:
         logger.error("Analysis pipeline startup check failed: %s", exc)
@@ -7886,6 +7899,15 @@ if not _BACKEND_API_KEY:
 
 @app.middleware("http")
 async def _require_api_key(request: Request, call_next):
+    if request.url.path in {"/api/analyze-skin", "/api/skin/analyze-single", "/api/body/analyze-silhouette"}:
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                oversized = int(content_length) > MAX_IMAGE_BYTES
+            except ValueError:
+                return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length."})
+            if oversized:
+                return JSONResponse(status_code=400, content={"detail": "Image upload exceeds 20 MB."})
     if (
         _BACKEND_API_KEY
         and request.method != "OPTIONS"
@@ -7900,11 +7922,98 @@ async def _require_api_key(request: Request, call_next):
     return await call_next(request)
 
 
+def _check_image_bytes(raw: bytes) -> None:
+    if len(raw) > MAX_IMAGE_BYTES:
+        raise ImageInputLimitError("Image upload exceeds 20 MB.")
+
+
+def _check_image_dimensions(width: int, height: int) -> None:
+    if max(width, height) > MAX_IMAGE_EDGE or width * height > MAX_IMAGE_PIXELS:
+        raise ImageInputLimitError("Image exceeds the allowed dimensions.")
+
+
+def _decode_base64_image(value: str) -> bytes:
+    if not isinstance(value, str):
+        raise HTTPException(status_code=400, detail="Image data must be base64 text.")
+    encoded = value.strip()
+    if encoded.lower().startswith("data:"):
+        header, separator, encoded = encoded.partition(",")
+        if not separator or not header.lower().startswith("data:image/") or not header.lower().endswith(";base64"):
+            raise HTTPException(status_code=400, detail="Invalid image data URL.")
+    if len(encoded) > 4 * ((MAX_IMAGE_BYTES + 2) // 3):
+        raise ImageInputLimitError("Image upload exceeds 20 MB.")
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid base64 image data.") from None
+    _check_image_bytes(decoded)
+    return decoded
+
+
+async def _read_analysis_json(request: Request) -> Dict[str, Any]:
+    chunks = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > MAX_IMAGE_BYTES:
+            raise HTTPException(status_code=400, detail="Image upload exceeds 20 MB.")
+        chunks.append(chunk)
+    try:
+        body = json.loads(b"".join(chunks))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="Could not decode request body as valid JSON format.") from None
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object payload.")
+    return body
+
+
+async def _read_image_upload(upload: UploadFile) -> bytes:
+    raw = await upload.read(MAX_IMAGE_BYTES + 1)
+    _check_image_bytes(raw)
+    return raw
+
+
+async def _load_analysis_pipeline(initializer) -> None:
+    try:
+        await asyncio.to_thread(initializer)
+    except Exception as error:
+        logger.error("Analysis pipeline initialization failed: %s", type(error).__name__)
+        raise HTTPException(status_code=503, detail=ANALYSIS_UNAVAILABLE_DETAIL) from None
+
+
+def _analysis_http_exception(error: Exception) -> HTTPException:
+    message = str(error)
+    known_messages = {
+        YUNET_PRECISE_LANDMARKS_MESSAGE,
+        YUNET_PARTIAL_FACE_MESSAGE,
+        "No face detected by MediaPipe Face Mesh. Please avoid camera monitor reflection or glare noise.",
+        "Could not derive dynamic facial regions from the normalized face patch. Retake photo in frontal lighting.",
+        "Face crop failed due to invalid bounds",
+        "Pose Landmarker could not detect a full body pose for silhouette analysis.",
+        "Detected pose has fewer than 33 landmarks; body silhouette analysis is not reliable.",
+        "Body silhouette ROI could not be derived from detected pose landmarks.",
+    }
+    if message in known_messages or message.startswith(("Camera hardware QA failed:", "Unable to confirm full-body framing:")):
+        return HTTPException(status_code=400, detail=message)
+    status_code = 503 if isinstance(error, RuntimeError) or _is_pipeline_init_error(message) else 500
+    logger.error("Analysis failed: %s", type(error).__name__)
+    return HTTPException(status_code=status_code, detail=ANALYSIS_UNAVAILABLE_DETAIL)
+
+
 def _decode_image_bytes(raw: bytes) -> np.ndarray:
+    _check_image_bytes(raw)
+    try:
+        with Image.open(BytesIO(raw)) as header:
+            _check_image_dimensions(*header.size)
+    except Image.DecompressionBombError:
+        raise ImageInputLimitError("Image exceeds the allowed dimensions.") from None
+    except (UnidentifiedImageError, OSError, ValueError):
+        raise HTTPException(status_code=400, detail="Could not decode image") from None
     arr = np.frombuffer(raw, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
-        raise ValueError("Could not decode image")
+        raise HTTPException(status_code=400, detail="Could not decode image")
+    _check_image_dimensions(img.shape[1], img.shape[0])
     logger.info("Decoded image matrix: shape=%s dtype=%s", tuple(img.shape), img.dtype)
     return img
 
@@ -8030,16 +8139,16 @@ def validate_camera_hardware_qa(bgr_image: np.ndarray) -> None:
 @app.post("/api/body/analyze-silhouette")
 async def analyze_body_silhouette_endpoint(request: Request):
     try:
-        ensure_body_pipeline_ready()
-        body = await request.json()
+        body = await _read_analysis_json(request)
         image_b64 = body.get("imageBytes") or body.get("image_bytes") or body.get("image")
         if not image_b64:
             raise HTTPException(status_code=422, detail="Missing image data (imageBytes / image_bytes / image)")
 
-        image_data = base64.b64decode(image_b64)
-        image_bgr = _decode_image_bytes(image_data)
+        image_data = await asyncio.to_thread(_decode_base64_image, image_b64)
+        image_bgr = await asyncio.to_thread(_decode_image_bytes, image_data)
         if image_bgr is None or image_bgr.size == 0:
             raise HTTPException(status_code=400, detail="Decoded image is empty for body silhouette analysis.")
+        await _load_analysis_pipeline(ensure_body_pipeline_ready)
 
         current_capture_quality = _normalize_capture_quality(
             body.get("captureQuality") or body.get("capture_quality")
@@ -8119,7 +8228,7 @@ async def analyze_body_silhouette_endpoint(request: Request):
                 ),
             }
 
-        result = analyze_body_silhouette(image_bgr)
+        result = await asyncio.to_thread(analyze_body_silhouette, image_bgr)
         candidate_consistent_scan_count = int(
             body.get("currentConsistentScanCount")
             or body.get("current_consistent_scan_count")
@@ -8181,8 +8290,7 @@ async def analyze_body_silhouette_endpoint(request: Request):
     except HTTPException:
         raise
     except Exception as exc:
-        logger.exception("Body silhouette endpoint failed")
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise _analysis_http_exception(exc) from None
 
 
 @app.get("/health")
@@ -8198,9 +8306,7 @@ async def health_check():
 @app.post("/api/analyze-skin")
 async def analyze_skin(request: Request):
     try:
-        ensure_pipeline_ready()
-
-        body = await request.json()
+        body = await _read_analysis_json(request)
         logger.info(f"Analyze request keys: {list(body.keys())}")
 
         # Accept multiple possible field names
@@ -8252,33 +8358,35 @@ async def analyze_skin(request: Request):
         if not image_b64:
             raise HTTPException(status_code=422, detail="Missing image data (imageBytes / image_bytes / image)")
 
-        image_data = base64.b64decode(image_b64)
+        image_data = await asyncio.to_thread(_decode_base64_image, image_b64)
         logger.info("Photo received: size=%.1f KB", len(image_data) / 1024)
 
         baseline_image_bgr: np.ndarray | None = None
         if baseline_image_b64:
             try:
-                baseline_raw = str(baseline_image_b64)
-                if "," in baseline_raw and "base64" in baseline_raw[:40].lower():
-                    baseline_raw = baseline_raw.split(",", 1)[1]
-                baseline_bytes = base64.b64decode(baseline_raw)
-                baseline_image_bgr = _decode_image_bytes(baseline_bytes)
+                baseline_bytes = await asyncio.to_thread(_decode_base64_image, baseline_image_b64)
+                baseline_image_bgr = await asyncio.to_thread(_decode_image_bytes, baseline_bytes)
+            except ImageInputLimitError:
+                raise
             except Exception as exc:
                 logger.info("Baseline image decode skipped for SSIM guard: %s", exc)
 
+        await _load_analysis_pipeline(ensure_pipeline_ready)
         (
             normalized_image,
             quality_profile,
             pre_white_balance_image,
-        ) = _assess_and_normalize_image_with_pre_white_balance(
+        ) = await asyncio.to_thread(
+            _assess_and_normalize_image_with_pre_white_balance,
             image_data,
             parse_gray_card_region(
                 body.get("grayCardRegion") or body.get("gray_card_region")
             ),
         )
         logger.info("/api/analyze-skin request matrix accepted for inference.")
-        validate_camera_hardware_qa(normalized_image)
-        result = analyze_skin_patch(
+        await asyncio.to_thread(validate_camera_hardware_qa, normalized_image)
+        result = await asyncio.to_thread(
+            analyze_skin_patch,
             normalized_image,
             baseline_matrix=baseline_matrix,
             baseline_extraction_paths=baseline_extraction_paths,
@@ -8342,25 +8450,8 @@ async def analyze_skin(request: Request):
 
     except HTTPException:
         raise
-    except RuntimeError as e:
-        logger.error(f"Analysis runtime error: {e}")
-        message = str(e)
-        if _is_pipeline_init_error(message):
-            raise HTTPException(status_code=400, detail=_FACE_DETECTION_UNAVAILABLE_DETAIL)
-        if message in {YUNET_PRECISE_LANDMARKS_MESSAGE, YUNET_PARTIAL_FACE_MESSAGE}:
-            raise HTTPException(status_code=400, detail=message)
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Skin analysis model pipeline unavailable. "
-                f"Action: verify MediaPipe + YOLO model load. Details: {e}"
-            ),
-        )
     except Exception as e:
-        logger.error(f"Analysis error: {e}")
-        if _is_pipeline_init_error(str(e)):
-            raise HTTPException(status_code=400, detail=_FACE_DETECTION_UNAVAILABLE_DETAIL)
-        raise HTTPException(status_code=400, detail=str(e))
+        raise _analysis_http_exception(e) from None
 
 
 @app.post("/api/skin/analyze-single")
@@ -8392,8 +8483,6 @@ async def analyze_skin_single(
     gray_card_still_region: str | None = Form(None),
 ):
     try:
-        ensure_pipeline_ready()
-
         parsed_baseline_matrix = _parse_baseline_metric_matrix(baseline_metric_matrix)
         parsed_baseline_paths = _normalize_metric_extraction_paths(
             baseline_extraction_paths,
@@ -8408,39 +8497,45 @@ async def analyze_skin_single(
             baseline_capture_quality
         )
 
-        contents = await image.read()
+        contents = await _read_image_upload(image)
         if not contents:
             raise HTTPException(status_code=400, detail="Empty file attachment package received.")
-        gray_card_patch_bytes = await gray_card_image.read() if gray_card_image is not None else None
+        gray_card_patch_bytes = await _read_image_upload(gray_card_image) if gray_card_image is not None else None
+        if len(contents) + len(gray_card_patch_bytes or b"") > MAX_IMAGE_BYTES:
+            raise ImageInputLimitError("Image upload exceeds 20 MB.")
 
-        try:
-            (
-                img_bgr,
-                quality_profile,
-                pre_white_balance_image,
-            ) = _assess_and_normalize_image_with_pre_white_balance(
-                contents,
-                parse_gray_card_region(gray_card_region),
-                gray_card_patch=gray_card_patch_bytes,
-                gray_card_still_region=parse_gray_card_region(gray_card_still_region),
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail="Corrupted image encoding matrix parameters.") from exc
+        await _load_analysis_pipeline(ensure_pipeline_ready)
+        (
+            img_bgr,
+            quality_profile,
+            pre_white_balance_image,
+        ) = await asyncio.to_thread(
+            _assess_and_normalize_image_with_pre_white_balance,
+            contents,
+            parse_gray_card_region(gray_card_region),
+            gray_card_patch=gray_card_patch_bytes,
+            gray_card_still_region=parse_gray_card_region(gray_card_still_region),
+        )
 
         logger.info("/api/skin/analyze-single request matrix accepted for inference.")
 
-        validate_camera_hardware_qa(img_bgr)
+        await asyncio.to_thread(validate_camera_hardware_qa, img_bgr)
 
         baseline_image_bgr: np.ndarray | None = None
         if baseline_image is not None:
             try:
-                baseline_contents = await baseline_image.read()
+                baseline_contents = await _read_image_upload(baseline_image)
+                if len(contents) + len(gray_card_patch_bytes or b"") + len(baseline_contents) > MAX_IMAGE_BYTES:
+                    raise ImageInputLimitError("Image upload exceeds 20 MB.")
                 if baseline_contents:
-                    baseline_image_bgr = _decode_image_bytes(baseline_contents)
+                    baseline_image_bgr = await asyncio.to_thread(_decode_image_bytes, baseline_contents)
+            except ImageInputLimitError:
+                raise
             except Exception as exc:
                 logger.info("Baseline file decode skipped for SSIM guard: %s", exc)
 
-        results = analyze_skin_patch(
+        results = await asyncio.to_thread(
+            analyze_skin_patch,
             img_bgr,
             baseline_matrix=parsed_baseline_matrix,
             baseline_extraction_paths=parsed_baseline_paths,
@@ -8691,19 +8786,8 @@ async def analyze_skin_single(
 
     except HTTPException:
         raise
-    except RuntimeError as exc:
-        message = str(exc)
-        if _is_pipeline_init_error(message):
-            raise HTTPException(status_code=400, detail=_FACE_DETECTION_UNAVAILABLE_DETAIL)
-        status_code = 400 if "face" in message.lower() or "landmark" in message.lower() else 503
-        raise HTTPException(status_code=status_code, detail=message)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
-        logger.error("Single-image analysis error: %s", exc)
-        if _is_pipeline_init_error(str(exc)):
-            raise HTTPException(status_code=400, detail=_FACE_DETECTION_UNAVAILABLE_DETAIL)
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise _analysis_http_exception(exc) from None
 
 
 @app.post("/api/ai-coach")
@@ -8726,8 +8810,7 @@ async def ai_coach(request: Request):
                 unescaped = raw_text.encode("utf-8").decode("unicode_escape")
                 body = json.loads(unescaped)
             except Exception:
-                logger.exception("JSON decode failed for /api/coach")
-                logger.error("Raw body preview (first 1000 chars): %s", raw_text[:1000])
+                logger.error("JSON decode failed for /api/ai-coach")
                 raise HTTPException(
                     status_code=400,
                     detail="Could not decode request body as valid JSON format.",
@@ -8737,6 +8820,7 @@ async def ai_coach(request: Request):
             try:
                 body = json.loads(body)
             except json.JSONDecodeError:
+                logger.error("JSON decode failed for /api/ai-coach")
                 raise HTTPException(
                     status_code=400,
                     detail="Request payload parsed down to a string, not a valid object map.",
@@ -8812,12 +8896,12 @@ async def ai_coach(request: Request):
 
         # 3) Process LLM content loops through client API safely
         client = genai.Client(api_key=api_key)
-        candidate_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
         
         last_error: Exception | None = None
-        for model_name in candidate_models:
+        for model_name in COACH_MODELS:
             try:
-                response = client.models.generate_content(
+                response = await asyncio.to_thread(
+                    client.models.generate_content,
                     model=model_name,
                     contents=full_prompt,
                 )
@@ -8835,14 +8919,8 @@ async def ai_coach(request: Request):
                 last_error = model_error
                 message = str(model_error).lower()
 
-                if "api_key_invalid" in message or "api key not valid" in message:
-                    raise HTTPException(
-                        status_code=401,
-                        detail="The authentication token specified for the Gemini integration layer is invalid.",
-                    )
-
                 if "not found for api version" in message or "is not supported" in message:
-                    logger.warning("Target LLM platform fallback execution triggered for model %s: %s", model_name, message)
+                    logger.warning("%s", type(model_error).__name__)
                     continue
                 raise
 
@@ -8853,9 +8931,11 @@ async def ai_coach(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Catastrophic interception on /api/coach scope framework processing block.")
-        logger.error("Internal Traceback Context Info Dump:\n%s", traceback.format_exc())
-        raise HTTPException(status_code=502, detail=f"AI Engine extraction layer failure proxy error context: {str(e)}")
+        logger.error("%s", type(e).__name__)
+        raise HTTPException(
+            status_code=502,
+            detail="AI coach is temporarily unavailable. Try again.",
+        ) from None
 
 
 if __name__ == "__main__":

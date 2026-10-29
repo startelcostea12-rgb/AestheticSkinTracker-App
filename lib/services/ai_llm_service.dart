@@ -130,7 +130,7 @@ class AiService {
 
   /// Analyze skin photo using Google Gemini Vision with multimodal input.
   ///
-  /// Uses Gemini 2.0 Flash with vision capabilities for skin analysis.
+  /// Uses Gemini 3.8 Flash with vision capabilities for skin analysis.
   /// Requires GEMINI_API_KEY environment variable.
   Future<String> analyzeSkinWithImage({
     required File imageFile,
@@ -151,7 +151,7 @@ class AiService {
       _log('Analyzing skin photo with Gemini Vision...');
 
       final model = GenerativeModel(
-        model: 'gemini-2.0-flash-exp',
+        model: 'gemini-3.8-flash',
         apiKey: apiKey,
         systemInstruction: Content.text(systemPrompt),
       );
