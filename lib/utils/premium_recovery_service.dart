@@ -25,6 +25,65 @@ const String _futurePredictionsKey = 'premium_future_predictions';
 const String _smartRemindersKey = 'premium_smart_reminders';
 const String _voiceJournalsKey = 'premium_voice_journals';
 
+Map<String, dynamic> buildRecoveryCoachReplyContext({
+  required Procedure? procedure,
+  required int? day,
+  required Map<String, dynamic>? latestScan,
+  required String? nextMilestone,
+}) {
+  final procedureName = procedure?.type.trim().replaceAll(
+    RegExp(r'[\r\n]+'),
+    ' ',
+  );
+  final status = latestScan?['status']?.toString();
+  final rawReason = latestScan?['reason']?.toString();
+  final photoOnlyReason = switch (rawReason) {
+    'no recorded metric match' => 'no_recorded_metric_match',
+    'no photo or recorded metric match' => 'no_photo_or_recorded_metric_match',
+    _ => 'no_scan_logged',
+  };
+  final milestone = (nextMilestone ?? '').trim().replaceAll(
+    RegExp(r'[\r\n]+'),
+    ' ',
+  );
+  return <String, dynamic>{
+    'procedureName': procedureName == null || procedureName.isEmpty
+        ? null
+        : procedureName,
+    'day': procedureName == null || procedureName.isEmpty ? null : day,
+    'lastScanStatus': status == 'matched' ? 'matched' : 'photo_only',
+    'photoOnlyReason': photoOnlyReason,
+    'nextMilestone': milestone.isEmpty ? 'Nothing scheduled.' : milestone,
+  };
+}
+
+String nextSavedRecoveryMilestone(Procedure? procedure, {DateTime? now}) {
+  if (procedure == null) return 'Nothing scheduled.';
+  final today = now ?? DateTime.now();
+  final startOfToday = DateTime(today.year, today.month, today.day);
+  final appointmentDate = procedure.appointmentReminderEnabled
+      ? procedure.nextAppointmentDate
+      : null;
+  final datedItems = <({DateTime date, String label})>[
+    for (final item in procedure.timelineMilestones)
+      if (!item.expectedDate.isBefore(startOfToday))
+        (date: item.expectedDate, label: item.label),
+    for (final date in procedure.milestoneDates)
+      if (!date.isBefore(startOfToday)) (date: date, label: 'Saved milestone'),
+    if (appointmentDate != null && !appointmentDate.isBefore(startOfToday))
+      (date: appointmentDate, label: 'Appointment reminder'),
+  ]..sort((a, b) => a.date.compareTo(b.date));
+  if (datedItems.isNotEmpty) {
+    final item = datedItems.first;
+    return '${item.label} (${DateFormat('MMM d').format(item.date)})';
+  }
+  for (final reminder in procedure.customReminders) {
+    final savedReminder = reminder.trim().replaceAll(RegExp(r'[\r\n]+'), ' ');
+    if (savedReminder.isNotEmpty) return savedReminder;
+  }
+  return 'Nothing scheduled.';
+}
+
 class PremiumRecoveryService {
   static String _normalizedProcedureType(String? value) {
     final normalized = (value ?? '').trim();
@@ -553,57 +612,38 @@ class PremiumRecoveryService {
     Procedure? activeProcedure,
     List<ScanHistoryEntry>? scopedScans,
   }) async {
-    final userName = await AppPrefs.getUserName();
-    final appProcedureType = await AppPrefs.getProcedureType();
     final procedure =
         activeProcedure ?? await _resolveActiveProcedureFromPrefs();
     final scans = scopedScans ?? await _loadScansScopedToProcedure(procedure);
-    final procedures = await AppPrefs.getProcedureEntries();
-    final generalJournalEntries = await AppPrefs.getGeneralJournalEntries();
-    final procedureType = _resolveProcedureType(
-      explicit: appProcedureType,
-      activeProcedure: procedure,
-      scans: scans,
-      procedureEntries: procedures,
-    );
-    AppLogger.verbose(
-      '[PremiumRecoveryService.generateRecoveryCoachReply] resolvedProcedureType=$procedureType',
-    );
-    final journalsRaw = await AppPrefs.getString('skincare_journal_entries');
-
-    final context = _buildCoachContext(
-      procedure: procedure,
-      scans: scans,
-      procedures: procedures,
-      skincareJournalRaw: journalsRaw,
-      generalJournalEntries: generalJournalEntries,
-    );
-    final day = procedure?.startDate == null
-        ? 0
-        : (DateTime.now()
+    final today = DateTime.now();
+    final day = procedure == null
+        ? null
+        : (today
                       .difference(
                         DateTime(
-                          procedure!.startDate.year,
+                          procedure.startDate.year,
                           procedure.startDate.month,
                           procedure.startDate.day,
                         ),
                       )
                       .inDays +
                   1)
-              .clamp(1, 999);
+              .clamp(1, 999)
+              .toInt();
     final scanData = AiIntelligenceEngine.buildAiScanContext(
       scans: scans.take(5).toList(),
     );
+    final latestScan = scanData.isEmpty ? null : scanData.first;
+    final coachReplyContext = buildRecoveryCoachReplyContext(
+      procedure: procedure,
+      day: day,
+      latestScan: latestScan,
+      nextMilestone: nextSavedRecoveryMilestone(procedure),
+    );
 
     final requestBody = <String, dynamic>{
-      'prompt': question,
-      'procedure': procedureType,
-      'day': day,
-      'scanData': scanData,
-      'hasImageAttachment': hasImageAttachment,
-      'context': '${procedureType.trim()} - Day $day',
-      'userName': userName,
-      'contextSummary': context.summaryForPrompt,
+      'userPrompt': question,
+      'coachContext': coachReplyContext,
     };
 
     final endpoints = <Uri>[BackendConfig.aiCoachUri];
@@ -652,7 +692,7 @@ class PremiumRecoveryService {
             continue;
           }
 
-          return _ensureSafetyDisclaimer(reply);
+          return reply;
         } on TimeoutException {
           lastError = 'AI Recovery Coach request timed out.';
         } catch (e) {
@@ -666,23 +706,6 @@ class PremiumRecoveryService {
     } finally {
       client.close();
     }
-  }
-
-  static String _ensureSafetyDisclaimer(String text) {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) {
-      return 'This is general guidance, not a diagnosis. Please follow your surgeon\'s instructions first.';
-    }
-
-    final lower = trimmed.toLowerCase();
-    final hasGeneralGuidance = lower.contains('general guidance');
-    final hasDiagnosis = lower.contains('not a diagnosis');
-    final hasSurgeon = lower.contains('surgeon') || lower.contains('provider');
-    if (hasGeneralGuidance && hasDiagnosis && hasSurgeon) {
-      return trimmed;
-    }
-
-    return '$trimmed\n\nThis is general guidance, not a diagnosis. Please follow your surgeon\'s instructions first.';
   }
 
   static Future<Procedure?> _resolveActiveProcedureFromPrefs() async {
@@ -735,6 +758,7 @@ class PremiumRecoveryService {
     return scoped;
   }
 
+  // ignore: unused_element
   static _CoachContextSnapshot _buildCoachContext({
     required Procedure? procedure,
     required List<ScanHistoryEntry> scans,

@@ -159,8 +159,12 @@ def test_rosacea_note_does_not_recommend_vascular_calm(client, face_png):
 
 
 class _FakeModels:
+    reply_text = "coach reply"
+    last_contents = None
+
     def generate_content(self, model, contents):
-        return mock.Mock(text="coach reply")
+        type(self).last_contents = contents
+        return mock.Mock(text=type(self).reply_text)
 
 
 class _FakeGenaiClient:
@@ -187,9 +191,46 @@ def test_ai_coach_uses_server_key_not_client_key(client, monkeypatch, body):
     with mock.patch.object(main.genai, "Client", _FakeGenaiClient):
         response = client.post("/api/ai-coach", json=body)
     assert response.status_code == 200, response.text
-    assert response.json()["text"] == "coach reply"
+    assert response.json()["text"].splitlines() == [
+        "No procedure logged.",
+        "Last scan: photo only — no scan has been logged.",
+        "Nothing scheduled.",
+    ]
     assert _FakeGenaiClient.created_with == ["SERVER-KEY"]
     assert "CLIENT-KEY" not in response.text
+
+
+def test_ai_coach_reply_fixture_has_three_safe_lines_and_missing_milestone(client, monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "SERVER-KEY")
+    fixture = (
+        "Day 12 — Microneedling\n"
+        "Last scan: photo only — no scan match was recorded.\n"
+        "Nothing scheduled."
+    )
+    context = {
+        "procedureName": "Microneedling",
+        "day": 12,
+        "lastScanStatus": "photo_only",
+        "photoOnlyReason": "no_recorded_metric_match",
+        "metric_matrix": {"wrinkle_load": 12.3},
+        "lock_reasons": ["lighting_mismatch"],
+    }
+    with mock.patch.object(_FakeModels, "reply_text", fixture):
+        with mock.patch.object(main.genai, "Client", _FakeGenaiClient):
+            response = client.post(
+                "/api/ai-coach",
+                json={"userPrompt": "How is recovery going?", "coachContext": context},
+            )
+    assert response.status_code == 200, response.text
+    reply = response.json()["text"]
+    assert reply == fixture
+    assert len(reply.splitlines()) == 3
+    assert "wrinkle_load" not in reply
+    assert "12.3" not in reply
+    assert "lighting_mismatch" not in _FakeModels.last_contents
+    assert "wrinkle_load" not in _FakeModels.last_contents
+    assert "12.3" not in _FakeModels.last_contents
+    assert "Nothing scheduled." in _FakeModels.last_contents
 
 
 @pytest.mark.parametrize("body", CLIENT_KEY_BODIES)
@@ -202,3 +243,64 @@ def test_ai_coach_without_server_key_never_uses_client_key(client, monkeypatch, 
     assert response.json()["status"] == "fallback"
     assert _FakeGenaiClient.created_with == [], "client-supplied key was used"
     assert "CLIENT-KEY" not in response.text
+
+
+def test_ai_coach_reply_fixture_has_three_lines_without_metric_names_or_numbers(
+    client, monkeypatch
+):
+    monkeypatch.setenv("GEMINI_API_KEY", "SERVER-KEY")
+    fixture = (
+        "No procedure logged.\n"
+        "Last scan: photo only — no scan has been logged.\n"
+        "Nothing scheduled."
+    )
+    context = {
+        "procedureName": None,
+        "day": None,
+        "lastScanStatus": "photo_only",
+        "photoOnlyReason": "no_scan_logged",
+        "nextMilestone": None,
+        "metric_matrix": {"wrinkle_load": 82.7},
+        "trend_deltas": {"wrinkle_load": -82.7},
+        "lock_reasons": ["lighting_mismatch"],
+    }
+    monkeypatch.setattr(_FakeModels, "reply_text", fixture)
+    with mock.patch.object(main.genai, "Client", _FakeGenaiClient):
+        response = client.post(
+            "/api/ai-coach",
+            json={"userPrompt": "How am I doing?", "coachContext": context},
+        )
+
+    assert response.status_code == 200, response.text
+    reply = response.json()["text"]
+    assert reply == fixture
+    assert len(reply.splitlines()) == 3
+    assert not any(character.isdigit() for character in reply)
+    assert "wrinkle_load" not in reply
+    assert "improved" not in reply.lower()
+    assert "worsened" not in reply.lower()
+    assert "lighting_mismatch" not in _FakeModels.last_contents
+    assert "82.7" not in _FakeModels.last_contents
+
+
+def test_ai_coach_missing_milestone_uses_nothing_scheduled(client, monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    response = client.post(
+        "/api/ai-coach",
+        json={
+            "userPrompt": "What is next?",
+            "coachContext": {
+                "procedureName": "Microneedling",
+                "day": 8,
+                "lastScanStatus": "matched",
+                "nextMilestone": None,
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["text"].splitlines() == [
+        "Day 8 — Microneedling",
+        "Last scan: matched.",
+        "Nothing scheduled.",
+    ]

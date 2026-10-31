@@ -41,6 +41,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 COACH_MODELS = ("gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash")
+COACH_SYSTEM_PROMPT = """Return exactly three short lines, with no heading, bullets, blank lines, or extra text.
+Line 1: use the supplied procedure name and day, or write exactly "No procedure logged.".
+Line 2: write exactly "Last scan: matched." for a matched scan, or "Last scan: photo only — <plain-language reason>." for a photo-only scan. No metric names, scores, numbers, deltas, "improved", or "worsened" on this line. Never interpret a lock reason as a statement about skin or as advice.
+Line 3: repeat the next saved milestone or reminder supplied in context, or write exactly "Nothing scheduled.".
+Use only supplied saved context. Never invent a skin change, milestone, or reminder. Never recommend products; no saved product log is supplied."""
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_IMAGE_EDGE = 12000
 MAX_IMAGE_PIXELS = 60_000_000
@@ -8000,6 +8005,49 @@ def _analysis_http_exception(error: Exception) -> HTTPException:
     return HTTPException(status_code=status_code, detail=ANALYSIS_UNAVAILABLE_DETAIL)
 
 
+def _coach_reply_lines(raw_context: Any) -> list[str]:
+    context = raw_context if isinstance(raw_context, dict) else {}
+
+    def single_line(value: Any) -> str:
+        return " ".join(str(value or "").split())
+
+    procedure_name = single_line(context.get("procedureName"))
+    try:
+        day = int(context.get("day"))
+    except (TypeError, ValueError):
+        day = None
+    procedure_line = (
+        f"Day {day} — {procedure_name}"
+        if procedure_name and day is not None
+        else "No procedure logged."
+    )
+
+    if context.get("lastScanStatus") == "matched":
+        scan_line = "Last scan: matched."
+    else:
+        reasons = {
+            "no_recorded_metric_match": "no scan match was recorded",
+            "no_photo_or_recorded_metric_match": "no scan photo or match was recorded",
+            "no_scan_logged": "no scan has been logged",
+        }
+        reason = reasons.get(
+            context.get("photoOnlyReason"),
+            "no scan has been logged",
+        )
+        scan_line = f"Last scan: photo only — {reason}."
+
+    milestone = single_line(context.get("nextMilestone")) or "Nothing scheduled."
+    return [procedure_line, scan_line, milestone]
+
+
+def _coach_response_text(model_text: Any, reply_lines: list[str]) -> str:
+    candidate = str(model_text or "").strip().splitlines()
+    candidate = [line.strip() for line in candidate if line.strip()]
+    if candidate == reply_lines:
+        return "\n".join(candidate)
+    return "\n".join(reply_lines)
+
+
 def _decode_image_bytes(raw: bytes) -> np.ndarray:
     _check_image_bytes(raw)
     try:
@@ -8886,10 +8934,12 @@ async def ai_coach(request: Request):
             return default
 
         # Extract system & user string markers securely
-        system_prompt = str(_pick("systemPrompt", "system_prompt", "system", "instructions", default="")).strip()
         user_prompt = str(_pick("userPrompt", "user_prompt", "prompt", "query", "message", default="")).strip()
+        reply_lines = _coach_reply_lines(
+            _pick("coachContext", "coach_context", default={})
+        )
 
-        if not system_prompt and not user_prompt:
+        if not user_prompt:
             raise HTTPException(status_code=400, detail="Either systemPrompt or userPrompt data is required.")
 
         # Resolve authentication key safely. Only the server's GEMINI_API_KEY
@@ -8897,11 +8947,7 @@ async def ai_coach(request: Request):
         api_key = os.getenv("GEMINI_API_KEY", "").strip()
         if not api_key:
             logger.warning("/api/ai-coach fallback: GEMINI_API_KEY missing; returning non-LLM guidance response")
-            fallback_text = (
-                "AI coach is running in fallback mode because GEMINI_API_KEY is not configured. "
-                "You can still continue tracking scans and trends. "
-                "To enable live AI responses, set GEMINI_API_KEY and restart the backend."
-            )
+            fallback_text = "\n".join(reply_lines)
             return {
                 "text": fallback_text,
                 "modelUsed": "fallback-no-key",
@@ -8911,10 +8957,10 @@ async def ai_coach(request: Request):
 
         # Combine payload context explicitly
         full_prompt = (
-            "SYSTEM INSTRUCTIONS:\n"
-            f"{system_prompt}\n\n"
-            "USER REQUEST:\n"
-            f"{user_prompt}"
+            f"SYSTEM INSTRUCTIONS:\n{COACH_SYSTEM_PROMPT}\n\n"
+            "SAVED REPLY CONTEXT (repeat these exact three lines):\n"
+            f"{chr(10).join(reply_lines)}\n\n"
+            f"USER REQUEST:\n{user_prompt}"
         ).strip()
 
         # 3) Process LLM content loops through client API safely
@@ -8928,9 +8974,7 @@ async def ai_coach(request: Request):
                     model=model_name,
                     contents=full_prompt,
                 )
-                text = (response.text or "").strip()
-                if not text:
-                    raise ValueError("Target model execution returned empty string value object.")
+                text = _coach_response_text(response.text, reply_lines)
 
                 return {
                     "text": text,

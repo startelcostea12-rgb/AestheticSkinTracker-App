@@ -53,4 +53,36 @@ void main() {
 
     expect(scoped, isEmpty);
   });
+
+  test('coach reply context excludes metric values and lock reasons', () {
+    final context = buildRecoveryCoachReplyContext(
+      procedure: _procedure(),
+      day: 12,
+      latestScan: const {
+        'status': 'photo_only',
+        'reason': 'no recorded metric match',
+        'metric_matrix': {'wrinkle_load': 12.3},
+        'lock_reasons': ['lighting_mismatch'],
+      },
+      nextMilestone: null,
+    );
+    final serialized = jsonEncode(context);
+
+    expect(context['nextMilestone'], 'Nothing scheduled.');
+    expect(context['lastScanStatus'], 'photo_only');
+    expect(serialized, isNot(contains('wrinkle_load')));
+    expect(serialized, isNot(contains('12.3')));
+    expect(serialized, isNot(contains('lighting_mismatch')));
+  });
+
+  test(
+    'no saved milestone or reminder uses the Nothing scheduled sentinel',
+    () {
+      expect(nextSavedRecoveryMilestone(null), 'Nothing scheduled.');
+      expect(
+        nextSavedRecoveryMilestone(_procedure(), now: DateTime(2026, 9, 29)),
+        'Nothing scheduled.',
+      );
+    },
+  );
 }
