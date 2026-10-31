@@ -41,11 +41,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 COACH_MODELS = ("gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash")
-COACH_SYSTEM_PROMPT = """Return exactly three short lines, with no heading, bullets, blank lines, or extra text.
+COACH_SYSTEM_PROMPT = """Return the three saved-context lines exactly as supplied, each on one short line.
 Line 1: use the supplied procedure name and day, or write exactly "No procedure logged.".
 Line 2: write exactly "Last scan: matched." for a matched scan, or "Last scan: photo only — <plain-language reason>." for a photo-only scan. No metric names, scores, numbers, deltas, "improved", or "worsened" on this line. Never interpret a lock reason as a statement about skin or as advice.
 Line 3: repeat the next saved milestone or reminder supplied in context, or write exactly "Nothing scheduled.".
-Use only supplied saved context. Never invent a skin change, milestone, or reminder. Never recommend products; no saved product log is supplied."""
+If the user question is empty, output only those three lines. Otherwise append exactly one short sentence on line 4 answering the question. The answer must contain no metric names, scores, numbers, deltas, or the words improved/worsened. Do not claim or infer any skin change. Never recommend a product; no product log is supplied. If the question cannot be answered without inventing a skin change or recommending a product, say "I can't tell from the saved details." Use no other unsupplied facts."""
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_IMAGE_EDGE = 12000
 MAX_IMAGE_PIXELS = 60_000_000
@@ -8040,12 +8040,51 @@ def _coach_reply_lines(raw_context: Any) -> list[str]:
     return [procedure_line, scan_line, milestone]
 
 
-def _coach_response_text(model_text: Any, reply_lines: list[str]) -> str:
+def _coach_answer_is_safe(answer: str) -> bool:
+    text = answer.strip()
+    lower = text.lower()
+    if not text or len(text) > 180 or any(character.isdigit() for character in text):
+        return False
+    if any(character in text for character in "\r\n%"):
+        return False
+    if any(character in text[:-1] for character in ".!?"):
+        return False
+    banned_terms = (
+        "localized_redness", "texture_smoothness", "pigment_load",
+        "pore_visibility", "wrinkle_load", "breakout_activity",
+        "sebum_excess_oil_gloss", "diffuse_flushing_erythema",
+        "skin_tone_radiance_evenness", "glabellar_wrinkle_depth",
+        "under_eye", "rosacea_severity", "firmness_elasticity",
+        "lighting_mismatch", "resolution_mismatch", "formula_version_mismatch",
+        "improved", "worsened", "delta", "score", "percentage", "percent",
+        "product", "brand", "buy", "purchase", "recommend", "try ",
+        "concealer", "foundation", "mascara", "primer", "lipstick", "blush",
+        "powder", "serum", "moisturizer", "moisturiser", "cleanser", "sunscreen",
+        "spf", "skin", "face", "complexion", "redness", "swelling", "healing",
+        "irritation", "inflammation", "rash", "acne", "breakout", "dryness",
+        "oiliness", "symptom", "changed", "change", "calmer", "better", "worse",
+    )
+    return not any(term in lower for term in banned_terms)
+
+
+def _coach_response_text(
+    model_text: Any,
+    reply_lines: list[str],
+    user_prompt: str,
+) -> str:
+    if not user_prompt.strip():
+        return "\n".join(reply_lines)
+
     candidate = str(model_text or "").strip().splitlines()
     candidate = [line.strip() for line in candidate if line.strip()]
-    if candidate == reply_lines:
-        return "\n".join(candidate)
-    return "\n".join(reply_lines)
+    answer = "I can't tell from the saved details."
+    if (
+        len(candidate) == 4
+        and candidate[:3] == reply_lines
+        and _coach_answer_is_safe(candidate[3])
+    ):
+        answer = candidate[3]
+    return "\n".join([*reply_lines, answer])
 
 
 def _decode_image_bytes(raw: bytes) -> np.ndarray:
@@ -8939,15 +8978,12 @@ async def ai_coach(request: Request):
             _pick("coachContext", "coach_context", default={})
         )
 
-        if not user_prompt:
-            raise HTTPException(status_code=400, detail="Either systemPrompt or userPrompt data is required.")
-
         # Resolve authentication key safely. Only the server's GEMINI_API_KEY
         # is used; any key supplied in the request body is ignored.
         api_key = os.getenv("GEMINI_API_KEY", "").strip()
         if not api_key:
             logger.warning("/api/ai-coach fallback: GEMINI_API_KEY missing; returning non-LLM guidance response")
-            fallback_text = "\n".join(reply_lines)
+            fallback_text = _coach_response_text(None, reply_lines, user_prompt)
             return {
                 "text": fallback_text,
                 "modelUsed": "fallback-no-key",
@@ -8974,7 +9010,7 @@ async def ai_coach(request: Request):
                     model=model_name,
                     contents=full_prompt,
                 )
-                text = _coach_response_text(response.text, reply_lines)
+                text = _coach_response_text(response.text, reply_lines, user_prompt)
 
                 return {
                     "text": text,
