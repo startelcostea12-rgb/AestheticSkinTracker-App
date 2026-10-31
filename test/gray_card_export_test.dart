@@ -91,7 +91,7 @@ void main() {
     (passed: 4, read: 5, status: 'partial'),
     (passed: 5, read: 5, status: 'applied'),
     (passed: 0, read: 5, status: 'rejected'),
-    (passed: 1, read: 1, status: 'applied'),
+    (passed: 1, read: 1, status: 'partial'),
   ]) {
     test(
       '${scenario.passed} of ${scenario.read} card readings: ${scenario.status}',
@@ -127,9 +127,10 @@ void main() {
         final payload = aggregate.response;
         final quality = payload['image_quality'] as Map<String, dynamic>;
         expect(quality['gray_card_status'], scenario.status);
-        expect(quality['gray_card_frames_applied'], scenario.passed);
+        final appliedFrames = scenario.status == 'applied' ? 5 : 0;
+        expect(quality['gray_card_frames_applied'], appliedFrames);
         expect(quality['gray_card_frames_read'], scenario.read);
-        expect(quality['gray_card_frames_required'], scenario.read);
+        expect(quality['gray_card_frames_required'], 5);
         final applied = scenario.status == 'applied';
         expect(quality['gray_card_correction_applied'], applied);
         expect(quality['gray_card_retake_recommended'], !applied);
@@ -140,9 +141,11 @@ void main() {
           scenario.status,
         );
         final retriedWithoutCard =
-            scenario.passed > 0 && scenario.passed * 2 <= scenario.read;
+            scenario.passed > 0 && scenario.status != 'applied';
         if (retriedWithoutCard) {
-          expect(retries, [1, 2, 3, 4, 5]);
+          expect(retries, [
+            for (var index = 0; index < scenario.read; index++) index + 1,
+          ]);
           expect(payload['preprocessed_pixels'], frames.first.toList());
           expect((payload['metric_matrix'] as Map)['localized_redness'], 10);
           expect(
@@ -187,15 +190,9 @@ void main() {
           ], registryBaselineScanIds: const {}),
         ).single;
         expect(row['image_quality.gray_card_status'], scenario.status);
-        expect(
-          row['image_quality.gray_card_frames_applied'],
-          '${scenario.passed}',
-        );
+        expect(row['image_quality.gray_card_frames_applied'], '$appliedFrames');
         expect(row['image_quality.gray_card_frames_read'], '${scenario.read}');
-        expect(
-          row['image_quality.gray_card_frames_required'],
-          '${scenario.read}',
-        );
+        expect(row['image_quality.gray_card_frames_required'], '5');
         expect(row['image_quality.gray_card_baseline_eligible'], '$applied');
       },
     );
@@ -330,8 +327,9 @@ void main() {
   });
 
   test(
-    'failed upload counts against full card use without changing metrics or retries',
+    'a failed fifth upload retries successful frames without the card',
     () async {
+      final retries = <int>[];
       final aggregate = await analyzeBackendFrames(
         [for (var index = 0; index < 5; index++) Uint8List(1)],
         photoUploadAccepted: true,
@@ -339,18 +337,47 @@ void main() {
           if (number == 5) throw StateError('upload failed');
           return _frame(marked: true, applied: true, redness: 20);
         },
-        uploadFrameWithoutGrayCard: (_, _) async =>
-            throw StateError('unexpected retry'),
+        uploadFrameWithoutGrayCard: (frame, number) async {
+          retries.add(number);
+          return _frame(marked: false, redness: 10)
+            ..['preprocessed_pixels'] = frame.toList();
+        },
       );
+      expect(retries, [1, 2, 3, 4]);
       expect(aggregate.response['gray_card_status'], 'partial');
-      expect(aggregate.response['gray_card_frames_applied'], 4);
+      expect(aggregate.response['gray_card_correction_applied'], isFalse);
+      expect(aggregate.response['gray_card_frames_applied'], 0);
       expect(aggregate.response['gray_card_frames_required'], 5);
       expect(
         (aggregate.response['metric_matrix'] as Map)['localized_redness'],
-        20,
+        10,
       );
     },
   );
+
+  test('an unmarked burst stays not_marked and is never retried', () async {
+    final frames = [
+      for (var index = 0; index < 5; index++) Uint8List.fromList([index + 1]),
+    ];
+    final retries = <int>[];
+    final aggregate = await analyzeBackendFrames(
+      frames,
+      photoUploadAccepted: true,
+      uploadFrame: (frame, _) async =>
+          _frame(marked: false)..['preprocessed_pixels'] = frame.toList(),
+      uploadFrameWithoutGrayCard: (_, number) async {
+        retries.add(number);
+        return <String, dynamic>{};
+      },
+    );
+    final quality = aggregate.response['image_quality'] as Map;
+    expect(retries, isEmpty);
+    expect(quality['gray_card_status'], 'not_marked');
+    expect(quality['gray_card_correction_applied'], isFalse);
+    expect(quality['gray_card_frames_applied'], 0);
+    expect(quality['gray_card_baseline_eligible'], isTrue);
+    expect(aggregate.response['preprocessed_pixels'], [1]);
+  });
 
   test('aggregate and export: scan summary and per-frame columns', () {
     final aggregate = averageBackendAnalysisFrames([

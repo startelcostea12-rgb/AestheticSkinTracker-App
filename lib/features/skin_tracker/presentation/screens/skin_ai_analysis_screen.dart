@@ -370,24 +370,30 @@ String? aiBaselineRejectionReason(ScanHistoryEntry scan) {
   }
   final payload = scan.rawPayload ?? const <String, dynamic>{};
   final cardQuality = _dynamicMap(payload['image_quality']);
-  final cardMarked = cardQuality['gray_card_marked'] == true ||
+  final cardMarked =
+      cardQuality['gray_card_marked'] == true ||
       payload['gray_card_marked'] == true;
   if (cardMarked) {
-    final cardStatus = (cardQuality['gray_card_status'] ??
-            payload['gray_card_status'] ?? '')
-        .toString();
-    final framesApplied = _parseFiniteDouble(
+    final cardStatus =
+        (cardQuality['gray_card_status'] ?? payload['gray_card_status'] ?? '')
+            .toString();
+    final framesApplied =
+        _parseFiniteDouble(
           cardQuality['gray_card_frames_applied'] ??
               payload['gray_card_frames_applied'],
         ) ??
         0;
-    final framesRequired = _parseFiniteDouble(
+    final framesRequired =
+        _parseFiniteDouble(
           _dynamicMap(payload['multi_frame_analysis'])['requested_frames'],
         ) ??
-        _parseFiniteDouble(cardQuality['gray_card_frames_required'] ??
-            payload['gray_card_frames_required']) ??
+        _parseFiniteDouble(
+          cardQuality['gray_card_frames_required'] ??
+              payload['gray_card_frames_required'],
+        ) ??
         (payload['scan_mode'] == 'quick' ? 1 : aiScanCaptureFrameCount);
-    final correctionApplied = cardQuality['gray_card_correction_applied'] ??
+    final correctionApplied =
+        cardQuality['gray_card_correction_applied'] ??
         payload['gray_card_correction_applied'];
     if (cardStatus.startsWith('rejected') ||
         correctionApplied != true ||
@@ -649,6 +655,7 @@ double _medianOf(List<double> values) {
 MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
   List<Map<String, dynamic>> responses, {
   required int requestedFrames,
+  int? requiredGrayCardFrames,
   List<int>? frameNumbers,
 }) {
   final samples = <String, List<double>>{};
@@ -962,7 +969,7 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
   response['metrics'] = metricsNode;
   final grayCardSummary = summarizeGrayCardFrames(
     successfulResponses,
-    requiredFrames: requestedFrames,
+    requiredFrames: requiredGrayCardFrames ?? requestedFrames,
   );
   if (grayCardSummary.isNotEmpty) {
     final firstQuality = _dynamicMap(first['image_quality']).isNotEmpty
@@ -2315,15 +2322,14 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
   }
   final grayCardSummary = summarizeGrayCardFrames(
     responses,
-    requiredFrames: frames.length,
+    requiredFrames: aiScanCaptureFrameCount,
   );
   final cardFramesApplied =
       grayCardSummary['gray_card_frames_applied'] as int? ?? 0;
-  final cardFramesRead = grayCardSummary['gray_card_frames_read'] as int? ?? 0;
-  final retryWithoutCard =
-      grayCardSummary['gray_card_marked'] == true &&
-      cardFramesApplied > 0 &&
-      cardFramesApplied * 2 <= cardFramesRead;
+  final cardWasMarked = grayCardSummary['gray_card_marked'] == true;
+  final cardAppliedToEveryFrame =
+      cardWasMarked && cardFramesApplied == aiScanCaptureFrameCount;
+  final retryWithoutCard = cardFramesApplied > 0 && !cardAppliedToEveryFrame;
   if (retryWithoutCard) {
     if (uploadFrameWithoutGrayCard == null) {
       throw StateError(
@@ -2339,11 +2345,17 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
     responses
       ..clear()
       ..addAll(uncorrected);
+    grayCardSummary
+      ..['gray_card_correction_applied'] = false
+      ..['gray_card_frames_applied'] = 0
+      ..['gray_card_retake_recommended'] = true
+      ..['gray_card_baseline_eligible'] = false;
   }
   try {
     final aggregate = averageBackendAnalysisFrames(
       responses,
       requestedFrames: frames.length,
+      requiredGrayCardFrames: aiScanCaptureFrameCount,
       frameNumbers: responseFrameNumbers,
     );
     if (grayCardSummary.isNotEmpty) {
@@ -3967,7 +3979,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         averagedMetricMatrix: _dynamicMap(backendResponse['metric_matrix']),
         baselineMetricMatrix: baselineMetricMatrixForTrend ?? const {},
         metricFrameValues: _dynamicMap(
-          _dynamicMap(backendResponse['multi_frame_analysis'])['metric_frame_values'],
+          _dynamicMap(
+            backendResponse['multi_frame_analysis'],
+          )['metric_frame_values'],
         ),
       );
       final unlockedVerdictsOnly = clearLockedTrendVerdicts(
