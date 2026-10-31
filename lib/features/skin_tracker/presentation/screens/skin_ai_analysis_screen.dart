@@ -659,6 +659,10 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
   final sampleFrameIndices = <String, List<int>>{};
   final confidenceSamples = <String, List<Object>>{};
   final successfulResponses = <Map<String, dynamic>>[];
+  final nonBlurryStandardFrameNumbers = <int>{};
+  final blurryStandardFrameNumbers = <int>{};
+  final seenMetricKeys = <String>{};
+  var hasBlurryFrame = false;
 
   Object? confidenceForMetric(
     Map<String, dynamic> response,
@@ -688,9 +692,22 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
         ? frameNumbers[responseIndex]
         : responseIndex + 1;
     final metricsNode = _dynamicMap(response['metrics']);
+    final imageQuality = _dynamicMap(response['image_quality']).isNotEmpty
+        ? _dynamicMap(response['image_quality'])
+        : _dynamicMap(metricsNode['image_quality']);
+    final frameIsBlurry = imageQuality['image_blurry'] == true;
+    if (frameIsBlurry) {
+      hasBlurryFrame = true;
+      if (frameNumber <= standardMetricFrameCount) {
+        blurryStandardFrameNumbers.add(frameNumber);
+      }
+    } else if (frameNumber <= standardMetricFrameCount) {
+      nonBlurryStandardFrameNumbers.add(frameNumber);
+    }
     final matrix = _dynamicMap(response['metric_matrix']).isNotEmpty
         ? _dynamicMap(response['metric_matrix'])
         : _dynamicMap(metricsNode['metric_matrix']);
+    seenMetricKeys.addAll(matrix.keys);
     if (matrix.isEmpty) continue;
     final frameMetrics = <String, double>{};
     for (final entry in matrix.entries) {
@@ -699,6 +716,7 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
           ? value.toDouble()
           : double.tryParse(value?.toString() ?? '');
       if (numeric == null || !numeric.isFinite) continue;
+      if (frameIsBlurry) continue;
       // Standard metrics keep the three-frame path: frames 4+ only feed
       // fiveFrameMedianMetricKeys.
       if (frameNumber > standardMetricFrameCount &&
@@ -722,7 +740,9 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     }
   }
 
-  if (successfulResponses.isEmpty || samples.isEmpty) {
+  if (responses.isEmpty ||
+      (successfulResponses.isEmpty && !hasBlurryFrame) ||
+      (samples.isEmpty && !hasBlurryFrame)) {
     throw StateError('No captured frame produced usable backend metrics.');
   }
 
@@ -730,14 +750,25 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
   final contributorCounts = <String, int>{};
   final metricRanges = <String, Map<String, num>>{};
   final fiveFrameMedianOmitted = <String>[];
+  final expectedStandardFrames = math.min(
+    requestedFrames,
+    standardMetricFrameCount,
+  );
+  final omitMeanMetrics =
+      blurryStandardFrameNumbers.isNotEmpty &&
+      nonBlurryStandardFrameNumbers.length < expectedStandardFrames;
   for (final entry in samples.entries) {
     if (fiveFrameMedianMetricKeys.contains(entry.key)) {
       // Median of five; omitted unless all five frames produced a value.
       if (entry.value.length < aiScanCaptureFrameCount) {
-        fiveFrameMedianOmitted.add(entry.key);
+        if (!fiveFrameMedianOmitted.contains(entry.key)) {
+          fiveFrameMedianOmitted.add(entry.key);
+        }
         continue;
       }
       averagedMatrix[entry.key] = _medianOf(entry.value);
+    } else if (omitMeanMetrics) {
+      continue;
     } else {
       averagedMatrix[entry.key] =
           entry.value.reduce((a, b) => a + b) / entry.value.length;
@@ -880,10 +911,33 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     resolvedExtractionPaths[key] = 'skipped';
   }
 
-  final first = successfulResponses.first;
+  if (hasBlurryFrame) {
+    for (final key in seenMetricKeys) {
+      if (fiveFrameMedianMetricKeys.contains(key) &&
+          (samples[key]?.length ?? 0) < aiScanCaptureFrameCount &&
+          !fiveFrameMedianOmitted.contains(key)) {
+        fiveFrameMedianOmitted.add(key);
+      }
+    }
+  }
+
+  final first = successfulResponses.isNotEmpty
+      ? successfulResponses.first
+      : responses.first;
   final response = Map<String, dynamic>.from(first);
   final metricsNode = Map<String, dynamic>.from(_dynamicMap(first['metrics']));
-  for (final key in fiveFrameMedianOmitted) {
+  final omittedMetricKeys = <String>{...fiveFrameMedianOmitted};
+  if (omitMeanMetrics) {
+    omittedMetricKeys.addAll(
+      seenMetricKeys.where((key) => !fiveFrameMedianMetricKeys.contains(key)),
+    );
+  }
+  if (hasBlurryFrame) {
+    omittedMetricKeys.addAll(
+      seenMetricKeys.where((key) => !averagedMatrix.containsKey(key)),
+    );
+  }
+  for (final key in omittedMetricKeys) {
     response.remove(key);
     metricsNode.remove(key);
   }

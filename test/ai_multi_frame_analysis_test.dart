@@ -5,13 +5,134 @@ import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screen
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import 'package:aesthetic_skin_tracker/models/ai_scan_frame_exposure.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
+import 'package:aesthetic_skin_tracker/services/skin_history_repository.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_scan_data_csv_exporter.dart';
 import 'package:aesthetic_skin_tracker/utils/trend_lock_reason.dart';
 import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  Map<String, dynamic> _frameMetrics({
+    required int number,
+    required double meanValue,
+    required double medianValue,
+    bool blurry = false,
+  }) => {
+    'metric_matrix': {
+      'texture_smoothness': meanValue,
+      'wrinkle_load': medianValue,
+    },
+    'metric_formula_versions': {'texture_smoothness': 5, 'wrinkle_load': 5},
+    'image_quality': {'image_blurry': blurry},
+  };
+
+  test('clean mean and median values are unchanged', () {
+    final frames = [
+      for (var index = 0; index < 5; index++)
+        _frameMetrics(
+          number: index + 1,
+          meanValue: (index + 1) * 10.0,
+          medianValue: [10.0, 40.0, 20.0, 50.0, 30.0][index],
+        ),
+    ];
+    final aggregate = averageBackendAnalysisFrames(
+      frames,
+      requestedFrames: 5,
+      frameNumbers: [1, 2, 3, 4, 5],
+    );
+    final matrix = aggregate.response['metric_matrix'] as Map;
+    expect(matrix['texture_smoothness'], 20.0);
+    expect(matrix['wrinkle_load'], 30.0);
+    expect(aggregate.response['metric_formula_versions'], {
+      'texture_smoothness': 5,
+      'wrinkle_load': 5,
+    });
+  });
+
+  test('a blurry standard frame omits the mean instead of averaging two', () {
+    final frames = [
+      _frameMetrics(number: 1, meanValue: 10, medianValue: 10),
+      _frameMetrics(number: 2, meanValue: 1000, medianValue: 40, blurry: true),
+      _frameMetrics(number: 3, meanValue: 30, medianValue: 20),
+      _frameMetrics(number: 4, meanValue: 4000, medianValue: 50),
+      _frameMetrics(number: 5, meanValue: 5000, medianValue: 30),
+    ];
+    final aggregate = averageBackendAnalysisFrames(
+      frames,
+      requestedFrames: 5,
+      frameNumbers: [1, 2, 3, 4, 5],
+    );
+    final matrix = aggregate.response['metric_matrix'] as Map;
+    expect(matrix.containsKey('texture_smoothness'), isFalse);
+    expect(matrix.containsKey('wrinkle_load'), isFalse);
+    expect(
+      (aggregate.response['metrics'] as Map).containsKey('texture_smoothness'),
+      isFalse,
+    );
+  });
+
+  test('a blurry median frame omits only that five-frame median', () {
+    final frames = [
+      _frameMetrics(number: 1, meanValue: 10, medianValue: 10),
+      _frameMetrics(number: 2, meanValue: 20, medianValue: 40),
+      _frameMetrics(number: 3, meanValue: 30, medianValue: 20),
+      _frameMetrics(number: 4, meanValue: 4000, medianValue: 50, blurry: true),
+      _frameMetrics(number: 5, meanValue: 5000, medianValue: 30),
+    ];
+    final aggregate = averageBackendAnalysisFrames(
+      frames,
+      requestedFrames: 5,
+      frameNumbers: [1, 2, 3, 4, 5],
+    );
+    final matrix = aggregate.response['metric_matrix'] as Map;
+    expect(matrix['texture_smoothness'], 20.0);
+    expect(matrix.containsKey('wrinkle_load'), isFalse);
+    expect(
+      aggregate.response['multi_frame_analysis']['five_frame_median_omitted'],
+      ['wrinkle_load'],
+    );
+  });
+
+  test(
+    'blurry frames retain diagnostics and the scan can still be saved',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final frames = [
+        _frameMetrics(number: 1, meanValue: 10, medianValue: 10),
+        _frameMetrics(number: 2, meanValue: 20, medianValue: 40, blurry: true),
+        _frameMetrics(number: 3, meanValue: 30, medianValue: 20),
+        _frameMetrics(number: 4, meanValue: 40, medianValue: 50),
+        _frameMetrics(number: 5, meanValue: 50, medianValue: 30),
+      ];
+      final aggregate = await analyzeBackendFrames(
+        [
+          for (var index = 0; index < 5; index++) Uint8List.fromList([index]),
+        ],
+        photoUploadAccepted: true,
+        uploadFrame: (_, number) async => frames[number - 1],
+      );
+      final diagnostics =
+          aggregate.response[aiScanPerFrameDiagnosticsKey] as List;
+      expect(diagnostics, hasLength(5));
+      expect(diagnostics[1]['frame_number'], 2);
+      final saved = await SkinHistoryRepository.instance.saveScan(
+        metrics: const <String, double>{},
+        poseTemplate: 'Front',
+        guideType: 'facial',
+        captureQuality: 'normal',
+        rawPayload: aggregate.response,
+      );
+      final reloaded = await SkinHistoryRepository.instance.getAllScans();
+      expect(reloaded.any((scan) => scan.id == saved.id), isTrue);
+      expect(saved.rawPayload![aiScanPerFrameDiagnosticsKey], hasLength(5));
+      expect(saved.rawPayload!['metric_matrix'], isEmpty);
+    },
+  );
+
   test('measured breakout zero counts but a missing value does not', () {
     for (final missing in [false, true]) {
       final aggregate = averageBackendAnalysisFrames([
