@@ -181,7 +181,7 @@ void main() {
         trendLockReasons: <String, String>{},
         averagedMetricMatrix: {'pigment_load': 10.0},
         baselineMetricMatrix: {'pigment_load': 5.0},
-        metricNoiseFloor2sd: {'pigment_load': 2.0},
+        metricNoiseFloor2sd: {'pigment_load': 3.0},
         trendNoiseFloorExceedsUsefulRange: const <String>{},
         trendNoiseFloorExcludedMultiplier: 3.0,
       );

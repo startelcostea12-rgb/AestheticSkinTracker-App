@@ -982,9 +982,9 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
                 "under_eye_dark_circle_density": 14.1,
                 "under_eye_texture_density": 6.0,
                 "structural_firmness_elasticity": 5.0,
-                "pigment_load": 2.0,
-                "skin_tone_radiance_evenness": 1.1,
-                "pore_visibility": 1.0,
+                "pigment_load": 3.0,
+                "skin_tone_radiance_evenness": 4.0,
+                "pore_visibility": 3.0,
                 "breakout_activity": 13.1,
                 "sebum_excess_oil_gloss": 4.0,
                 "diffuse_flushing_erythema": 2.0,
@@ -1015,7 +1015,7 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
         self.assertEqual(delta, 0.0)
 
     def test_at_or_above_floor_delta_still_requires_the_honesty_band(self) -> None:
-        # pigment_load's floor is 2.0. A 3-point move clears the floor but
+        # pigment_load's floor is 3.0. A 3-point move reaches the floor but
         # is only a 3.3% relative move on a baseline of 90 -- the existing
         # 8% relative band must still be able to hold this to stable. The
         # noise floor is an additional requirement, not a replacement.

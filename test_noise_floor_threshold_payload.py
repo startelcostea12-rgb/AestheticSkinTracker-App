@@ -21,6 +21,7 @@ intact) is caught.
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -29,6 +30,48 @@ import main
 REPO_ROOT = Path(__file__).resolve().parent
 CLEAR_FACE_PHOTO = REPO_ROOT / "test_fixtures" / "metric_regression" / "clear_face.jfif"
 MAIN_PY = REPO_ROOT / "main.py"
+
+
+def test_shared_noise_floors_match_across_production_maps():
+    def dart_map(relative_path, name):
+        source = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+        match = re.search(
+            rf"\b{name}\s*=\s*<String,\s*double>\s*(\{{.*?\}});",
+            source,
+            re.DOTALL,
+        )
+        assert match is not None, f"Missing production map: {name}"
+        return ast.literal_eval(match.group(1))
+
+    measured = dart_map(
+        "lib/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart",
+        "measuredStableNoiseFloors",
+    )
+    display = dart_map("lib/utils/display_noise_floors.dart", "displayVerdictNoiseFloors")
+    expected = {
+        "texture_smoothness": 5.4,
+        "glabellar_wrinkle_depth": 6.4,
+        "pigment_load": 3.0,
+        "skin_tone_radiance_evenness": 4.0,
+        "pore_visibility": 3.0,
+    }
+    assert set(measured) == {
+        "texture_smoothness", "pigment_load", "skin_tone_radiance_evenness",
+        "pore_visibility", "structural_firmness_elasticity",
+    }
+    assert set(display) == set(expected) | {
+        "structural_firmness_elasticity", "sebum_excess_oil_gloss",
+        "diffuse_flushing_erythema",
+    }
+    maps = {
+        "backend": main.METRIC_NOISE_FLOOR_2SD,
+        "measured": measured,
+        "display": display,
+    }
+    for key, floor in expected.items():
+        copies = {name: values[key] for name, values in maps.items() if key in values}
+        assert len(copies) >= 2, (key, copies)
+        assert all(value == floor for value in copies.values()), (key, copies)
 
 
 def test_response_payload_echoes_the_noise_floor_thresholds_exactly():

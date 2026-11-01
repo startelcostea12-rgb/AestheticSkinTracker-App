@@ -331,10 +331,7 @@ void main() {
       ),
       findsNothing,
     );
-    expect(
-      find.textContaining('Face Shape Stability: Stable'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Face Shape Stability: Stable'), findsOneWidget);
   });
 
   testWidgets('stable locked firmness remains not comparable', (tester) async {
@@ -414,14 +411,14 @@ void main() {
     (tester) async {
       final payload = basePayload(
         baseline: 8.0,
-        current: 10.0,
+        current: 12.0,
         metricKey: 'pore_visibility',
         trendStatus: {'pore_visibility': 'worsened'},
-        trendDeltas: {'pore_visibility': 25.0},
+        trendDeltas: {'pore_visibility': 50.0},
         metricRanges: {
-          'pore_visibility': {'min': 8.5, 'max': 11.5, 'count': 3},
+          'pore_visibility': {'min': 10.5, 'max': 13.5, 'count': 3},
         },
-        metricNoiseFloors: {'pore_visibility': 1.0},
+        metricNoiseFloors: {'pore_visibility': 3.0},
       );
       await tester.pumpWidget(harness(payload));
       await tester.pumpAndSettle();
@@ -447,15 +444,15 @@ void main() {
   ) async {
     final payload = basePayload(
       baseline: 8.0,
-      current: 10.0,
+      current: 12.0,
       metricKey: 'pore_visibility',
       trendStatus: {'pore_visibility': 'stable'},
       trendDeltas: {'pore_visibility': 0.0},
       trendLockReasons: {'pore_visibility': 'lighting_mismatch'},
       metricRanges: {
-        'pore_visibility': {'min': 8.5, 'max': 11.5, 'count': 3},
+        'pore_visibility': {'min': 10.5, 'max': 13.5, 'count': 3},
       },
-      metricNoiseFloors: {'pore_visibility': 1.0},
+      metricNoiseFloors: {'pore_visibility': 3.0},
     );
     await tester.pumpWidget(harness(payload));
     await tester.pumpAndSettle();
@@ -519,7 +516,7 @@ void main() {
       metricRanges: {
         'pigment_load': {'min': 24.0, 'max': 31.0, 'count': 3},
       },
-      metricNoiseFloors: {'pigment_load': 2.0},
+      metricNoiseFloors: {'pigment_load': 3.0},
     );
     await tester.pumpWidget(
       MaterialApp(
@@ -1302,8 +1299,8 @@ void main() {
       await tester.pumpWidget(
         liveHarness(
           basePayload(
-            baseline: 57.0,
-            current: 60.0,
+            baseline: 10.0,
+            current: 15.4,
             metricKey: 'texture_smoothness',
             trendStatus: {'texture_smoothness': 'improved'},
             trendDeltas: {'texture_smoothness': 5.3},
@@ -1344,10 +1341,10 @@ void main() {
         'pore_visibility': 3.0,
         'skin_tone_radiance_evenness': 4.0,
         'diffuse_flushing_erythema': 2.0,
-        'glabellar_wrinkle_depth': 3.5,
+        'glabellar_wrinkle_depth': 6.4,
         'structural_firmness_elasticity': 5.0,
         'sebum_excess_oil_gloss': 4.0,
-        'texture_smoothness': 2.5,
+        'texture_smoothness': 5.4,
       };
       expect(displayVerdictNoiseFloors, floors);
       expect(displayStableFloorMetrics, floors.keys.toSet());
@@ -1394,8 +1391,8 @@ void main() {
         await tester.pumpWidget(
           liveHarness(
             basePayload(
-              baseline: 30.0,
-              current: 30.0 + floor,
+              baseline: 5.0,
+              current: 5.0 + floor,
               metricKey: key,
               trendStatus: {key: 'worsened'},
               trendDeltas: {key: 20.0},
@@ -1411,14 +1408,14 @@ void main() {
       }
     });
 
-    testWidgets('texture: 2.4 points stays Stable, 2.5 keeps its verdict', (
+    testWidgets('texture: 5.3 points stays Stable, 5.4 keeps its verdict', (
       tester,
     ) async {
       await tester.pumpWidget(
         liveHarness(
           basePayload(
-            baseline: 50.0,
-            current: 52.4,
+            baseline: 10.0,
+            current: 15.3,
             metricKey: 'texture_smoothness',
             trendStatus: {'texture_smoothness': 'improved'},
             trendDeltas: {'texture_smoothness': 5.8},
@@ -1442,8 +1439,8 @@ void main() {
       await tester.pumpWidget(
         liveHarness(
           basePayload(
-            baseline: 50.0,
-            current: 52.5,
+            baseline: 10.0,
+            current: 15.4,
             metricKey: 'texture_smoothness',
             trendStatus: {'texture_smoothness': 'improved'},
             trendDeltas: {'texture_smoothness': 5.0},
@@ -1602,10 +1599,10 @@ void main() {
     });
 
     test('unlisted display floors are unchanged', () {
-      expect(displayVerdictNoiseFloors['texture_smoothness'], 2.5);
+      expect(displayVerdictNoiseFloors['texture_smoothness'], 5.4);
       expect(displayVerdictNoiseFloors['skin_tone_radiance_evenness'], 4.0);
       expect(displayVerdictNoiseFloors['diffuse_flushing_erythema'], 2.0);
-      expect(displayVerdictNoiseFloors['glabellar_wrinkle_depth'], 3.5);
+      expect(displayVerdictNoiseFloors['glabellar_wrinkle_depth'], 6.4);
       expect(displayVerdictNoiseFloors['sebum_excess_oil_gloss'], 4.0);
       expect(displayNoVerdictMetrics, {
         'under_eye_dark_circle_density',
@@ -1788,10 +1785,10 @@ void main() {
       expect(cell('pore_visibility_noise_floor'), '3.0');
       expect(cell('skin_tone_radiance_evenness_noise_floor'), '4.0');
       expect(cell('diffuse_flushing_erythema_noise_floor'), '2.0');
-      expect(cell('glabellar_wrinkle_depth_noise_floor'), '3.5');
+      expect(cell('glabellar_wrinkle_depth_noise_floor'), '6.4');
       expect(cell('structural_firmness_elasticity_noise_floor'), '5.0');
       expect(cell('sebum_excess_oil_gloss_noise_floor'), '4.0');
-      expect(cell('texture_smoothness_noise_floor'), '2.5');
+      expect(cell('texture_smoothness_noise_floor'), '5.4');
       expect(cell('under_eye_dark_circle_density_noise_floor'), isEmpty);
       expect(cell('localized_redness_noise_floor'), isEmpty);
       expect(cell('wrinkle_load_noise_floor'), isEmpty);
@@ -2107,7 +2104,7 @@ void main() {
                   metricRanges: {
                     'pigment_load': {'min': 24.0, 'max': 31.0, 'count': 3},
                   },
-                  metricNoiseFloors: {'pigment_load': 2.0},
+                  metricNoiseFloors: {'pigment_load': 3.0},
                 ),
               ),
             ),

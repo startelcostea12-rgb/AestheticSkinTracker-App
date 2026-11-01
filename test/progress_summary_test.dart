@@ -41,11 +41,11 @@ const _before = <String, double>{
   'localized_redness': 8.4,
 };
 const _after = <String, double>{
-  'texture_smoothness': 63.0, // +4.0, floor 3.0
-  'pigment_load': 11.2, // +1.0, floor 2.5
+  'texture_smoothness': 63.0, // +4.0, floor 5.4
+  'pigment_load': 11.2, // +1.0, floor 3.0
   'skin_tone_radiance_evenness': 31.5,
   'structural_firmness_elasticity': 50.0,
-  'pore_visibility': 16.1, // +3.0, floor 2.5
+  'pore_visibility': 16.1, // +3.0, floor 3.0
   'localized_redness': 5.0,
 };
 const _status = <String, String>{
@@ -64,8 +64,8 @@ List<ScanHistoryEntry> _history() => [
 void main() {
   test('trend words only where the stored verdict is valid', () {
     final pair = lastComparablePair(_history())!;
-    expect(progressTrendLabel(pair, 'texture_smoothness'), 'Improved');
-    // Below its 2.5 display floor: Stable, as on the live card.
+    expect(progressTrendLabel(pair, 'texture_smoothness'), 'Stable');
+    // Below its 3.0 display floor: Stable, as on the live card.
     expect(progressTrendLabel(pair, 'pigment_load'), 'Stable');
     expect(progressTrendLabel(pair, 'pore_visibility'), 'Worsened');
     // Not a valid verdict: insufficient signal / no status.
@@ -119,7 +119,7 @@ void main() {
     expect(find.text('Progress summary'), findsOneWidget);
     String trend(String key) =>
         tester.widget<Text>(find.byKey(ValueKey('progress_trend_$key'))).data!;
-    expect(trend('texture_smoothness'), 'Improved');
+    expect(trend('texture_smoothness'), 'Stable');
     expect(trend('pigment_load'), 'Stable');
     expect(trend('localized_redness'), 'Value only');
     expect(trend('skin_tone_radiance_evenness'), 'Value only');

@@ -1209,7 +1209,7 @@ downgradeTrendBelowMeasuredNoiseFloor({
 /// the backend's METRIC_NOISE_FLOOR_2SD and from the live cards'
 /// displayVerdictNoiseFloors.
 const Map<String, double> measuredStableNoiseFloors = <String, double>{
-  'texture_smoothness': 2.5,
+  'texture_smoothness': 5.4,
   'pigment_load': 3.0,
   'skin_tone_radiance_evenness': 4.0,
   'pore_visibility': 3.0,

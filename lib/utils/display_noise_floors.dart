@@ -17,10 +17,10 @@ const Map<String, double> displayVerdictNoiseFloors = <String, double>{
   'pore_visibility': 3.0,
   'skin_tone_radiance_evenness': 4.0,
   'diffuse_flushing_erythema': 2.0,
-  'glabellar_wrinkle_depth': 3.5,
+  'glabellar_wrinkle_depth': 6.4,
   'structural_firmness_elasticity': 5.0,
   'sebum_excess_oil_gloss': 4.0,
-  'texture_smoothness': 2.5,
+  'texture_smoothness': 5.4,
 };
 
 /// Metrics whose display floor means "Stable below the floor" rather than

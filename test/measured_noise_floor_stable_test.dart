@@ -31,7 +31,7 @@ _apply(
 void main() {
   test('the floors are as specified', () {
     expect(measuredStableNoiseFloors, {
-      'texture_smoothness': 2.5,
+      'texture_smoothness': 5.4,
       'pigment_load': 3.0,
       'skin_tone_radiance_evenness': 4.0,
       'pore_visibility': 3.0,
@@ -59,14 +59,14 @@ void main() {
     expect(result.trendDeltas['texture_smoothness'], 0.0);
   });
 
-  test('a 2.5-point texture move keeps its improved or worsened status', () {
-    final up = _apply('texture_smoothness', 57.0, 59.5);
+  test('a 5.4-point texture move keeps its improved or worsened status', () {
+    final up = _apply('texture_smoothness', 10.0, 15.4);
     expect(up.trendStatus['texture_smoothness'], 'improved');
     expect(up.trendDeltas['texture_smoothness'], 9.0);
     final down = _apply(
       'texture_smoothness',
-      57.0,
-      54.5,
+      10.0,
+      4.6,
       status: 'worsened',
       delta: -4.4,
     );
@@ -77,8 +77,8 @@ void main() {
     expect(
       _apply(
         'texture_smoothness',
-        57.0,
-        59.5,
+        10.0,
+        15.4,
       ).trendStatus['texture_smoothness'],
       'improved',
     );
@@ -200,14 +200,15 @@ void main() {
       );
     }
 
-    // Below 2.0: stable, not the backend-floor lock.
+    // Below 5.4: stable, not the backend-floor lock.
     final small = chain(58.0);
     expect(small.trendStatus['texture_smoothness'], 'stable');
     expect(small.trendLockReasons.containsKey('texture_smoothness'), isFalse);
 
-    // Between 2.0 and the backend's 5.4: the existing lock still applies.
+    // The saved and backend floors now agree, so this is stable too.
     final medium = chain(60.0);
-    expect(medium.trendLockReasons['texture_smoothness'], 'below_noise_floor');
+    expect(medium.trendStatus['texture_smoothness'], 'stable');
+    expect(medium.trendLockReasons.containsKey('texture_smoothness'), isFalse);
 
     // A lighting mismatch still locks a move the floor made stable.
     final dim = chain(58.0, currentBv: 3.0);
@@ -473,7 +474,7 @@ void main() {
       () {
         for (final key in displayStableFloorMetrics) {
           final floor = displayVerdictNoiseFloors[key]!;
-          final payload = savedPayload(key, 20, 20 + floor);
+          final payload = savedPayload(key, 5, 5 + floor);
           expect(
             (payload['trend_status'] as Map)[key],
             'improved',
@@ -481,7 +482,7 @@ void main() {
           );
           expect((payload['trend_deltas'] as Map)[key], 4.0, reason: key);
         }
-        final texture = savedPayload('texture_smoothness', 50, 54);
+        final texture = savedPayload('texture_smoothness', 50, 56);
         expect(
           (texture['trend_status'] as Map)['texture_smoothness'],
           'improved',
