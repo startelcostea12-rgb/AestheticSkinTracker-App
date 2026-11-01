@@ -410,9 +410,8 @@ class NaturalSkincareAdvisor {
     }
     if ((rosaceaProne || recentRedness >= 5) && !hasCentella) {
       out.add(
-        'Centella asiatica (cica) + aloe vera is a clinically calming pair '
-        'for rosacea-prone skin — wound-healing botanicals that reduce '
-        'TEWL without active load.',
+        'Centella asiatica (cica) and aloe vera are often used in '
+        'products marketed for soothing and moisturizing skin.',
       );
     }
     if (recentIrritation >= 5 && !hasNiacinamide) {

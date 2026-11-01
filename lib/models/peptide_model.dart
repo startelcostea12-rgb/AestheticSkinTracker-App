@@ -299,7 +299,7 @@ const List<PeptideLibraryEntry> kPeptideLibrary = [
     primaryMetrics: ['Texture', 'Skin Elasticity'],
     category: 'anti-aging',
     clinicalNote:
-        'Clinically shown to reduce fibrosis-related skin roughness and improve dermal matrix organization.',
+        'Often used in products marketed for skin texture and softness.',
   ),
   PeptideLibraryEntry(
     name: 'Carnosine',
@@ -398,7 +398,7 @@ const List<PeptideLibraryEntry> kPeptideLibrary = [
     primaryMetrics: ['Skin Elasticity', 'Texture'],
     category: 'firming',
     clinicalNote:
-        'Immediate tightening effect; clinically validated firming at 1–2% after 28 days.',
+        'Often used at 1–2% in products marketed for a firmer skin appearance.',
   ),
   PeptideLibraryEntry(
     name: 'EGF (sh-Oligopeptide-1)',
@@ -468,7 +468,7 @@ const List<PeptideLibraryEntry> kPeptideLibrary = [
     primaryMetrics: ['Pore Visibility', 'Dark Spots', 'Redness / Swelling'],
     category: 'brightening',
     clinicalNote:
-        'Well-tolerated at 2–5%. Clinically validated for barrier repair, pigmentation, redness and pore appearance.',
+        'Often used at 2–5% in products for barrier care, uneven tone and pore appearance.',
   ),
   PeptideLibraryEntry(
     name: 'Pal-GHK (Palmitoyl Tripeptide-1)',

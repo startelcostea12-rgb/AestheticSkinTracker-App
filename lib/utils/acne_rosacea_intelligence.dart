@@ -1257,9 +1257,8 @@ List<ProductRecommendation> _subtypeNaturalAlternatives(AcneRosaceaSubtype s) {
           name: 'Colloidal oat ceramide cream',
           activeIngredient: 'Avena sativa + ceramides',
           rationale:
-              'Avenanthramides bind TLR4 and reduce neurogenic '
-              'inflammation; clinically validated for rosacea barrier '
-              'restoration.',
+              'Colloidal oat and ceramides are often used in products '
+              'marketed for moisturizing and barrier care.',
           priority: RecommendationPriority.supporting,
         ),
       ];

@@ -653,7 +653,7 @@ String _getProductInsight(TrackedProduct product, {ScanAiReport? report}) {
     final metricNote = topMetric?.label == 'Redness'
         ? ' With redness at ${topMetric!.value.toStringAsFixed(1)}, niacinamide is a well-placed choice � it modulates vascular reactivity and supports transepidermal water loss reduction.'
         : topMetric?.label == 'Pores'
-        ? ' With pore visibility at ${topMetric!.value.toStringAsFixed(1)}, niacinamide is a clinically supported option � consistent use over 8�12 weeks typically yields measurable pore reduction.'
+        ? ' Niacinamide is a logged ingredient often used in products for pore appearance.'
         : '';
     return 'Niacinamide supports sebum regulation, pore minimization, and skin tone evenness.$metricNote Expect measurable improvement within 4�8 weeks of consistent twice-daily use.';
   } else if (lowerName.contains('retinol') ||

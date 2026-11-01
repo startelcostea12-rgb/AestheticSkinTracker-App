@@ -1531,7 +1531,7 @@ final List<ClinicalMetricDef> _bodyCompositionMetrics = [
     sourceKey: 'redness',
     lowerIsBetter: true,
     clinicalContext:
-        'Percent body fat. Clinically elevated when sustained above ~25% (M) '
+        'Recorded body fat percentage. Higher readings above ~25% (M) '
         '/ ~32% (F). Peptide protocols should preserve lean mass during '
         'caloric deficit — pair with protein + resistance training.',
     suggestionImproving:

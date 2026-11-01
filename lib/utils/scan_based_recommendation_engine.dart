@@ -670,7 +670,7 @@ class ScanBasedRecommendationEngine {
         name: 'BBL / BroadBand Light',
         category: 'Light-Based',
         mechanism:
-            'Selective photothermolysis targets melanin and vascular lesions; clinically validated for sunspots, redness and tone evenness.',
+            'A light-based procedure often used for the appearance of sunspots, redness and uneven tone.',
         tier: 'Tier 1',
         triggerKeys: ['darkSpots', 'redness'],
         threshold: 5.0,

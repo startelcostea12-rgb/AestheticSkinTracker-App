@@ -1133,7 +1133,7 @@ class AcneRosaceaPhotoAnalyzer {
                   'clustered papules.'
             : 'Heavy weighting on nodule/cyst size, depth, and '
                   'surrounding inflammation. Scores stay at zero until '
-                  'lesion clusters exceed a clinically meaningful size.',
+                  'lesion clusters exceed the configured size.',
         confidence: conf(cystDriver) * 0.85,
       ),
       'hormonalAcneSeverity': MetricDerivation(
@@ -1646,7 +1646,7 @@ class AcneRosaceaPhotoAnalyzer {
           pros: const [
             'No downtime, no skin irritation',
             'Stacks safely with topicals',
-            'At-home devices increasingly clinically validated',
+            'At-home devices are available',
           ],
           cons: const [
             'Slow onset — consistency matters more than intensity',

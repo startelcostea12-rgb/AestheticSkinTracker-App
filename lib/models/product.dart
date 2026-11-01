@@ -78,7 +78,7 @@ extension ProductBadgeX on ProductBadge {
       case ProductBadge.clinicallyInspired:
         return 'Expertly Curated';
       case ProductBadge.dermatologistRecommended:
-        return 'Derm Recommended';
+        return 'Catalog Pick';
       case ProductBadge.bestSeller:
         return 'Best Seller';
       case ProductBadge.newArrival:
@@ -361,7 +361,7 @@ class ProductCatalog {
       shortDescription:
           'Hydrolyzed type I & III marine collagen with vitamin C cofactor.',
       whyRecommend:
-          'Oral collagen supports systemic recovery — clinically associated with improved skin elasticity, joint comfort, and hair regrowth after transplant procedures.',
+          'Oral collagen is often used in supplements marketed for skin and hair care.',
       clinicalNotes:
           'Hydrolyzed peptides (2–5 kDa) absorb efficiently and stimulate fibroblast activity. Best taken with vitamin C to drive endogenous collagen synthesis.',
       usage:
@@ -486,7 +486,7 @@ class ProductCatalog {
       shortDescription:
           'Everything you need for the first 6 weeks post-laser: barrier repair, hydration, and broad-spectrum SPF.',
       whyRecommend:
-          'A complete, dermatologist-aligned routine designed for ablative or fractional laser recovery. Calms reactivity, restores barrier, and protects against pigment rebound.',
+          'A bundled routine with soothing, hydrating, and sun-protection products for post-laser care.',
       clinicalNotes:
           'Includes Centella Cica Repair Cream, Multi-Weight HA Serum, and Mineral SPF 50 — selected to cover the three critical needs of laser recovery: soothing, hydrating, and shielding.',
       usage:

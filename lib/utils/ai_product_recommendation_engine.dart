@@ -104,7 +104,7 @@ class AIProductRecommendationEngine {
           'Bromelain (pineapple enzyme) has strong clinical evidence for reducing post-surgical swelling, bruising, and pain after body contouring procedures.',
       'guidance':
           'Take 500mg bromelain between meals twice daily. Begin 48 hours post-op and continue for 3–4 weeks. Do not take on empty stomach initially.',
-      'evidence': 'Proven efficacy',
+      'evidence': 'Listed ingredient',
       'link': 'https://www.amazon.com/s?k=bromelain+quercetin+supplement',
       'image': 'https://via.placeholder.com/200x200?text=Bromelain',
       'category': 'Recovery Support',
@@ -142,7 +142,7 @@ class AIProductRecommendationEngine {
           'Medical-grade silicone is the most evidence-backed treatment for post-surgical scars. Prevents hypertrophic or keloid scarring at incision sites.',
       'guidance':
           'Apply over fully closed incisions (not open wounds). Wear 12+ hours/day. Reusable — wash daily. Start as soon as incisions fully close.',
-      'evidence': 'Proven efficacy',
+      'evidence': 'Listed ingredient',
       'link': 'https://www.amazon.com/s?k=scaraway+silicone+sheets+body',
       'image': 'https://via.placeholder.com/200x200?text=Scar+Sheets',
       'category': 'Recovery Support',
@@ -192,7 +192,7 @@ class AIProductRecommendationEngine {
           'The Stage 1 faja provides maximum compression (20–30 mmHg) critical for fat-graft survival, edema control, and preventing seroma in the first 3 weeks after BBL or lipo. Tighter than Stage 2.',
       'guidance':
           'Wear 23 hours/day for the first 3 weeks. Remove only to shower. Your surgeon will advise when to transition to Stage 2 (typically Week 3–6). Wash daily.',
-      'evidence': 'Proven efficacy',
+      'evidence': 'Listed ingredient',
       'link':
           'https://www.amazon.com/s?k=stage+1+compression+faja+post+surgery',
       'image': 'https://via.placeholder.com/200x200?text=Stage+1+Faja',
@@ -282,7 +282,7 @@ class AIProductRecommendationEngine {
           'Minoxidil reduces shock loss duration and supports new growth after transplant. Studied for supporting recovery of transplanted and native follicles; results vary.',
       'guidance':
           'Apply 1ml to recipient area twice daily. Begin only when cleared by your surgeon (typically month 1–2). Consistent daily use required for results.',
-      'evidence': 'Proven efficacy',
+      'evidence': 'Listed ingredient',
       'link': 'https://www.amazon.com/s?k=minoxidil+5+percent+solution',
       'image': 'https://via.placeholder.com/200x200?text=Minoxidil+5%25',
       'category': 'Maintenance',
@@ -291,7 +291,7 @@ class AIProductRecommendationEngine {
       'name': 'Biotin + Saw Palmetto Supplement',
       'brand': 'Nutrafol / Sports Research',
       'reason':
-          'Biotin supports keratin production for healthy hair shaft growth. Saw Palmetto is a clinically-studied DHT blocker that protects native follicles from miniaturisation.',
+          'Biotin and saw palmetto are ingredients often used in hair-care supplements.',
       'guidance':
           'Take daily with food. Allow 3–6 months for meaningful hair density response. Combine with adequate dietary protein (1.2–1.6g/kg body weight).',
       'evidence': 'Evidence-backed',
@@ -386,7 +386,7 @@ class AIProductRecommendationEngine {
             'With elevated redness, medical-grade silicone provides hydration and occlusion to accelerate healing. Studied for reducing redness and improving scar appearance; results vary.',
         'guidance':
             'Apply to affected areas for 12+ hours daily. Replace sheets every 12 hours. Results visible in 4–8 weeks.',
-        'evidence': 'Proven efficacy',
+        'evidence': 'Listed ingredient',
         'link': 'https://www.amazon.com/s?k=scar+away+silicone+gel+sheets',
         'image': 'https://via.placeholder.com/200x200?text=Silicone+Sheets',
         'category': 'Recovery Support',
@@ -410,7 +410,7 @@ class AIProductRecommendationEngine {
             'Excellent for reducing post-treatment erythema. Azelaic acid has anti-inflammatory and antioxidant properties specifically targeting redness.',
         'guidance':
             'Apply after cleansing, 1–2 times daily. May cause slight tingling initially. Introduce slowly.',
-        'evidence': 'Proven efficacy',
+        'evidence': 'Listed ingredient',
         'link': 'https://www.amazon.com/s?k=the+ordinary+azelaic+acid+20',
         'image': 'https://via.placeholder.com/200x200?text=Azelaic+Acid',
         'category': 'Recovery Support',
@@ -424,7 +424,7 @@ class AIProductRecommendationEngine {
             'When texture is rough, hydration is key. Hyaluronic acid draws moisture into skin, plumping fine irregularities and improving smoothness.',
         'guidance':
             'Apply to damp skin before moisturizer. Use morning and evening.',
-        'evidence': 'Proven efficacy',
+        'evidence': 'Listed ingredient',
         'link': 'https://www.amazon.com/s?k=olay+hyaluronic+acid+serum',
         'image': 'https://via.placeholder.com/200x200?text=HA+Serum',
         'category': 'Recovery Support',
@@ -462,7 +462,7 @@ class AIProductRecommendationEngine {
             'Retinol stimulates collagen production and cellular turnover. Essential for wrinkle reduction. Start low after procedures to avoid irritation.',
         'guidance':
             'Begin 2–3 weeks post-procedure. Use 2–3 times weekly at night, increasing frequency as tolerance builds. Always follow with moisturizer.',
-        'evidence': 'Proven efficacy',
+        'evidence': 'Listed ingredient',
         'link': 'https://www.amazon.com/s?k=paulas+choice+retinol+serum',
         'image': 'https://via.placeholder.com/200x200?text=Retinol+Serum',
         'category': 'Maintenance',
@@ -486,7 +486,7 @@ class AIProductRecommendationEngine {
             'Vitamin C is a potent antioxidant that supports collagen synthesis and brightens skin. Ideal when fine lines are present.',
         'guidance':
             'Apply in morning before sunscreen. Use 2–3 times weekly initially, building to daily use.',
-        'evidence': 'Proven efficacy',
+        'evidence': 'Listed ingredient',
         'link': 'https://www.amazon.com/s?k=skinceuticals+vitamin+c+15',
         'image': 'https://via.placeholder.com/200x200?text=Vitamin+C',
         'category': 'Maintenance',
@@ -500,7 +500,7 @@ class AIProductRecommendationEngine {
             'BHA penetrates pores to dissolve sebum and exfoliate internal walls. Reduces pore appearance and prevents congestion.',
         'guidance':
             'Start 1–2 weeks post-procedure. Use 2–3 times weekly. Not recommended during active healing or with peeling.',
-        'evidence': 'Proven efficacy',
+        'evidence': 'Listed ingredient',
         'link': 'https://www.amazon.com/s?k=paulas+choice+bha+salicylic',
         'image': 'https://via.placeholder.com/200x200?text=BHA+Exfoliant',
         'category': 'Maintenance',
@@ -538,7 +538,7 @@ class AIProductRecommendationEngine {
             'Gold-standard for hyperpigmentation. Hydroquinone inhibits tyrosinase and prevents melanin production.',
         'guidance':
             'Apply to affected spots twice daily for 12+ weeks. Sun protection mandatory. Consult provider before use.',
-        'evidence': 'Proven efficacy',
+        'evidence': 'Listed ingredient',
         'link': 'https://www.amazon.com/s?k=hydroquinone+4+percent+cream',
         'image': 'https://via.placeholder.com/200x200?text=Hydroquinone',
         'category': 'Maintenance',
@@ -576,7 +576,7 @@ class AIProductRecommendationEngine {
             'Ceramides restore barrier lipids and reduce transepidermal water loss. Ideal when hydration appears below your baseline.',
         'guidance':
             'Apply morning and evening as the final step. Use on damp skin for better water retention.',
-        'evidence': 'Proven efficacy',
+        'evidence': 'Listed ingredient',
         'link': 'https://www.amazon.com/s?k=cerave+ceramide+cream',
         'image': 'https://via.placeholder.com/200x200?text=Ceramide+Cream',
         'category': 'Recovery Support',
@@ -626,7 +626,7 @@ class AIProductRecommendationEngine {
             'BHA penetrates oil-prone areas to reduce congestion and mattify pores over time.',
         'guidance':
             'Use at night 2–3 times weekly. Skip during high sensitivity/redness flare windows.',
-        'evidence': 'Proven efficacy',
+        'evidence': 'Listed ingredient',
         'link': 'https://www.amazon.com/s?k=paulas+choice+bha+2+percent',
         'image': 'https://via.placeholder.com/200x200?text=BHA+2%25',
         'category': 'Maintenance',
@@ -676,7 +676,7 @@ class AIProductRecommendationEngine {
             'Reduces trigger load in sensitivity-prone routines while supporting hydration and barrier resilience.',
         'guidance':
             'Use twice daily and pair with mineral SPF in daytime.',
-        'evidence': 'Proven efficacy',
+        'evidence': 'Listed ingredient',
         'link': 'https://www.amazon.com/s?k=vanicream+moisturizing+cream',
         'image': 'https://via.placeholder.com/200x200?text=Barrier+Moisturizer',
         'category': 'Recovery Support',
@@ -780,7 +780,7 @@ class AIProductRecommendationEngine {
           'Silicone is a standard option for incision healing and scar support after liposuction once the skin is fully closed.',
       'guidance':
           'Apply only after incisions are closed. Wear consistently as directed and replace according to product instructions.',
-      'evidence': 'Proven efficacy',
+      'evidence': 'Listed ingredient',
       'link': 'https://www.amazon.com/s?k=scaraway+silicone+sheets',
       'image': 'https://via.placeholder.com/200x200?text=Scar+Sheets',
       'category': 'Recovery Support',

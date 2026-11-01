@@ -1023,7 +1023,7 @@ class _PremiumRecoveryHubScreenState extends State<PremiumRecoveryHubScreen> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'To generate a luxury, clinically relevant 3D prediction, choose your active procedure in your procedure tracker first.',
+                  'Choose your active procedure in the procedure tracker to view its 3D preview.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Color(0xFF1E2225),

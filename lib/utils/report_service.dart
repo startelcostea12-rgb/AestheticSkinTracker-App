@@ -1604,7 +1604,7 @@ class ReportService {
       final isImproving = isImprovement && pct.abs() > 0.5;
       final isWorsening = !isImprovement && pct.abs() > 0.5;
       final clinicalSig = isImproving
-          ? 'Improvement of ${pct.abs().toStringAsFixed(1)}% - clinically favorable.'
+          ? 'Recorded change of ${pct.abs().toStringAsFixed(1)}%.'
           : isWorsening
           ? 'Decline of ${pct.abs().toStringAsFixed(1)}% - monitor closely.'
           : 'Stable measurement - within expected range.';
