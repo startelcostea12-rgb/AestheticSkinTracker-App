@@ -1,9 +1,9 @@
 // lib/utils/peptide_service.dart
 // CRUD + correlation engine for the Peptide Tracker feature.
 
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../models/peptide_model.dart';
 import '../models/scan_history.dart';
@@ -110,7 +110,7 @@ class PeptideService {
           .map((e) => PeptideEntry.fromJson(Map<String, dynamic>.from(e)))
           .toList();
     } catch (e) {
-      debugPrint('[PeptideService] loadAll error: $e');
+      AppLogger.debug('[PeptideService] loadAll error: $e');
       return [];
     }
   }
@@ -152,7 +152,7 @@ class PeptideService {
           .map((e) => PeptideStack.fromJson(Map<String, dynamic>.from(e)))
           .toList();
     } catch (e) {
-      debugPrint('[PeptideService] loadStacks error: $e');
+      AppLogger.debug('[PeptideService] loadStacks error: $e');
       return [];
     }
   }
@@ -650,7 +650,7 @@ class PeptideService {
             .toList())
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     } catch (e) {
-      debugPrint('[PeptideService] loadJournal error: $e');
+      AppLogger.debug('[PeptideService] loadJournal error: $e');
       return [];
     }
   }

@@ -1,9 +1,9 @@
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:google_generative_ai/google_generative_ai.dart';
 
@@ -56,7 +56,7 @@ class AiService {
 
     try {
       final uri = BackendConfig.aiCoachUri;
-      debugPrint('[AiService] POST $uri');
+      AppLogger.debug('[AiService] POST $uri');
 
       final response = await client
           .post(
@@ -231,7 +231,7 @@ class AiService {
   }
 
   void _log(String message) {
-    print('[AiService] $message');
+    AppLogger.debug('[AiService] $message');
     developer.log(message, name: 'AiService');
   }
 }

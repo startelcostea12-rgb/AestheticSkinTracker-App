@@ -11,9 +11,10 @@
 // a local-unlock simulation so the QA/dev experience still works end-to-end.
 // On mobile, a real RevenueCat purchase call is attempted.
 
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:purchases_flutter/purchases_flutter.dart';
 
 import 'app_prefs.dart';
@@ -63,12 +64,12 @@ class ReportPurchase {
     if (kIsWeb) {
       // Web fallback — no real IAP plumbing on this surface yet.
       await _markUnlocked(procedureId);
-      debugPrint('[ReportPurchase] (web) simulated unlock for $procedureId');
+      AppLogger.debug('[ReportPurchase] (web) simulated unlock for $procedureId');
       return true;
     }
 
     if (!PremiumAccess.revenueCatConfigured) {
-      debugPrint(
+      AppLogger.debug(
         '[ReportPurchase] RevenueCat is not configured; skipping purchase '
         'for $procedureId',
       );
@@ -78,7 +79,7 @@ class ReportPurchase {
     try {
       final products = await Purchases.getProducts(<String>[productId]);
       if (products.isEmpty) {
-        debugPrint('[ReportPurchase] product not found: $productId');
+        AppLogger.debug('[ReportPurchase] product not found: $productId');
         return false;
       }
 
@@ -88,13 +89,13 @@ class ReportPurchase {
       // Treat any non-error result as a successful purchase. The exact
       // entitlement payload depends on the RevenueCat dashboard config;
       // we persist the per-procedure unlock regardless.
-      debugPrint(
+      AppLogger.debug(
         '[ReportPurchase] purchase succeeded: ${result.customerInfo.originalAppUserId}',
       );
       await _markUnlocked(procedureId);
       return true;
     } catch (e) {
-      debugPrint('[ReportPurchase] purchase failed: $e');
+      AppLogger.debug('[ReportPurchase] purchase failed: $e');
       return false;
     }
   }
@@ -115,7 +116,7 @@ class ReportPurchase {
         return list.map((e) => e.toString()).toSet();
       }
     } catch (e) {
-      debugPrint('[ReportPurchase] _loadUnlockedIds parse error: $e');
+      AppLogger.debug('[ReportPurchase] _loadUnlockedIds parse error: $e');
     }
     return <String>{};
   }

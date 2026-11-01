@@ -1,3 +1,4 @@
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -930,7 +931,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     if (confirmed != true) return;
 
-    debugPrint('🔥 User confirmed nuclear clear - executing...');
+    AppLogger.debug('🔥 User confirmed nuclear clear - executing...');
 
     // Execute nuclear clear
     await cancelRemindersForAllProcedures();
@@ -980,7 +981,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
 
-    debugPrint('✓ Nuclear clear UI refresh complete - recommend app restart');
+    AppLogger.debug('✓ Nuclear clear UI refresh complete - recommend app restart');
   }
 
   /// HARD RESET — wipes EVERY persisted key + all Hive boxes, then rebuilds the
@@ -1034,7 +1035,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     if (confirmed != true) return;
 
-    debugPrint('💣 User confirmed HARD RESET - executing...');
+    AppLogger.debug('💣 User confirmed HARD RESET - executing...');
     await AppPrefs.hardResetEverything();
 
     // Allow disk writes to settle before rebuilding the tree.
@@ -1044,7 +1045,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     // Simulated restart: rebuild the entire widget tree from scratch.
     RestartWidget.restartApp(context);
-    debugPrint('💣 Hard reset complete - app tree restarted');
+    AppLogger.debug('💣 Hard reset complete - app tree restarted');
   }
 
   Future<void> _clearScanHistory() async {
@@ -1137,7 +1138,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await cancelRemindersForAllProcedures();
     await AppPrefs.clearProcedureHistory();
     final remaining = await AppPrefs.getProcedureEntries();
-    debugPrint(
+    AppLogger.debug(
       'Settings clear procedure history. Remaining: ${remaining.length}',
     );
     await _loadProfilePrefs();

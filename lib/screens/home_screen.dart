@@ -1,3 +1,4 @@
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -291,7 +292,7 @@ class _HomePageState extends State<HomePage>
       });
       _skincareJournals = loaded;
     } catch (e) {
-      debugPrint('Failed to load skincare journals: $e');
+      AppLogger.debug('Failed to load skincare journals: $e');
       _skincareJournals = {};
     }
   }
@@ -522,7 +523,7 @@ class _HomePageState extends State<HomePage>
         );
       });
     } catch (e) {
-      debugPrint('Failed to load saved routine: $e');
+      AppLogger.debug('Failed to load saved routine: $e');
     }
   }
 
@@ -2160,7 +2161,7 @@ class _HomePageState extends State<HomePage>
       probe(source.label, source.map, ageCandidates, foundAge);
     }
 
-    debugPrint(
+    AppLogger.debug(
       'HOME KEY AUDIT | scan=${scan.id} | poreMissing=$poreMissing | ageMissing=$ageMissing | '
       'foundPore=$foundPore | foundAge=$foundAge | '
       'metricsKeys=${metricsMap.keys.toList()} | rawPayloadKeys=${payloadMap.keys.toList()}',

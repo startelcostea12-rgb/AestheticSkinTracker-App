@@ -1,8 +1,9 @@
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
-import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
@@ -218,7 +219,7 @@ detectPrimaryFaceBoxOnDecodedImage(img.Image decoded) async {
   try {
     return await _detectPrimaryFaceBox(decoded, _singleFaceDetector);
   } catch (e) {
-    debugPrint(
+    AppLogger.debug(
       '[AiScanCropPreset] face detection on captured still failed: $e',
     );
     return null;
@@ -239,7 +240,7 @@ detectPrimaryFaceBoxForDisplayOnDecodedImage(img.Image decoded) async {
   try {
     return await _detectPrimaryFaceBox(decoded, detector);
   } catch (e) {
-    debugPrint('[ProcedurePhotoOverlay] face detection failed: $e');
+    AppLogger.debug('[ProcedurePhotoOverlay] face detection failed: $e');
     return null;
   } finally {
     try {
@@ -621,7 +622,7 @@ Future<LandmarkAssessment> _assessFace(
       ? face.boundingBox.width / face.boundingBox.height
       : 0.0;
 
-  print(
+  AppLogger.debug(
     '[MLKIT FACE POSE] poseTemplate=$poseTemplate yaw=${yaw.toStringAsFixed(2)}° pitch=${pitch.toStringAsFixed(2)}° roll=${roll.toStringAsFixed(2)}° eyeTilt=${eyeTilt.toStringAsFixed(2)}° centerOffsetX=${centerOffsetX.toStringAsFixed(3)} centerOffsetY=${centerOffsetY.toStringAsFixed(3)} faceFillRatio=${faceFillRatio.toStringAsFixed(3)} targetYaw=${targetYaw.toStringAsFixed(2)}° yawDelta=${yawDelta.toStringAsFixed(2)}°',
   );
 

@@ -185,7 +185,7 @@ class AppPrefs {
             ..sort((a, b) => b.date.compareTo(a.date));
       return entries;
     } catch (error) {
-      debugPrint('Failed to decode general journal entries: $error');
+      AppLogger.debug('Failed to decode general journal entries: $error');
       return [];
     }
   }
@@ -210,7 +210,7 @@ class AppPrefs {
           .map((item) => Map<String, dynamic>.from(item))
           .toList(growable: false);
     } catch (error) {
-      debugPrint('Failed to decode scar healing entries: $error');
+      AppLogger.debug('Failed to decode scar healing entries: $error');
       return [];
     }
   }
@@ -229,7 +229,7 @@ class AppPrefs {
       if (decoded is! Map) return null;
       return Map<String, dynamic>.from(decoded);
     } catch (error) {
-      debugPrint('Failed to decode active AI routine: $error');
+      AppLogger.debug('Failed to decode active AI routine: $error');
       return null;
     }
   }
@@ -246,7 +246,7 @@ class AppPrefs {
       if (decoded is! Map) return {};
       return Map<String, dynamic>.from(decoded);
     } catch (error) {
-      debugPrint('Failed to decode active AI routine completion: $error');
+      AppLogger.debug('Failed to decode active AI routine completion: $error');
       return {};
     }
   }
@@ -280,17 +280,17 @@ class AppPrefs {
     final clean = productName?.trim();
     if (clean == null || clean.isEmpty) {
       await prefs.remove(activeSkincareProductKey);
-      debugPrint('Cleared active skincare product');
+      AppLogger.debug('Cleared active skincare product');
     } else {
       await prefs.setString(activeSkincareProductKey, clean);
-      debugPrint('Set active skincare product: $clean');
+      AppLogger.debug('Set active skincare product: $clean');
     }
   }
 
   static Future<String?> getActiveProductOrNull() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString(activeSkincareProductKey)?.trim();
-    debugPrint('Got active skincare product: $saved');
+    AppLogger.debug('Got active skincare product: $saved');
     return saved;
   }
 
@@ -301,10 +301,10 @@ class AppPrefs {
   // ── Product Tracker Functions ──
   static Future<void> addTrackedProduct(TrackedProduct product) async {
     final prefs = await SharedPreferences.getInstance();
-    debugPrint('addTrackedProduct called for: ${product.name}');
+    AppLogger.debug('addTrackedProduct called for: ${product.name}');
 
     final currentJson = prefs.getStringList(trackedProductsKey) ?? [];
-    debugPrint(
+    AppLogger.debug(
       'Current stored products count before save: ${currentJson.length}',
     );
 
@@ -313,7 +313,7 @@ class AppPrefs {
           try {
             return jsonDecode(jsonStr) as Map<String, dynamic>;
           } catch (e) {
-            debugPrint('Error decoding existing product: $e');
+            AppLogger.debug('Error decoding existing product: $e');
             return null;
           }
         })
@@ -324,13 +324,13 @@ class AppPrefs {
     final updatedJson = current.map((map) => jsonEncode(map)).toList();
 
     final success = await prefs.setStringList(trackedProductsKey, updatedJson);
-    debugPrint('Save success: $success | Total now: ${updatedJson.length}');
+    AppLogger.debug('Save success: $success | Total now: ${updatedJson.length}');
   }
 
   static Future<List<TrackedProduct>> getTrackedProducts() async {
     final prefs = await SharedPreferences.getInstance();
     final jsonList = prefs.getStringList(trackedProductsKey) ?? [];
-    debugPrint(
+    AppLogger.debug(
       'getTrackedProducts called | Raw stored count: ${jsonList.length}',
     );
 
@@ -340,14 +340,14 @@ class AppPrefs {
             final jsonMap = jsonDecode(jsonStr) as Map<String, dynamic>;
             return TrackedProduct.fromJson(jsonMap);
           } catch (e) {
-            debugPrint('Error decoding product: $e | Raw: $jsonStr');
+            AppLogger.debug('Error decoding product: $e | Raw: $jsonStr');
             return null;
           }
         })
         .whereType<TrackedProduct>()
         .toList();
 
-    debugPrint('Successfully loaded ${products.length} products');
+    AppLogger.debug('Successfully loaded ${products.length} products');
     return products;
   }
 
@@ -406,7 +406,7 @@ class AppPrefs {
               jsonDecode(jsonStr) as Map<String, dynamic>,
             );
           } catch (e) {
-            debugPrint('Error decoding product feedback entry: $e');
+            AppLogger.debug('Error decoding product feedback entry: $e');
             return null;
           }
         })
@@ -634,7 +634,7 @@ class AppPrefs {
       final decoded = jsonDecode(raw) as Map<String, dynamic>;
       return SkinProfile.fromJson(decoded);
     } catch (e) {
-      debugPrint('Error decoding skin profile: $e');
+      AppLogger.debug('Error decoding skin profile: $e');
       return null;
     }
   }
@@ -714,7 +714,7 @@ class AppPrefs {
   static Future<void> removeUserProfilePicture() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(userProfilePictureKey);
-    debugPrint('Removed user profile picture');
+    AppLogger.debug('Removed user profile picture');
   }
 
   // ── Procedures ──
@@ -735,13 +735,13 @@ class AppPrefs {
         return dateB.compareTo(dateA);
       });
 
-      debugPrint(
+      AppLogger.debug(
         '[getProcedureEntries] loaded ${list.length} procedures: '
         '${list.map((p) => "${p['id']}:${p['type']}").join(', ')}',
       );
       return list;
     } catch (e) {
-      debugPrint('[getProcedureEntries] ERROR: $e');
+      AppLogger.debug('[getProcedureEntries] ERROR: $e');
       return [];
     }
   }
@@ -750,7 +750,7 @@ class AppPrefs {
     List<Map<String, dynamic>> procedures,
   ) async {
     final prefs = await SharedPreferences.getInstance();
-    debugPrint(
+    AppLogger.debug(
       '[saveProcedureHistory] saving ${procedures.length} procedures: '
       '${procedures.map((p) => "${p['id']}:${p['type']}").join(', ')}',
     );
@@ -801,7 +801,7 @@ class AppPrefs {
   static Future<String?> getSelectedProcedureIdOrNull() async {
     final prefs = await SharedPreferences.getInstance();
     final id = prefs.getString(selectedProcedureIdKey)?.trim();
-    debugPrint('[getSelectedProcedureId] selectedProcedureId=$id');
+    AppLogger.debug('[getSelectedProcedureId] selectedProcedureId=$id');
     return id;
   }
 
@@ -809,10 +809,10 @@ class AppPrefs {
     final prefs = await SharedPreferences.getInstance();
     if (id == null || id.trim().isEmpty) {
       await prefs.remove(selectedProcedureIdKey);
-      debugPrint('[setSelectedProcedureId] cleared');
+      AppLogger.debug('[setSelectedProcedureId] cleared');
     } else {
       await prefs.setString(selectedProcedureIdKey, id.trim());
-      debugPrint('[setSelectedProcedureId] set to ${id.trim()}');
+      AppLogger.debug('[setSelectedProcedureId] set to ${id.trim()}');
     }
   }
 
@@ -854,7 +854,7 @@ class AppPrefs {
     };
     await _saveProcedurePhotoComparisonMap(updatedMap);
 
-    debugPrint(
+    AppLogger.debug(
       '[BASELINE_WRITE] setBaselineScanId procedureId=$procedureId baselineScanId=${target.id} latestScanId=${latestScan.id}',
     );
     return true;
@@ -1025,7 +1025,7 @@ class AppPrefs {
       entries[idx] = record;
     }
     await _writeAiBaselineRegistry(entries);
-    debugPrint('[AI_BASELINE_WRITE] key=$key baselineScanId=$scanId');
+    AppLogger.debug('[AI_BASELINE_WRITE] key=$key baselineScanId=$scanId');
   }
 
   /// Every scan id currently registered as some key's AI baseline. Read-only
@@ -1116,7 +1116,7 @@ class AppPrefs {
     if (!markedComplete) {
       throw StateError('Could not mark Front scan-history cleanup complete.');
     }
-    debugPrint(
+    AppLogger.debug(
       '[SCAN_HISTORY_CLEANUP] frontBaseline=$registeredBaselineId removed=$removedCount retained=${savedHistory.length}',
     );
     return removedCount;
@@ -1326,7 +1326,7 @@ class AppPrefs {
       normalizedPersistedEntry,
       history: normalized,
     );
-    debugPrint('Added scan entry | Total scans now: ${normalized.length}');
+    AppLogger.debug('Added scan entry | Total scans now: ${normalized.length}');
     return normalized;
   }
 
@@ -1336,12 +1336,12 @@ class AppPrefs {
   }) async {
     final procedureId = entry.procedureId?.trim();
     if (procedureId == null || procedureId.isEmpty) {
-      debugPrint(
+      AppLogger.debug(
         '[BASELINE_WRITE] sync skipped entryId=${entry.id} procedureId=null_or_empty reason=missing_procedure_id',
       );
       return;
     }
-    debugPrint(
+    AppLogger.debug(
       '[BASELINE_WRITE] sync start entryId=${entry.id} procedureId=$procedureId historyProvided=${history != null}',
     );
     final resolvedHistory = history ?? await getScanEntries();
@@ -1403,7 +1403,7 @@ class AppPrefs {
           .where((e) => e.procedureId == procedureId)
           .toList();
       isBaseline = procedureScans.isEmpty; // true only for the FIRST photo
-      debugPrint(
+      AppLogger.debug(
         '[addScanMetric] procedureId=$procedureId | existingScans=${procedureScans.length} | isBaseline=$isBaseline',
       );
 
@@ -1423,7 +1423,7 @@ class AppPrefs {
           resolvedCustomDescription = custom;
         }
       } catch (_) {}
-      debugPrint(
+      AppLogger.debug(
         '[addScanMetric] resolvedProcedureType=$resolvedProcedureType',
       );
     }
@@ -1477,7 +1477,7 @@ class AppPrefs {
       // instance.runFullAnalysis) — never the remote backend.
       scanEngine: ScanHistoryEntry.engineLocalTflite,
     );
-    debugPrint(
+    AppLogger.debug(
       'Added scan for product: ${entry.productName ?? "none"} | isBaseline=$isBaseline | procedureId=$procedureId | procedureType=${entry.procedure} | makeup=$makeupPresent',
     );
     final history = await addScanEntry(entry);
@@ -1544,7 +1544,7 @@ class AppPrefs {
             );
 
     await box.put(procedureId, log);
-    debugPrint(
+    AppLogger.debug(
       '[addScanMetric] Linked scan ${entry.id} to procedure $procedureId '
       '(${log.photoPaths.length} photos).',
     );
@@ -1625,7 +1625,7 @@ class AppPrefs {
     }
 
     await prefs.reload();
-    debugPrint(
+    AppLogger.debug(
       'Cleared scan history + baselines (clearOnboardingState=$clearOnboardingState).',
     );
   }
@@ -1634,15 +1634,15 @@ class AppPrefs {
   /// Deletes Hive boxes and all SharedPreferences keys
   /// Use this for complete profile reset with no leftovers
   static Future<void> clearAllDataAggressively() async {
-    debugPrint('🔥 NUCLEAR CLEAR STARTED - Deleting ALL data...');
+    AppLogger.debug('🔥 NUCLEAR CLEAR STARTED - Deleting ALL data...');
 
     final prefs = await SharedPreferences.getInstance();
 
     // ── VERIFY BEFORE CLEAR ──
     final beforeScanData = prefs.getString(scanHistoryKey);
     final beforeProcedureData = prefs.getString(procedureHistoryKey);
-    debugPrint('Before clear - Scan data exists: ${beforeScanData != null}');
-    debugPrint(
+    AppLogger.debug('Before clear - Scan data exists: ${beforeScanData != null}');
+    AppLogger.debug(
       'Before clear - Procedure data exists: ${beforeProcedureData != null}',
     );
 
@@ -1659,78 +1659,78 @@ class AppPrefs {
     ]);
 
     // ── SHARED PREFERENCES - SCAN HISTORY ──
-    debugPrint('Clearing scan history keys...');
+    AppLogger.debug('Clearing scan history keys...');
     await prefs.remove(scanHistoryKey);
     await prefs.remove(legacyScanHistoryKey);
     await prefs.remove(procedurePhotoComparisonKey);
     await prefs.remove(scanHistoryStorageWarningKey);
     await prefs.remove(acneRosaceaLogsKey);
-    debugPrint('✓ Scan history keys removed');
+    AppLogger.debug('✓ Scan history keys removed');
 
     // ── PROCEDURE HISTORY ──
-    debugPrint('Clearing procedure history keys...');
+    AppLogger.debug('Clearing procedure history keys...');
     await prefs.remove(procedureHistoryKey);
     await prefs.remove(selectedProcedureIdKey);
     await prefs.remove(trackedProcedureKey);
     await prefs.remove(procedureTypeKey);
-    debugPrint('✓ Procedure history keys removed');
+    AppLogger.debug('✓ Procedure history keys removed');
 
     // ── PRODUCT TRACKING ──
-    debugPrint('Clearing product tracking keys...');
+    AppLogger.debug('Clearing product tracking keys...');
     await prefs.remove(trackedProductsKey);
     await prefs.remove(productFeedbackKey);
     await prefs.remove(activeSkincareProductKey);
     await prefs.remove('skincare_journal_entries'); // Journal entries
-    debugPrint('✓ Product tracking keys removed');
+    AppLogger.debug('✓ Product tracking keys removed');
 
     // ── PEPTIDE STACK ──
     await prefs.remove(peptideStackNameKey);
-    debugPrint('✓ Peptide stack removed');
+    AppLogger.debug('✓ Peptide stack removed');
 
     // ── ADDITIONAL CLEANUP ──
     // Remove any other tracking data that might exist
     await prefs.remove('last_scan_metrics'); // Legacy metrics
     await prefs.remove('baseline_scan'); // Legacy baseline
-    debugPrint('✓ Legacy keys removed');
+    AppLogger.debug('✓ Legacy keys removed');
 
     // ── FORCE RELOAD FROM DISK ──
     // Force reload from disk to clear any in-memory caches
     await prefs.reload();
-    debugPrint('✓ SharedPreferences reloaded from disk');
+    AppLogger.debug('✓ SharedPreferences reloaded from disk');
 
     // ── VERIFY AFTER CLEAR ──
     final afterScanData = prefs.getString(scanHistoryKey);
     final afterProcedureData = prefs.getString(procedureHistoryKey);
     final afterTrackedProducts = prefs.getStringList(trackedProductsKey);
 
-    debugPrint('After clear - Scan data exists: ${afterScanData != null}');
-    debugPrint(
+    AppLogger.debug('After clear - Scan data exists: ${afterScanData != null}');
+    AppLogger.debug(
       'After clear - Procedure data exists: ${afterProcedureData != null}',
     );
-    debugPrint(
+    AppLogger.debug(
       'After clear - Products exist: ${afterTrackedProducts != null && afterTrackedProducts.isNotEmpty}',
     );
 
     // Verify actual deletion
     if (afterScanData != null || afterProcedureData != null) {
-      debugPrint('⚠️ WARNING: Some data still exists after clear!');
-      debugPrint(
+      AppLogger.debug('⚠️ WARNING: Some data still exists after clear!');
+      AppLogger.debug(
         '   Scan data: ${afterScanData != null ? "STILL EXISTS" : "cleared"}',
       );
-      debugPrint(
+      AppLogger.debug(
         '   Procedure data: ${afterProcedureData != null ? "STILL EXISTS" : "cleared"}',
       );
     }
 
-    debugPrint(
+    AppLogger.debug(
       '🔥 NUCLEAR CLEAR COMPLETE: All Hive boxes and SharedPreferences data removed',
     );
-    debugPrint('   - Hive procedureLogs: DELETED');
-    debugPrint('   - Scan history: DELETED');
-    debugPrint('   - Procedure history: DELETED');
-    debugPrint('   - Product tracking: DELETED');
-    debugPrint('   - Journal entries: DELETED');
-    debugPrint('   - All legacy data: DELETED');
+    AppLogger.debug('   - Hive procedureLogs: DELETED');
+    AppLogger.debug('   - Scan history: DELETED');
+    AppLogger.debug('   - Procedure history: DELETED');
+    AppLogger.debug('   - Product tracking: DELETED');
+    AppLogger.debug('   - Journal entries: DELETED');
+    AppLogger.debug('   - All legacy data: DELETED');
   }
 
   /// HARD RESET - the most aggressive reset possible.
@@ -1739,7 +1739,7 @@ class AppPrefs {
   /// persisted state. Pair with RestartWidget.restartApp() to show the user a
   /// completely empty state immediately.
   static Future<void> hardResetEverything() async {
-    debugPrint('💣 HARD RESET STARTED - Wiping EVERYTHING...');
+    AppLogger.debug('💣 HARD RESET STARTED - Wiping EVERYTHING...');
 
     // ── HIVE: fully wipe the typed procedureLogs box (clear+delete+reopen) ──
     await clearAllProcedureData();
@@ -1756,23 +1756,23 @@ class AppPrefs {
     // ── SHARED PREFERENCES: nuke every key ──
     final prefs = await SharedPreferences.getInstance();
     final keyCountBefore = prefs.getKeys().length;
-    debugPrint('SharedPreferences keys before wipe: $keyCountBefore');
+    AppLogger.debug('SharedPreferences keys before wipe: $keyCountBefore');
 
     final cleared = await prefs.clear();
-    debugPrint('prefs.clear() returned: $cleared');
+    AppLogger.debug('prefs.clear() returned: $cleared');
 
     await prefs.reload();
     final keyCountAfter = prefs.getKeys().length;
-    debugPrint('SharedPreferences keys after wipe: $keyCountAfter');
+    AppLogger.debug('SharedPreferences keys after wipe: $keyCountAfter');
 
     if (keyCountAfter > 0) {
-      debugPrint(
+      AppLogger.debug(
         '⚠️ WARNING: $keyCountAfter keys still present after clear(): '
         '${prefs.getKeys().join(', ')}',
       );
     }
 
-    debugPrint('💣 HARD RESET COMPLETE: All persisted data destroyed.');
+    AppLogger.debug('💣 HARD RESET COMPLETE: All persisted data destroyed.');
   }
 
   /// Closes (if open) and deletes the named Hive boxes from disk.
@@ -1785,12 +1785,12 @@ class AppPrefs {
           final count = box.length;
           await box.clear();
           await box.close();
-          debugPrint('✓ Hive box "$name": cleared & closed ($count entries)');
+          AppLogger.debug('✓ Hive box "$name": cleared & closed ($count entries)');
         }
         await Hive.deleteBoxFromDisk(name);
-        debugPrint('✓ Hive box "$name": deleted from disk');
+        AppLogger.debug('✓ Hive box "$name": deleted from disk');
       } catch (e) {
-        debugPrint('⚠️ Hive box "$name": error during delete: $e');
+        AppLogger.debug('⚠️ Hive box "$name": error during delete: $e');
       }
     }
   }
@@ -1808,24 +1808,24 @@ class AppPrefs {
         final count = box.length;
         await box.clear();
         await box.close();
-        debugPrint('✓ procedureLogs: cleared & closed ($count entries)');
+        AppLogger.debug('✓ procedureLogs: cleared & closed ($count entries)');
       }
 
       // 2. Delete the box file from disk (removes any persisted data).
       await Hive.deleteBoxFromDisk(boxName);
-      debugPrint('✓ procedureLogs: deleted from disk');
+      AppLogger.debug('✓ procedureLogs: deleted from disk');
 
       // 3. Ensure the adapter is registered before re-opening.
       if (!Hive.isAdapterRegistered(5)) {
         Hive.registerAdapter(ProcedureLogAdapter());
-        debugPrint('✓ ProcedureLogAdapter re-registered');
+        AppLogger.debug('✓ ProcedureLogAdapter re-registered');
       }
 
       // 4. Re-open a fresh, empty box so callers get a clean, usable box.
       await Hive.openBox<ProcedureLog>(boxName);
-      debugPrint('✓ procedureLogs: re-opened (empty)');
+      AppLogger.debug('✓ procedureLogs: re-opened (empty)');
     } catch (e) {
-      debugPrint('⚠️ clearAllProcedureData error: $e');
+      AppLogger.debug('⚠️ clearAllProcedureData error: $e');
     }
   }
 
@@ -1834,7 +1834,7 @@ class AppPrefs {
   ) async {
     final cleanProcedureId = procedureId.trim();
     if (cleanProcedureId.isEmpty) {
-      debugPrint(
+      AppLogger.debug(
         '[BASELINE_READ] source=procedure_photo_comparison procedureId=empty reason=invalid_procedure_id baselineScanId=none latestScanId=none',
       );
       return const {
@@ -1862,7 +1862,7 @@ class AppPrefs {
     final isMapAlreadyCanonical =
         existingBaselineId == derived['baselineScanId'] &&
         existingLatestId == derived['latestScanId'];
-    debugPrint(
+    AppLogger.debug(
       '[BASELINE_READ] source=scan_history_canonical procedureId=$cleanProcedureId '
       'baselineScanId=${derived['baselineScanId'] ?? 'none'} '
       'latestScanId=${derived['latestScanId'] ?? 'none'} '
@@ -2321,7 +2321,7 @@ class AppPrefs {
     );
     history[idx] = updated;
     await _saveScanEntries(history);
-    debugPrint(
+    AppLogger.debug(
       '[patchScanMetrics] patched scan $scanId with ${extraMetrics.keys.join(', ')}',
     );
   }
@@ -2372,7 +2372,7 @@ class AppPrefs {
     );
     history[idx] = updated;
     await _saveScanEntries(history);
-    debugPrint('[patchScanPeptideId] tagged scan $scanId → peptide $peptideId');
+    AppLogger.debug('[patchScanPeptideId] tagged scan $scanId → peptide $peptideId');
   }
 
   /// Assigns [procedureId] to an existing scan so procedure-scoped features
@@ -2427,7 +2427,7 @@ class AppPrefs {
 
     history[idx] = updated;
     await _saveScanEntries(history);
-    debugPrint(
+    AppLogger.debug(
       '[patchScanProcedureId] updated scan $cleanScanId → procedure $cleanProcedureId',
     );
     return true;
@@ -2472,7 +2472,7 @@ class AppPrefs {
           ..sort(_compareScansByTimestampAscThenId); // oldest → newest
 
     if (procedureScans.isEmpty) {
-      debugPrint('[COMPARISON] No scans for $procedureId — skipping');
+      AppLogger.debug('[COMPARISON] No scans for $procedureId — skipping');
       return;
     }
 
@@ -2489,13 +2489,13 @@ class AppPrefs {
         .trim();
     final existingLatestId = existingMap?['latestScanId']?.toString().trim();
 
-    debugPrint(
+    AppLogger.debug(
       '[BASELINE_WRITE] before procedureId=$procedureId '
       'baselineScanId=${existingBaselineId?.isNotEmpty == true ? existingBaselineId : 'none'} '
       'latestScanId=${existingLatestId?.isNotEmpty == true ? existingLatestId : 'none'}',
     );
 
-    debugPrint(
+    AppLogger.debug(
       '[COMPARISON] proc=$procedureId | count=${procedureScans.length}'
       ' | baseline=${baselineScan.id} (${baselineScan.timestamp})'
       ' | latest=${latestScan.id} (${latestScan.timestamp})'
@@ -2523,16 +2523,16 @@ class AppPrefs {
     final afterBaselineId = afterEntry['baselineScanId']?.toString().trim();
     final afterLatestId = afterEntry['latestScanId']?.toString().trim();
 
-    debugPrint(
+    AppLogger.debug(
       '[BASELINE_WRITE] after procedureId=$procedureId '
       'baselineScanId=${afterBaselineId?.isNotEmpty == true ? afterBaselineId : 'none'} '
       'latestScanId=${afterLatestId?.isNotEmpty == true ? afterLatestId : 'none'} '
       'entry=${afterEntry.toString()}',
     );
-    debugPrint(
+    AppLogger.debug(
       '[COMPARISON] Saved — baseline≠latest: ${baselineScan.id != latestScan.id}',
     );
-    debugPrint(
+    AppLogger.debug(
       'POST SAVE BASELINE: baselineScanId=${baselineScan.id} latestScanId=${latestScan.id} '
       'localHistoryCount=${procedureScans.length} globalCount=${history.length}',
     );

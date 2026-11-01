@@ -1,6 +1,6 @@
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ConversionEventRecord {
@@ -93,7 +93,7 @@ class ConversionAnalytics {
       'properties': properties,
     };
 
-    debugPrint('[CONVERSION] ${jsonEncode(payload)}');
+    AppLogger.debug('[CONVERSION] ${jsonEncode(payload)}');
 
     final prefs = await SharedPreferences.getInstance();
     final existingRaw = prefs.getString(_storageKey);

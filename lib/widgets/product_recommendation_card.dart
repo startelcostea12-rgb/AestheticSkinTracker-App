@@ -1,3 +1,4 @@
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../app_theme.dart';
@@ -314,7 +315,7 @@ class ProductRecommendationCard extends StatelessWidget {
       }
     } catch (e) {
       // Silently handle launch errors
-      debugPrint('Error launching URL: $e');
+      AppLogger.debug('Error launching URL: $e');
     }
   }
 }

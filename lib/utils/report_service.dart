@@ -15,7 +15,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
@@ -388,10 +387,10 @@ class ReportService {
     try {
       await _persistRecord(record);
     } catch (e) {
-      debugPrint('[ReportService.generateAndSave] persist failed: $e');
+      AppLogger.debug('[ReportService.generateAndSave] persist failed: $e');
     }
 
-    debugPrint(
+    AppLogger.debug(
       '[ReportService] Generated report: ${record.id} | '
       '${record.title} | ${pdfBytes.length} bytes',
     );
@@ -412,7 +411,7 @@ class ReportService {
           )
           .toList();
     } catch (e) {
-      debugPrint('[ReportService] loadAll parse error: $e - wiping bad data');
+      AppLogger.debug('[ReportService] loadAll parse error: $e - wiping bad data');
       // Corrupt or oversized payload - wipe to recover.
       try {
         await AppPrefs.setString(_storageKey, '');
@@ -431,7 +430,7 @@ class ReportService {
       // If the raw blob is larger than ~256 KB, it almost certainly
       // contains embedded PDFs from a previous version - reset it.
       if (raw.length > 256 * 1024) {
-        debugPrint(
+        AppLogger.debug(
           '[ReportService] Evicting oversized record store '
           '(${raw.length} bytes) to recover localStorage quota.',
         );
@@ -450,7 +449,7 @@ class ReportService {
           .toList();
       await AppPrefs.setString(_storageKey, jsonEncode(list));
     } catch (e) {
-      debugPrint('[ReportService] cleanupLegacyStorage error: $e');
+      AppLogger.debug('[ReportService] cleanupLegacyStorage error: $e');
       try {
         await AppPrefs.setString(_storageKey, '');
       } catch (_) {}
@@ -491,7 +490,7 @@ class ReportService {
         jsonEncode(updated.map((e) => _lightweightJson(e)).toList()),
       );
     } catch (e) {
-      debugPrint('[ReportService] deleteById persist error: $e');
+      AppLogger.debug('[ReportService] deleteById persist error: $e');
     }
   }
 
@@ -530,7 +529,7 @@ class ReportService {
     } catch (e) {
       // localStorage quota or other storage failure - shed older
       // records and retry with only the newest entry.
-      debugPrint(
+      AppLogger.debug(
         '[ReportService] _persistRecord failed ($e); retrying with newest record only.',
       );
       try {
@@ -539,7 +538,7 @@ class ReportService {
           jsonEncode([_lightweightJson(record)]),
         );
       } catch (e2) {
-        debugPrint(
+        AppLogger.debug(
           '[ReportService] _persistRecord retry failed ($e2); clearing key.',
         );
         try {
@@ -620,11 +619,11 @@ class ReportService {
       final data = await rootBundle.load(assetPath);
       return pw.Font.ttf(data);
     } catch (error, stackTrace) {
-      debugPrint(
+      AppLogger.debug(
         '[ReportService] Unable to load PDF font assetPath="$assetPath". '
         'Falling back to Helvetica. Error: $error',
       );
-      debugPrint(stackTrace.toString());
+      AppLogger.debug(stackTrace.toString());
       return fallback();
     }
   }
@@ -633,16 +632,16 @@ class ReportService {
     const assetPath = 'assets/fonts/Roboto-Regular.ttf';
     try {
       final data = await rootBundle.load(assetPath);
-      debugPrint(
+      AppLogger.debug(
         '[ReportService] PDF font asset loaded: $assetPath '
         '(${data.lengthInBytes} bytes)',
       );
     } catch (error, stackTrace) {
-      debugPrint(
+      AppLogger.debug(
         '[ReportService] PDF font asset check failed assetPath="$assetPath". '
         'Report generation will continue with Helvetica fallback. Error: $error',
       );
-      debugPrint(stackTrace.toString());
+      AppLogger.debug(stackTrace.toString());
     }
   }
 
@@ -663,11 +662,11 @@ class ReportService {
         ),
       );
     } catch (error, stackTrace) {
-      debugPrint(
+      AppLogger.debug(
         '[ReportService] PDF theme creation failed. '
         'Using built-in Helvetica theme. Error: $error',
       );
-      debugPrint(stackTrace.toString());
+      AppLogger.debug(stackTrace.toString());
       return pw.ThemeData.withFont(
         base: pw.Font.helvetica(),
         bold: pw.Font.helveticaBold(),
@@ -724,11 +723,11 @@ class ReportService {
             ProcedureBodyContouringSubtype.bbl;
 
     // ── Decode photos (forced PNG transcode) ───────────────────────────────
-    print('=== PDF IMAGE EMBEDDING START ===');
-    print(
+    AppLogger.debug('=== PDF IMAGE EMBEDDING START ===');
+    AppLogger.debug(
       '=== INPUT CHECK: baseline bytes = ${input.beforePhotoBytes?.length ?? 0} ===',
     );
-    print(
+    AppLogger.debug(
       '=== INPUT CHECK: latest bytes = ${input.afterPhotoBytes?.length ?? 0} ===',
     );
 
@@ -741,9 +740,9 @@ class ReportService {
       label: 'Latest',
     );
 
-    print('=== RESULT CHECK: baseline converted = ${beforeImage != null} ===');
-    print('=== RESULT CHECK: latest converted = ${afterImage != null} ===');
-    print('=== PDF IMAGE EMBEDDING END ===');
+    AppLogger.debug('=== RESULT CHECK: baseline converted = ${beforeImage != null} ===');
+    AppLogger.debug('=== RESULT CHECK: latest converted = ${afterImage != null} ===');
+    AppLogger.debug('=== PDF IMAGE EMBEDDING END ===');
 
     // ── Luxury clinical color palette ───────────────────────────────────────
     const navy = PdfColor.fromInt(0xFF2C3539); // refined slate
@@ -3069,53 +3068,53 @@ class ReportService {
     Uint8List? bytes, {
     required String label,
   }) async {
-    print('============================================================');
-    print('[$label] FORCE PNG PIPELINE: START');
-    print('============================================================');
+    AppLogger.debug('============================================================');
+    AppLogger.debug('[$label] FORCE PNG PIPELINE: START');
+    AppLogger.debug('============================================================');
 
     if (bytes == null || bytes.isEmpty) {
-      print('[$label] NULL or empty bytes. Placeholder will be used.');
-      print('[$label] FORCE PNG PIPELINE: END (FAILED EARLY)');
+      AppLogger.debug('[$label] NULL or empty bytes. Placeholder will be used.');
+      AppLogger.debug('[$label] FORCE PNG PIPELINE: END (FAILED EARLY)');
       return null;
     }
 
-    print('[$label] INPUT BYTE LENGTH: ${bytes.length}');
-    print('[$label] STEP 1/4: instantiateImageCodec()');
+    AppLogger.debug('[$label] INPUT BYTE LENGTH: ${bytes.length}');
+    AppLogger.debug('[$label] STEP 1/4: instantiateImageCodec()');
 
     try {
       final codec = await ui.instantiateImageCodec(bytes);
-      print('[$label] STEP 1/4: SUCCESS');
-      print('[$label] STEP 2/4: getNextFrame()');
+      AppLogger.debug('[$label] STEP 1/4: SUCCESS');
+      AppLogger.debug('[$label] STEP 2/4: getNextFrame()');
 
       final frame = await codec.getNextFrame();
       final width = frame.image.width;
       final height = frame.image.height;
-      print('[$label] STEP 2/4: SUCCESS (${width}x$height)');
-      print('[$label] STEP 3/4: toByteData(PNG)');
+      AppLogger.debug('[$label] STEP 2/4: SUCCESS (${width}x$height)');
+      AppLogger.debug('[$label] STEP 3/4: toByteData(PNG)');
 
       final byteData = await frame.image.toByteData(
         format: ui.ImageByteFormat.png,
       );
       frame.image.dispose();
-      print('[$label] STEP 3/4: COMPLETE');
-      print('[$label] STEP 4/4: validate PNG bytes');
+      AppLogger.debug('[$label] STEP 3/4: COMPLETE');
+      AppLogger.debug('[$label] STEP 4/4: validate PNG bytes');
 
       if (byteData == null || byteData.lengthInBytes == 0) {
-        print(
+        AppLogger.debug(
           '[$label] Conversion returned empty PNG bytes. Placeholder will be used.',
         );
-        print('[$label] FORCE PNG PIPELINE: END (FAILED EMPTY PNG)');
+        AppLogger.debug('[$label] FORCE PNG PIPELINE: END (FAILED EMPTY PNG)');
         return null;
       }
 
       final pngBytes = byteData.buffer.asUint8List();
-      print('[$label] STEP 4/4: SUCCESS - PNG ${pngBytes.length} bytes');
-      print('[$label] FORCE PNG PIPELINE: END (SUCCESS)');
+      AppLogger.debug('[$label] STEP 4/4: SUCCESS - PNG ${pngBytes.length} bytes');
+      AppLogger.debug('[$label] FORCE PNG PIPELINE: END (SUCCESS)');
       return pw.MemoryImage(pngBytes);
     } catch (e, st) {
-      print('[$label] FORCE PNG PIPELINE: FAILED - $e');
-      print('[$label] Placeholder will be used; no image will be embedded.');
-      debugPrint(st.toString());
+      AppLogger.debug('[$label] FORCE PNG PIPELINE: FAILED - $e');
+      AppLogger.debug('[$label] Placeholder will be used; no image will be embedded.');
+      AppLogger.debug(st.toString());
       return null;
     }
   }

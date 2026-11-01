@@ -4,7 +4,7 @@
 /// blocks the deletion.
 library;
 
-import 'package:flutter/foundation.dart';
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 
 import '../services/notification_service.dart';
 import 'app_prefs.dart';
@@ -16,7 +16,7 @@ Future<void> _cancelReminders(
   try {
     await notifications.cancelProcedureReminders(procedureId);
   } catch (e) {
-    debugPrint('[procedure_deletion] cancel reminders for $procedureId: $e');
+    AppLogger.debug('[procedure_deletion] cancel reminders for $procedureId: $e');
   }
 }
 

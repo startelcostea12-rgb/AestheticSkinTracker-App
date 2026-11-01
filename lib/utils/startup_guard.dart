@@ -1,6 +1,6 @@
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 
 /// How long one startup step may take before the app gives up on it and
 /// continues to its first screen. Startup timing only -- unrelated to any
@@ -20,12 +20,12 @@ Future<bool> runStartupStep(
     await step().timeout(timeout);
     return true;
   } on TimeoutException {
-    debugPrint(
+    AppLogger.debug(
       '[Startup] $name did not finish within ${timeout.inSeconds}s; '
       'continuing to the first screen.',
     );
   } catch (error) {
-    debugPrint('[Startup] $name failed: $error; continuing.');
+    AppLogger.debug('[Startup] $name failed: $error; continuing.');
   }
   return false;
 }

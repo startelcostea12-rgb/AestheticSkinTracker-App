@@ -16,6 +16,7 @@
 // The analysis engine itself is the shared `AcneRosaceaPhotoAnalyzer`,
 // so derivations and scoring stay consistent with the tracker.
 
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'dart:convert' show base64Decode, base64Encode, jsonEncode, utf8;
 import 'dart:io';
 import 'dart:math' as math;
@@ -2310,7 +2311,7 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
         }
       }
     } catch (error) {
-      debugPrint(
+      AppLogger.debug(
         '[MultiFrameAnalysis] Frame $frameNumber/${frames.length} failed: $error',
       );
       if (kDebugMode) {
@@ -3859,7 +3860,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
             uploadFrame(frame, frameNumber, withGrayCard: false),
       );
       final backendResponse = aggregate.response;
-      debugPrint(
+      AppLogger.debug(
         '[MultiFrameAnalysis] ${aggregate.successfulFrames}/${aggregate.requestedFrames} '
         'frames succeeded; contributors=${aggregate.metricContributorCounts}',
       );
@@ -6234,7 +6235,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               ? 'explicit isFollowUp flag from local scan records'
               : 'localHistoryCount >= 2')
         : 'missing prior local baseline scan in history';
-    debugPrint(
+    AppLogger.debug(
       'LUXE GATE: localHistoryCount=$_localHistoryCountForFocusArea isFollowUp=$isFollowUpPhase willRenderCards=$isFollowUpPhase reason=$gateReason',
     );
     final luxePayload = _buildLuxeResultsPayload(
@@ -6895,7 +6896,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final sourceSuffix = (source == null || source.isEmpty)
         ? ''
         : ' source=$source';
-    debugPrint(
+    AppLogger.debug(
       'BASELINE REJECT [$metricKey] value=${value.toStringAsFixed(1)} reason=$reason$sourceSuffix',
     );
   }
@@ -7205,7 +7206,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         final immediateScanId = _priorFocusAreaScans.isNotEmpty
             ? _priorFocusAreaScans.first.id
             : priorScan.id;
-        debugPrint(
+        AppLogger.debug(
           'BASELINE PRIOR SELECT [$metricKey] priorScanId=$immediateScanId priorIndex=0 nonImmediate=false source=baseline_matrix.$metricKey value=${existingNumeric!.toStringAsFixed(2)}',
         );
         continue;
@@ -7213,14 +7214,14 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
       final resolved = _resolvePriorBaselineForMetric(metricKey, aliases);
       if (resolved == null) {
-        debugPrint(
+        AppLogger.debug(
           'BASELINE PRIOR SELECT [$metricKey] priorScanId=none priorIndex=-1 nonImmediate=false source=none value=0.00',
         );
         continue;
       }
 
       canonicalBaseline[metricKey] = resolved.value;
-      debugPrint(
+      AppLogger.debug(
         'BASELINE PRIOR SELECT [$metricKey] priorScanId=${resolved.priorScanId} priorIndex=${resolved.priorIndex} nonImmediate=${resolved.priorIndex > 0} confidence=${resolved.confidenceLabel} source=${resolved.sourceKey} value=${resolved.value.toStringAsFixed(2)}',
       );
     }
@@ -7260,7 +7261,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     final usedPriorScan = baselineMetricMatrix.isNotEmpty;
     final priorScanId = usedPriorScan ? _previousFocusAreaScan?.id : null;
     final baselineKeys = baselineMetricMatrix.keys.toList()..sort();
-    debugPrint(
+    AppLogger.debug(
       'BASELINE SOURCE: localHistoryCount=$_localHistoryCountForFocusArea priorScanId=${priorScanId ?? 'none'} baselineKeys=$baselineKeys usedPriorScan=$usedPriorScan',
     );
 
@@ -7284,7 +7285,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     if (isFollowUp && trendDeltas.isEmpty && _previousMetrics.isNotEmpty) {
       // Legacy fallback deltas had no extraction-path provenance. Keep these
       // scans in tracking-only mode to avoid directional claims.
-      debugPrint(
+      AppLogger.debug(
         'TREND DELTA FALLBACK: skipped directional fallback due to unknown extraction paths',
       );
     }
@@ -7536,7 +7537,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       _priorFocusAreaScans = resolution.eligibleScansForKey;
       _ignoredBaselinePinMessage = resolution.ignoredPinReason;
 
-      debugPrint(
+      AppLogger.debug(
         'AI BASELINE: key=$key keyMatches=${keyMatches.length} '
         'eligible=${resolution.eligibleScansForKey.length} '
         'resolved=${resolution.baselineScan?.id ?? 'none'} '

@@ -244,7 +244,7 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
       final allScans = await AppPrefs.getScanEntries();
       final validScans = _sanitizeScanEntries(allScans);
       for (final scan in validScans) {
-        print('DEBUG SCAN ENTRY METRICS: ${scan.metrics}');
+        AppLogger.debug('DEBUG SCAN ENTRY METRICS: ${scan.metrics}');
       }
       if (!mounted) return;
       setState(() {
@@ -385,8 +385,8 @@ class _ProgressReportScreenState extends State<ProgressReportScreen>
     ScanHistoryEntry baseline,
     ScanHistoryEntry latest,
   ) {
-    print('DEBUG SCAN ENTRY METRICS: ${baseline.metrics}');
-    print('DEBUG SCAN ENTRY METRICS: ${latest.metrics}');
+    AppLogger.debug('DEBUG SCAN ENTRY METRICS: ${baseline.metrics}');
+    AppLogger.debug('DEBUG SCAN ENTRY METRICS: ${latest.metrics}');
     final rows = <_MetricDelta>[];
     final baselineRows = ScanDetailScreen.displayMetricsFor(baseline);
     final latestRows = ScanDetailScreen.displayMetricsFor(latest);
@@ -2580,7 +2580,7 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
   Widget _metricDeltaRow(_MetricDelta delta) {
     final baselineValue = delta.baselineValue;
     final currentValue = delta.latestValue;
-    print(
+    AppLogger.debug(
       'REPORT CARD [${delta.label}]: Baseline=$baselineValue -> Current=$currentValue',
     );
     final adjustedBaselineForDelta =
@@ -2905,8 +2905,8 @@ class _ProcedureScanComparisonDetailScreen extends StatelessWidget {
     ScanHistoryEntry baseline,
     ScanHistoryEntry latest,
   ) {
-    print('DEBUG SCAN ENTRY METRICS: ${baseline.metrics}');
-    print('DEBUG SCAN ENTRY METRICS: ${latest.metrics}');
+    AppLogger.debug('DEBUG SCAN ENTRY METRICS: ${baseline.metrics}');
+    AppLogger.debug('DEBUG SCAN ENTRY METRICS: ${latest.metrics}');
     final rows = <_MetricDelta>[];
     final baselineRows = ScanDetailScreen.displayMetricsFor(baseline);
     final latestRows = ScanDetailScreen.displayMetricsFor(latest);
@@ -3379,7 +3379,7 @@ class ScanDetailScreen extends StatelessWidget {
         trendDeltas[key] = parsedDelta;
         trendStatus[key] = rawStatus;
       } else if (!initialBaseline) {
-        debugPrint(
+        AppLogger.debug(
           'ARCHIVE TREND FALLBACK [$key]: missing payload.trend_deltas/trend_status entry; Luxe parser will recompute for legacy payload.',
         );
       }
@@ -4389,7 +4389,7 @@ class ScanDetailScreen extends StatelessWidget {
 
     if (val == null || !val.isFinite) {
       final metricsKeys = metricsMap.keys.toList();
-      print(
+      AppLogger.debug(
         'EXTRACTOR FAIL for [$metricKeyOrTitle] -> Available keys in metrics: $metricsKeys',
       );
       return 0.0;

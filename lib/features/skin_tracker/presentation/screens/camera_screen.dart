@@ -1,3 +1,4 @@
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Directory, File, FileMode, Platform;
@@ -339,7 +340,7 @@ Future<bool> requestAiBurstExposureLock(
     await setLocked();
     return true;
   } catch (error) {
-    debugPrint('AI burst exposure lock unsupported: $error');
+    AppLogger.debug('AI burst exposure lock unsupported: $error');
     return false;
   }
 }
@@ -351,7 +352,7 @@ Future<bool> requestAiBurstFocusLock(Future<void> Function() setLocked) async {
     await setLocked();
     return true;
   } catch (error) {
-    debugPrint('AI burst focus lock unsupported: $error');
+    AppLogger.debug('AI burst focus lock unsupported: $error');
     return false;
   }
 }
@@ -2033,7 +2034,7 @@ class _CameraScreenState extends State<CameraScreen>
     try {
       await controller.setExposureMode(ExposureMode.auto);
     } catch (e) {
-      debugPrint('Camera exposure auto mode unsupported: $e');
+      AppLogger.debug('Camera exposure auto mode unsupported: $e');
     }
   }
 
@@ -2176,7 +2177,7 @@ class _CameraScreenState extends State<CameraScreen>
             final stabilized = _stabilizeLandmarkAssessment(assessment);
             final shouldRefresh = _shouldRefreshLandmarkAssessment(stabilized);
             if (shouldRefresh || stabilized.available) {
-              print(
+              AppLogger.debug(
                 '[LIVE FACE POSE] available=${stabilized.available} yaw=${(stabilized.yaw ?? 0.0).toStringAsFixed(2)}° pitch=${(stabilized.pitch ?? 0.0).toStringAsFixed(2)}° roll=${(stabilized.roll ?? 0.0).toStringAsFixed(2)}° centerDelta=${((stabilized.centerOffsetX.abs() + stabilized.centerOffsetY.abs())).toStringAsFixed(3)} faceFillRatio=${stabilized.faceFillRatio.toStringAsFixed(3)} poseSimilarity=${stabilized.poseSimilarity.toStringAsFixed(2)}',
               );
               setState(() {
@@ -3644,7 +3645,7 @@ class _CameraScreenState extends State<CameraScreen>
         flush: true,
       );
     } catch (e) {
-      debugPrint('[BURST_LUMINANCE] failed to append log file: $e');
+      AppLogger.debug('[BURST_LUMINANCE] failed to append log file: $e');
     }
   }
 
@@ -3872,7 +3873,7 @@ class _CameraScreenState extends State<CameraScreen>
       if (!mounted) return;
       setState(() => _isAnalyzing = false);
 
-      debugPrint('[DeepAnalysis] Result: $result');
+      AppLogger.debug('[DeepAnalysis] Result: $result');
       final resultMap = _normalizeDeepAnalysisResult(result);
       final status = resultMap['status']?.toString().toLowerCase();
       final isSuccess =
@@ -3903,7 +3904,7 @@ class _CameraScreenState extends State<CameraScreen>
         );
       }
     } catch (e) {
-      debugPrint('[DeepAnalysis] Failed: $e');
+      AppLogger.debug('[DeepAnalysis] Failed: $e');
       if (!mounted) return;
       setState(() => _isAnalyzing = false);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -4446,7 +4447,7 @@ class _CameraScreenState extends State<CameraScreen>
     String? procedureIdToSave;
     String? productNameToSave;
 
-    debugPrint(
+    AppLogger.debug(
       '[WEB PICKER] isSkincareScan=${widget.isSkincareScan} procedure=${widget.procedure?.id} selectedProcedureId=$_selectedProcedureId productName=${widget.productName}',
     );
 
@@ -4458,7 +4459,7 @@ class _CameraScreenState extends State<CameraScreen>
       final procedureId = widget.procedure?.id ?? _selectedProcedureId;
       if (procedureId == null || procedureId.isEmpty) {
         // Still open picker — save will prompt for procedure selection
-        debugPrint('[WEB PICKER] No procedure ID — will open picker anyway');
+        AppLogger.debug('[WEB PICKER] No procedure ID — will open picker anyway');
       } else {
         procedureIdToSave = procedureId;
       }
@@ -4469,7 +4470,7 @@ class _CameraScreenState extends State<CameraScreen>
       _croppedImageBytes = null;
     });
     openWebImagePicker((bytes) async {
-      debugPrint('[WEB PICKER] complete, bytes=${bytes?.length}');
+      AppLogger.debug('[WEB PICKER] complete, bytes=${bytes?.length}');
       try {
         if (bytes == null || bytes.isEmpty) {
           if (mounted) setState(() => _capturing = false);
@@ -4495,7 +4496,7 @@ class _CameraScreenState extends State<CameraScreen>
         try {
           croppedBytes = await _cropWebBytes(workingBytes);
         } catch (e) {
-          debugPrint('[WEB PICKER] crop failed, using original bytes: $e');
+          AppLogger.debug('[WEB PICKER] crop failed, using original bytes: $e');
           croppedBytes = workingBytes;
         }
         if (croppedBytes == null) {
@@ -4511,7 +4512,7 @@ class _CameraScreenState extends State<CameraScreen>
           sourceImageHeight,
         );
       } catch (e) {
-        debugPrint('[WEB PICKER] exception: $e');
+        AppLogger.debug('[WEB PICKER] exception: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -4554,7 +4555,7 @@ class _CameraScreenState extends State<CameraScreen>
 
     if (!widget.isSkincareScan &&
         (resolvedProcedureId == null || resolvedProcedureId.isEmpty)) {
-      debugPrint(
+      AppLogger.debug(
         '[_saveWebGalleryBytes] ERROR: Procedure scan but no procedureId!',
       );
       if (mounted) {
@@ -4565,7 +4566,7 @@ class _CameraScreenState extends State<CameraScreen>
       return;
     }
 
-    debugPrint(
+    AppLogger.debug(
       '[_saveWebGalleryBytes] START bytes.length=${bytes.length} procedureIdToSave=$resolvedProcedureId productNameToSave=$productNameToSave isSkincareScan=${widget.isSkincareScan}',
     );
 
@@ -4586,27 +4587,27 @@ class _CameraScreenState extends State<CameraScreen>
     // remains absent until a genuine on-device implementation is available.
     const Map<String, dynamic>? bodySilhouettePayload = null;
     try {
-      debugPrint(
+      AppLogger.debug(
         '[_saveWebGalleryBytes] imagePathToSave length=${imagePathToSave.length}, originalBytes=${bytes.length}, storedBytes=${bytesForStorage.length}',
       );
       List<ScanHistoryEntry> updatedHistory = const [];
 
-      debugPrint('[_saveWebGalleryBytes] _cycleGuidance() starting');
+      AppLogger.debug('[_saveWebGalleryBytes] _cycleGuidance() starting');
       _cycleGuidance();
-      debugPrint('[_saveWebGalleryBytes] _cycleGuidance() done');
+      AppLogger.debug('[_saveWebGalleryBytes] _cycleGuidance() done');
 
       final liveLighting = _analyzeLighting(bytes);
-      debugPrint(
+      AppLogger.debug(
         '[_saveWebGalleryBytes] liveLighting analyzed, level=${liveLighting.level}',
       );
       final lightingConfidence = kIsWeb
           ? _lightingConfidenceFromGuidance(liveLighting)
           : _estimateLightingConfidence(bytes);
-      debugPrint(
+      AppLogger.debug(
         '[_saveWebGalleryBytes] lightingConfidence=$lightingConfidence',
       );
 
-      debugPrint('[_saveWebGalleryBytes] analyzeCapturedLandmarks() starting');
+      AppLogger.debug('[_saveWebGalleryBytes] analyzeCapturedLandmarks() starting');
       final capturedLandmarks = kIsWeb
           ? await analyzeCapturedLandmarks(
               bytes: bytes,
@@ -4616,7 +4617,7 @@ class _CameraScreenState extends State<CameraScreen>
             ).timeout(
               const Duration(seconds: 4),
               onTimeout: () {
-                debugPrint(
+                AppLogger.debug(
                   '[_saveWebGalleryBytes] analyzeCapturedLandmarks timeout on web, using unsupported fallback',
                 );
                 return LandmarkAssessment.unsupported;
@@ -4628,7 +4629,7 @@ class _CameraScreenState extends State<CameraScreen>
               isBody: _isBodyGuide,
               poseTemplate: _selectedPoseTemplate,
             );
-      debugPrint(
+      AppLogger.debug(
         '[_saveWebGalleryBytes] analyzeCapturedLandmarks() done, available=${capturedLandmarks.available}',
       );
 
@@ -4639,19 +4640,19 @@ class _CameraScreenState extends State<CameraScreen>
             _liveLandmarkAssessment = capturedLandmarks;
           }
         });
-        debugPrint(
+        AppLogger.debug(
           '[_saveWebGalleryBytes] setState after landmark analysis done',
         );
       }
 
-      debugPrint('[_saveWebGalleryBytes] nextMetrics created');
+      AppLogger.debug('[_saveWebGalleryBytes] nextMetrics created');
 
       final consistencyScore = _calculateConsistencyScore(
         bytes,
         nextMetrics,
         landmarkAssessment: capturedLandmarks,
       );
-      debugPrint('[_saveWebGalleryBytes] consistencyScore=$consistencyScore');
+      AppLogger.debug('[_saveWebGalleryBytes] consistencyScore=$consistencyScore');
 
       final preferredReference =
           liveLighting.level == LightingLevel.optimal &&
@@ -4660,12 +4661,12 @@ class _CameraScreenState extends State<CameraScreen>
               capturedLandmarks.landmarkQuality >= 0.76) &&
           consistencyScore >= 84;
       _lastConsistencyScore = consistencyScore;
-      debugPrint(
+      AppLogger.debug(
         '[_saveWebGalleryBytes] preferredReference=$preferredReference',
       );
 
       if (widget.isSkincareScan) {
-        debugPrint('[_saveWebGalleryBytes] Saving skincare scan');
+        AppLogger.debug('[_saveWebGalleryBytes] Saving skincare scan');
         updatedHistory = await AppPrefs.addScanMetric(
           nextMetrics,
           procedureId: null,
@@ -4696,11 +4697,11 @@ class _CameraScreenState extends State<CameraScreen>
             sourceImageHeight: sourceImageHeight,
           rawPayload: bodySilhouettePayload,
         );
-        debugPrint(
+        AppLogger.debug(
           '[_saveWebGalleryBytes] skincare scan saved, updatedHistory.length=${updatedHistory.length}',
         );
       } else {
-        debugPrint(
+        AppLogger.debug(
           '[_saveWebGalleryBytes] Saving procedure scan, procedureIdToSave=$resolvedProcedureId',
         );
         updatedHistory = await AppPrefs.addScanMetric(
@@ -4733,7 +4734,7 @@ class _CameraScreenState extends State<CameraScreen>
             sourceImageHeight: sourceImageHeight,
           rawPayload: bodySilhouettePayload,
         );
-        debugPrint(
+        AppLogger.debug(
           '[_saveWebGalleryBytes] procedure scan saved, updatedHistory.length=${updatedHistory.length}',
         );
 
@@ -4741,7 +4742,7 @@ class _CameraScreenState extends State<CameraScreen>
         final idx = proceduresJson.indexWhere(
           (p) => (p['id'] ?? '') == resolvedProcedureId,
         );
-        debugPrint('[_saveWebGalleryBytes] proceduresJson idx=$idx');
+        AppLogger.debug('[_saveWebGalleryBytes] proceduresJson idx=$idx');
         if (idx == -1) {
           throw Exception('Procedure not found for ID: $resolvedProcedureId');
         }
@@ -4755,7 +4756,7 @@ class _CameraScreenState extends State<CameraScreen>
           latestBytes: bytes,
         );
         proceduresJson[idx] = updatedProc.toJson();
-        debugPrint(
+        AppLogger.debug(
           '[_saveWebGalleryBytes] procedure updated in proceduresJson',
         );
         try {
@@ -4764,7 +4765,7 @@ class _CameraScreenState extends State<CameraScreen>
           if (!kIsWeb || !e.toString().contains('QuotaExceededError')) {
             rethrow;
           }
-          debugPrint(
+          AppLogger.debug(
             '[_saveWebGalleryBytes] Quota exceeded, compacting procedure history and retrying',
           );
           for (final procedure in proceduresJson) {
@@ -4777,16 +4778,16 @@ class _CameraScreenState extends State<CameraScreen>
           }
           await AppPrefs.saveProcedureHistory(proceduresJson);
         }
-        debugPrint('[_saveWebGalleryBytes] saveProcedureHistory done');
+        AppLogger.debug('[_saveWebGalleryBytes] saveProcedureHistory done');
       }
 
       String? premiumInsightText;
       final isPremium = await PremiumAccess.isPremiumUser();
-      debugPrint(
+      AppLogger.debug(
         '[_saveWebGalleryBytes] isPremium=$isPremium, updatedHistory.length=${updatedHistory.length}',
       );
       if (isPremium && updatedHistory.length >= 2) {
-        debugPrint('[_saveWebGalleryBytes] Processing premium insights');
+        AppLogger.debug('[_saveWebGalleryBytes] Processing premium insights');
         final sorted = List<ScanHistoryEntry>.from(updatedHistory)
           ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
         final insight =
@@ -4798,7 +4799,7 @@ class _CameraScreenState extends State<CameraScreen>
         );
         await PremiumRecoveryService.buildSmartRemindersFromLatestScan(sorted);
         premiumInsightText = insight?.summary;
-        debugPrint('[_saveWebGalleryBytes] Premium insights done');
+        AppLogger.debug('[_saveWebGalleryBytes] Premium insights done');
       }
 
       final affirmation = _affirmations[_lastAffirmationIndex];
@@ -4806,28 +4807,28 @@ class _CameraScreenState extends State<CameraScreen>
           (_lastAffirmationIndex + 1) % _affirmations.length;
 
       if (mounted) {
-        debugPrint('[_saveWebGalleryBytes] Widget is mounted, showing UI');
+        AppLogger.debug('[_saveWebGalleryBytes] Widget is mounted, showing UI');
         final messenger = ScaffoldMessenger.of(context);
         final navigator = Navigator.of(context);
-        debugPrint('[_saveWebGalleryBytes] About to play success burst');
+        AppLogger.debug('[_saveWebGalleryBytes] About to play success burst');
         await _playSuccessBurst();
-        debugPrint('[_saveWebGalleryBytes] Success burst done');
+        AppLogger.debug('[_saveWebGalleryBytes] Success burst done');
         if (!mounted) {
-          debugPrint(
+          AppLogger.debug(
             '[_saveWebGalleryBytes] Widget unmounted after success burst, returning early',
           );
           return;
         }
-        debugPrint(
+        AppLogger.debug(
           '[_saveWebGalleryBytes] About to show consistency result sheet, score=$consistencyScore',
         );
         await _showConsistencyResultSheet(
           score: consistencyScore,
           premiumInsightText: premiumInsightText,
         );
-        debugPrint('[_saveWebGalleryBytes] Consistency sheet closed');
+        AppLogger.debug('[_saveWebGalleryBytes] Consistency sheet closed');
         if (!mounted) {
-          debugPrint(
+          AppLogger.debug(
             '[_saveWebGalleryBytes] Widget unmounted after consistency sheet, returning early',
           );
           return;
@@ -4838,32 +4839,32 @@ class _CameraScreenState extends State<CameraScreen>
             duration: const Duration(seconds: 4),
           ),
         );
-        debugPrint('[_saveWebGalleryBytes] Affirmation snackbar shown');
+        AppLogger.debug('[_saveWebGalleryBytes] Affirmation snackbar shown');
         await _loadReferenceContext();
-        debugPrint('[_saveWebGalleryBytes] Reference context loaded');
+        AppLogger.debug('[_saveWebGalleryBytes] Reference context loaded');
         if (!mounted) {
-          debugPrint(
+          AppLogger.debug(
             '[_saveWebGalleryBytes] Widget unmounted after loading context, returning early',
           );
           return;
         }
-        debugPrint('[_saveWebGalleryBytes] About to pop navigator');
+        AppLogger.debug('[_saveWebGalleryBytes] About to pop navigator');
         navigator.pop(true);
-        debugPrint('[_saveWebGalleryBytes] Navigator popped');
+        AppLogger.debug('[_saveWebGalleryBytes] Navigator popped');
       } else {
-        debugPrint(
+        AppLogger.debug(
           '[_saveWebGalleryBytes] Widget NOT mounted, skipping UI updates',
         );
       }
     } catch (e) {
-      debugPrint('[_saveWebGalleryBytes] Exception caught: $e');
+      AppLogger.debug('[_saveWebGalleryBytes] Exception caught: $e');
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Failed to save photo: $e')));
       }
     } finally {
-      debugPrint(
+      AppLogger.debug(
         '[_saveWebGalleryBytes] Finally block, setting _capturing=false',
       );
       if (mounted) setState(() => _capturing = false);
@@ -5141,7 +5142,7 @@ class _CameraScreenState extends State<CameraScreen>
         navigator.pop(true);
       }
     } catch (e) {
-      debugPrint('Photo save error: $e');
+      AppLogger.debug('Photo save error: $e');
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -5235,7 +5236,7 @@ class _CameraScreenState extends State<CameraScreen>
       final reason = controller == null
           ? 'controller_null'
           : 'controller_not_initialized';
-      debugPrint(
+      AppLogger.debug(
         'CAPTURE_FALLBACK: using gallery picker instead of camera, reason=$reason',
       );
       ScaffoldMessenger.of(context).showSnackBar(
@@ -5262,7 +5263,7 @@ class _CameraScreenState extends State<CameraScreen>
       try {
         await controller.setExposureMode(ExposureMode.locked);
       } catch (e) {
-        debugPrint('Camera exposure lock unsupported; continuing capture: $e');
+        AppLogger.debug('Camera exposure lock unsupported; continuing capture: $e');
       }
 
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -5302,7 +5303,7 @@ class _CameraScreenState extends State<CameraScreen>
         }
         burstLuminances.add(meanLuminanceFromImageBytes(bytes));
       }
-      debugPrint('[BURST_LUMINANCE] source=liveCamera frames=$burstLuminances (logging only, selection unaffected)');
+      AppLogger.debug('[BURST_LUMINANCE] source=liveCamera frames=$burstLuminances (logging only, selection unaffected)');
       await _appendBurstLuminanceLogLine(burstLuminances, source: 'liveCamera');
 
       for (final file in burstFiles) {
@@ -5328,7 +5329,7 @@ class _CameraScreenState extends State<CameraScreen>
       try {
         await controller.setExposureMode(ExposureMode.auto);
       } catch (e) {
-        debugPrint('Camera exposure reset unsupported: $e');
+        AppLogger.debug('Camera exposure reset unsupported: $e');
       }
       _startLightingStream(controller);
       await _streamTransitionGate.awaitPending();
@@ -5417,7 +5418,7 @@ class _CameraScreenState extends State<CameraScreen>
         burstStillHeights.add(exifAndSize.stillHeight);
       }
       // The locked ISO / exposure time and whether every frame kept them.
-      debugPrint(
+      AppLogger.debug(
         aiBurstLockLogLine(
           exposureLockSucceeded: exposureLockSucceeded,
           focusLockSucceeded: focusLockSucceeded,
@@ -5466,7 +5467,7 @@ class _CameraScreenState extends State<CameraScreen>
           }
         }
       } catch (e) {
-        debugPrint('[AiScanCropPreset] face-centered crop preset failed: $e');
+        AppLogger.debug('[AiScanCropPreset] face-centered crop preset failed: $e');
       }
       if (!mounted) return;
 
@@ -5562,7 +5563,7 @@ class _CameraScreenState extends State<CameraScreen>
             'full_still_sharpness=${qualityTag.fullStillSharpness.toStringAsFixed(2)} '
             'sharpness_floor=$_sharpnessVarianceFloor';
       }
-      debugPrint(
+      AppLogger.debug(
         '[BURST_LUMINANCE] source=aiSkinAnalysis frames=$burstLuminances (logging only, selection unaffected)',
       );
       await _appendBurstLuminanceLogLine(
@@ -5636,12 +5637,12 @@ class _CameraScreenState extends State<CameraScreen>
       try {
         await controller.setExposureMode(ExposureMode.auto);
       } catch (e) {
-        debugPrint('AI burst exposure reset unsupported: $e');
+        AppLogger.debug('AI burst exposure reset unsupported: $e');
       }
       try {
         await controller.setFocusMode(FocusMode.auto);
       } catch (e) {
-        debugPrint('AI burst focus reset unsupported: $e');
+        AppLogger.debug('AI burst focus reset unsupported: $e');
       }
       _startLightingStream(controller);
       // Keep the shutter disabled (_capturing stays true) until the restart
@@ -5866,7 +5867,7 @@ class _CameraScreenState extends State<CameraScreen>
     final pitch = a.pitch ?? 0.0;
     final yaw = a.yaw ?? 0.0;
     final roll = a.roll ?? 0.0;
-    print(
+    AppLogger.debug(
       '[FRONTEND LIVE POSE] pitch=${pitch.toStringAsFixed(2)} yaw=${yaw.toStringAsFixed(2)} tilt=${tilt.toStringAsFixed(2)} roll=${roll.toStringAsFixed(2)} centerDelta=${centerDelta.toStringAsFixed(3)}',
     );
     return centerDelta <= 0.25 && tilt <= 30.0;
@@ -6454,7 +6455,7 @@ class _CameraScreenState extends State<CameraScreen>
     final captureCenterDelta =
         _liveLandmarkAssessment.centerOffsetX.abs() +
         _liveLandmarkAssessment.centerOffsetY.abs();
-    print(
+    AppLogger.debug(
       '[FRONTEND CAPTURE FINAL] pitch=${capturePitch.toStringAsFixed(2)} yaw=${captureYaw.toStringAsFixed(2)} roll=${captureRoll.toStringAsFixed(2)} faceFill=${captureFaceFill.toStringAsFixed(3)} centerDelta=${captureCenterDelta.toStringAsFixed(3)}',
     );
 

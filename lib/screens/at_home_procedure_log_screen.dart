@@ -1,3 +1,4 @@
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -951,7 +952,7 @@ class _AtHomeProcedureLogScreenState
       await ref.read(procedureLogsProvider.notifier).addLog(log);
 
       // Debug: Confirm photo persistence and that photos are linked to THIS log
-      debugPrint(
+      AppLogger.debug(
         'Saved ProcedureLog ${log.id} with '
         '${log.photoPaths.length} photos: ${log.photoPaths}',
       );

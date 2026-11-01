@@ -1,3 +1,4 @@
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'dart:async';
 import 'dart:io' show Platform;
 import 'dart:ui' as ui;
@@ -5,7 +6,7 @@ import 'dart:ui' as ui;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
@@ -105,7 +106,7 @@ Future<void> main() async {
         try {
           await Hive.openBox<ProcedureLog>('procedureLogs');
         } catch (e) {
-          debugPrint('⚠️ Failed to open procedureLogs box on startup: $e');
+          AppLogger.debug('⚠️ Failed to open procedureLogs box on startup: $e');
         }
       }
 
@@ -170,7 +171,7 @@ Future<void> main() async {
               ? androidKey
               : '';
           if (revenueCatPublicKey.isEmpty) {
-            debugPrint(
+            AppLogger.debug(
               '[RevenueCat] Skipping Purchases.configure: no key supplied '
               'for this platform. Pass --dart-define=REVENUECAT_IOS_KEY=... '
               'or --dart-define=REVENUECAT_ANDROID_KEY=... to enable purchases.',

@@ -16,6 +16,7 @@
 // On real devices the purchase flow drives RevenueCat; on web / desktop /
 // testing it falls back to a local-unlock simulation so QA never blocks.
 
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -91,7 +92,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
       }
     } on MissingPluginException catch (e) {
       // Desktop may not register purchases plugin; do not block upgrade flow.
-      debugPrint('[Paywall] Missing plugin on this platform: $e');
+      AppLogger.debug('[Paywall] Missing plugin on this platform: $e');
       if (!mounted) return;
       setState(() {
         _offerings = null;
@@ -103,7 +104,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
         _errorMessage =
             'Live pricing is temporarily unavailable. You can still continue with listed plan pricing.';
       });
-      debugPrint('[Paywall] Failed to load offerings: $e');
+      AppLogger.debug('[Paywall] Failed to load offerings: $e');
     }
   }
 

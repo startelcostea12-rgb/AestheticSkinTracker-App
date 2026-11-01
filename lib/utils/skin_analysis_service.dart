@@ -1,3 +1,4 @@
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'dart:convert';
 import 'dart:async';
 
@@ -78,8 +79,8 @@ class SkinAnalysisService {
       ..['recommended_products'] = safeProducts
       ..['safety_profile'] = safetyProfile;
 
-    debugPrint('Active Safety Profile: $safetyProfile');
-    debugPrint('Safe Product Suggestions Count: ${safeProducts.length}');
+    AppLogger.debug('Active Safety Profile: $safetyProfile');
+    AppLogger.debug('Safe Product Suggestions Count: ${safeProducts.length}');
 
     return normalized;
   }
@@ -105,7 +106,7 @@ class SkinAnalysisService {
       final commit = decoded['commit']?.toString().trim();
       return (commit == null || commit.isEmpty) ? null : commit;
     } catch (e) {
-      debugPrint('[SkinAnalysisService] fetchBackendCommit failed: $e');
+      AppLogger.debug('[SkinAnalysisService] fetchBackendCommit failed: $e');
       return null;
     }
   }
@@ -122,7 +123,7 @@ class SkinAnalysisService {
     await UploadGate.ensureCanUpload();
     final uri = BackendConfig.analyzeSkinUri;
 
-    debugPrint('[SkinAnalysisService] POST $uri');
+    AppLogger.debug('[SkinAnalysisService] POST $uri');
 
     try {
       final response = await http.post(
@@ -143,7 +144,7 @@ class SkinAnalysisService {
         }),
       ).timeout(_requestTimeout);
 
-      debugPrint(
+      AppLogger.debug(
         '[SkinAnalysisService] Backend status: ${response.statusCode}',
       );
 
@@ -168,7 +169,7 @@ class SkinAnalysisService {
         'Skin analysis timed out after 60 seconds. Please check your connection and try again.',
       );
     } catch (e) {
-      debugPrint('❌ [SkinAnalysisService] Request failed: $e');
+      AppLogger.debug('❌ [SkinAnalysisService] Request failed: $e');
       final lower = e.toString().toLowerCase();
       if (lower.contains('failed to fetch') ||
           lower.contains('clientexception') ||
@@ -211,7 +212,7 @@ class SkinAnalysisService {
       _ensureBackendAllowed(allowBackend);
       await UploadGate.ensureCanUpload();
       final uri = BackendConfig.analyzeBodySilhouetteUri;
-      debugPrint('[SkinAnalysisService] POST $uri (body silhouette)');
+      AppLogger.debug('[SkinAnalysisService] POST $uri (body silhouette)');
       final poster = httpClient?.post ?? http.post;
       final response = await poster(
         uri,
@@ -243,7 +244,7 @@ class SkinAnalysisService {
       ).timeout(_requestTimeout);
 
       if (response.statusCode != 200) {
-        debugPrint(
+        AppLogger.debug(
           '[SkinAnalysisService] Body silhouette backend HTTP ${response.statusCode}: ${response.body}',
         );
         return null;
@@ -255,7 +256,7 @@ class SkinAnalysisService {
       }
       return null;
     } catch (e) {
-      debugPrint('[SkinAnalysisService] Body silhouette request failed: $e');
+      AppLogger.debug('[SkinAnalysisService] Body silhouette request failed: $e');
       return null;
     }
   }
@@ -280,7 +281,7 @@ class SkinAnalysisService {
     }
 
     final targetUri = uri ?? BackendConfig.analyzeSingleSkinUri;
-    debugPrint('[SkinAnalysisService] POST $targetUri (multipart)');
+    AppLogger.debug('[SkinAnalysisService] POST $targetUri (multipart)');
 
     final mergedFields = Map<String, String>.from(fields);
     final inferredSafety = await _inferSafetySignalFields();
@@ -341,7 +342,7 @@ class SkinAnalysisService {
           .timeout(_requestTimeout);
       final response = await http.Response.fromStream(streamed);
 
-      debugPrint('[SkinAnalysisService] Multipart status: ${response.statusCode}');
+      AppLogger.debug('[SkinAnalysisService] Multipart status: ${response.statusCode}');
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception(
@@ -368,7 +369,7 @@ class SkinAnalysisService {
         'Skin analysis upload timed out after 60 seconds. Please check your connection and try again.',
       );
     } catch (e) {
-      debugPrint('❌ [SkinAnalysisService] Multipart request failed: $e');
+      AppLogger.debug('❌ [SkinAnalysisService] Multipart request failed: $e');
       final lower = e.toString().toLowerCase();
       if (lower.contains('failed to fetch') ||
           lower.contains('clientexception') ||

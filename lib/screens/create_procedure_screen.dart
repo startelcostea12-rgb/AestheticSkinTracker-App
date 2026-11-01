@@ -1,3 +1,4 @@
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../app_theme.dart';
@@ -1174,7 +1175,7 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
 
   Widget _buildTypeDropdown() {
     if (selectedType != null && !_visibleProcedureTypes.contains(selectedType)) {
-      debugPrint(
+      AppLogger.debug(
         'WARNING: selectedType="$selectedType" is not in visibleTypes for '
         'region=$selectedBodyRegion category=$selectedCategory — '
         'DropdownButton is about to crash.',
@@ -1245,7 +1246,7 @@ class _CreateProcedureScreenState extends State<CreateProcedureScreen> {
             final items = _visibleProcedureTypes;
             if (selectedBodyRegion == ProcedureBodyRegion.body &&
                 selectedCategory == atHomeCategory) {
-              print(
+              AppLogger.debug(
                 'DEBUG BODY+ATHOME dropdown values: ${items.asMap().entries.map((entry) => '${entry.key}:${entry.value}').join(' | ')}',
               );
             }

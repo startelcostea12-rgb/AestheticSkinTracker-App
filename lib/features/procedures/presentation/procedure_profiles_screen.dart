@@ -990,7 +990,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     final comparison = await AppPrefs.getProcedurePhotoComparison(
       _procedure.id,
     );
-    debugPrint(
+    AppLogger.debug(
       '[BASELINE_READ] source=procedure_photo_comparison procedureId=${_procedure.id} '
       'baselineScanId=${comparison['baselineScanId'] ?? 'none'} '
       'latestScanId=${comparison['latestScanId'] ?? 'none'} reason=procedure_profiles_refresh',
@@ -1000,7 +1000,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     // scan history. Load the log that shares this procedure's id so the
     // Before/After section can surface those photos too.
     final procedureLog = _findProcedureLogById(_procedure.id);
-    debugPrint(
+    AppLogger.debug(
       'Loaded ProcedureLog for procedure ${_procedure.id}: '
       '${procedureLog == null ? 'none' : '${procedureLog.photoPaths.length} photos: ${procedureLog.photoPaths}'}',
     );
@@ -1089,7 +1089,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     }
 
     try {
-      print(
+      AppLogger.debug(
         "DEBUG [Delta Engine]: Starting compute for baseline: '$baselinePath' and progress: '$latestPath'",
       );
 
@@ -1101,17 +1101,17 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
         latestPath.trim(),
       );
 
-      print(
+      AppLogger.debug(
         'DEBUG [Delta Engine]: Success! Payload keys found: ${payload.keys}',
       );
-      print("DEBUG [Delta Engine]: metric_matrix: ${payload['metric_matrix']}");
+      AppLogger.debug("DEBUG [Delta Engine]: metric_matrix: ${payload['metric_matrix']}");
 
       if (!mounted) {
-        print('DEBUG [Delta Engine]: Widget unmounted, dropping state update.');
+        AppLogger.debug('DEBUG [Delta Engine]: Widget unmounted, dropping state update.');
         return;
       }
 
-      print(
+      AppLogger.debug(
         'DEBUG [Delta Engine]: Dispatching setState to trigger premium layout rebuild.',
       );
       setState(() {
@@ -1121,10 +1121,10 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
       });
       setState(() {});
     } catch (e, stackTrace) {
-      print(
+      AppLogger.debug(
         'DEBUG [Delta Engine]: CRITICAL FAILURE processing photo deltas: $e',
       );
-      print('DEBUG [Delta Engine]: StackTrace: $stackTrace');
+      AppLogger.debug('DEBUG [Delta Engine]: StackTrace: $stackTrace');
       if (!mounted) return;
       setState(() {
         _localProcedureDeltaPayload = null;
@@ -1154,7 +1154,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
             _scans,
           );
         } catch (e) {
-          debugPrint('[_loadPremiumData] lazy insight gen failed: $e');
+          AppLogger.debug('[_loadPremiumData] lazy insight gen failed: $e');
         }
       }
     }
@@ -1337,14 +1337,14 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
   ScanHistoryEntry? get _resolvedLatestEntry {
     final latestEntry = _findScanById(_latestScanId);
     if (latestEntry != null) {
-      debugPrint(
+      AppLogger.debug(
         '[BASELINE_READ] source=procedure_photo_comparison procedureId=${_procedure.id} '
         'baselineScanId=${_baselineScanId ?? 'none'} latestScanId=${_latestScanId ?? 'none'} reason=latest_id_hit',
       );
       return latestEntry;
     }
     if (_scans.isNotEmpty) {
-      debugPrint(
+      AppLogger.debug(
         '[BASELINE_READ] source=previous_scan_in_list procedureId=${_procedure.id} '
         'baselineScanId=${_baselineScanId ?? 'none'} latestScanId=${_latestScanId ?? 'none'} reason=latest_id_miss_fallback_first_scan',
       );
@@ -1360,7 +1360,7 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
 
     final savedBaseline = _findScanById(_baselineScanId);
     if (savedBaseline != null) {
-      debugPrint(
+      AppLogger.debug(
         '[BASELINE_READ] source=procedure_photo_comparison procedureId=${_procedure.id} '
         'baselineScanId=${_baselineScanId ?? 'none'} latestScanId=${_latestScanId ?? 'none'} reason=baseline_id_hit',
       );
@@ -1372,14 +1372,14 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     ScanHistoryEntry? baselineEntry;
     try {
       baselineEntry = _scans.firstWhere((s) => s.isBaseline);
-      debugPrint(
+      AppLogger.debug(
         '[BASELINE_READ] source=previous_scan_in_list procedureId=${_procedure.id} '
         'baselineScanId=${_baselineScanId ?? 'none'} latestScanId=${_latestScanId ?? 'none'} reason=baseline_id_miss_use_isBaseline_flag',
       );
     } catch (_) {
       // Fallback: Use the OLDEST scan (last in sorted list, since newest is first)
       baselineEntry = _scans.last;
-      debugPrint(
+      AppLogger.debug(
         '[BASELINE_READ] source=previous_scan_in_list procedureId=${_procedure.id} '
         'baselineScanId=${_baselineScanId ?? 'none'} latestScanId=${_latestScanId ?? 'none'} reason=baseline_id_miss_use_oldest_scan',
       );
@@ -2112,20 +2112,20 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     // ── Debug: verify image bytes before PDF generation ──────────────────────
     final dbgBasePath = _baselineImagePath;
     final dbgLatPath = _latestImagePath;
-    debugPrint(
+    AppLogger.debug(
       '[PDF Export] _baselineImagePath: ${dbgBasePath != null ? "${dbgBasePath.substring(0, dbgBasePath.length.clamp(0, 60))}..." : "NULL"}',
     );
-    debugPrint(
+    AppLogger.debug(
       '[PDF Export] _latestImagePath:   ${dbgLatPath != null ? "${dbgLatPath.substring(0, dbgLatPath.length.clamp(0, 60))}..." : "NULL"}',
     );
-    debugPrint('[PDF Export] _scans.length: ${_scans.length}');
+    AppLogger.debug('[PDF Export] _scans.length: ${_scans.length}');
     if (_scans.isNotEmpty) {
       final fp = _scans.first.imagePath ?? '';
       final lp = _scans.last.imagePath ?? '';
-      debugPrint(
+      AppLogger.debug(
         '[PDF Export] scans.first.imagePath: ${fp.isEmpty ? "EMPTY" : "${fp.substring(0, fp.length.clamp(0, 60))}..."}',
       );
-      debugPrint(
+      AppLogger.debug(
         '[PDF Export] scans.last.imagePath:  ${lp.isEmpty ? "EMPTY" : "${lp.substring(0, lp.length.clamp(0, 60))}..."}',
       );
     }
@@ -2154,16 +2154,16 @@ class _ProcedureDetailScreenState extends State<ProcedureDetailScreen> {
     final dbgBaselineBytes = baselineFromHistory ?? baselineFromComparison;
     final dbgLatestBytes = latestFromHistory ?? latestFromComparison;
 
-    debugPrint(
+    AppLogger.debug(
       '[PDF Export] baseline source: ${baselineFromHistory != null ? "scan-history" : "comparison-map"}',
     );
-    debugPrint(
+    AppLogger.debug(
       '[PDF Export] latest source:   ${latestFromHistory != null ? "scan-history" : "comparison-map"}',
     );
-    debugPrint(
+    AppLogger.debug(
       '[PDF Export] _baselinePhotoBytes: ${dbgBaselineBytes?.length ?? "NULL"}',
     );
-    debugPrint(
+    AppLogger.debug(
       '[PDF Export] _latestPhotoBytes:   ${dbgLatestBytes?.length ?? "NULL"}',
     );
 

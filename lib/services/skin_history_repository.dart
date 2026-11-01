@@ -15,9 +15,9 @@
 //   `wrinkle`). The keys below are the single source of truth for those
 //   metric names.
 
+import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
 import '../models/scan_history.dart';
 import '../utils/app_prefs.dart';
-import 'package:flutter/foundation.dart';
 
 /// Repository for reading and writing AI skin-analysis scans, including
 /// the two specialist metrics (`acne_severity`, `rosacea_intensity`).
@@ -200,20 +200,20 @@ class SkinHistoryRepository {
 
     final hasProcedureId =
         (entry.procedureId?.trim().isNotEmpty ?? false);
-    debugPrint(
+    AppLogger.debug(
       '[BASELINE_WRITE] saveScan entryId=${entry.id} procedureId=${entry.procedureId ?? 'null'} '
       'willSyncProcedureComparison=$hasProcedureId',
     );
 
     final history = await AppPrefs.addScanEntry(entry);
-    debugPrint(
+    AppLogger.debug(
       '[BASELINE_WRITE] addScanEntry complete entryId=${entry.id} historyCount=${history.length}',
     );
     await AppPrefs.syncProcedurePhotoComparisonForEntry(
       entry,
       history: history,
     );
-    debugPrint(
+    AppLogger.debug(
       '[BASELINE_WRITE] syncProcedurePhotoComparisonForEntry complete entryId=${entry.id}',
     );
     return entry;
