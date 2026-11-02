@@ -77,6 +77,12 @@ def _missing_landmark_mask(shape, points, skin_mask, *, side):
     return _REAL_UNDER_EYE_MASK(shape, points[:10], skin_mask, side=side)
 
 
+def _left_eye_only_mask(shape, points, skin_mask, *, side):
+    if side == "right":
+        return np.zeros(shape, dtype=np.uint8)
+    return _REAL_UNDER_EYE_MASK(shape, points, skin_mask, side=side)
+
+
 _REAL_UNDER_EYE_MASK = main._under_eye_region_mask
 
 
@@ -122,6 +128,23 @@ def test_missing_landmarks_omit_both_metrics(clear_face_input):
         assert key not in result["metric_matrix"]
         assert result["omitted_metric_reasons"][key] == "non_usable_value"
         assert result["image_quality"][f"{key}_mask_pixels"] == 0
+
+
+def test_missing_eye_diagnostics_are_omitted_not_zero(clear_face_input):
+    result, _ = _analyze(clear_face_input, _left_eye_only_mask)
+    image_quality = result["image_quality"]
+    fields = (
+        "offset_eye_widths",
+        "band_median_L",
+        "reference_median_L",
+        "raw_L_delta",
+        "dark_circle_density",
+        "texture_density",
+    )
+
+    for field in fields:
+        assert f"under_eye_left_{field}" in image_quality
+        assert f"under_eye_right_{field}" not in image_quality
 
 
 def test_texture_and_pigment_values_do_not_depend_on_under_eye_band(clear_face_input):

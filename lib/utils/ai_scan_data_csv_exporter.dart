@@ -56,6 +56,7 @@ class AiScanDataCsvExporter {
     'image_quality.chroma_cast',
     'image_quality.lighting_balance_score',
     ...colorDiagnosticColumns,
+    ...underEyeOffsetSummaryColumns,
   ];
 
   /// Signed color / redness-branch logging fields main.py adds to
@@ -122,6 +123,13 @@ class AiScanDataCsvExporter {
     'image_quality.under_eye_right_box_cy',
     'image_quality.under_eye_right_box_w',
     'image_quality.under_eye_right_box_h',
+  ];
+
+  static const List<String> underEyeOffsetSummaryColumns = <String>[
+    'image_quality.under_eye_left_offset_median_eye_widths',
+    'image_quality.under_eye_left_offset_max_minus_min_eye_widths',
+    'image_quality.under_eye_right_offset_median_eye_widths',
+    'image_quality.under_eye_right_offset_max_minus_min_eye_widths',
   ];
 
   static const List<String> _metricFields = <String>[
@@ -211,6 +219,18 @@ class AiScanDataCsvExporter {
     'under_eye_texture_density_mask_kind',
     'under_eye_texture_density_mask_pixels',
     'under_eye_texture_density_omit_reason',
+    'under_eye_left_offset_eye_widths',
+    'under_eye_left_band_median_L',
+    'under_eye_left_reference_median_L',
+    'under_eye_left_raw_L_delta',
+    'under_eye_left_dark_circle_density',
+    'under_eye_left_texture_density',
+    'under_eye_right_offset_eye_widths',
+    'under_eye_right_band_median_L',
+    'under_eye_right_reference_median_L',
+    'under_eye_right_raw_L_delta',
+    'under_eye_right_dark_circle_density',
+    'under_eye_right_texture_density',
   ];
 
   static List<ScanHistoryEntry> exportableScans(

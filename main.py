@@ -2324,6 +2324,83 @@ def _under_eye_reference_mask(
     return cv2.bitwise_and(reference, cv2.bitwise_not(band))
 
 
+def _under_eye_logging_diagnostics(
+    face_bgr: np.ndarray,
+    points: np.ndarray,
+    face_skin_mask: np.ndarray,
+) -> Dict[str, float]:
+    h, w = face_bgr.shape[:2]
+    lab_l = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2LAB)[:, :, 0].astype(np.float32)
+    gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    eye_widths = [
+        float(np.linalg.norm(points[a] - points[b]))
+        for a, b in ((33, 133), (263, 362))
+        if max(a, b) < points.shape[0]
+    ]
+    eye_width = float(np.mean(eye_widths)) if eye_widths else 0.0
+    sigma = max(0.8, UNDER_EYE_TEXTURE_DOG_SIGMA_EYE_WIDTHS * eye_width)
+    dog = np.abs(
+        cv2.GaussianBlur(gray, (0, 0), sigma)
+        - cv2.GaussianBlur(gray, (0, 0), 2.0 * sigma)
+    )
+    diagnostics: Dict[str, float] = {}
+    for side, canthus_ids in (("left", (33, 133)), ("right", (263, 362))):
+        band_mask = _under_eye_region_mask(
+            (h, w), points, face_skin_mask, side=side
+        )
+        reference_mask = _under_eye_reference_mask(
+            (h, w), points, face_skin_mask, side=side
+        )
+        band_pixels = band_mask > 0
+        reference_pixels = reference_mask > 0
+        if not np.any(band_pixels) or not np.any(reference_pixels):
+            continue
+
+        canthi = points[list(canthus_ids)].astype(np.float64)
+        eye_width = float(np.linalg.norm(canthi[1] - canthi[0]))
+        offset_values = []
+        if math.isfinite(eye_width) and eye_width >= 1.0 and canthi[1, 0] != canthi[0, 0]:
+            start_x = max(0, int(math.ceil(float(np.min(canthi[:, 0])))))
+            end_x = min(w - 1, int(math.floor(float(np.max(canthi[:, 0])))))
+            for x in range(start_x, end_x + 1):
+                band_rows = np.flatnonzero(band_pixels[:, x])
+                if band_rows.size == 0:
+                    continue
+                canthus_y = canthi[0, 1] + (
+                    (canthi[1, 1] - canthi[0, 1])
+                    * (x - canthi[0, 0])
+                    / (canthi[1, 0] - canthi[0, 0])
+                )
+                offset_values.append((float(band_rows[0]) - canthus_y) / eye_width)
+
+        band_median_l = float(np.median(lab_l[band_pixels]))
+        reference_median_l = float(np.median(lab_l[reference_pixels]))
+        raw_l_delta = reference_median_l - band_median_l
+        prefix = f"under_eye_{side}"
+        if offset_values:
+            diagnostics[f"{prefix}_offset_eye_widths"] = float(
+                np.median(offset_values)
+            )
+        diagnostics[f"{prefix}_band_median_L"] = band_median_l
+        diagnostics[f"{prefix}_reference_median_L"] = reference_median_l
+        diagnostics[f"{prefix}_raw_L_delta"] = raw_l_delta
+        diagnostics[f"{prefix}_dark_circle_density"] = (
+            compute_under_eye_dark_circle_density(max(0.0, raw_l_delta))
+        )
+
+        band_energy = float(np.mean(dog[band_pixels]))
+        reference_energy = float(np.mean(dog[reference_pixels]))
+        if reference_energy > 0.0 and math.isfinite(band_energy):
+            diagnostics[f"{prefix}_texture_density"] = float(
+                np.clip(
+                    UNDER_EYE_TEXTURE_RATIO_SCALE * band_energy / reference_energy,
+                    0.0,
+                    100.0,
+                )
+            )
+    return diagnostics
+
+
 def _compute_pose_pitch_yaw_from_landmarks(points: np.ndarray) -> tuple[float, float]:
     # Lightweight pose proxy from landmark geometry. Values are degrees-like.
     required_ids = [1, 33, 263, 10, 152]
@@ -6649,6 +6726,9 @@ def analyze_skin_patch(
             )
         )
     )
+    under_eye_frame_diagnostics = _under_eye_logging_diagnostics(
+        norm, norm_points, under_eye_face_skin_mask
+    )
     # A zero reading here is ambiguous (genuinely flawless vs. detector floor),
     # so it is passed through as-is rather than substituted with a synthetic
     # non-zero value; the emission loop below marks adequate-ROI zeros as an
@@ -7754,6 +7834,7 @@ def analyze_skin_patch(
         "under_eye_texture_density_omit_reason": omitted_metric_reasons.get(
             "under_eye_texture_density"
         ),
+        **under_eye_frame_diagnostics,
         # Same-height cheek strip both under-eye metrics compare against.
         "under_eye_reference_mask_pixels": under_eye_reference_pixels,
     }

@@ -174,6 +174,31 @@ def test_texture_is_the_band_over_reference_dog_ratio(zone_inputs, caplog):
     )
 
 
+def test_logging_diagnostics_include_each_eye_measurement(zone_inputs):
+    captured, _ = zone_inputs
+    diagnostics = main._under_eye_logging_diagnostics(
+        captured["face_bgr"],
+        captured["points"],
+        captured["face_skin_mask"],
+    )
+    for side in ("left", "right"):
+        prefix = f"under_eye_{side}_"
+        for field in (
+            "offset_eye_widths",
+            "band_median_L",
+            "reference_median_L",
+            "raw_L_delta",
+            "dark_circle_density",
+            "texture_density",
+        ):
+            assert prefix + field in diagnostics
+        assert diagnostics[f"{prefix}dark_circle_density"] == pytest.approx(
+            main.compute_under_eye_dark_circle_density(
+                max(0.0, diagnostics[f"{prefix}raw_L_delta"])
+            )
+        )
+
+
 def test_formula_versions_bumped_and_old_baselines_refused():
     for key in UNDER_EYE_KEYS:
         current_version = main._metric_formula_version(key)

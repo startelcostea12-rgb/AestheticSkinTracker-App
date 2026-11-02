@@ -1924,6 +1924,15 @@ clearLockedTrendVerdicts({
   );
 }
 
+const List<String> underEyePerFrameDiagnosticFields = <String>[
+  'offset_eye_widths',
+  'band_median_L',
+  'reference_median_L',
+  'raw_L_delta',
+  'dark_circle_density',
+  'texture_density',
+];
+
 List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
   required List<Map<String, dynamic>?> frameResponses,
   required List<AiScanFrameExposure> frameExposureMetadata,
@@ -2007,9 +2016,34 @@ List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({
           imageQuality['under_eye_texture_density_mask_pixels'],
       'under_eye_texture_density_omit_reason':
           imageQuality['under_eye_texture_density_omit_reason'],
+      for (final side in const ['left', 'right'])
+        for (final field in underEyePerFrameDiagnosticFields)
+          'under_eye_${side}_$field': imageQuality['under_eye_${side}_$field'],
       ...exposure.toJson(),
     };
   }, growable: false);
+}
+
+Map<String, dynamic> summarizeAiScanUnderEyeOffsets(
+  List<Map<String, dynamic>> frameDiagnostics,
+) {
+  final summary = <String, dynamic>{};
+  for (final side in const ['left', 'right']) {
+    final offsets = <double>[];
+    for (final frame in frameDiagnostics) {
+      final offset = _parseFiniteDouble(
+        frame['under_eye_${side}_offset_eye_widths'],
+      );
+      if (offset != null) offsets.add(offset);
+    }
+    if (offsets.isEmpty) continue;
+    offsets.sort();
+    final prefix = 'under_eye_${side}_offset';
+    summary['${prefix}_median_eye_widths'] = _medianOf(offsets);
+    summary['${prefix}_max_minus_min_eye_widths'] =
+        offsets.last - offsets.first;
+  }
+  return summary;
 }
 
 bool aiScanHasCheekSideMismatch({
@@ -2409,12 +2443,23 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
         _dynamicMap(aggregate.response['metrics'])[key] = grayCardSummary[key];
       }
     }
-    aggregate.response[aiScanPerFrameDiagnosticsKey] =
-        buildAiScanPerFrameDiagnostics(
-          frameResponses: responsesByFrame,
-          frameExposureMetadata: frameExposureMetadata,
-          frameCount: frames.length,
-        );
+    final perFrameDiagnostics = buildAiScanPerFrameDiagnostics(
+      frameResponses: responsesByFrame,
+      frameExposureMetadata: frameExposureMetadata,
+      frameCount: frames.length,
+    );
+    aggregate.response[aiScanPerFrameDiagnosticsKey] = perFrameDiagnostics;
+    final underEyeOffsetSummary = summarizeAiScanUnderEyeOffsets(
+      perFrameDiagnostics,
+    );
+    if (underEyeOffsetSummary.isNotEmpty) {
+      aggregate.response['image_quality'] = {
+        ..._dynamicMap(aggregate.response['image_quality']),
+        ...underEyeOffsetSummary,
+      };
+      _dynamicMap(aggregate.response['metrics'])['image_quality'] =
+          aggregate.response['image_quality'];
+    }
     return aggregate;
   } on StateError catch (e) {
     if (kDebugMode && failureReasons.isNotEmpty) {

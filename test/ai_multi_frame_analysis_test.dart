@@ -1465,19 +1465,33 @@ void main() {
   test(
     'the lash-free under-eye band kind and pixel counts reach the export',
     () {
-      final aggregate = averageBackendAnalysisFrames([
-        {
-          'metric_matrix': {'under_eye_dark_circle_density': 16.8},
-          'image_quality': {
-            'under_eye_dark_circle_density_mask_kind':
-                'under_eye_lash_free_band',
-            'under_eye_dark_circle_density_mask_pixels': 2474,
-            'under_eye_texture_density_mask_kind': 'under_eye_lash_free_band',
-            'under_eye_texture_density_mask_pixels': 2474,
-            'under_eye_reference_mask_pixels': 2569,
-          },
+      final frameResponse = {
+        'metric_matrix': {'under_eye_dark_circle_density': 16.8},
+        'image_quality': {
+          'under_eye_dark_circle_density_mask_kind': 'under_eye_lash_free_band',
+          'under_eye_dark_circle_density_mask_pixels': 2474,
+          'under_eye_texture_density_mask_kind': 'under_eye_lash_free_band',
+          'under_eye_texture_density_mask_pixels': 2474,
+          'under_eye_reference_mask_pixels': 2569,
+          'under_eye_left_offset_eye_widths': 0.22,
+          'under_eye_left_band_median_L': 172.0,
+          'under_eye_left_reference_median_L': 188.0,
+          'under_eye_left_raw_L_delta': 16.0,
+          'under_eye_left_dark_circle_density': 9.6,
+          'under_eye_left_texture_density': 41.0,
         },
+      };
+      final aggregate = averageBackendAnalysisFrames([
+        frameResponse,
       ], requestedFrames: 1);
+      final perFrameDiagnostics = buildAiScanPerFrameDiagnostics(
+        frameResponses: [frameResponse],
+        frameExposureMetadata: const <AiScanFrameExposure>[],
+        frameCount: 1,
+      );
+      final underEyeOffsetSummary = summarizeAiScanUnderEyeOffsets(
+        perFrameDiagnostics,
+      );
       final scan = ScanHistoryEntry(
         id: 'lash-free-band',
         timestamp: DateTime.utc(2026, 10, 11),
@@ -1486,11 +1500,11 @@ void main() {
         metrics: const <String, double>{},
         rawPayload: {
           ...aggregate.response,
-          aiScanPerFrameDiagnosticsKey: buildAiScanPerFrameDiagnostics(
-            frameResponses: [aggregate.response],
-            frameExposureMetadata: const <AiScanFrameExposure>[],
-            frameCount: 1,
-          ),
+          'image_quality': {
+            ...frameResponse['image_quality'] as Map<String, dynamic>,
+            ...underEyeOffsetSummary,
+          },
+          aiScanPerFrameDiagnosticsKey: perFrameDiagnostics,
         },
       );
       final rows = AiScanDataCsvExporter.format([
@@ -1509,8 +1523,80 @@ void main() {
         'under_eye_lash_free_band',
       );
       expect(cell('frame1_under_eye_dark_circle_density_mask_pixels'), '2474');
+      expect(cell('frame1_under_eye_left_offset_eye_widths'), '0.22');
+      expect(cell('frame1_under_eye_left_band_median_L'), '172.0');
+      expect(cell('frame1_under_eye_left_reference_median_L'), '188.0');
+      expect(cell('frame1_under_eye_left_raw_L_delta'), '16.0');
+      expect(cell('frame1_under_eye_left_dark_circle_density'), '9.6');
+      expect(cell('frame1_under_eye_left_texture_density'), '41.0');
+      for (final field in const [
+        'offset_eye_widths',
+        'band_median_L',
+        'reference_median_L',
+        'raw_L_delta',
+        'dark_circle_density',
+        'texture_density',
+      ]) {
+        expect(cell('frame1_under_eye_right_$field'), isEmpty);
+      }
+      expect(
+        cell('image_quality.under_eye_left_offset_median_eye_widths'),
+        '0.22',
+      );
+      expect(
+        cell('image_quality.under_eye_left_offset_max_minus_min_eye_widths'),
+        '0.0',
+      );
+      expect(
+        cell('image_quality.under_eye_right_offset_median_eye_widths'),
+        isEmpty,
+      );
     },
   );
+
+  test('under-eye offsets are summarized per eye across available frames', () {
+    final frameDiagnostics = buildAiScanPerFrameDiagnostics(
+      frameResponses: [
+        {
+          'image_quality': {
+            'under_eye_left_offset_eye_widths': 0.20,
+            'under_eye_left_band_median_L': 172.0,
+            'under_eye_left_reference_median_L': 188.0,
+            'under_eye_left_raw_L_delta': 16.0,
+            'under_eye_left_dark_circle_density': 9.6,
+            'under_eye_left_texture_density': 41.0,
+          },
+        },
+        {
+          'image_quality': {'under_eye_left_offset_eye_widths': 0.24},
+        },
+        {
+          'image_quality': {'under_eye_left_offset_eye_widths': 0.30},
+        },
+      ],
+      frameExposureMetadata: const <AiScanFrameExposure>[],
+      frameCount: 3,
+    );
+
+    expect(frameDiagnostics.first['under_eye_left_band_median_L'], 172.0);
+    expect(frameDiagnostics.first['under_eye_left_texture_density'], 41.0);
+    expect(frameDiagnostics.first['under_eye_right_offset_eye_widths'], isNull);
+
+    final summary = summarizeAiScanUnderEyeOffsets(frameDiagnostics);
+    expect(summary['under_eye_left_offset_median_eye_widths'], 0.24);
+    expect(
+      summary['under_eye_left_offset_max_minus_min_eye_widths'],
+      closeTo(0.10, 1e-12),
+    );
+    expect(
+      summary.containsKey('under_eye_right_offset_median_eye_widths'),
+      isFalse,
+    );
+    expect(
+      summary.containsKey('under_eye_right_offset_max_minus_min_eye_widths'),
+      isFalse,
+    );
+  });
 
   group('untrusted metrics never keep a verdict', () {
     test(
