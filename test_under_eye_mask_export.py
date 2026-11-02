@@ -73,6 +73,10 @@ def _empty_mask(shape, points, skin_mask, *, side):
     return np.zeros(shape, dtype=np.uint8)
 
 
+def _missing_landmark_mask(shape, points, skin_mask, *, side):
+    return _REAL_UNDER_EYE_MASK(shape, points[:10], skin_mask, side=side)
+
+
 _REAL_UNDER_EYE_MASK = main._under_eye_region_mask
 
 
@@ -111,10 +115,27 @@ def test_empty_mask_still_omits_and_exports_count_and_reason(clear_face_input):
         assert result["image_quality"][f"{key}_omit_reason"] == reason
 
 
+def test_missing_landmarks_omit_both_metrics(clear_face_input):
+    result, _ = _analyze(clear_face_input, _missing_landmark_mask)
+
+    for key in UNDER_EYE_KEYS:
+        assert key not in result["metric_matrix"]
+        assert result["omitted_metric_reasons"][key] == "non_usable_value"
+        assert result["image_quality"][f"{key}_mask_pixels"] == 0
+
+
+def test_texture_and_pigment_values_do_not_depend_on_under_eye_band(clear_face_input):
+    complete, _ = _analyze(clear_face_input)
+    without_band, _ = _analyze(clear_face_input, _empty_mask)
+
+    for key in ("texture_smoothness", "pigment_load"):
+        assert complete["metric_matrix"][key] == without_band["metric_matrix"][key]
+
+
 def test_under_eye_roi_too_small_gate_is_gone():
     assert "under_eye_roi_too_small" not in Path(main.__file__).read_text()
 
 
 def test_under_eye_formula_versions_bumped():
     for key in UNDER_EYE_KEYS:
-        assert main._metric_formula_version(key) == 6
+        assert main._metric_formula_version(key) == 7

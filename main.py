@@ -2907,8 +2907,8 @@ def _compute_zone_based_metrics(
         # omitted exactly as when zone extraction fails outright.
         return {
             "rosacea_severity": None,
-            "under_eye_texture_density": 0.0,
-            "under_eye_dark_circle_density": 0.0,
+            "under_eye_texture_density": None,
+            "under_eye_dark_circle_density": None,
         }
 
     lab = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2LAB)
@@ -3061,14 +3061,19 @@ def _compute_zone_based_metrics(
     else:
         glabellar_11_lines_depth = 0.0
 
-    # Periorbital zone (v4): lash-free band + same-height cheek reference.
-    left_under_eye = _under_eye_region_mask((h, w), points, skin_mask, side="left")
-    right_under_eye = _under_eye_region_mask((h, w), points, skin_mask, side="right")
+    # Keep the under-eye band and its reference inside wide face skin.
+    if roi_cache is not None:
+        _, face_skin_mask = roi_cache.get_face_skin_mask((h, w), points, skin_mask)
+    else:
+        _, face_skin_mask = _build_face_skin_mask((h, w), points, skin_mask)
+    face_skin_mask = _as_binary_mask(face_skin_mask, (h, w))
+    left_under_eye = _under_eye_region_mask((h, w), points, face_skin_mask, side="left")
+    right_under_eye = _under_eye_region_mask((h, w), points, face_skin_mask, side="right")
     peri_pixels = cv2.bitwise_or(left_under_eye, right_under_eye) > 0
     reference_pixels = (
         cv2.bitwise_or(
-            _under_eye_reference_mask((h, w), points, skin_mask, side="left"),
-            _under_eye_reference_mask((h, w), points, skin_mask, side="right"),
+            _under_eye_reference_mask((h, w), points, face_skin_mask, side="left"),
+            _under_eye_reference_mask((h, w), points, face_skin_mask, side="right"),
         )
         > 0
     )
@@ -3129,14 +3134,10 @@ def _compute_zone_based_metrics(
             texture_ratio,
             under_eye_texture_density,
         )
-    elif np.any(peri_pixels):
-        # A band with no usable reference strip has nothing to compare
-        # against: not measured, rather than a fabricated 0.
+    else:
+        # Missing landmarks or either empty region means neither metric was measured.
         under_eye_texture_density = None
         under_eye_dark_circle_density = None
-    else:
-        under_eye_texture_density = 0.0
-        under_eye_dark_circle_density = 0.0
 
     return {
         "localized_redness": round(localized_redness, 1),
@@ -4604,9 +4605,9 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     # lid) instead of the lid-hugging polygon. Dark circles compare the
     # band's median L to a same-height cheek strip directly below it;
     # texture is fine-scale DoG energy on the band over the same strip.
-    # v5: median of five frames in the app (see wrinkle_load v4).
-    "under_eye_texture_density": 6,
-    "under_eye_dark_circle_density": 6,
+    # v5: median of five frames in the app; v7 clips both strips to face skin.
+    "under_eye_texture_density": 7,
+    "under_eye_dark_circle_density": 7,
     # v2: only boxes kept at YOLO_CONF_THRESHOLD contribute. v1 also added
     # 22 x the strongest rejected box, so zero kept boxes still scored
     # 0.7-3.6 on the regression fixtures; v1 and v2 are not comparable.
@@ -6620,14 +6621,31 @@ def analyze_skin_patch(
 
     glabella_pixels = int(cv2.countNonZero(_glabella_region_mask(norm.shape[:2], norm_points, mask)))
     glabella_pitch = float(_compute_pose_pitch_yaw_from_landmarks(norm_points)[0])
-    left_under_eye = _under_eye_region_mask(norm.shape[:2], norm_points, mask, side="left")
-    right_under_eye = _under_eye_region_mask(norm.shape[:2], norm_points, mask, side="right")
+    if request_roi_cache is not None:
+        _, under_eye_face_skin_mask = request_roi_cache.get_face_skin_mask(
+            norm.shape[:2], norm_points, mask
+        )
+    else:
+        _, under_eye_face_skin_mask = _build_face_skin_mask(
+            norm.shape[:2], norm_points, mask
+        )
+    under_eye_face_skin_mask = _as_binary_mask(under_eye_face_skin_mask, norm.shape[:2])
+    left_under_eye = _under_eye_region_mask(
+        norm.shape[:2], norm_points, under_eye_face_skin_mask, side="left"
+    )
+    right_under_eye = _under_eye_region_mask(
+        norm.shape[:2], norm_points, under_eye_face_skin_mask, side="right"
+    )
     under_eye_pixels = int(cv2.countNonZero(cv2.bitwise_or(left_under_eye, right_under_eye)))
     under_eye_reference_pixels = int(
         cv2.countNonZero(
             cv2.bitwise_or(
-                _under_eye_reference_mask(norm.shape[:2], norm_points, mask, side="left"),
-                _under_eye_reference_mask(norm.shape[:2], norm_points, mask, side="right"),
+                _under_eye_reference_mask(
+                    norm.shape[:2], norm_points, under_eye_face_skin_mask, side="left"
+                ),
+                _under_eye_reference_mask(
+                    norm.shape[:2], norm_points, under_eye_face_skin_mask, side="right"
+                ),
             )
         )
     )
@@ -6668,7 +6686,9 @@ def analyze_skin_patch(
             for key, value in _region_box_fields(
                 f"under_eye_{side}",
                 _mask_box_in_face_units(
-                    _under_eye_region_mask(norm.shape[:2], norm_points, mask, side=side),
+                    _under_eye_region_mask(
+                        norm.shape[:2], norm_points, under_eye_face_skin_mask, side=side
+                    ),
                     norm_points,
                 ),
             ).items()
