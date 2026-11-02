@@ -1573,6 +1573,8 @@ String _shortLockReasonPhrase(String reason) {
       return 'redness was read from a different skin region than your baseline';
     case 'lighting_mismatch':
       return 'capture brightness differed too much from your baseline';
+    case 'scene_color_mismatch':
+      return 'scene color differed too much from your baseline to compare pigment';
     case 'region_position_mismatch':
       return 'the measured area sat in a different position than your baseline';
     default:

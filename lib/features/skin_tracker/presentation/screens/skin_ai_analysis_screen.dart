@@ -1435,6 +1435,42 @@ lockTrendsForLightingMismatch({
   );
 }
 
+({
+  Map<String, String> trendStatus,
+  Map<String, double> trendDeltas,
+  Map<String, String> trendLockReasons,
+})
+lockPigmentTrendForSceneColorMismatch({
+  required Map<String, String> trendStatus,
+  required Map<String, double> trendDeltas,
+  required Map<String, String> trendLockReasons,
+  required Map<String, dynamic> currentPayload,
+  required Map<String, dynamic> baselinePayload,
+}) {
+  final updatedStatus = Map<String, String>.from(trendStatus);
+  final updatedDeltas = Map<String, double>.from(trendDeltas);
+  final updatedLockReasons = Map<String, String>.from(trendLockReasons);
+  final current = _parseFiniteDouble(
+    _payloadNode(currentPayload, 'image_quality')['whole_image_mean_a_before_wb'],
+  );
+  final baseline = _parseFiniteDouble(
+    _payloadNode(baselinePayload, 'image_quality')['whole_image_mean_a_before_wb'],
+  );
+  if (current != null && baseline != null && (current - baseline).abs() > 3.0) {
+    if (trendStatus.containsKey('pigment_load') ||
+        trendDeltas.containsKey('pigment_load')) {
+      updatedStatus.remove('pigment_load');
+      updatedDeltas.remove('pigment_load');
+      updatedLockReasons.putIfAbsent('pigment_load', () => 'scene_color_mismatch');
+    }
+  }
+  return (
+    trendStatus: updatedStatus,
+    trendDeltas: updatedDeltas,
+    trendLockReasons: updatedLockReasons,
+  );
+}
+
 /// Rolling-average trend for [fiveFrameMedianMetricKeys]: the median of the
 /// last [rollingTrendWindowSize] same-light, same-path scans (the current
 /// one plus the most recent qualifying earlier scans after the baseline) is
@@ -3973,10 +4009,18 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         baselinePayload:
             _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
       );
-      final displayFloorTrend = forceStableWithinLiveDisplayNoiseFloors(
+      final sceneColorAdjustedTrend = lockPigmentTrendForSceneColorMismatch(
         trendStatus: regionAdjustedTrend.trendStatus,
         trendDeltas: regionAdjustedTrend.trendDeltas,
         trendLockReasons: regionAdjustedTrend.trendLockReasons,
+        currentPayload: backendResponse,
+        baselinePayload:
+            _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
+      );
+      final displayFloorTrend = forceStableWithinLiveDisplayNoiseFloors(
+        trendStatus: sceneColorAdjustedTrend.trendStatus,
+        trendDeltas: sceneColorAdjustedTrend.trendDeltas,
+        trendLockReasons: sceneColorAdjustedTrend.trendLockReasons,
         averagedMetricMatrix: _dynamicMap(backendResponse['metric_matrix']),
         baselineMetricMatrix: baselineMetricMatrixForTrend ?? const {},
         metricFrameValues: _dynamicMap(
