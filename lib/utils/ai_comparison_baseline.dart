@@ -28,3 +28,35 @@ void recordAiComparisonBaseline(
       ? aiComparisonBaselineSourceRegistry
       : aiComparisonBaselineSourceEarliestEligible;
 }
+
+Map<String, dynamic> clearAiComparisonBaselineForReset(
+  Map<String, dynamic> payload,
+) {
+  final cleared = Map<String, dynamic>.from(payload);
+  recordAiComparisonBaseline(
+    cleared,
+    baselineScanId: null,
+    registryScanId: null,
+  );
+  for (final key in const [
+    'baseline_metric_matrix',
+    'baseline_metric_extraction_paths',
+    'baseline_metric_formula_versions',
+    'baseline_source_image_width',
+    'baseline_source_image_height',
+    'trend_status',
+    'trend_deltas',
+    'trend_lock_reasons',
+  ]) {
+    cleared.remove(key);
+  }
+  for (final key in const ['metrics', 'luxePayload']) {
+    final nested = cleared[key];
+    if (nested is Map) {
+      cleared[key] = clearAiComparisonBaselineForReset(
+        Map<String, dynamic>.from(nested),
+      );
+    }
+  }
+  return cleared;
+}

@@ -3376,6 +3376,20 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     if (!mounted) return;
     setState(() {
       _aiBaselineResolution = const AiBaselineResolution();
+      _previousFocusAreaScan = null;
+      _baselineFocusAreaScan = null;
+      _aiBaselineRegistryScanId = null;
+      _previousMetrics = const {};
+      _priorFocusAreaScans = const [];
+      _explicitLocalFollowUpFlag = false;
+      _explicitBaselineSelection = false;
+      _localHistoryCountForFocusArea = 1;
+      _noComparableBaselineMessage = null;
+      if (_latestBackendAnalysisPayload != null) {
+        _latestBackendAnalysisPayload = clearAiComparisonBaselineForReset(
+          _latestBackendAnalysisPayload!,
+        );
+      }
       _currentScanBecameNewBaseline = false;
       _baselineNotSavedReason = null;
       _ignoredBaselinePinMessage = null;
