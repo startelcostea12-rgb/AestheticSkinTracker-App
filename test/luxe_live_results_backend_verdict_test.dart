@@ -1200,7 +1200,7 @@ void main() {
       expect(liveResultsHiddenMetricKeys, {'pore_contraction_index'});
     });
 
-    testWidgets('other report callers still render pore_contraction_index', (
+    testWidgets('other report callers omit pore_contraction_index', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -1215,7 +1215,38 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('result_metric_pore_contraction_index')),
+        findsNothing,
+      );
+      expect(find.textContaining('Pore Contraction'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('result_metric_pore_visibility')),
         findsOneWidget,
+      );
+    });
+
+    testWidgets('contraction-only payload never fills the visibility card', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: LuxeReportLayout(
+              rawPayload: {
+                'metric_matrix': {'pore_contraction_index': 72.0},
+                'baseline_metric_matrix': {'pore_contraction_index': 60.0},
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('result_metric_pore_visibility')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('result_metric_pore_contraction_index')),
+        findsNothing,
       );
     });
 
@@ -1644,6 +1675,13 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
+        if (key == 'pore_contraction_index') {
+          expect(
+            find.byKey(ValueKey('result_metric_$key')),
+            findsNothing,
+          );
+          continue;
+        }
         expect(
           inCard(key, find.textContaining('45.0')),
           findsWidgets,
@@ -1904,11 +1942,18 @@ void main() {
           outlierPayload(key),
           medianDisplayMetricKeys: medianDisplayMetricKeys,
         );
-        final six_ = metrics.singleWhere((m) => m.key == key);
         final texture = metrics.singleWhere(
           (m) => m.key == 'texture_smoothness',
         );
-        expect(six_.currentScore, closeTo(45.0, 1e-9), reason: key);
+        if (key == 'pore_contraction_index') {
+          expect(metrics.where((metric) => metric.key == key), isEmpty);
+        } else {
+          expect(
+            metrics.singleWhere((metric) => metric.key == key).currentScore,
+            closeTo(45.0, 1e-9),
+            reason: key,
+          );
+        }
         expect(texture.currentScore, closeTo(62.667, 0.001), reason: key);
       }
       // Without the option (history, Track Procedure, progress report) the

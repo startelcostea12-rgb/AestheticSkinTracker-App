@@ -69,7 +69,6 @@ const Map<String, String> liveResultsShortLabels = <String, String>{
   'wrinkle_load': 'Wrinkles',
   'rosacea_severity': 'Rosacea',
   'diffuse_flushing_erythema': 'Flushing',
-  'pore_contraction_index': 'Pore contraction',
   'under_eye_dark_circle_density': 'Under-eye darkness',
   'under_eye_texture_density': 'Under-eye texture',
 };
@@ -338,7 +337,6 @@ class LuxeMetricParser {
     'pigment_load',
     'rosacea_severity',
     'diffuse_flushing_erythema',
-    'pore_contraction_index',
     'under_eye_dark_circle_density',
     'under_eye_texture_density',
     'skin_tone_radiance_evenness',

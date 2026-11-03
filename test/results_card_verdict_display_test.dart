@@ -2,12 +2,11 @@ import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// The six metrics whose verdicts are never shown on the results card.
+/// Displayed metrics whose verdicts are never shown on the results card.
 const _untrusted = <String>[
   'wrinkle_load',
   'rosacea_severity',
   'diffuse_flushing_erythema',
-  'pore_contraction_index',
   'under_eye_dark_circle_density',
   'under_eye_texture_density',
 ];

@@ -92,6 +92,7 @@ void main() {
   );
 
   for (final entry in hiddenMetrics.entries) {
+    if (entry.key == 'pore_contraction_index') continue;
     testWidgets('${entry.key} worsening badge has no percent and keeps locks', (
       tester,
     ) async {
@@ -197,19 +198,22 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Recorded'), findsNothing);
-    for (final score in hiddenMetrics.values) {
-      expect(find.text(score.toStringAsFixed(1)), findsOneWidget);
+    for (final entry in hiddenMetrics.entries) {
+      expect(
+        find.text(entry.value.toStringAsFixed(1)),
+        entry.key == 'pore_contraction_index' ? findsNothing : findsOneWidget,
+      );
     }
     for (final label in const [
       'Wrinkle Load',
       'Rosacea Severity',
       'Diffuse Flushing Erythema',
-      'Pore Contraction Index',
       'Under Eye Dark Circle Density',
       'Under Eye Texture Density',
     ]) {
       expect(find.text(label), findsOneWidget);
     }
+    expect(find.text('Pore Contraction Index'), findsNothing);
     expect(find.text('Stable - change within tracking noise'), findsOneWidget);
     expect(find.text('Improved'), findsNothing);
     expect(find.text('Worsened'), findsNothing);

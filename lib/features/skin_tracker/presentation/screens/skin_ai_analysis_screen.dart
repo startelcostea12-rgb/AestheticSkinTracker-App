@@ -6408,8 +6408,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               if (_capturedScanMode == aiScanModeQuick) ...[
                 const SizedBox(height: 10),
                 const Text(
-                  'Quick scan: single photo. Wrinkle load, pore contraction '
-                  'and under-eye metrics need the controlled scan and are '
+                  'Quick scan: single photo. Wrinkle load and under-eye '
+                  'metrics need the controlled scan and are '
                   'not shown. Comparisons use the same locks.',
                   key: ValueKey('quick_scan_results_note'),
                   style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
