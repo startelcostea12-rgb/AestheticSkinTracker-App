@@ -40,6 +40,7 @@ bool shouldShowTrendVerdict(String metricKey) =>
 
 const Map<String, double> measuredNoiseVerdictMinimumChanges = {
   'wrinkle_load': 4.0,
+  'localized_redness': 5.0,
 };
 
 /// Whether [metric]'s card shows a trend verdict. On the live results views
@@ -1178,8 +1179,11 @@ String? _repeatNoiseHideReason({
   final normalizedKey = metricKey.trim().toLowerCase();
   final minimumChange = measuredNoiseVerdictMinimumChanges[normalizedKey];
   if (minimumChange != null && hasRealBaseline) {
-    return (current - baseline).abs() <= minimumChange
-        ? _hideReasonDisplayFloor
+    if ((current - baseline).abs() <= minimumChange) {
+      return _hideReasonDisplayFloor;
+    }
+    return normalizedKey == 'localized_redness' && current <= 0.0
+        ? _hideReasonRednessZero
         : null;
   }
   final displayFloor = applyDisplayNoiseFloors
@@ -1471,8 +1475,7 @@ _HonestyAssessment _assessMetricHonesty({
   } else if (!hasRealBaseline) {
     status = _HonestyStatus.stable;
     reason = 'Starting point';
-  } else if (requireBackendVerdict &&
-      !measuredNoiseVerdictMinimumChanges.containsKey(normalizedMetricKey)) {
+  } else if (requireBackendVerdict && normalizedMetricKey != 'wrinkle_load') {
     status = _HonestyStatus.noVerdict;
     reason = 'No backend verdict supplied';
   } else if (pathUnknown) {

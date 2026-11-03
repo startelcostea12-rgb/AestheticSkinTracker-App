@@ -98,6 +98,78 @@ final _percent = RegExp(r'\d%|\bpts\b');
 const _neutral = Color(0xFF8E7F6D);
 
 void main() {
+  group('redness measured-noise display', () {
+    for (final move in [5.0, 5.1]) {
+      for (final status in ['improved', 'worsened', 'stable']) {
+        testWidgets('$move points with $status', (tester) async {
+          await _pumpLive(
+            tester,
+            _payload({
+              'localized_redness': (
+                baseline: 10.0,
+                current: 10.0 + move,
+                status: status,
+                delta: 50.0,
+                lock: null,
+              ),
+            }),
+          );
+          final text = _cardText(tester, 'localized_redness');
+          expect(text, contains((10.0 + move).toStringAsFixed(1)));
+          expect(_verdictWords.hasMatch(text), move > 5);
+          if (move > 5) {
+            expect(text.toLowerCase(), contains(status));
+          }
+        });
+      }
+    }
+
+    for (final lock in [
+      'cast_mismatch',
+      'cheek_mismatch',
+      'lighting_mismatch',
+      'formula_version_mismatch',
+    ]) {
+      testWidgets('$lock wins over a large redness move', (tester) async {
+        await _pumpLive(
+          tester,
+          _payload({
+            'localized_redness': (
+              baseline: 10.0,
+              current: 20.0,
+              status: 'worsened',
+              delta: 100.0,
+              lock: lock,
+            ),
+          }),
+        );
+        final text = _cardText(tester, 'localized_redness');
+        expect(text, contains('Not comparable'));
+        expect(_verdictWords.hasMatch(text), isFalse);
+      });
+    }
+
+    testWidgets('a zero redness score stays zero and number-only within 5', (
+      tester,
+    ) async {
+      await _pumpLive(
+        tester,
+        _payload({
+          'localized_redness': (
+            baseline: 5.0,
+            current: 0.0,
+            status: 'improved',
+            delta: 100.0,
+            lock: null,
+          ),
+        }),
+      );
+      final text = _cardText(tester, 'localized_redness');
+      expect(text, contains('0.0'));
+      expect(_verdictWords.hasMatch(text), isFalse);
+    });
+  });
+
   group('wrinkle measured-noise display', () {
     for (final move in [4.0, 4.1]) {
       for (final status in ['improved', 'worsened', 'stable']) {

@@ -658,12 +658,12 @@ void main() {
     }
   });
 
-  testWidgets('unlocked redness keeps the backend stable verdict', (
+  testWidgets('redness above five points keeps the backend stable verdict', (
     tester,
   ) async {
     final payload = basePayload(
       baseline: 24.0,
-      current: 25.0,
+      current: 30.0,
       metricKey: 'localized_redness',
       trendStatus: {'localized_redness': 'stable'},
       trendDeltas: {'localized_redness': 4.2},
@@ -695,12 +695,12 @@ void main() {
     );
   });
 
-  testWidgets('unlocked redness keeps the backend improved verdict', (
+  testWidgets('redness above five points keeps the backend improved verdict', (
     tester,
   ) async {
     final payload = basePayload(
       baseline: 30.0,
-      current: 25.0,
+      current: 24.9,
       metricKey: 'localized_redness',
       trendStatus: {'localized_redness': 'improved'},
       trendDeltas: {'localized_redness': -16.7},
@@ -1682,7 +1682,7 @@ void main() {
           );
           continue;
         }
-        if (key == 'wrinkle_load') {
+        if (key == 'wrinkle_load' || key == 'localized_redness') {
           expect(inCard(key, find.text('Worsened')), findsWidgets);
           continue;
         }
@@ -1737,7 +1737,7 @@ void main() {
       );
     });
 
-    testWidgets('history views keep redness verdicts (live-only change)', (
+    testWidgets('history hides redness verdicts at five points', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -1752,7 +1752,11 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(inCard('localized_redness', find.text('Improved')), findsWidgets);
+      expect(inCard('localized_redness', find.text('Improved')), findsNothing);
+      expect(
+        inCard('localized_redness', find.textContaining('25.0')),
+        findsWidgets,
+      );
     });
 
     testWidgets('a locked metric inside its floor still says Not comparable', (
