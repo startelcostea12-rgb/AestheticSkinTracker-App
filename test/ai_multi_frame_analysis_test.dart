@@ -1992,6 +1992,44 @@ void main() {
     },
   );
 
+  for (final failUpload in [false, true]) {
+    test('releases burst images after uploads (failure=$failUpload)', () async {
+      final frames = [
+        Uint8List.fromList([1]),
+        Uint8List.fromList([2]),
+      ];
+      var completed = false;
+      var uploads = 0;
+      final analysis = analyzeBackendFrames(
+        frames,
+        photoUploadAccepted: true,
+        uploadFrame: (frame, number) async {
+          expect(completed, isFalse);
+          expect(frames, hasLength(2));
+          uploads++;
+          if (failUpload) throw StateError('upload failed');
+          return {
+            'metric_matrix': {'pigment_load': 12.0},
+          };
+        },
+        onUploadsComplete: () {
+          completed = true;
+          frames.clear();
+        },
+      );
+      if (failUpload) {
+        await expectLater(analysis, throwsStateError);
+      } else {
+        final result = await analysis;
+        expect(result.response['metric_matrix']['pigment_load'], 12.0);
+        expect(result.requestedFrames, 2);
+      }
+      expect(uploads, 2);
+      expect(completed, isTrue);
+      expect(frames, isEmpty);
+    });
+  }
+
   test(
     'uploads all three frames after acceptance and excludes a failed frame from averages',
     () async {

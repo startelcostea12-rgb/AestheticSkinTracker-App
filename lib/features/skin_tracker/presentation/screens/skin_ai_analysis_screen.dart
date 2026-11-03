@@ -17,6 +17,7 @@
 // so derivations and scoring stay consistent with the tracker.
 
 import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
+import 'dart:async' show unawaited;
 import 'dart:convert' show base64Decode, base64Encode, jsonEncode, utf8;
 import 'dart:io';
 import 'dart:math' as math;
@@ -2344,6 +2345,27 @@ Future<MultiFrameAnalysisAggregate> analyzeBackendFrames(
   uploadFrameWithoutGrayCard,
   List<AiScanFrameExposure> frameExposureMetadata =
       const <AiScanFrameExposure>[],
+  void Function()? onUploadsComplete,
+}) => _analyzeBackendFrames(
+  frames,
+  photoUploadAccepted: photoUploadAccepted,
+  uploadFrame: uploadFrame,
+  uploadFrameWithoutGrayCard: uploadFrameWithoutGrayCard,
+  frameExposureMetadata: frameExposureMetadata,
+).whenComplete(() => onUploadsComplete?.call());
+
+Future<MultiFrameAnalysisAggregate> _analyzeBackendFrames(
+  List<Uint8List> frames, {
+  required bool photoUploadAccepted,
+  required Future<Map<String, dynamic>> Function(
+    Uint8List frame,
+    int frameNumber,
+  )
+  uploadFrame,
+  Future<Map<String, dynamic>> Function(Uint8List frame, int frameNumber)?
+  uploadFrameWithoutGrayCard,
+  List<AiScanFrameExposure> frameExposureMetadata =
+      const <AiScanFrameExposure>[],
 }) async {
   if (!photoUploadAccepted) {
     throw StateError('Face photo upload acknowledgment is required.');
@@ -3509,7 +3531,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       }
 
       setState(() => _focusAreaError = null);
-      await _runAnalysis();
+      unawaited(_runAnalysis());
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -3895,7 +3917,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       );
 
       final frames = _analysisFrameBytes.isNotEmpty
-          ? _analysisFrameBytes
+          ? List<Uint8List>.of(_analysisFrameBytes)
           : <Uint8List>[backendBytes];
       // Both the metric matrix AND its extraction-path provenance now come
       // from the SAME resolved baseline entry (_previousFocusAreaScan) --
@@ -3939,6 +3961,11 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         uploadFrame: uploadFrame,
         uploadFrameWithoutGrayCard: (frame, frameNumber) =>
             uploadFrame(frame, frameNumber, withGrayCard: false),
+        onUploadsComplete: () {
+          frames.clear();
+          _analysisFrameBytes = const [];
+          _grayCardPatches = const [];
+        },
       );
       final backendResponse = aggregate.response;
       AppLogger.debug(
