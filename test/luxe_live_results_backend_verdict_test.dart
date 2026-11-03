@@ -1089,7 +1089,9 @@ void main() {
         );
       });
 
-      testWidgets('a hidden metric stays number-only', (tester) async {
+      testWidgets('wrinkle above measured noise shows a verdict', (
+        tester,
+      ) async {
         final card = await pumpResults(
           tester,
           basePayload(baseline: 30.0, current: 40.0, metricKey: 'wrinkle_load'),
@@ -1099,12 +1101,10 @@ void main() {
           find.descendant(of: card, matching: find.textContaining('40.0')),
           findsWidgets,
         );
-        for (final label in const ['Improved', 'Worsened']) {
-          expect(
-            find.descendant(of: card, matching: find.text(label)),
-            findsNothing,
-          );
-        }
+        expect(
+          find.descendant(of: card, matching: find.text('Worsened')),
+          findsWidgets,
+        );
       });
     },
   );
@@ -1680,6 +1680,10 @@ void main() {
             find.byKey(ValueKey('result_metric_$key')),
             findsNothing,
           );
+          continue;
+        }
+        if (key == 'wrinkle_load') {
+          expect(inCard(key, find.text('Worsened')), findsWidgets);
           continue;
         }
         expect(

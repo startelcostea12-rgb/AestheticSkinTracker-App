@@ -38,6 +38,10 @@ String? storedBaselineLabelFor(LuxeMetric metric) {
 bool shouldShowTrendVerdict(String metricKey) =>
     !metricsWithHiddenTrendVerdicts.contains(metricKey);
 
+const Map<String, double> measuredNoiseVerdictMinimumChanges = {
+  'wrinkle_load': 4.0,
+};
+
 /// Whether [metric]'s card shows a trend verdict. On the live results views
 /// ([liveDisplay], i.e. applyDisplayNoiseFloors) this is decided by
 /// displayNoVerdictMetrics plus the untrusted metrics
@@ -45,10 +49,11 @@ bool shouldShowTrendVerdict(String metricKey) =>
 /// never show a verdict; elsewhere by [LuxeMetric.showTrendVerdict].
 /// Display only: parsing (including baseline selection) is unchanged.
 bool showsTrendVerdictOnCard(LuxeMetric metric, {required bool liveDisplay}) =>
-    liveDisplay
-    ? !displayNoVerdictMetrics.contains(metric.key) &&
-          !untrustedTrendVerdictMetrics.contains(metric.key)
-    : metric.showTrendVerdict;
+    measuredNoiseVerdictMinimumChanges.containsKey(metric.key) ||
+    (liveDisplay
+        ? !displayNoVerdictMetrics.contains(metric.key) &&
+              !untrustedTrendVerdictMetrics.contains(metric.key)
+        : metric.showTrendVerdict);
 
 /// True when, on the live results views, [metric] carries a trend lock
 /// reason. Such a metric shows only "Not comparable" even if a directional
@@ -1171,6 +1176,12 @@ String? _repeatNoiseHideReason({
   // (and the older firmness small-move rule below does not apply). For the
   // other floored metrics, a move at or below the floor shows no verdict.
   final normalizedKey = metricKey.trim().toLowerCase();
+  final minimumChange = measuredNoiseVerdictMinimumChanges[normalizedKey];
+  if (minimumChange != null && hasRealBaseline) {
+    return (current - baseline).abs() <= minimumChange
+        ? _hideReasonDisplayFloor
+        : null;
+  }
   final displayFloor = applyDisplayNoiseFloors
       ? displayVerdictNoiseFloors[normalizedKey]
       : null;
@@ -1460,7 +1471,8 @@ _HonestyAssessment _assessMetricHonesty({
   } else if (!hasRealBaseline) {
     status = _HonestyStatus.stable;
     reason = 'Starting point';
-  } else if (requireBackendVerdict) {
+  } else if (requireBackendVerdict &&
+      !measuredNoiseVerdictMinimumChanges.containsKey(normalizedMetricKey)) {
     status = _HonestyStatus.noVerdict;
     reason = 'No backend verdict supplied';
   } else if (pathUnknown) {

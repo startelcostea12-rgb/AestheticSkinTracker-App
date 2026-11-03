@@ -1,10 +1,10 @@
 import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
+import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Displayed metrics whose verdicts are never shown on the results card.
 const _untrusted = <String>[
-  'wrinkle_load',
   'rosacea_severity',
   'diffuse_flushing_erythema',
   'under_eye_dark_circle_density',
@@ -98,6 +98,77 @@ final _percent = RegExp(r'\d%|\bpts\b');
 const _neutral = Color(0xFF8E7F6D);
 
 void main() {
+  group('wrinkle measured-noise display', () {
+    for (final move in [4.0, 4.1]) {
+      for (final status in ['improved', 'worsened', 'stable']) {
+        testWidgets('$move points with $status', (tester) async {
+          await _pumpLive(
+            tester,
+            _payload({
+              'wrinkle_load': (
+                baseline: 20.0,
+                current: 20.0 + move,
+                status: status,
+                delta: 20.0,
+                lock: null,
+              ),
+            }),
+          );
+          final text = _cardText(tester, 'wrinkle_load');
+          expect(text, contains((20.0 + move).toStringAsFixed(1)));
+          expect(_verdictWords.hasMatch(text), move > 4);
+          if (move > 4) {
+            expect(text.toLowerCase(), contains(status));
+          }
+        });
+      }
+    }
+
+    for (final lock in ['lighting_mismatch', 'formula_version_mismatch']) {
+      testWidgets('$lock wins over a large wrinkle move', (tester) async {
+        await _pumpLive(
+          tester,
+          _payload({
+            'wrinkle_load': (
+              baseline: 20.0,
+              current: 30.0,
+              status: 'worsened',
+              delta: 50.0,
+              lock: lock,
+            ),
+          }),
+        );
+        final text = _cardText(tester, 'wrinkle_load');
+        expect(text, contains('Not comparable'));
+        expect(_verdictWords.hasMatch(text), isFalse);
+      });
+    }
+
+    for (final pixels in [52502, 79002]) {
+      testWidgets('wrinkle face size $pixels', (tester) async {
+        final payload = _payload({
+          'wrinkle_load': (
+            baseline: 20.0,
+            current: 30.0,
+            status: null,
+            delta: null,
+            lock: null,
+          ),
+        });
+        payload['image_quality'] = {'face_skin_pixels': pixels};
+        omitWrinkleForSmallFace(payload);
+        await _pumpLive(tester, payload);
+        final card = find.byKey(const ValueKey('result_metric_wrinkle_load'));
+        if (pixels < 60000) {
+          expect(card, findsNothing);
+        } else {
+          expect(card, findsOneWidget);
+          expect(_cardText(tester, 'wrinkle_load'), contains('Worsened'));
+        }
+      });
+    }
+  });
+
   group('locked metrics', () {
     for (final lock in [
       'lighting_mismatch',
@@ -263,6 +334,7 @@ void main() {
       'structural_firmness_elasticity',
       'pore_visibility',
       'localized_redness',
+      'wrinkle_load',
     ];
 
     Map<String, dynamic> allMetrics() => _payload({

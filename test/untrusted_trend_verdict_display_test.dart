@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const hiddenMetrics = <String, double>{
-  'wrinkle_load': 45.4,
   'rosacea_severity': 0.43,
   'diffuse_flushing_erythema': 1.2,
   'pore_contraction_index': 22.0,
@@ -205,7 +204,6 @@ void main() {
       );
     }
     for (final label in const [
-      'Wrinkle Load',
       'Rosacea Severity',
       'Diffuse Flushing Erythema',
       'Under Eye Dark Circle Density',
