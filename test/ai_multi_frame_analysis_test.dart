@@ -10,11 +10,68 @@ import 'package:aesthetic_skin_tracker/utils/ai_scan_data_csv_exporter.dart';
 import 'package:aesthetic_skin_tracker/utils/trend_lock_reason.dart';
 import 'package:aesthetic_skin_tracker/widgets/luxe_report_layout.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show SynchronousFuture;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+class _PendingScanImageStreamCompleter extends ImageStreamCompleter {}
+
+class _ScanCacheTestImageProvider extends ImageProvider<Object> {
+  const _ScanCacheTestImageProvider(this.cacheKey);
+
+  final Object cacheKey;
+
+  @override
+  Future<Object> obtainKey(ImageConfiguration configuration) =>
+      SynchronousFuture(cacheKey);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'releases retained scan cache entries but not unrelated images',
+    () async {
+      final cache = ImageCache();
+      const scan = _ScanCacheTestImageProvider('scan-image');
+      const unrelated = _ScanCacheTestImageProvider('other-image');
+      cache.putIfAbsent('scan-image', _PendingScanImageStreamCompleter.new);
+      cache.putIfAbsent('other-image', _PendingScanImageStreamCompleter.new);
+      final retained = <ImageProvider<Object>>{scan};
+      expect(cache.statusForKey('scan-image').pending, isTrue);
+      await releaseRetainedScanImages(retained, cache: cache);
+      expect(retained, isEmpty);
+      expect(cache.statusForKey('scan-image').pending, isFalse);
+      expect(cache.statusForKey('other-image').pending, isTrue);
+      await unrelated.evict(cache: cache);
+    },
+  );
+
+  test(
+    'scan images are released before capture, after upload and on dispose',
+    () {
+      final source = File(
+        'lib/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart',
+      ).readAsStringSync();
+      final capture = source.indexOf('Future<void> _pickFromCamera() async {');
+      final release = source.indexOf(
+        'await releaseRetainedScanImages(',
+        capture,
+      );
+      final camera = source.indexOf('Navigator.push<Object?>(', capture);
+      expect(release, greaterThan(capture));
+      expect(release, lessThan(camera));
+      final uploadCleanup = source.indexOf('onUploadsComplete: () {');
+      expect(
+        source.substring(uploadCleanup, uploadCleanup + 250),
+        contains('_croppedBytes = null;'),
+      );
+      expect(
+        source,
+        contains('unawaited(releaseRetainedScanImages(_retainedScanImages));'),
+      );
+    },
+  );
 
   Map<String, dynamic> _frameMetrics({
     required int number,

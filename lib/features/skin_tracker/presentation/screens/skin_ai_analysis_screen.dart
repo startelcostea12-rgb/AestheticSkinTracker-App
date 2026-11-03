@@ -1367,6 +1367,17 @@ String _describeUploadFailure(Object error) {
       'exception=${error.runtimeType}: $message';
 }
 
+Future<void> releaseRetainedScanImages(
+  Set<ImageProvider<Object>> retained, {
+  ImageCache? cache,
+}) async {
+  final providers = retained.toList(growable: false);
+  retained.clear();
+  for (final provider in providers) {
+    await provider.evict(cache: cache);
+  }
+}
+
 const String aiScanPerFrameDiagnosticsKey = 'per_frame_diagnostics';
 const String rednessTrendLockReasonsKey = 'redness_trend_lock_reasons';
 
@@ -3118,6 +3129,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   /// uncropped original. A "latest scan" selection leaves this null and is
   /// read from its stored path instead.
   Uint8List? _croppedBytes;
+  final Set<ImageProvider<Object>> _retainedScanImages = {};
   List<Uint8List> _analysisFrameBytes = const [];
   List<AiScanFrameExposure> _analysisFrameExposureMetadata = const [];
   int? _capturedSourceImageWidth;
@@ -3280,6 +3292,15 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         setState(() => _debugBackendCommit = commit);
       });
     }
+  }
+
+  @override
+  void dispose() {
+    _croppedBytes = null;
+    _analysisFrameBytes = const [];
+    _grayCardPatches = const [];
+    unawaited(releaseRetainedScanImages(_retainedScanImages));
+    super.dispose();
   }
 
   Future<void> _refreshFocusAreaPhaseHint() async {
@@ -3502,6 +3523,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         focusArea: _resolvedFocusArea(),
       );
       if (!mounted) return;
+      _croppedBytes = null;
+      await releaseRetainedScanImages(_retainedScanImages);
+      if (!mounted) return;
       final captured = await Navigator.push<Object?>(
         context,
         MaterialPageRoute(
@@ -3602,6 +3626,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       );
       if (picked == null || !mounted) return;
 
+      _croppedBytes = null;
+      await releaseRetainedScanImages(_retainedScanImages);
+      if (!mounted) return;
       final rawBytes = await picked.readAsBytes();
       if (!mounted) return;
       final cropped = await showDialog<Uint8List>(
@@ -4007,6 +4034,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           frames.clear();
           _analysisFrameBytes = const [];
           _grayCardPatches = const [];
+          _croppedBytes = null;
         },
       );
       final backendResponse = aggregate.response;
@@ -9128,9 +9156,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         p.startsWith('data:image') ||
         p.startsWith('http://') ||
         p.startsWith('https://')) {
-      return NetworkImage(p);
+      final provider = NetworkImage(p);
+      _retainedScanImages.add(provider);
+      return provider;
     }
-    return FileImage(File(p));
+    final provider = FileImage(File(p));
+    _retainedScanImages.add(provider);
+    return provider;
   }
 
   /// Small italic caption used to frame procedure / ingredient sections as

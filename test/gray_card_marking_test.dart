@@ -236,7 +236,7 @@ void main() {
       expect(source, contains('? _grayCardPatches[frameNumber - 1]'));
       expect(
         '_grayCardPatches = const [];'.allMatches(source).length,
-        '_grayCardRegion = null;'.allMatches(source).length + 2,
+        '_grayCardRegion = null;'.allMatches(source).length + 3,
       );
       expect(source, contains('onUploadsComplete: () {'));
       expect(source, contains('frames.clear();'));
