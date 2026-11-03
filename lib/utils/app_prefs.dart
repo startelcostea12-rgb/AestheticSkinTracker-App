@@ -1207,7 +1207,7 @@ class AppPrefs {
           throw const FormatException('scan entry is not an object');
         }
         final entryJson = Map<String, dynamic>.from(rawEntry);
-        entryJson['imagePath'] = resolvedScanPhotoPath(
+        entryJson['imagePath'] = await loadScanPhotoPath(
           entryJson['imagePath']?.toString(),
           documentsDirectory,
         );

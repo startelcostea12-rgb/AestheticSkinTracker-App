@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/utils/app_prefs.dart';
@@ -79,11 +80,68 @@ void main() {
     SharedPreferences.setMockInitialValues({
       AppPrefs.scanHistoryKey: jsonEncode([scan.toJson()]),
     });
-    documents = '/var/mobile/Containers/Data/Application/NEW/Documents';
+    final currentDocuments = await Directory.systemTemp.createTemp('scan-photo-documents-');
+    addTearDown(() => currentDocuments.delete(recursive: true));
+    final photo = File('${currentDocuments.path}/scan_123.jpg');
+    await photo.writeAsBytes([1, 2, 3]);
+    documents = currentDocuments.path;
     await initializeScanPhotoPaths();
     final loaded = (await AppPrefs.getScanEntries()).single;
-    expect(loaded.imagePath, '$documents/scan_123.jpg');
+    expect(loaded.imagePath, photo.path);
     expect(loaded.id, 'legacy-id');
+  });
+
+  test('load finds an old absolute filename in Documents/scans without rewriting storage', () async {
+    final currentDocuments = await Directory.systemTemp.createTemp('scan-photo-documents-');
+    addTearDown(() => currentDocuments.delete(recursive: true));
+    final scans = await Directory('${currentDocuments.path}/scans').create();
+    final photo = File('${scans.path}/old-photo.jpg');
+    await photo.writeAsBytes([1, 2, 3]);
+    const oldPath = '/var/mobile/Containers/Data/Application/OLD/Documents/moved/old-photo.jpg';
+    final scan = ScanHistoryEntry(
+      id: 'old-photo-scan',
+      timestamp: DateTime.utc(2026, 10, 27),
+      imagePath: oldPath,
+      estimatedSkinAge: 0,
+      metrics: const {'texture_smoothness': 55.0},
+    );
+    final originalStorage = jsonEncode([scan.toJson()]);
+    SharedPreferences.setMockInitialValues({AppPrefs.scanHistoryKey: originalStorage});
+    documents = currentDocuments.path;
+    await initializeScanPhotoPaths();
+    final loaded = (await AppPrefs.getScanEntriesWithoutNormalization()).single;
+    expect(loaded.imagePath, photo.path);
+    expect(loaded.id, scan.id);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString(AppPrefs.scanHistoryKey), originalStorage);
+    expect(await photo.exists(), isTrue);
+  });
+
+  test('an existing absolute file is preserved even with a Documents match', () async {
+    final root = await Directory.systemTemp.createTemp('scan-photo-existing-');
+    addTearDown(() => root.delete(recursive: true));
+    final oldDocuments = await Directory(
+      '${root.path}/Containers/Data/Application/OLD/Documents',
+    ).create(recursive: true);
+    final currentDocuments = await Directory('${root.path}/current/Documents').create(recursive: true);
+    final original = File('${oldDocuments.path}/same-name.jpg');
+    final candidate = File('${currentDocuments.path}/same-name.jpg');
+    await original.writeAsBytes([1]);
+    await candidate.writeAsBytes([2]);
+    expect(await loadScanPhotoPath(original.path, currentDocuments.path), original.path);
+    expect(await original.readAsBytes(), [1]);
+    expect(await candidate.readAsBytes(), [2]);
+  });
+
+  test('a missing photo stays missing and does not delete another photo', () async {
+    final currentDocuments = await Directory.systemTemp.createTemp('scan-photo-missing-');
+    addTearDown(() => currentDocuments.delete(recursive: true));
+    final unrelated = File('${currentDocuments.path}/other.jpg');
+    await unrelated.writeAsBytes([1]);
+    const missing = '/var/mobile/Containers/Data/Application/OLD/Documents/missing.jpg';
+    expect(await loadScanPhotoPath(missing, currentDocuments.path), missing);
+    expect(await File(missing).exists(), isFalse);
+    expect(await unrelated.exists(), isTrue);
   });
 
   test('keeps external, data, missing and unrelated absolute paths intact', () {

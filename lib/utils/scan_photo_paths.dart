@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -46,4 +48,36 @@ String? resolvedScanPhotoPath(String? imagePath, String? documentsDirectory) {
   if (uri == null || uri.hasScheme || stored.startsWith('/')) return stored;
   if (uri.pathSegments.contains('..')) return imagePath;
   return Uri.directory(documentsDirectory).resolveUri(uri).toFilePath();
+}
+
+Future<String?> loadScanPhotoPath(
+  String? imagePath,
+  String? documentsDirectory,
+) async {
+  final resolved = resolvedScanPhotoPath(imagePath, documentsDirectory);
+  if (kIsWeb || imagePath == null || imagePath.isEmpty || documentsDirectory == null) {
+    return resolved;
+  }
+  final uri = Uri.tryParse(imagePath);
+  if (uri == null || uri.hasScheme || uri.pathSegments.contains('..')) {
+    return imagePath;
+  }
+  try {
+    if (uri.hasAbsolutePath && await File(imagePath).exists()) return imagePath;
+    if (resolved != null && await File(resolved).exists()) return resolved;
+    final filename = uri.pathSegments.last;
+    final documents = Directory(documentsDirectory);
+    if (await documents.exists()) {
+      String? match;
+      await for (final entry in documents.list(recursive: true, followLinks: false)) {
+        if (entry is! File || entry.uri.pathSegments.last != filename) continue;
+        if (match != null) return uri.hasAbsolutePath ? imagePath : resolved;
+        match = entry.path;
+      }
+      if (match != null) return match;
+    }
+  } on FileSystemException {
+    return uri.hasAbsolutePath ? imagePath : resolved;
+  }
+  return uri.hasAbsolutePath ? imagePath : resolved;
 }
