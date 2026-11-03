@@ -30,6 +30,7 @@ import 'screens/legal_screen.dart';
 import 'screens/share_result_screen.dart';
 import 'screens/welcome_tour_screen.dart';
 import 'utils/app_prefs.dart';
+import 'utils/scan_photo_paths.dart';
 import 'utils/premium_access.dart';
 import 'utils/report_service.dart';
 import 'utils/startup_guard.dart';
@@ -96,6 +97,7 @@ Future<void> main() async {
       // one is bounded by runStartupStep: a step that throws or never
       // completes is logged and skipped instead of leaving the app stuck on
       // the splash screen.
+      await runStartupStep('scan photo paths', initializeScanPhotoPaths);
       await runStartupStep('Hive.initFlutter', Hive.initFlutter);
       if (!Hive.isAdapterRegistered(5)) {
         Hive.registerAdapter(ProcedureLogAdapter());

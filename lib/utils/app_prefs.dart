@@ -13,6 +13,7 @@ import '../models/scan_history.dart';
 import '../models/skin_profile.dart';
 import '../models/procedure_log.dart';
 import 'app_logger.dart';
+import 'scan_photo_paths.dart';
 
 class AiBaselineRegistryState {
   const AiBaselineRegistryState({
@@ -1197,6 +1198,7 @@ class AppPrefs {
     }
 
     final entries = <ScanHistoryEntry>[];
+    final documentsDirectory = scanPhotoDocumentsDirectory;
     var skippedEntry = false;
     for (var index = 0; index < decoded.length; index++) {
       try {
@@ -1204,9 +1206,12 @@ class AppPrefs {
         if (rawEntry is! Map) {
           throw const FormatException('scan entry is not an object');
         }
-        entries.add(
-          ScanHistoryEntry.fromJson(Map<String, dynamic>.from(rawEntry)),
+        final entryJson = Map<String, dynamic>.from(rawEntry);
+        entryJson['imagePath'] = resolvedScanPhotoPath(
+          entryJson['imagePath']?.toString(),
+          documentsDirectory,
         );
+        entries.add(ScanHistoryEntry.fromJson(entryJson));
       } catch (error) {
         skippedEntry = true;
         if (kDebugMode) {
@@ -2165,6 +2170,11 @@ class AppPrefs {
   static Future<void> _saveScanEntries(List<ScanHistoryEntry> entries) async {
     final prefs = await SharedPreferences.getInstance();
     final pinnedBaselineScanIds = await getAllAiBaselineScanIds();
+    final documentsDirectory = scanPhotoDocumentsDirectory;
+    Map<String, dynamic> storedEntry(ScanHistoryEntry entry) => {
+      ...entry.toJson(),
+      'imagePath': storedScanPhotoPath(entry.imagePath, documentsDirectory),
+    };
 
     var entriesToSave = _normalizeScanHistoryForStorage(
       entries,
@@ -2172,7 +2182,7 @@ class AppPrefs {
       keepImageCount: maxStoredScanImages,
       pinnedBaselineScanIds: pinnedBaselineScanIds,
     );
-    var encoded = jsonEncode(entriesToSave.map((e) => e.toJson()).toList());
+    var encoded = jsonEncode(entriesToSave.map(storedEntry).toList());
     final trimmedScans = entries.length - entriesToSave.length;
     final trimmedImages =
         _inlineImageCount(entries) - _inlineImageCount(entriesToSave);
@@ -2197,7 +2207,7 @@ class AppPrefs {
         keepImageCount: 0,
         pinnedBaselineScanIds: pinnedBaselineScanIds,
       );
-      encoded = jsonEncode(entriesToSave.map((e) => e.toJson()).toList());
+      encoded = jsonEncode(entriesToSave.map(storedEntry).toList());
       await prefs.setString(
         scanHistoryStorageWarningKey,
         'Scan storage was almost full, so older photos were removed. Your latest scan metrics were saved safely.',
