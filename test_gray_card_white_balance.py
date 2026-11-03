@@ -110,7 +110,7 @@ def test_active_capture_wb_preserves_mean_linear_luminance(marked):
     ("pore_contraction_index", 3),
     ("glabellar_wrinkle_depth", 2),
     ("under_eye_texture_density", 6),
-    ("under_eye_dark_circle_density", 6),
+    ("under_eye_dark_circle_density", 7),
     ("breakout_activity", 2),
     ("skin_tone_radiance_evenness", 1),
     ("structural_firmness_elasticity", 1),

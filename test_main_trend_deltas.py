@@ -1350,7 +1350,7 @@ class MetricFormulaVersionRegistryTests(unittest.TestCase):
                 "pore_contraction_index": 4,
                 "glabellar_wrinkle_depth": 3,
                 "under_eye_texture_density": 7,
-                "under_eye_dark_circle_density": 7,
+                "under_eye_dark_circle_density": 8,
                 "breakout_activity": 4,
                 "skin_tone_radiance_evenness": 2,
                 "structural_firmness_elasticity": 2,

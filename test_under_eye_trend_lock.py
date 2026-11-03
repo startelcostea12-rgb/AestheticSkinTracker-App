@@ -8,22 +8,25 @@ from __future__ import annotations
 
 from pathlib import Path
 from unittest import mock
+import json
 
 import numpy as np
 import pytest
 
 import main
+import test_metric_regression_batch as regression
 
 REPO_ROOT = Path(__file__).resolve().parent
-CLEAR_FACE_PHOTO = REPO_ROOT / "test_fixtures" / "metric_regression" / "clear_face.jfif"
 UNDER_EYE_KEYS = ("under_eye_texture_density", "under_eye_dark_circle_density")
-CURRENT_VERSION = 7
+CURRENT_VERSION = {"under_eye_texture_density": 7, "under_eye_dark_circle_density": 8}
 
 
 @pytest.fixture(scope="module")
 def scan():
-    normalized, profile, _ = main._assess_and_normalize_image_with_pre_white_balance(
-        CLEAR_FACE_PHOTO.read_bytes()
+    manifest = json.loads(regression.MANIFEST_PATH.read_text())
+    case = next(case for case in manifest["cases"] if case["id"] == "nikki3")
+    normalized, profile = main.assess_and_normalize_image(
+        regression._prepare_image_bytes(REPO_ROOT / case["photo_path"], case["preprocess"])
     )
     common = {
         "quality_profile": dict(profile),
@@ -59,7 +62,10 @@ def _compare(scan, baseline_paths, baseline_version, *, baseline_matrix=None, em
             normalized,
             baseline_matrix=dict(baseline if baseline_matrix is None else baseline_matrix),
             baseline_extraction_paths=baseline_paths,
-            baseline_formula_versions={key: baseline_version for key in UNDER_EYE_KEYS},
+            baseline_formula_versions=(
+                baseline_version if isinstance(baseline_version, dict)
+                else {key: baseline_version for key in UNDER_EYE_KEYS}
+            ),
             **kwargs,
         )
     finally:
@@ -67,9 +73,15 @@ def _compare(scan, baseline_paths, baseline_version, *, baseline_matrix=None, em
             patch.stop()
 
 
-def test_current_under_eye_version_is_seven():
+def test_only_darkness_version_is_bumped():
     for key in UNDER_EYE_KEYS:
-        assert main._metric_formula_version(key) == CURRENT_VERSION
+        assert main._metric_formula_version(key) == CURRENT_VERSION[key]
+
+
+def test_v7_darkness_baseline_locks_but_texture_v7_compares(scan):
+    result = _compare(scan, {key: "primary_roi" for key in UNDER_EYE_KEYS}, 7)
+    assert result["trend_lock_reasons"]["under_eye_dark_circle_density"] == "formula_version_mismatch"
+    assert result["trend_lock_reasons"].get("under_eye_texture_density") is None
 
 
 def test_same_path_same_version_does_not_lock_on_path(scan):

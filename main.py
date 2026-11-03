@@ -2324,6 +2324,41 @@ def _under_eye_reference_mask(
     return cv2.bitwise_and(reference, cv2.bitwise_not(band))
 
 
+def _under_eye_darkness_diagnostics(
+    face_bgr: np.ndarray,
+    points: np.ndarray,
+    face_skin_mask: np.ndarray,
+    regions: Dict[str, np.ndarray],
+) -> Dict[str, float]:
+    shape = face_bgr.shape[:2]
+    l_channel = cv2.cvtColor(
+        face_bgr.astype(np.float32) / 255.0, cv2.COLOR_BGR2LAB
+    )[:, :, 0]
+    diagnostics: Dict[str, float] = {}
+    for side in ("left", "right"):
+        band = _under_eye_region_mask(shape, points, face_skin_mask, side=side) > 0
+        cheek_mask = regions.get(f"{side}_cheek")
+        if cheek_mask is None:
+            continue
+        cheek = cv2.bitwise_and(
+            _as_binary_mask(cheek_mask, shape),
+            face_skin_mask,
+        ) > 0
+        if not np.any(band) or not np.any(cheek):
+            continue
+        band_l = float(np.median(l_channel[band]))
+        reference_l = float(np.median(l_channel[cheek]))
+        raw_delta = reference_l - band_l
+        prefix = f"under_eye_{side}_darkness"
+        diagnostics[f"{prefix}_band_median_L"] = band_l
+        diagnostics[f"{prefix}_reference_median_L"] = reference_l
+        diagnostics[f"{prefix}_raw_L_delta"] = raw_delta
+        diagnostics[f"{prefix}_score"] = compute_under_eye_dark_circle_density(
+            max(0.0, raw_delta) * (255.0 / 100.0)
+        )
+    return diagnostics
+
+
 def _under_eye_logging_diagnostics(
     face_bgr: np.ndarray,
     points: np.ndarray,
@@ -3157,28 +3192,18 @@ def _compute_zone_based_metrics(
 
     under_eye_texture_density: float | None
     under_eye_dark_circle_density: float | None
+    darkness_diagnostics = _under_eye_darkness_diagnostics(
+        face_bgr, points, face_skin_mask, regions
+    )
+    darkness_scores = [
+        darkness_diagnostics[f"under_eye_{side}_darkness_score"]
+        for side in ("left", "right")
+        if f"under_eye_{side}_darkness_score" in darkness_diagnostics
+    ]
+    under_eye_dark_circle_density = (
+        float(np.mean(darkness_scores)) if len(darkness_scores) == 2 else None
+    )
     if np.any(peri_pixels) and np.any(reference_pixels):
-        # Dark circles: median L of the band against the median L of the
-        # cheek strip directly below it (not the whole-cheek mean). The
-        # dead zone and multiplier are unchanged.
-        l_channel = lab[:, :, 0].astype(np.float32)
-        reference_l_median = float(np.median(l_channel[reference_pixels]))
-        band_l_median = float(np.median(l_channel[peri_pixels]))
-        darkness_delta = max(0.0, reference_l_median - band_l_median)
-        effective_delta = max(
-            0.0, darkness_delta - UNDER_EYE_DARK_CIRCLE_DEAD_ZONE_L_UNITS
-        )
-        under_eye_dark_circle_density = compute_under_eye_dark_circle_density(darkness_delta)
-        logger.info(
-            "UNDER_EYE_DARK_CIRCLE band_l_median=%.2f reference_l_median=%.2f raw_delta=%.2f dead_zone=%.1f effective_delta=%.2f score=%.1f",
-            band_l_median,
-            reference_l_median,
-            darkness_delta,
-            UNDER_EYE_DARK_CIRCLE_DEAD_ZONE_L_UNITS,
-            effective_delta,
-            under_eye_dark_circle_density,
-        )
-
         # Texture: fine-scale DoG energy on the band over the same energy on
         # the reference strip.
         eye_widths = [
@@ -3214,7 +3239,6 @@ def _compute_zone_based_metrics(
     else:
         # Missing landmarks or either empty region means neither metric was measured.
         under_eye_texture_density = None
-        under_eye_dark_circle_density = None
 
     return {
         "localized_redness": round(localized_redness, 1),
@@ -4684,7 +4708,7 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     # texture is fine-scale DoG energy on the band over the same strip.
     # v5: median of five frames in the app; v7 clips both strips to face skin.
     "under_eye_texture_density": 7,
-    "under_eye_dark_circle_density": 7,
+    "under_eye_dark_circle_density": 8,
     # v2: only boxes kept at YOLO_CONF_THRESHOLD contribute. v1 also added
     # 22 x the strongest rejected box, so zero kept boxes still scored
     # 0.7-3.6 on the regression fixtures; v1 and v2 are not comparable.
@@ -6728,6 +6752,11 @@ def analyze_skin_patch(
     )
     under_eye_frame_diagnostics = _under_eye_logging_diagnostics(
         norm, norm_points, under_eye_face_skin_mask
+    )
+    under_eye_frame_diagnostics.update(
+        _under_eye_darkness_diagnostics(
+            norm, norm_points, under_eye_face_skin_mask, regions
+        )
     )
     # A zero reading here is ambiguous (genuinely flawless vs. detector floor),
     # so it is passed through as-is rather than substituted with a synthetic

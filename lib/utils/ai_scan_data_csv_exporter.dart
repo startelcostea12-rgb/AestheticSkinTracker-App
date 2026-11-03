@@ -231,6 +231,14 @@ class AiScanDataCsvExporter {
     'under_eye_right_raw_L_delta',
     'under_eye_right_dark_circle_density',
     'under_eye_right_texture_density',
+    'under_eye_left_darkness_band_median_L',
+    'under_eye_left_darkness_reference_median_L',
+    'under_eye_left_darkness_raw_L_delta',
+    'under_eye_left_darkness_score',
+    'under_eye_right_darkness_band_median_L',
+    'under_eye_right_darkness_reference_median_L',
+    'under_eye_right_darkness_raw_L_delta',
+    'under_eye_right_darkness_score',
   ];
 
   static List<ScanHistoryEntry> exportableScans(

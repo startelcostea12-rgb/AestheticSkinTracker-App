@@ -86,13 +86,15 @@ def _left_eye_only_mask(shape, points, skin_mask, *, side):
 _REAL_UNDER_EYE_MASK = main._under_eye_region_mask
 
 
-def test_phone_sized_mask_emits_both_metrics_at_their_own_values(clear_face_input, caplog):
+def test_phone_sized_mask_keeps_texture_but_darkness_needs_both_eyes(clear_face_input, caplog):
     caplog.set_level(logging.INFO, logger=main.logger.name)
     result, zone = _analyze(clear_face_input, _phone_sized_mask)
     pixels = _logged_under_eye_pixels(caplog)
 
     assert 0 < pixels < 1500
-    for key in UNDER_EYE_KEYS:
+    assert zone["under_eye_dark_circle_density"] is None
+    assert "under_eye_dark_circle_density" not in result["metric_matrix"]
+    for key in ("under_eye_texture_density",):
         assert result["metric_matrix"][key] == zone[key]
         assert key not in result["omitted_metric_reasons"]
         assert result["image_quality"][f"{key}_mask_kind"] == main.UNDER_EYE_MASK_KIND
@@ -106,7 +108,11 @@ def test_real_clear_face_mask_emits_both_metrics(clear_face_input, caplog):
     pixels = _logged_under_eye_pixels(caplog)
 
     for key in UNDER_EYE_KEYS:
-        assert result["metric_matrix"][key] == zone[key]
+        if zone[key] == 0.0:
+            assert key not in result["metric_matrix"]
+            assert result["omitted_metric_reasons"][key] == "insufficient_signal"
+        else:
+            assert result["metric_matrix"][key] == zone[key]
         assert result["image_quality"][f"{key}_mask_pixels"] == pixels
 
 
@@ -155,10 +161,26 @@ def test_texture_and_pigment_values_do_not_depend_on_under_eye_band(clear_face_i
         assert complete["metric_matrix"][key] == without_band["metric_matrix"][key]
 
 
+def test_new_darkness_does_not_change_any_other_metric(clear_face_input):
+    complete, _ = _analyze(clear_face_input)
+    with mock.patch.object(main, "_under_eye_darkness_diagnostics", return_value={}):
+        without_darkness, _ = _analyze(clear_face_input)
+    for key, value in complete["metric_matrix"].items():
+        if key != "under_eye_dark_circle_density":
+            assert without_darkness["metric_matrix"][key] == value
+
+    quality = complete["image_quality"]
+    for side in ("left", "right"):
+        for field in ("band_median_L", "reference_median_L", "raw_L_delta", "score"):
+            assert f"under_eye_{side}_darkness_{field}" in quality
+
+
 def test_under_eye_roi_too_small_gate_is_gone():
     assert "under_eye_roi_too_small" not in Path(main.__file__).read_text()
 
 
 def test_under_eye_formula_versions_bumped():
     for key in UNDER_EYE_KEYS:
-        assert main._metric_formula_version(key) == 7
+        assert main._metric_formula_version(key) == (
+            8 if key == "under_eye_dark_circle_density" else 7
+        )

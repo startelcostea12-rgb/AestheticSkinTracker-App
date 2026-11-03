@@ -1970,6 +1970,10 @@ const List<String> underEyePerFrameDiagnosticFields = <String>[
   'raw_L_delta',
   'dark_circle_density',
   'texture_density',
+  'darkness_band_median_L',
+  'darkness_reference_median_L',
+  'darkness_raw_L_delta',
+  'darkness_score',
 ];
 
 List<Map<String, dynamic>> buildAiScanPerFrameDiagnostics({

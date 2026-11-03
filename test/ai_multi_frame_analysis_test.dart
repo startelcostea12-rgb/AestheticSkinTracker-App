@@ -1542,6 +1542,14 @@ void main() {
           'under_eye_left_raw_L_delta': 16.0,
           'under_eye_left_dark_circle_density': 9.6,
           'under_eye_left_texture_density': 41.0,
+          'under_eye_left_darkness_band_median_L': 67.125,
+          'under_eye_left_darkness_reference_median_L': 80.375,
+          'under_eye_left_darkness_raw_L_delta': 13.25,
+          'under_eye_left_darkness_score': 30.945,
+          'under_eye_right_darkness_band_median_L': 69.25,
+          'under_eye_right_darkness_reference_median_L': 79.5,
+          'under_eye_right_darkness_raw_L_delta': 10.25,
+          'under_eye_right_darkness_score': 21.765,
         },
       };
       final aggregate = averageBackendAnalysisFrames([
@@ -1592,6 +1600,20 @@ void main() {
       expect(cell('frame1_under_eye_left_raw_L_delta'), '16.0');
       expect(cell('frame1_under_eye_left_dark_circle_density'), '9.6');
       expect(cell('frame1_under_eye_left_texture_density'), '41.0');
+      for (final side in ['left', 'right']) {
+        for (final field in [
+          'darkness_band_median_L',
+          'darkness_reference_median_L',
+          'darkness_raw_L_delta',
+          'darkness_score',
+        ]) {
+          final key = 'under_eye_${side}_$field';
+          final quality = frameResponse['image_quality'] as Map;
+          expect(cell('frame1_$key'), '${quality[key]}');
+          expect(cell('image_quality.$key'), '${quality[key]}');
+          expect(cell('frame2_$key'), isEmpty);
+        }
+      }
       for (final field in const [
         'offset_eye_widths',
         'band_median_L',

@@ -124,40 +124,62 @@ def test_reference_strip_sits_directly_below_the_band(zone_inputs):
         assert np.mean(np.nonzero(reference)[0]) > np.mean(np.nonzero(band)[0])
 
 
-def test_dark_circle_score_uses_the_same_height_cheek_reference(zone_inputs, caplog):
+def test_dark_circle_score_uses_side_cheek_skin_and_averages_eyes(zone_inputs):
     captured, _ = zone_inputs
     face = captured["face_bgr"]
     skin = captured["skin_mask"]
     face_skin = captured["face_skin_mask"]
     points = captured["points"]
-    shape = face.shape[:2]
-    caplog.set_level(logging.INFO, logger=main.logger.name)
-    zone = main._compute_zone_based_metrics(face, skin, {}, points)
-
-    l_channel = cv2.cvtColor(face, cv2.COLOR_BGR2LAB)[:, :, 0].astype(np.float32)
-    band = (
-        cv2.bitwise_or(
-            main._under_eye_region_mask(shape, points, face_skin, side="left"),
-            main._under_eye_region_mask(shape, points, face_skin, side="right"),
+    regions = captured["regions"]
+    zone = main._compute_zone_based_metrics(face, skin, regions, points)
+    diagnostics = main._under_eye_darkness_diagnostics(face, points, face_skin, regions)
+    l_channel = cv2.cvtColor(face.astype(np.float32) / 255.0, cv2.COLOR_BGR2LAB)[:, :, 0]
+    scores = []
+    for side in ("left", "right"):
+        cheek_pixels = cv2.bitwise_and(regions[f"{side}_cheek"], face_skin) > 0
+        prefix = f"under_eye_{side}_darkness"
+        assert diagnostics[f"{prefix}_reference_median_L"] == pytest.approx(
+            np.median(l_channel[cheek_pixels])
         )
-        > 0
-    )
-    reference = (
-        cv2.bitwise_or(
-            main._under_eye_reference_mask(shape, points, face_skin, side="left"),
-            main._under_eye_reference_mask(shape, points, face_skin, side="right"),
-        )
-        > 0
-    )
-    delta = max(0.0, float(np.median(l_channel[reference])) - float(np.median(l_channel[band])))
-    expected = round(main.compute_under_eye_dark_circle_density(delta), 1)
-    assert zone["under_eye_dark_circle_density"] == expected
+        scores.append(diagnostics[f"{prefix}_score"])
+    assert zone["under_eye_dark_circle_density"] == round(float(np.mean(scores)), 1)
 
-    line = next(
-        r.getMessage() for r in caplog.records if "UNDER_EYE_DARK_CIRCLE" in r.getMessage()
-    )
-    logged_reference = float(re.search(r"reference_l_median=([\d.]+)", line).group(1))
-    assert logged_reference == pytest.approx(float(np.median(l_channel[reference])), abs=0.01)
+
+def test_darkness_keeps_fractional_l_and_equal_eye_weights(zone_inputs):
+    captured, _ = zone_inputs
+    lab = np.zeros_like(captured["face_bgr"], dtype=np.float32)
+    lab[:, :, 0] = 80.25
+    bands = {}
+    for side, value in (("left", 70.25), ("right", 76.25)):
+        band = main._under_eye_region_mask(
+            lab.shape[:2], captured["points"], captured["face_skin_mask"], side=side
+        ) > 0
+        bands[side] = band
+        lab[band, 0] = value
+    with mock.patch.object(main.cv2, "cvtColor", return_value=lab):
+        diagnostics = main._under_eye_darkness_diagnostics(
+            captured["face_bgr"], captured["points"],
+            captured["face_skin_mask"], captured["regions"],
+        )
+        for side in ("left", "right"):
+            assert diagnostics[f"under_eye_{side}_darkness_band_median_L"] % 1 != 0
+        old_score = diagnostics["under_eye_left_darkness_score"]
+        lab[bands["left"], 0] += 0.1
+        changed = main._under_eye_darkness_diagnostics(
+            captured["face_bgr"], captured["points"],
+            captured["face_skin_mask"], captured["regions"],
+        )
+    change = abs(changed["under_eye_left_darkness_score"] - old_score)
+    assert 0 < change < 1.0
+    with mock.patch.object(main, "_under_eye_darkness_diagnostics", return_value={
+        "under_eye_left_darkness_score": 10.25,
+        "under_eye_right_darkness_score": 30.75,
+    }):
+        zone = main._compute_zone_based_metrics(
+            captured["face_bgr"], captured["skin_mask"],
+            captured["regions"], captured["points"],
+        )
+    assert zone["under_eye_dark_circle_density"] == 20.5
 
 
 def test_texture_is_the_band_over_reference_dog_ratio(zone_inputs, caplog):
@@ -202,8 +224,8 @@ def test_logging_diagnostics_include_each_eye_measurement(zone_inputs):
 def test_formula_versions_bumped_and_old_baselines_refused():
     for key in UNDER_EYE_KEYS:
         current_version = main._metric_formula_version(key)
-        assert current_version == 7
-        for old in (1, 2, 3, 4, 5, 6):
+        assert current_version == (8 if key == "under_eye_dark_circle_density" else 7)
+        for old in range(1, current_version):
             assert (
                 main._trend_lock_reason(
                     "primary_roi",
