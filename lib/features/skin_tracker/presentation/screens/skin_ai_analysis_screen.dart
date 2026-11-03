@@ -1011,12 +1011,50 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
       'five_frame_median_omitted': fiveFrameMedianOmitted..sort(),
   };
 
+  omitWrinkleForSmallFace(response);
   return MultiFrameAnalysisAggregate(
     response: response,
     metricContributorCounts: contributorCounts,
     successfulFrames: successfulResponses.length,
     requestedFrames: requestedFrames,
   );
+}
+
+void omitWrinkleForSmallFace(Map<String, dynamic> response) {
+  final quality = _payloadNode(response, 'image_quality');
+  final facePixels = _parseFiniteDouble(quality['face_skin_pixels']);
+  if (facePixels == null || facePixels >= 60000) return;
+
+  void omitFromNode(Map<String, dynamic> node) {
+    node.remove('wrinkle_load');
+    for (final field in const [
+      'metric_matrix',
+      'opencv_metrics',
+      'trend_status',
+      'trend_deltas',
+      'trend_lock_reasons',
+      'metric_confidence',
+    ]) {
+      if (node[field] is! Map) continue;
+      node[field] = Map<String, dynamic>.from(_dynamicMap(node[field]))
+        ..remove('wrinkle_load');
+    }
+    node['metric_extraction_paths'] = {
+      ..._dynamicMap(node['metric_extraction_paths']),
+      'wrinkle_load': 'skipped',
+    };
+    node['omitted_metric_reasons'] = {
+      ..._dynamicMap(node['omitted_metric_reasons']),
+      'wrinkle_load': 'face_skin_too_small',
+    };
+  }
+
+  omitFromNode(response);
+  if (response['metrics'] is Map) {
+    final metrics = Map<String, dynamic>.from(_dynamicMap(response['metrics']));
+    omitFromNode(metrics);
+    response['metrics'] = metrics;
+  }
 }
 
 double? _parseFiniteDouble(dynamic value) {

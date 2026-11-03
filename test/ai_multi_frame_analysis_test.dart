@@ -53,6 +53,69 @@ void main() {
     });
   });
 
+  for (final facePixels in [52502, 59999, 60000, 79002, 96000, 100000]) {
+    for (final sharpness in [36.0, 50.0]) {
+      test(
+        'wrinkle face-size gate: pixels=$facePixels sharpness=$sharpness',
+        () {
+          final frames = [
+            for (var index = 0; index < 5; index++)
+              {
+                'imagePath': 'saved-photo.jpg',
+                'metric_matrix': {
+                  'wrinkle_load': 20.0 + index,
+                  'pore_visibility': 12.0,
+                  'pore_contraction_index': 40.0 + index,
+                  'texture_smoothness': 55.0,
+                  'pigment_load': 9.0,
+                },
+                'metric_formula_versions': {'wrinkle_load': 5},
+                'trend_status': {'wrinkle_load': 'worsened'},
+                'trend_deltas': {'wrinkle_load': -10.0},
+                'image_quality': {
+                  'face_skin_pixels': facePixels,
+                  'sharpness_score': sharpness,
+                },
+              },
+          ];
+          final result = averageBackendAnalysisFrames(
+            frames,
+            requestedFrames: 5,
+          );
+          final response = result.response;
+          final matrix = response['metric_matrix'] as Map;
+          if (facePixels < 60000) {
+            expect(matrix.containsKey('wrinkle_load'), isFalse);
+            expect(
+              (response['metrics'] as Map).containsKey('wrinkle_load'),
+              isFalse,
+            );
+            expect(
+              (response['trend_status'] as Map).containsKey('wrinkle_load'),
+              isFalse,
+            );
+            expect(
+              (response['trend_deltas'] as Map).containsKey('wrinkle_load'),
+              isFalse,
+            );
+            expect(response['omitted_metric_reasons'], {
+              'wrinkle_load': 'face_skin_too_small',
+            });
+          } else {
+            expect(matrix['wrinkle_load'], 22.0);
+          }
+          expect(response['imagePath'], 'saved-photo.jpg');
+          expect(response['metric_formula_versions'], {'wrinkle_load': 5});
+          expect(matrix['pore_visibility'], 12.0);
+          expect(matrix['pore_contraction_index'], 42.0);
+          expect(matrix['texture_smoothness'], 55.0);
+          expect(matrix['pigment_load'], 9.0);
+          expect((frames.first['metric_matrix'] as Map)['wrinkle_load'], 20.0);
+        },
+      );
+    }
+  }
+
   test('a blurry standard frame omits the mean instead of averaging two', () {
     final frames = [
       _frameMetrics(number: 1, meanValue: 10, medianValue: 10),
