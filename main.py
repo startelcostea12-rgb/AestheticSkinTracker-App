@@ -7811,6 +7811,9 @@ def analyze_skin_patch(
     elif redness_branch == "baseline_p95_anchor":
         redness_mask_kind = "u_zone"
 
+    export_head_pose_pitch, export_head_pose_yaw = (
+        _compute_pose_pitch_yaw_from_landmarks(norm_points)
+    )
     image_quality_payload = {
         **(quality_profile or {}),
         **region_position_boxes,
@@ -7866,6 +7869,10 @@ def analyze_skin_patch(
         **under_eye_frame_diagnostics,
         # Same-height cheek strip both under-eye metrics compare against.
         "under_eye_reference_mask_pixels": under_eye_reference_pixels,
+        # Logging only: head-pose proxy already computed for gates elsewhere.
+        # Exported for diagnostics; does not reject or alter metric values.
+        "head_pose_pitch": round(float(export_head_pose_pitch), 4),
+        "head_pose_yaw": round(float(export_head_pose_yaw), 4),
     }
 
     response_payload = {

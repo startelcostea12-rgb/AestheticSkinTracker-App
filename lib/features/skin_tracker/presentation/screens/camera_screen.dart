@@ -1142,6 +1142,9 @@ class AiSkinAnalysisCaptureResult {
     this.quickScan = false,
     this.sourceImageWidth,
     this.sourceImageHeight,
+    this.headYaw,
+    this.headPitch,
+    this.headRoll,
   });
 
   /// True for a single-photo quick scan (see CameraScreen.aiQuickScan).
@@ -1150,6 +1153,12 @@ class AiSkinAnalysisCaptureResult {
   final String primaryImagePath;
   final int? sourceImageWidth;
   final int? sourceImageHeight;
+
+  /// Capture-time head pose degrees from the live landmark assessment.
+  /// Logging/export only — never used to reject a scan after capture.
+  final double? headYaw;
+  final double? headPitch;
+  final double? headRoll;
 
   /// The fixed gray-card target as fractions of the full still (it lies
   /// below the face crop), or null when the gray-card switch was off.
@@ -5625,6 +5634,9 @@ class _CameraScreenState extends State<CameraScreen>
           quickScan: widget.aiQuickScan,
           sourceImageWidth: decodedStillWidth,
           sourceImageHeight: decodedStillHeight,
+          headYaw: _liveLandmarkAssessment.yaw,
+          headPitch: _liveLandmarkAssessment.pitch,
+          headRoll: _liveLandmarkAssessment.roll,
         ),
       );
     } catch (e) {

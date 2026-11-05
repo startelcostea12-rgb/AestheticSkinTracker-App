@@ -37,6 +37,7 @@ import 'package:aesthetic_skin_tracker/services/skin_history_repository.dart';
 import 'package:aesthetic_skin_tracker/utils/acne_rosacea_photo_analysis.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_comparison_baseline.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_backend_commit.dart';
+import 'package:aesthetic_skin_tracker/utils/ai_head_angle.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_capture_sharpness.dart';
 import 'package:aesthetic_skin_tracker/utils/display_aggregation.dart';
 import 'package:aesthetic_skin_tracker/utils/display_noise_floors.dart';
@@ -3135,6 +3136,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   List<AiScanFrameExposure> _analysisFrameExposureMetadata = const [];
   int? _capturedSourceImageWidth;
   int? _capturedSourceImageHeight;
+  double? _capturedHeadYaw;
+  double? _capturedHeadPitch;
+  double? _capturedHeadRoll;
 
   /// The user must explicitly accept the pre-analysis disclaimer before the
   /// "Run AI Analysis" button unlocks. This is a hard gate, not a checkbox
@@ -3578,6 +3582,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _capturedGuideType = captured.guideType;
           _capturedSourceImageWidth = captured.sourceImageWidth;
           _capturedSourceImageHeight = captured.sourceImageHeight;
+          _capturedHeadYaw = captured.headYaw;
+          _capturedHeadPitch = captured.headPitch;
+          _capturedHeadRoll = captured.headRoll;
           _grayCardRegion = captured.grayCardRegion;
           _grayCardPatches = captured.grayCardPatches;
           _capturedScanMode = captured.quickScan
@@ -3593,6 +3600,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _capturedGuideType = null;
           _capturedSourceImageWidth = null;
           _capturedSourceImageHeight = null;
+          _capturedHeadYaw = null;
+          _capturedHeadPitch = null;
+          _capturedHeadRoll = null;
           _grayCardRegion = null;
           _grayCardPatches = const [];
           _capturedScanMode = null;
@@ -3660,6 +3670,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
           _capturedGuideType = null;
           _capturedSourceImageWidth = null;
           _capturedSourceImageHeight = null;
+          _capturedHeadYaw = null;
+          _capturedHeadPitch = null;
+          _capturedHeadRoll = null;
           _grayCardRegion = null;
           _grayCardPatches = const [];
           _capturedScanMode = null;
@@ -4258,6 +4271,12 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         }
       }
       recordAiBackendCommit(persistencePayload, resolvedBackendCommit);
+      recordAiHeadAngle(
+        persistencePayload,
+        yaw: _capturedHeadYaw,
+        pitch: _capturedHeadPitch,
+        roll: _capturedHeadRoll,
+      );
       final Map<String, double> rawMetricScores = _rawMetricScoresForStorage(
         persistencePayload,
       );

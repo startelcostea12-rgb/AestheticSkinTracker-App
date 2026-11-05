@@ -1,3 +1,4 @@
+import 'package:aesthetic_skin_tracker/utils/ai_head_angle.dart';
 import '../models/scan_history.dart';
 import 'ai_capture_sharpness.dart';
 import 'ai_comparison_baseline.dart';
@@ -34,6 +35,11 @@ class AiScanDataCsvExporter {
     'guideType',
     'captureQuality',
     'backend_commit',
+    'head_yaw',
+    'head_pitch',
+    'head_roll',
+    'image_quality.head_pose_pitch',
+    'image_quality.head_pose_yaw',
     'is_baseline',
     'comparison_baseline_scan_id',
     'comparison_baseline_source',
@@ -323,6 +329,9 @@ class AiScanDataCsvExporter {
         'gitCommit',
         'commit',
       ]),
+      'head_yaw': _storedValue(payload, const [aiHeadYawKey, 'headYaw']),
+      'head_pitch': _storedValue(payload, const [aiHeadPitchKey, 'headPitch']),
+      'head_roll': _storedValue(payload, const [aiHeadRollKey, 'headRoll']),
       'is_baseline': registryBaselineScanIds.contains(scan.id),
       // Only the id recorded at comparison time; empty on older scans.
       'comparison_baseline_scan_id': payload[aiComparisonBaselineScanIdKey],
