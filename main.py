@@ -9,6 +9,7 @@ import json
 import logging
 import math
 import os
+import time
 import random
 import threading
 from contextlib import asynccontextmanager
@@ -9049,9 +9050,95 @@ async def analyze_skin_single(
         raise _analysis_http_exception(exc) from None
 
 
+# Per-client limit for /api/ai-coach only. Logging/abuse control — does not
+# change BACKEND_API_KEY defaults or Gemini key handling. Direct peer address
+# is the client id; X-Forwarded-For / X-Real-IP are ignored unless
+# COACH_TRUST_PROXY is set to a truthy value (configured trusted proxy).
+COACH_RATE_LIMIT_MAX = 10
+COACH_RATE_LIMIT_WINDOW_SECONDS = 60.0
+COACH_RATE_LIMIT_MAX_CLIENTS = 4096
+
+
+class _CoachRateLimiter:
+    """Fixed-window counter keyed by client id; uses monotonic time."""
+
+    def __init__(
+        self,
+        *,
+        max_calls: int = COACH_RATE_LIMIT_MAX,
+        window_seconds: float = COACH_RATE_LIMIT_WINDOW_SECONDS,
+        max_clients: int = COACH_RATE_LIMIT_MAX_CLIENTS,
+    ) -> None:
+        self.max_calls = max_calls
+        self.window_seconds = window_seconds
+        self.max_clients = max_clients
+        self._hits: dict[str, list[float]] = {}
+
+    def _prune(self, now: float) -> None:
+        stale = [
+            key
+            for key, stamps in self._hits.items()
+            if not stamps or stamps[-1] <= now - self.window_seconds
+        ]
+        for key in stale:
+            self._hits.pop(key, None)
+        if len(self._hits) <= self.max_clients:
+            return
+        # Drop oldest clients first when the map grows past the bound.
+        overflow = sorted(
+            self._hits.items(),
+            key=lambda item: item[1][0] if item[1] else 0.0,
+        )
+        for key, _ in overflow[: len(self._hits) - self.max_clients]:
+            self._hits.pop(key, None)
+
+    def allow(self, client_id: str, *, now: float | None = None) -> bool:
+        current = time.monotonic() if now is None else now
+        self._prune(current)
+        stamps = self._hits.setdefault(client_id, [])
+        cutoff = current - self.window_seconds
+        stamps[:] = [stamp for stamp in stamps if stamp > cutoff]
+        if len(stamps) >= self.max_calls:
+            return False
+        stamps.append(current)
+        return True
+
+
+_coach_rate_limiter = _CoachRateLimiter()
+
+
+def _coach_client_id(request: Request) -> str:
+    trust_proxy = os.getenv("COACH_TRUST_PROXY", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if trust_proxy:
+        forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        if forwarded:
+            return forwarded
+        real_ip = (request.headers.get("x-real-ip") or "").strip()
+        if real_ip:
+            return real_ip
+    peer = request.client.host if request.client is not None else ""
+    return peer or "unknown"
+
+
+def _coach_rate_limited_response() -> dict[str, object]:
+    return {
+        "text": "Please try again in a moment.",
+        "modelUsed": "rate-limit",
+        "attempts": 0,
+        "status": "rate_limited",
+    }
+
+
 @app.post("/api/ai-coach")
 async def ai_coach(request: Request):
     try:
+        if not _coach_rate_limiter.allow(_coach_client_id(request)):
+            return _coach_rate_limited_response()
         raw_bytes = await request.body()
         raw_text = raw_bytes.decode("utf-8", errors="replace").strip()
 

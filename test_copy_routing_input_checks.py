@@ -35,6 +35,11 @@ BASELINE = REPO_ROOT / "test_fixtures" / "analyze_single_baseline_e1941f9.json"
 # Intentionally changed copy; every other response field must be identical.
 INTENTIONALLY_CHANGED_FIELDS = ("smart_narrative",)
 
+# Logging/provenance fields added after the frozen baseline capture. They must
+# not fail the metric-invariant response compare.
+LOGGING_ONLY_TOP_LEVEL_FIELDS = ("backend_commit",)
+LOGGING_ONLY_IMAGE_QUALITY_FIELDS = ("head_pose_pitch", "head_pose_yaw")
+
 BASELINE_CASES = {
     "plain": {},
     "finite_scores": {"rosacea_score": "3.5", "sensitivity_score": "5.0"},
@@ -50,6 +55,11 @@ BASELINE_CASES = {
 @pytest.fixture(scope="module")
 def client():
     main.ensure_pipeline_ready()
+    # /api/ai-coach is per-client rate limited; TestClient shares one peer IP.
+    # Use a high ceiling for this module so coach content tests are unaffected.
+    main._coach_rate_limiter = main._CoachRateLimiter(
+        max_calls=10_000, window_seconds=60.0
+    )
     return TestClient(main.app)
 
 
@@ -114,9 +124,19 @@ def test_response_matches_pre_edit_baseline(client, face_png, case):
     body = response.json()
     expected = baseline["body"]
 
-    assert set(body) == set(expected), "top-level response keys changed"
-    for key in expected:
+    body_keys = set(body) - set(LOGGING_ONLY_TOP_LEVEL_FIELDS)
+    expected_keys = set(expected) - set(LOGGING_ONLY_TOP_LEVEL_FIELDS)
+    assert body_keys == expected_keys, "top-level response keys changed"
+    for key in expected_keys:
         if key in INTENTIONALLY_CHANGED_FIELDS:
+            continue
+        if key == "image_quality":
+            actual_iq = dict(body.get("image_quality") or {})
+            expected_iq = dict(expected.get("image_quality") or {})
+            for field in LOGGING_ONLY_IMAGE_QUALITY_FIELDS:
+                actual_iq.pop(field, None)
+                expected_iq.pop(field, None)
+            assert actual_iq == expected_iq, "field changed: image_quality"
             continue
         assert body[key] == expected[key], f"field changed: {key}"
 
