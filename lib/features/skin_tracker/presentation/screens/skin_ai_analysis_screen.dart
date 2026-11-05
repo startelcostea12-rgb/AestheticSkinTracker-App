@@ -36,6 +36,7 @@ import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/services/skin_history_repository.dart';
 import 'package:aesthetic_skin_tracker/utils/acne_rosacea_photo_analysis.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_comparison_baseline.dart';
+import 'package:aesthetic_skin_tracker/utils/ai_backend_commit.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_capture_sharpness.dart';
 import 'package:aesthetic_skin_tracker/utils/display_aggregation.dart';
 import 'package:aesthetic_skin_tracker/utils/display_noise_floors.dart';
@@ -3271,10 +3272,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
               'baseline.';
   }
 
-  /// Debug-only: the deployed backend's git commit (see GET /health and
-  /// main.py's health_check), shown on the results screen so a developer
-  /// can confirm which server build actually served this analysis. Null
-  /// while loading, unreachable, or in a release build (never fetched).
+  /// Deployed backend git commit from GET /health (see main.py). Used for
+  /// CSV provenance (backend_commit) and shown on the results screen in
+  /// debug builds. Null while loading or when the server is unreachable.
   String? _debugBackendCommit;
 
   @override
@@ -3286,12 +3286,10 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     _loadLatestScan();
     _loadProcedureContext();
     _refreshFocusAreaPhaseHint();
-    if (kDebugMode) {
-      remote_analysis.SkinAnalysisService.fetchBackendCommit().then((commit) {
-        if (!mounted) return;
-        setState(() => _debugBackendCommit = commit);
-      });
-    }
+    remote_analysis.SkinAnalysisService.fetchBackendCommit().then((commit) {
+      if (!mounted) return;
+      setState(() => _debugBackendCommit = commit);
+    });
   }
 
   @override
@@ -4245,6 +4243,21 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         fullStillSharpness: _currentCaptureSharpness.fullStill,
         sharpnessFloor: _currentCaptureSharpness.floor,
       );
+      // Server commit from analyze response, else the /health value fetched
+      // for debug display — never invent a client-side commit string.
+      var resolvedBackendCommit = resolveAiBackendCommit(
+        analyzeResponse: backendResponse,
+        existingPayload: persistencePayload,
+        healthCommit: _debugBackendCommit,
+      );
+      if (resolvedBackendCommit == null) {
+        resolvedBackendCommit =
+            await remote_analysis.SkinAnalysisService.fetchBackendCommit();
+        if (resolvedBackendCommit != null && mounted) {
+          _debugBackendCommit = resolvedBackendCommit;
+        }
+      }
+      recordAiBackendCommit(persistencePayload, resolvedBackendCommit);
       final Map<String, double> rawMetricScores = _rawMetricScoresForStorage(
         persistencePayload,
       );

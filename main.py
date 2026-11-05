@@ -7898,6 +7898,9 @@ def analyze_skin_patch(
         "confidence_hints": confidence_hints if confidence_score < 0.65 else [],
         "image_quality": image_quality_payload,
         **_gray_card_top_level_fields(image_quality_payload),
+        # Logging/provenance only: same value /health reports. Clients persist
+        # this onto each scan so CSV exports can fill backend_commit.
+        "backend_commit": _server_backend_commit(),
         "fingerprint": fingerprint,
         "calibration": calibration,
         "metric_matrix": metric_matrix,
@@ -8510,14 +8513,23 @@ async def analyze_body_silhouette_endpoint(request: Request):
         raise _analysis_http_exception(exc) from None
 
 
+def _server_backend_commit() -> str:
+    """Git commit baked into the image via GIT_COMMIT (see Dockerfile).
+
+    Logging/provenance only -- never used for metric math. Missing/unset
+    returns "unknown" so /health and analyze responses stay available.
+    """
+    return os.environ.get("GIT_COMMIT", "").strip() or "unknown"
+
+
 @app.get("/health")
 async def health_check():
     # GIT_COMMIT is baked into the image as an env var at `docker build
     # --build-arg GIT_COMMIT=...` time (see Dockerfile) -- there is no .git
     # directory in the running container to read it from at request time.
     # Missing/unset -> "unknown", never a failed health check.
-    commit = os.environ.get("GIT_COMMIT", "").strip() or "unknown"
-    return {"status": "ok", "commit": commit}
+    commit = _server_backend_commit()
+    return {"status": "ok", "commit": commit, "backend_commit": commit}
 
 
 @app.post("/api/analyze-skin")
