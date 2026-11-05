@@ -218,8 +218,8 @@ class SkinMetricRegistry {
     plainName: 'breakouts',
     description:
         'Composite of inflammatory lesions (papules, pustules) and '
-        'comedonal load (blackheads, whiteheads). Responds to consistent '
-        'topical actives over 8–12 weeks.',
+        'comedonal load (blackheads, whiteheads). Tracked over weeks with '
+        'consistent photos and gentle care.',
     shortExplanation: 'breakouts',
     friendlyDescription: 'breakouts & inflammation',
     lowerIsBetter: true,
@@ -233,8 +233,7 @@ class SkinMetricRegistry {
     plainName: 'cystic acne',
     description:
         'Deep, painful, inflamed nodules and cysts beneath the skin. '
-        'Typically requires systemic therapy (oral antibiotics, '
-        'isotretinoin, or hormonal treatment) for meaningful resolution.',
+        'Tracked carefully because scarring risk is higher with this pattern.',
     shortExplanation: 'deep painful nodules',
     friendlyDescription: 'deep painful nodules & inflammation',
     lowerIsBetter: true,
@@ -249,7 +248,7 @@ class SkinMetricRegistry {
     description:
         'Cycle-related breakouts concentrated along the lower face, '
         'jawline, chin, and neck. Often flares 7–10 days before menses '
-        'and improves with hormonal modulation or spironolactone.',
+        'and often follows a cycle-linked jawline pattern.',
     shortExplanation: 'cycle-related jawline breakouts',
     friendlyDescription: 'cycle-related jawline & chin breakouts',
     lowerIsBetter: true,
@@ -264,9 +263,8 @@ class SkinMetricRegistry {
     plainName: 'rosacea',
     description:
         'Persistent central-face erythema, papulopustules, and '
-        'sensitivity characteristic of rosacea. Managed with gentle '
-        'barrier-focused skincare and prescription topicals such as '
-        'azelaic acid, ivermectin, or metronidazole.',
+        'sensitivity characteristic of rosacea. Tracked with gentle '
+        'barrier-focused skincare routines.',
     shortExplanation: 'persistent central redness',
     friendlyDescription: 'persistent central-face redness & flushing',
     lowerIsBetter: true,

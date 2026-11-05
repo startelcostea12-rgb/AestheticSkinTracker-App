@@ -1,14 +1,14 @@
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'procedure_intelligence.dart';
 
-/// Represents a clinically-relevant product recommendation with affiliate link.
+/// Represents a product recommendation with affiliate link.
 class AIProductRecommendation {
   final String productName;
   final String brand;
   final String clinicalReason;
   final String usageGuidance;
   final String
-  evidenceLevel; // "Clinical consensus", "Evidence-backed", "Proven efficacy"
+  evidenceLevel; // "Evidence-backed", "Catalog pick"
   final String affiliateLink;
   final String imageUrl;
   final String category; // "Recovery Support", "Maintenance", "Prevention"
@@ -50,7 +50,7 @@ class CvSkinMetricsContext {
 }
 
 /// AI-driven product recommendation engine that analyzes skin metrics
-/// and suggests clinically relevant products based on highest-priority issues.
+/// and suggests products based on highest-priority issues.
 class AIProductRecommendationEngine {
   static String? _cleanProcedureType(String? value) {
     final normalized = (value ?? '').trim();
@@ -116,7 +116,7 @@ class AIProductRecommendationEngine {
           'Stage 2 compression garments are non-negotiable for BBL and lipo results. They control swelling, support skin retraction, prevent fibrosis, and define the final contour.',
       'guidance':
           'Wear 22+ hours/day weeks 3–8. Transition to lighter compression through month 3. Follow your surgeon\'s specific garment schedule.',
-      'evidence': 'Clinical consensus',
+      'evidence': 'Catalog pick',
       'link':
           'https://www.amazon.com/s?k=stage+2+compression+faja+post+surgery',
       'image': 'https://via.placeholder.com/200x200?text=Compression+Faja',
@@ -166,7 +166,7 @@ class AIProductRecommendationEngine {
           'UV exposure on healing surgical scars causes permanent hyperpigmentation. Body SPF spray protects incision sites and treated skin during the 3-month scar maturation window.',
       'guidance':
           'Spray on all treated areas before sun exposure. Reapply every 2 hours. Non-greasy formula safe over healing skin (avoid open wounds).',
-      'evidence': 'Clinical consensus',
+      'evidence': 'Catalog pick',
       'link':
           'https://www.amazon.com/s?k=neutrogena+body+sunscreen+spf+50+spray',
       'image': 'https://via.placeholder.com/200x200?text=Body+SPF',
@@ -179,7 +179,7 @@ class AIProductRecommendationEngine {
           'Hydrating the treated skin supports elasticity and skin retraction after liposuction. Ceramide-based formula repairs barrier without irritating post-surgical skin.',
       'guidance':
           'Apply twice daily to treated areas after wounds are fully closed. Massage in gently — this also provides light lymphatic stimulation.',
-      'evidence': 'Clinical consensus',
+      'evidence': 'Catalog pick',
       'link':
           'https://www.amazon.com/s?k=cerave+fragrance+free+body+moisturizer',
       'image': 'https://via.placeholder.com/200x200?text=Body+Moisturizer',
@@ -205,7 +205,7 @@ class AIProductRecommendationEngine {
           'Sitting directly on transferred fat grafts in the first 8 weeks compresses and kills fragile new fat cells, reducing final volume retention by 20–40%. A BBL cushion transfers weight to the thighs instead of the buttocks.',
       'guidance':
           'Use whenever seated for the first 8 weeks. Place under thighs so buttocks are suspended. Use in chairs, cars, and at work. Sleeping prone is preferred.',
-      'evidence': 'Clinical consensus',
+      'evidence': 'Catalog pick',
       'link': 'https://www.amazon.com/s?k=bbl+recovery+pillow+cushion',
       'image': 'https://via.placeholder.com/200x200?text=BBL+Cushion',
       'category': 'Recovery Support',
@@ -245,7 +245,7 @@ class AIProductRecommendationEngine {
           'Sulfate-free formulas cleanse grafts and donor sites without disrupting the healing scalp barrier. Standard sulfate shampoos strip protective sebum from healing follicles.',
       'guidance':
           'Begin gentle washing per your surgeon\'s protocol (typically day 3–7). Apply using only fingertips with light tapping — never rub or scrub. Rinse gently.',
-      'evidence': 'Clinical consensus',
+      'evidence': 'Catalog pick',
       'link':
           'https://www.amazon.com/s?k=sulfate+free+gentle+shampoo+hair+transplant',
       'image': 'https://via.placeholder.com/200x200?text=Gentle+Shampoo',
@@ -306,7 +306,7 @@ class AIProductRecommendationEngine {
           'UV exposure on healing grafts causes pigmentation changes and may impair graft survival. Scalp SPF spray is essential during outdoor activity for the first 3 months.',
       'guidance':
           'Spray on scalp before sun exposure. Reapply every 2 hours. Avoid direct spray on scabs in early weeks — use fingers to apply carefully.',
-      'evidence': 'Clinical consensus',
+      'evidence': 'Catalog pick',
       'link': 'https://www.amazon.com/s?k=scalp+sunscreen+spray+spf+30',
       'image': 'https://via.placeholder.com/200x200?text=Scalp+SPF',
       'category': 'Prevention',
@@ -369,7 +369,7 @@ class AIProductRecommendationEngine {
           'UV exposure activates melanocytes near injection sites, potentially causing PIH. Daily SPF is essential post-injectables, especially over bruised areas.',
       'guidance':
           'Apply every morning. Mineral-only formulas recommended in the first week (no rubbing — just dab over injection sites). Reapply at midday.',
-      'evidence': 'Clinical consensus',
+      'evidence': 'Catalog pick',
       'link': 'https://www.amazon.com/s?k=eltamd+spf+50+mineral+sunscreen',
       'image': 'https://via.placeholder.com/200x200?text=SPF+50',
       'category': 'Prevention',
@@ -448,7 +448,7 @@ class AIProductRecommendationEngine {
             'Once healed, gentle exfoliation accelerates cell turnover and improves texture uniformity. Avoid first 2 weeks post-treatment.',
         'guidance':
             'Use 2–3 times weekly after full healing (post-treatment week 3+). Massage gently for 1–2 minutes.',
-        'evidence': 'Clinical consensus',
+        'evidence': 'Catalog pick',
         'link': 'https://www.amazon.com/s?k=la+roche+posay+gentle+exfoliant',
         'image': 'https://via.placeholder.com/200x200?text=Exfoliant',
         'category': 'Maintenance',
@@ -512,7 +512,7 @@ class AIProductRecommendationEngine {
             'When pore size is still elevated, a silicone-based primer visually minimizes appearance while skin continues healing.',
         'guidance':
             'Apply to clean, moisturized skin as makeup base or standalone.',
-        'evidence': 'Clinical consensus',
+        'evidence': 'Catalog pick',
         'link': 'https://www.amazon.com/s?k=benefit+pore+minimizing+primer',
         'image': 'https://via.placeholder.com/200x200?text=Pore+Primer',
         'category': 'Recovery Support',
@@ -562,7 +562,7 @@ class AIProductRecommendationEngine {
             'UV exposure worsens dark spots. Sunscreen is non-negotiable for fading hyperpigmentation. Use daily without fail.',
         'guidance':
             'Apply 15 minutes before sun exposure. Reapply every 2 hours.',
-        'evidence': 'Clinical consensus',
+        'evidence': 'Catalog pick',
         'link': 'https://www.amazon.com/s?k=eltamd+broad+spectrum+spf+50',
         'image': 'https://via.placeholder.com/200x200?text=Sunscreen+SPF50',
         'category': 'Prevention',
@@ -600,7 +600,7 @@ class AIProductRecommendationEngine {
             'Supports long-wear hydration comfort and calms dehydration tightness without heaviness.',
         'guidance':
             'Use at night under moisturizer or as a daytime moisture booster before SPF.',
-        'evidence': 'Clinical consensus',
+        'evidence': 'Catalog pick',
         'link': 'https://www.amazon.com/s?k=squalane+panthenol+serum',
         'image': 'https://via.placeholder.com/200x200?text=Squalane+Serum',
         'category': 'Maintenance',
@@ -638,7 +638,7 @@ class AIProductRecommendationEngine {
             'Helps absorb excess oil and reduce greasy-zone shine when used conservatively.',
         'guidance':
             'Use once weekly for 10 minutes on the T-zone only, then hydrate afterward.',
-        'evidence': 'Clinical consensus',
+        'evidence': 'Catalog pick',
         'link': 'https://www.amazon.com/s?k=kaolin+clay+mask',
         'image': 'https://via.placeholder.com/200x200?text=Clay+Mask',
         'category': 'Maintenance',
@@ -664,7 +664,7 @@ class AIProductRecommendationEngine {
             'Lightweight soothing support for heat-prone, sensitive skin without active irritation risk.',
         'guidance':
             'Mist after cleansing and before moisturizer, or throughout the day for redness comfort.',
-        'evidence': 'Clinical consensus',
+        'evidence': 'Catalog pick',
         'link': 'https://www.amazon.com/s?k=avene+thermal+spring+water',
         'image': 'https://via.placeholder.com/200x200?text=Thermal+Mist',
         'category': 'Recovery Support',
@@ -743,7 +743,7 @@ class AIProductRecommendationEngine {
           'Compression is one of the main recovery tools after liposuction. It helps control swelling, support contour retraction, and reduce the chance of prolonged firmness.',
       'guidance':
           'Wear exactly as your surgeon directed, often most of the day during the early recovery window. Make sure the garment fits evenly and does not bunch.',
-      'evidence': 'Clinical consensus',
+      'evidence': 'Catalog pick',
       'link': 'https://www.amazon.com/s?k=post+lipo+compression+garment',
       'image': 'https://via.placeholder.com/200x200?text=Compression+Garment',
       'category': 'Recovery Support',
@@ -804,7 +804,7 @@ class AIProductRecommendationEngine {
           'Healing incision sites and bruised skin can darken with UV exposure, so daily sun protection matters after liposuction.',
       'guidance':
           'Apply to exposed areas before sun exposure and reapply as directed. Do not use on open wounds.',
-      'evidence': 'Clinical consensus',
+      'evidence': 'Catalog pick',
       'link':
           'https://www.amazon.com/s?k=neutrogena+body+sunscreen+spf+50+spray',
       'image': 'https://via.placeholder.com/200x200?text=Body+SPF',
@@ -817,7 +817,7 @@ class AIProductRecommendationEngine {
           'A barrier-supporting moisturizer helps the skin remain comfortable as contour retraction continues after liposuction.',
       'guidance':
           'Use after wounds are fully closed and massage in gently if cleared by your surgeon.',
-      'evidence': 'Clinical consensus',
+      'evidence': 'Catalog pick',
       'link':
           'https://www.amazon.com/s?k=cerave+fragrance+free+body+moisturizer',
       'image': 'https://via.placeholder.com/200x200?text=Body+Moisturizer',

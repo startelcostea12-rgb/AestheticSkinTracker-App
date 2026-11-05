@@ -643,18 +643,18 @@ class AiIntelligenceEngine {
       final procNote = proc != null
           ? ' This is particularly important during $proc recovery, where sustained erythema can impair healing quality.'
           : '';
-      return 'Redness at ${redness!.value.toStringAsFixed(1)} (elevated) is the immediate clinical priority.$procNote Apply SPF 50+ every morning without exception. Introduce azelaic acid 10–20% or niacinamide 10% twice daily to modulate vascular reactivity. Hold all retinoids and exfoliating acids until redness falls below 5.0 on your next scan.';
+      return 'Redness at ${redness!.value.toStringAsFixed(1)} (elevated) is the immediate tracking priority.$procNote Apply SPF 50+ every morning and keep your routine gentle until the next scan.';
     }
 
     if (elasticity?.level == MetricClinicalLevel.elevated) {
-      return 'Skin firmness at ${elasticity!.value.toStringAsFixed(1)} (significant laxity) is the priority concern. A prescription retinoid — the most evidence-based intervention for dermal remodeling — should form the cornerstone of your home protocol. Combine with a collagen-stimulating peptide serum and discuss energy-based tightening options (RF microneedling or HIFU) with your provider for meaningful structural improvement.';
+      return 'Skin firmness at ${elasticity!.value.toStringAsFixed(1)} (significant laxity) is the priority concern. Daily SPF, consistent hydration, and a gentle peptide serum support day-to-day tracking while you document change over time.';
     }
 
     if (darkSpots?.level == MetricClinicalLevel.elevated) {
       final procNote = proc != null
           ? ' Post-$proc hyperpigmentation is a well-documented risk — diligent photoprotection is the most impactful preventive step.'
           : '';
-      return 'Hyperpigmentation at ${darkSpots!.value.toStringAsFixed(1)} (significant) is the primary focus.$procNote Apply SPF 50+ daily and layer vitamin C serum (15–20%) each morning. Discuss prescription-strength depigmentation agents — hydroquinone 4% or a tretinoin-azelaic acid combination — with your provider for accelerated clearance.';
+      return 'Hyperpigmentation at ${darkSpots!.value.toStringAsFixed(1)} (significant) is the primary focus.$procNote Apply SPF 50+ daily and keep photos consistent so pigment change is easier to compare over weeks.';
     }
 
     if (darkSpots?.level == MetricClinicalLevel.moderate ||
@@ -677,7 +677,7 @@ class AiIntelligenceEngine {
 
     if (wrinkle?.level == MetricClinicalLevel.moderate ||
         wrinkle?.level == MetricClinicalLevel.elevated) {
-      return 'Line depth at ${wrinkle!.value.toStringAsFixed(1)} (${wrinkle.level == MetricClinicalLevel.elevated ? 'elevated' : 'moderate'}) benefits from a targeted anti-aging protocol. Tretinoin or prescription-strength retinoid is the most evidence-based topical intervention available. Combine with daily SPF 50+ and a peptide-rich moisturizer. For dynamic lines, neuromodulator options are worth discussing with your provider.';
+      return 'Line depth at ${wrinkle!.value.toStringAsFixed(1)} (${wrinkle.level == MetricClinicalLevel.elevated ? 'elevated' : 'moderate'}) benefits from consistent photos, daily SPF 50+, and a peptide-rich moisturizer while you track change over time.';
     }
 
     // All metrics mild or optimal

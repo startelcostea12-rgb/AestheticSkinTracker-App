@@ -1880,7 +1880,7 @@ class _AcneRosaceaTrackerScreenState extends State<AcneRosaceaTrackerScreen>
         eyebrow: 'Deep nodulocystic lesions',
         bullets: [
           'Never pop or extract — risks permanent scarring and post-inflammatory hyperpigmentation.',
-          'Topicals alone rarely resolve cysts. A board-certified dermatologist may prescribe oral antibiotics, hormonal therapy, or isotretinoin.',
+          'Document cyst count and tenderness weekly under the same lighting.',
           'Cold compress 10 minutes 2–3× / day to reduce inflammation.',
           'Photograph active cysts so your dermatologist can track resolution.',
         ],
@@ -1891,8 +1891,8 @@ class _AcneRosaceaTrackerScreenState extends State<AcneRosaceaTrackerScreen>
         eyebrow: 'Jawline & chin pattern',
         bullets: [
           'Log breakouts against your cycle — flares 7–10 days pre-menses are a hormonal signature.',
-          'Spironolactone, combined oral contraceptives, or low-dose isotretinoin are evidence-based options.',
-          'Topical: gentle BHA, azelaic acid, and tretinoin work over 8–12 weeks.',
+          'Note flare timing against your cycle to confirm a hormone-linked pattern.',
+          'Gentle cleansing and consistent barrier care support day-to-day comfort.',
           'Reduce dairy and high-glycemic foods if you notice a pattern in your journal.',
         ],
       ),
@@ -1902,7 +1902,7 @@ class _AcneRosaceaTrackerScreenState extends State<AcneRosaceaTrackerScreen>
         eyebrow: 'Central-face redness',
         bullets: [
           'Barrier-first: gentle cleanser, ceramide moisturizer, mineral SPF 30+ daily.',
-          'Prescription topicals: azelaic acid 15%, ivermectin 1%, metronidazole 0.75%.',
+          'Keep fragrance-free care consistent and photograph under the same light.',
           'Keep a trigger log — heat, alcohol, spicy food, stress, and UV are common.',
           'Avoid scrubs, alcohol-based toners, fragrance, and aggressive actives.',
         ],
@@ -1912,8 +1912,8 @@ class _AcneRosaceaTrackerScreenState extends State<AcneRosaceaTrackerScreen>
         title: 'Flushing Episodes',
         eyebrow: 'Transient erythema',
         bullets: [
-          'Topical alpha-agonists (brimonidine, oxymetazoline) provide hours of relief.',
-          'Beta-blockers (under physician supervision) reduce frequency for some patients.',
+          'Cool the face and step away from heat when a flush starts.',
+          'Track flush frequency alongside sleep and stress for clearer patterns.',
           'Cool environment, slow breathing, and SPF reduce trigger load.',
         ],
       ),

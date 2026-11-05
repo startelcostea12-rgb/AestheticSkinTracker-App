@@ -355,7 +355,7 @@ const _rosaceaAdditional = <AdditionalProcedureMetric>[
     lowerIsBetter: true,
     icon: Icons.local_florist_outlined,
     clinicalContext:
-        'Persistent central-face erythema and papulopustules — managed with gentle barrier care and prescription topicals.',
+        'Persistent central-face erythema and papulopustules — tracked with gentle barrier care.',
     valueFrom: _rosaceaSeverity,
   ),
   AdditionalProcedureMetric(

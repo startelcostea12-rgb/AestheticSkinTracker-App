@@ -469,7 +469,7 @@ class ScarAiAnalysisEngine {
         addRec(
           const ScarProductRecommendation(
             productName: 'Tretinoin 0.025% Cream',
-            brandExamples: 'Retin-A, Stieva-A (prescription)',
+            brandExamples: 'Retinoid leave-on examples',
             category: 'Topical Retinoid',
             icon: Icons.science_outlined,
             accentColor: Color(0xFF880E4F),
@@ -607,7 +607,7 @@ class ScarAiAnalysisEngine {
         triggeredCategories.contains('itch_moderate')) {
       addRec(
         const ScarProductRecommendation(
-          productName: '1% Hydrocortisone Cream',
+          productName: 'Cooling comfort cream',
           brandExamples: 'Cortaid Maximum Strength, Aveeno 1% HC, Dermacort',
           category: 'Topical Anti-inflammatory',
           icon: Icons.local_pharmacy_outlined,
@@ -921,7 +921,7 @@ class _ScarAiAnalysisSheetState extends State<ScarAiAnalysisSheet>
                       // Detected Issues
                       if (result.detectedIssues.isNotEmpty) ...[
                         _sectionLabel(
-                          'Detected Clinical Findings',
+                          'Detected findings',
                           Icons.find_in_page_outlined,
                           'Scan results',
                         ),
@@ -1083,7 +1083,7 @@ class _ScarAiAnalysisSheetState extends State<ScarAiAnalysisSheet>
               ),
               const SizedBox(width: 8),
               Text(
-                'Clinical Assessment Summary',
+                'Assessment summary',
                 style: TextStyle(
                   fontSize: 12.5,
                   fontWeight: FontWeight.w700,
@@ -1395,7 +1395,7 @@ class _ScarAiAnalysisSheetState extends State<ScarAiAnalysisSheet>
                 _bodySection(
                   icon: Icons.biotech_outlined,
                   iconColor: rec.accentColor,
-                  label: 'Clinical mechanism',
+                  label: 'How it may help',
                   body: rec.mechanism,
                 ),
                 const SizedBox(height: 8),

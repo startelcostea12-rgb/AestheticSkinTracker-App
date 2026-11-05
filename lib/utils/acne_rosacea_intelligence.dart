@@ -568,7 +568,7 @@ List<TriggerHypothesis> _identifyTriggers({
             description:
                 'Hormonal flares appear roughly every $avgGap days — '
                 'consistent with the luteal-phase androgen surge. Pre-emptive '
-                'spironolactone or BHA timing may help.',
+                'consistent photos and cycle notes may help.',
             confidence: 0.78,
             iconCue: IconCue.calendar,
           ),
@@ -678,7 +678,7 @@ List<ProductRecommendation> _subtypeRecommendations(AcneRosaceaSubtype s) {
     case AcneRosaceaSubtype.acne:
       return const [
         ProductRecommendation(
-          name: 'Adapalene 0.1% gel',
+          name: 'Adapalene gel',
           activeIngredient: 'Adapalene',
           rationale:
               'Third-gen retinoid — comedolytic, low irritation. '
@@ -686,7 +686,7 @@ List<ProductRecommendation> _subtypeRecommendations(AcneRosaceaSubtype s) {
           priority: RecommendationPriority.foundational,
         ),
         ProductRecommendation(
-          name: 'Salicylic acid 2% (BHA)',
+          name: 'Salicylic acid (BHA)',
           activeIngredient: 'Salicylic acid',
           rationale:
               'Lipid-soluble — clears the follicular plug. '
@@ -694,7 +694,7 @@ List<ProductRecommendation> _subtypeRecommendations(AcneRosaceaSubtype s) {
           priority: RecommendationPriority.supporting,
         ),
         ProductRecommendation(
-          name: 'Niacinamide 4-5% serum',
+          name: 'Niacinamide serum',
           activeIngredient: 'Niacinamide',
           rationale:
               'Reduces sebum oxidation + inflammatory papules without '
@@ -705,7 +705,7 @@ List<ProductRecommendation> _subtypeRecommendations(AcneRosaceaSubtype s) {
     case AcneRosaceaSubtype.cystic:
       return const [
         ProductRecommendation(
-          name: 'Azelaic acid 15-20%',
+          name: 'Azelaic acid leave-on',
           activeIngredient: 'Azelaic acid',
           rationale:
               'Anti-inflammatory + anti-bacterial — safe with cystic '
@@ -720,70 +720,20 @@ List<ProductRecommendation> _subtypeRecommendations(AcneRosaceaSubtype s) {
               'cystic acne manually.',
           priority: RecommendationPriority.supporting,
         ),
-        ProductRecommendation(
-          name: 'Oral isotretinoin (consult)',
-          activeIngredient: 'Isotretinoin',
-          rationale:
-              'For nodulocystic acne unresponsive to topicals — '
-              'requires board-certified dermatologist + iPLEDGE program.',
-          priority: RecommendationPriority.optional,
-        ),
       ];
     case AcneRosaceaSubtype.hormonal:
       return const [
         ProductRecommendation(
-          name: 'Spironolactone 50-100mg (consult)',
-          activeIngredient: 'Spironolactone',
+          name: 'Gentle BHA cleanser',
+          activeIngredient: 'Salicylic acid (low %)',
           rationale:
-              'Androgen-receptor antagonist — gold standard for adult '
-              'female hormonal acne. Prescription only.',
-          priority: RecommendationPriority.foundational,
-        ),
-        ProductRecommendation(
-          name: 'Tretinoin 0.025-0.05%',
-          activeIngredient: 'Tretinoin',
-          rationale:
-              'Normalizes follicular turnover; introduce slowly '
-              '(2x/week) and buffer with moisturizer.',
-          priority: RecommendationPriority.supporting,
-        ),
-        ProductRecommendation(
-          name: 'Azelaic acid 15%',
-          activeIngredient: 'Azelaic acid',
-          rationale:
-              'Useful adjunct — calms inflammatory papules along the '
-              'jawline and chin without dryness.',
+              'A mild cleanse supports comfort along the jawline without '
+              'heavy fragrance.',
           priority: RecommendationPriority.supporting,
         ),
       ];
     case AcneRosaceaSubtype.rosacea:
-      return const [
-        ProductRecommendation(
-          name: 'Azelaic acid 15% gel',
-          activeIngredient: 'Azelaic acid',
-          rationale:
-              'A common over-the-counter and prescription option for '
-              'persistent redness and bumps — calms inflammation and evens '
-              'tone. Ask a clinician whether it suits you.',
-          priority: RecommendationPriority.foundational,
-        ),
-        ProductRecommendation(
-          name: 'Ivermectin 1% cream',
-          activeIngredient: 'Ivermectin',
-          rationale:
-              'Targets Demodex mites + inflammation — effective for '
-              'persistent papules. Prescription.',
-          priority: RecommendationPriority.foundational,
-        ),
-        ProductRecommendation(
-          name: 'Metronidazole 0.75% gel',
-          activeIngredient: 'Metronidazole',
-          rationale:
-              'Classic anti-inflammatory for rosacea — well-tolerated '
-              'long-term. Prescription.',
-          priority: RecommendationPriority.supporting,
-        ),
-        ProductRecommendation(
+      return const [        ProductRecommendation(
           name: 'Mineral SPF 30+ (zinc oxide)',
           activeIngredient: 'Zinc oxide',
           rationale:
@@ -795,28 +745,20 @@ List<ProductRecommendation> _subtypeRecommendations(AcneRosaceaSubtype s) {
     case AcneRosaceaSubtype.flushing:
       return const [
         ProductRecommendation(
-          name: 'Brimonidine 0.33% gel',
-          activeIngredient: 'Brimonidine',
+          name: 'Mineral SPF 30+',
+          activeIngredient: 'Zinc oxide',
           rationale:
-              'α-adrenergic agonist — vasoconstricts cutaneous '
-              'vessels; reduces flushing for 8-12 hours. Prescription.',
+              'UV and heat are common flush triggers. Mineral filters '
+              'are often better tolerated on reactive skin.',
           priority: RecommendationPriority.foundational,
         ),
         ProductRecommendation(
-          name: 'Oxymetazoline 1% cream',
-          activeIngredient: 'Oxymetazoline',
+          name: 'Fragrance-free ceramide moisturizer',
+          activeIngredient: 'Ceramides',
           rationale:
-              'Alternative α-agonist — comparable efficacy with a '
-              'longer onset to avoid rebound erythema.',
+              'Supports barrier comfort on flush-prone days without '
+              'fragrance or alcohol.',
           priority: RecommendationPriority.supporting,
-        ),
-        ProductRecommendation(
-          name: 'Low-dose β-blocker (consult)',
-          activeIngredient: 'Propranolol / Carvedilol',
-          rationale:
-              'Off-label oral option for severe blushing tied to '
-              'autonomic triggers. Cardiology-aware prescribing.',
-          priority: RecommendationPriority.optional,
         ),
       ];
     case AcneRosaceaSubtype.visibleVessels:
@@ -865,7 +807,7 @@ List<ProductRecommendation> _subtypeRecommendations(AcneRosaceaSubtype s) {
           priority: RecommendationPriority.supporting,
         ),
         ProductRecommendation(
-          name: 'Panthenol 5% lotion',
+          name: 'Panthenol lotion',
           activeIngredient: 'Panthenol (provitamin B5)',
           rationale:
               'Humectant + soothing; great morning step during a '
@@ -952,8 +894,8 @@ List<CompatibilityWarning> _evaluateCompatibility({
           reasoning:
               'Retinoids increase epidermal turnover and inflammatory '
               'cytokines for the first 6-8 weeks — may aggravate active cysts. '
-              'Consider azelaic acid 15-20% in parallel and re-introduce the '
-              'retinoid once cysts settle.',
+              'Pause strong leave-on actives until cysts settle, then '
+              'reintroduce one gentle step at a time.',
           severity: WarningSeverity.caution,
         ),
       );
@@ -1140,13 +1082,13 @@ SubtypePlan _planForSubtype(
 
 /// Evidence-based natural / clean alternatives surfaced per subtype.
 /// These are *supporting* options for users who prefer naturally-derived
-/// actives — they are NOT a substitute for foundational prescription care.
+/// actives — supportive cosmetic suggestions only, not treatment plans.
 List<ProductRecommendation> _subtypeNaturalAlternatives(AcneRosaceaSubtype s) {
   switch (s) {
     case AcneRosaceaSubtype.acne:
       return const [
         ProductRecommendation(
-          name: 'Tea tree 5% serum',
+          name: 'Tea tree serum',
           activeIngredient: 'Melaleuca alternifolia 5%',
           rationale:
               'A randomized trial in *Med J Aust* found 5% tea tree '
@@ -1164,7 +1106,7 @@ List<ProductRecommendation> _subtypeNaturalAlternatives(AcneRosaceaSubtype s) {
           priority: RecommendationPriority.supporting,
         ),
         ProductRecommendation(
-          name: 'Niacinamide 4-5% (B3)',
+          name: 'Niacinamide (B3)',
           activeIngredient: 'Vitamin B3',
           rationale:
               'Naturally occurring vitamer; reduces inflammatory '
@@ -1195,27 +1137,27 @@ List<ProductRecommendation> _subtypeNaturalAlternatives(AcneRosaceaSubtype s) {
         ),
         ProductRecommendation(
           name: 'Zinc PCA serum',
-          activeIngredient: 'Zinc PCA 1%',
+          activeIngredient: 'Zinc PCA',
           rationale:
               'Zinc reduces sebaceous output and supports wound '
-              'healing — useful adjunct alongside prescription oral therapy.',
+              'healing as a calming optional leave-on step.',
           priority: RecommendationPriority.optional,
         ),
       ];
     case AcneRosaceaSubtype.hormonal:
       return const [
         ProductRecommendation(
-          name: 'Spearmint tea (oral, 2 cups/day)',
+          name: 'Spearmint tea',
           activeIngredient: 'Mentha spicata polyphenols',
           rationale:
               'A 30-day RCT (Phytother Res, 2010) showed spearmint '
               'tea lowered free testosterone and acne lesion counts in women '
-              'with hirsutism. Discuss with a clinician if on hormonal '
+              'with hirsutism. Track timing against your cycle if on hormonal '
               'medications.',
           priority: RecommendationPriority.supporting,
         ),
         ProductRecommendation(
-          name: 'Bakuchiol 0.5-1% nightly',
+          name: 'Bakuchiol leave-on',
           activeIngredient: 'Bakuchiol (Psoralea corylifolia)',
           rationale:
               'Plant-based retinol analogue — comparable wrinkle and '
@@ -1224,12 +1166,11 @@ List<ProductRecommendation> _subtypeNaturalAlternatives(AcneRosaceaSubtype s) {
           priority: RecommendationPriority.supporting,
         ),
         ProductRecommendation(
-          name: 'Niacinamide 5% + zinc',
+          name: 'Niacinamide + zinc',
           activeIngredient: 'Vitamin B3 + Zinc PCA',
           rationale:
               'Modulates sebum production and inflammation along the '
-              'jawline. Layers cleanly with prescription spironolactone or '
-              'OCPs.',
+              'jawline without heavy fragrance or alcohol.',
           priority: RecommendationPriority.supporting,
         ),
       ];
@@ -1245,12 +1186,12 @@ List<ProductRecommendation> _subtypeNaturalAlternatives(AcneRosaceaSubtype s) {
           priority: RecommendationPriority.supporting,
         ),
         ProductRecommendation(
-          name: 'Licorice root 2% serum',
+          name: 'Licorice root serum',
           activeIngredient: 'Glycyrrhiza glabra (licochalcone A)',
           rationale:
               'Licochalcone A inhibits inflammatory cascades and '
-              'reduced rosacea erythema in a 2008 randomized trial. A '
-              'reliable adjunct to topical metronidazole or ivermectin.',
+              'reduced rosacea erythema in a 2008 randomized trial and '
+              'is often used in calming leave-on products.',
           priority: RecommendationPriority.supporting,
         ),
         ProductRecommendation(
@@ -1366,7 +1307,7 @@ List<HealingStage> _acneStages(Map<String, List<AcneRosaceaLog>> logs) {
       weekRange: 'Week 5-8',
       title: 'Inflammation drops',
       description:
-          'Active papule count typically falls 30-50%. Add 4-5% '
+          'Active papule count typically falls 30-50%. Add a gentle '
           'niacinamide AM. Avoid layering multiple new actives.',
       isCurrent: sev >= 3 && sev < 6,
     ),
@@ -1382,7 +1323,7 @@ List<HealingStage> _acneStages(Map<String, List<AcneRosaceaLog>> logs) {
       weekRange: 'Month 4+',
       title: 'Maintenance',
       description:
-          'Continue retinoid 3-5x/week. Add tretinoin 0.025% if '
+          'Continue a gentle leave-on routine a few nights per week. '
           'response plateaus before clear.',
       isCurrent: sev == 0,
     ),
@@ -1406,16 +1347,16 @@ List<HealingStage> _cysticStages(Map<String, List<AcneRosaceaLog>> logs) {
       weekRange: 'Week 3-6',
       title: 'Anti-inflammatory base',
       description:
-          'Azelaic acid 15-20% twice daily. If prescribed: oral '
-          'doxycycline 50-100mg can bridge until topicals plateau.',
+          'Keep barrier care steady and photograph weekly under the '
+          'same lighting while inflammation settles.',
       isCurrent: sev >= 4 && sev < 7,
     ),
     HealingStage(
       weekRange: 'Week 7-12',
       title: 'Systemic consideration',
       description:
-          'If cysts persist, board-certified derm may initiate '
-          'isotretinoin or spironolactone. Track scarring risk.',
+          'If cysts persist, keep documenting count and scarring risk '
+          'with consistent photos.',
       isCurrent: sev >= 2 && sev < 4,
     ),
     HealingStage(
@@ -1444,10 +1385,9 @@ List<HealingStage> _hormonalStages(Map<String, List<AcneRosaceaLog>> logs) {
     ),
     HealingStage(
       weekRange: 'Week 3-8',
-      title: 'Systemic option',
+      title: 'Pattern tracking',
       description:
-          'Discuss spironolactone 50-100mg with a clinician. '
-          'Nightly tretinoin 0.025-0.05% if barrier allows.',
+          'Keep a cycle journal and photograph the jawline weekly.',
       isCurrent: sev >= 3 && sev < 5,
     ),
     HealingStage(
@@ -1455,15 +1395,15 @@ List<HealingStage> _hormonalStages(Map<String, List<AcneRosaceaLog>> logs) {
       title: 'Pattern dampens',
       description:
           'Premenstrual cysts typically lose 50-70% of their '
-          'severity on spironolactone by month 4.',
+          'severity by month 4 with consistent tracking.',
       isCurrent: sev >= 1 && sev < 3,
     ),
     HealingStage(
       weekRange: 'Month 5+',
       title: 'Maintenance',
       description:
-          'Maintain spiro + retinoid. Trial annual taper to assess '
-          'whether endogenous hormones have normalized.',
+          'Keep the routine that matched your calmer months and keep '
+          'photographing the same angles.',
       isCurrent: sev < 1,
     ),
   ];
@@ -1486,8 +1426,8 @@ List<HealingStage> _rosaceaStages(Map<String, List<AcneRosaceaLog>> logs) {
       weekRange: 'Week 3-6',
       title: 'Targeted active',
       description:
-          'Introduce ONE: azelaic acid 15%, ivermectin 1%, or '
-          'metronidazole 0.75%. Daily. Patch-test if needed.',
+          'Keep barrier care consistent and add at most one new '
+          'gentle step after patch-testing.',
       isCurrent: sev >= 3 && sev < 6,
     ),
     HealingStage(
@@ -1524,10 +1464,10 @@ List<HealingStage> _flushingStages(Map<String, List<AcneRosaceaLog>> logs) {
     ),
     HealingStage(
       weekRange: 'Week 3-6',
-      title: 'Topical α-agonist trial',
+      title: 'Flush-day comfort',
       description:
-          'Brimonidine 0.33% or oxymetazoline 1% — daily. Apply a '
-          'thin layer; rebound erythema can occur with too-frequent use.',
+          'Cool the face quickly and step away from heat when a flush '
+          'starts. Note what preceded each episode.',
       isCurrent: sev >= 4 && sev < 6,
     ),
     HealingStage(
@@ -1535,7 +1475,7 @@ List<HealingStage> _flushingStages(Map<String, List<AcneRosaceaLog>> logs) {
       title: 'Trigger avoidance entrenched',
       description:
           'Flushing frequency typically halves. If episodes remain '
-          'severe, discuss low-dose β-blockers with a clinician.',
+          'severe, note frequency alongside sleep and stress.',
       isCurrent: sev >= 2 && sev < 4,
     ),
     HealingStage(
@@ -1773,17 +1713,17 @@ List<String> _composeDailyActions(
       s.contains(AcneRosaceaSubtype.cystic) ||
       s.contains(AcneRosaceaSubtype.hormonal)) {
     actions.add(
-      'PM (alt nights): adapalene 0.1% pea-sized over the entire affected area — buffer with moisturizer if irritated.',
+      'PM (alt nights): apply a pea-sized amount of your leave-on active only as tolerated, buffered with moisturizer.',
     );
     actions.add(
-      'Spot-treat new lesions with benzoyl peroxide 2.5% (5 min short-contact rinse-off if sensitive).',
+      'Spot-treat new lesions gently — avoid picking or harsh scrubbing.',
     );
   }
   if (s.contains(AcneRosaceaSubtype.rosacea) ||
       s.contains(AcneRosaceaSubtype.flushing) ||
       s.contains(AcneRosaceaSubtype.visibleVessels)) {
     actions.add(
-      'PM: azelaic acid 10–15% across the central face — anti-inflammatory + tone-evening.',
+      'PM: keep the central face routine fragrance-free and barrier-first.',
     );
     actions.add(
       'Cool compress 5–10 minutes after any flushing trigger (heat, alcohol, spicy food).',
@@ -1822,7 +1762,7 @@ List<String> _composeWeeklyActions(
   }
   if (s.contains(AcneRosaceaSubtype.cystic)) {
     actions.add(
-      'If a cyst persists >2 weeks: book a dermatologist consult for intralesional triamcinolone.',
+      'If a cyst persists >2 weeks: photograph it weekly and note tenderness.',
     );
   }
   if (s.contains(AcneRosaceaSubtype.rosacea)) {

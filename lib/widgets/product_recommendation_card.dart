@@ -296,12 +296,10 @@ class ProductRecommendationCard extends StatelessWidget {
 
   Color _evidenceColor(String evidence) {
     switch (evidence) {
-      case 'Proven efficacy':
-        return AppColors.mutedSage;
       case 'Evidence-backed':
         return AppColors.refinedSlate;
-      case 'Clinical consensus':
-        return AppColors.softTerracotta;
+      case 'Catalog pick':
+        return AppColors.mutedSage;
       default:
         return AppColors.refinedSlate.withValues(alpha: 0.62);
     }
@@ -320,7 +318,7 @@ class ProductRecommendationCard extends StatelessWidget {
   }
 }
 
-/// Full-width section displaying clinician-recommended products with disclosure.
+/// Full-width section displaying suggested products with disclosure.
 class ClinicalProductRecommendationsSection extends StatelessWidget {
   final List<AIProductRecommendation> recommendations;
   final String? sectionTitle;

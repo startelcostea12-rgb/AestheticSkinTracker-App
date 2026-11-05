@@ -1490,7 +1490,7 @@ class _ScarHealingTrackerScreenState extends State<ScarHealingTrackerScreen> {
             _sectionHeader(
               'AI Scar Analysis',
               Icons.biotech_outlined,
-              'Clinical interpretation',
+              'Photo review',
             ),
             const SizedBox(height: 12),
             _buildAiAnalysisSection(latest, baseline, stage, active),
@@ -2388,7 +2388,7 @@ class _ScarHealingTrackerScreenState extends State<ScarHealingTrackerScreen> {
               'active type-III collagen deposition and hypertrophic risk. '
               'Scar massage (4�5 min, circular cross-friction, twice daily) combined with compression garments '
               'reduces hypertrophic progression by >50% in prospective trials. '
-              'Intralesional corticosteroid (triamcinolone 10�40 mg/mL) is the standard second-line intervention.',
+              'Continue gentle massage and consistent photos to track flattening.',
         ),
       );
     } else if (elDelta >= 1.2) {
@@ -2506,9 +2506,8 @@ class _ScarHealingTrackerScreenState extends State<ScarHealingTrackerScreen> {
               'Intense pruritus (${latest.itchiness.toStringAsFixed(1)}/10) is consistent with C-fibre nerve '
               'regeneration and histamine release through the healing dermis. '
               'Avoid scratching � it triggers mast-cell degranulation and amplifies itch via neurogenic feedback. '
-              'Cool compress or 1% hydrocortisone cream temporarily breaks the itch�scratch cycle. '
-              'Oral cetirizine (10 mg nocte) or loratadine can reduce systemic histamine load. '
-              'TENS has emerging evidence for chronic scar itch.',
+              'Cool compress and distraction can ease itch without scratching. '
+              'Avoid scratching — it can slow healing and worsen marks.',
         ),
       );
     } else if (itDelta >= 2.0) {

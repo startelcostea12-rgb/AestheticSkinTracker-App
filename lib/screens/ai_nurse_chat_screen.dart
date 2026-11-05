@@ -173,7 +173,7 @@ class _AiNurseChatScreenState extends State<AiNurseChatScreen> {
       return 'Great idea to prepare! Some useful questions to bring: '
           '"Is this finding something I should monitor?", '
           '"What treatment options exist for this?", '
-          '"Are there any prescription options that might help?", and '
+          '"What gentle routine steps might help?", and '
           '"What should I avoid aggravating this condition?". '
           'Writing them down beforehand helps you get the most from your appointment.';
     }

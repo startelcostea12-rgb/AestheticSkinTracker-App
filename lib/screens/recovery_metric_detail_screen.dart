@@ -358,15 +358,13 @@ class _RecoveryMetricDetailScreenState
           _PhaseRow(
             'Week 1–2',
             'Active cysts are tender and slow to resolve. '
-                'Topicals alone rarely move this metric — discuss systemic '
-                'options with your provider.',
+                'Track count and tenderness weekly under the same lighting.',
             isCurrent(1, 14),
           ),
           _PhaseRow(
             'Week 3–8',
-            'On oral antibiotic / spironolactone / '
-                'isotretinoin therapy you should start seeing fewer new '
-                'cysts. Existing nodules can take weeks to fully resolve.',
+            'Fewer new cysts may appear as inflammation settles. '
+                'Existing nodules can take weeks to fully resolve.',
             isCurrent(15, 56),
           ),
           _PhaseRow(
@@ -425,9 +423,8 @@ class _RecoveryMetricDetailScreenState
           ),
           _PhaseRow(
             'Week 3–6',
-            'Prescription topicals (azelaic acid, '
-                'ivermectin, metronidazole) reach steady state. Raised, '
-                'bump-like lesions visibly reduce.',
+            'Raised, bump-like lesions typically begin to look calmer '
+                'as barrier care continues.',
             isCurrent(15, 42),
           ),
           _PhaseRow(
@@ -462,9 +459,8 @@ class _RecoveryMetricDetailScreenState
           ),
           _PhaseRow(
             'Weeks 7–12',
-            'Topical alpha-agonists (brimonidine, '
-                'oxymetazoline) can reduce the visible redness component of '
-                'each flush on demand.',
+            'With continued trigger control, flush intensity often softens '
+                'further.',
             isCurrent(43, 84),
           ),
           _PhaseRow(
@@ -629,17 +625,13 @@ class _RecoveryMetricDetailScreenState
         return 'You are in maintenance — minimum effective dose of actives plus '
             'rigorous SPF. Track flares and adjust earlier rather than later.';
       case 'cysticAcneSeverity':
-        return 'Cystic acne rarely responds to topicals alone. The clinical '
-            'priorities are: stop new cysts from forming (systemic therapy), '
-            'reduce inflammation in existing nodules (warm compress, intralesional '
-            'cortisone), and never squeeze. Scarring risk is highest with this '
-            'subtype — early systemic intervention prevents permanent damage.';
+        return 'Cystic breakouts are tracked carefully because scarring risk '
+            'is higher with this pattern. Never squeeze. Warm compresses can '
+            'ease tenderness while you document progress.';
       case 'hormonalAcneSeverity':
-        return 'Hormonal acne follows your cycle. Expect predictable pre-menstrual '
-            'flares along the jawline and chin. The strongest interventions are '
-            'hormonal (spironolactone, combined OCP) — topicals support but rarely '
-            'control this subtype on their own. A cycle journal is more useful '
-            'than weekly photos.';
+        return 'Hormone-linked breakouts often follow your cycle along the '
+            'jawline and chin. A cycle journal is often more useful than '
+            'weekly photos for spotting the pattern.';
       case 'rosaceaSeverity':
         if (d <= 14) {
           return 'Strip your routine. Most rosacea flares are driven or '
@@ -647,20 +639,16 @@ class _RecoveryMetricDetailScreenState
               'ceramide moisturizer, and mineral SPF only.';
         }
         if (d <= 84) {
-          return 'Prescription topicals (azelaic acid, ivermectin, '
-              'metronidazole) are reaching steady state. Raised, bump-like '
-              'lesions should be visibly reducing. Trigger logging is '
-              'amplifying the result.';
+          return 'Raised, bump-like lesions often look calmer with consistent '
+              'barrier care. Trigger logging helps clarify what flares you.';
         }
         return 'You are in maintenance. Erythema and visible vessels respond '
             'next — typically with vascular laser or IPL once active disease '
             'is well controlled.';
       case 'rosaceaFlushing':
-        return 'Flushing is driven by triggers — most commonly heat, alcohol, '
-            'spicy food, exercise, UV, and stress. A trigger journal is the '
-            'single most powerful intervention. Topical alpha-agonists '
-            '(brimonidine, oxymetazoline) provide on-demand redness relief '
-            'but do not change the underlying tendency to flush.';
+        return 'Flushing is often driven by triggers — most commonly heat, '
+            'alcohol, spicy food, exercise, UV, and stress. A trigger journal '
+            'helps you spot patterns without changing how metrics are scored.';
       case 'visibleBloodVessels':
         return 'Telangiectasia do not resolve with topicals — they are fixed '
             'dilated capillaries. The treatment pathway is: control underlying '
@@ -733,15 +721,11 @@ class _RecoveryMetricDetailScreenState
         return const [
           'Never squeeze a cyst — it pushes inflammation deeper and triples scarring risk.',
           'Warm compress 10 minutes 2–3x/day reduces tenderness on active cysts.',
-          'Book a dermatologist appointment — topicals alone rarely control cystic disease.',
-          'Intralesional cortisone (kenalog) can shrink a painful cyst in 24–48 hours.',
-          'If three or more cysts in a month, ask about oral antibiotics, spironolactone, or isotretinoin.',
           'Track tenderness and cyst count weekly — surface appearance lags behind real progress.',
         ];
       case 'hormonalAcneSeverity':
         return const [
           'Keep a cycle journal — note flare timing relative to menses to confirm hormonal pattern.',
-          'Discuss spironolactone or a combined oral contraceptive with your provider.',
           'Increase frequency of your retinoid in the 10 days before menses, not after a flare hits.',
           'Manage cortisol — sleep, protein, and stress regulation all blunt hormonal flares.',
           'Avoid dairy and high-glycemic foods if you notice a correlation in your journal.',
@@ -753,7 +737,6 @@ class _RecoveryMetricDetailScreenState
           'Mineral SPF (zinc oxide / titanium dioxide) every morning, year-round.',
           'Ceramide-rich, fragrance-free moisturizer AM and PM. Barrier first, always.',
           'Avoid hot water, abrasive cleansing, scrubs, AHAs, BHAs, and high-strength retinoids during flares.',
-          'Prescription topicals: azelaic acid 15%, ivermectin 1%, or metronidazole as first-line.',
           'Cool environment, fragrance-free laundry, silk pillowcase — every micro-trigger adds up.',
           'Photograph weekly under identical lighting — improvement is gradual.',
         ];
@@ -762,8 +745,6 @@ class _RecoveryMetricDetailScreenState
           'Keep a trigger journal: time, temperature, food, drink, stress, and skincare used.',
           'Common triggers to test: hot drinks, alcohol (especially red wine), spicy food, exercise heat, UV, stress.',
           'Cool the face quickly with chilled water or a refrigerated jade roller during a flush.',
-          'Topical brimonidine or oxymetazoline can blunt redness on demand, but daily use can rebound.',
-          'Beta-blockers (e.g., low-dose propranolol) are sometimes used off-label for stubborn flushing — ask your dermatologist.',
           'Manage stress and sleep — autonomic load directly drives flushing frequency.',
         ];
       case 'visibleBloodVessels':
@@ -771,9 +752,7 @@ class _RecoveryMetricDetailScreenState
           'Mineral SPF daily — UV is the strongest driver of new vessel formation.',
           'No hot showers, saunas, or steam treatments on the face.',
           'Gentle barrier-first skincare reduces the inflammation that feeds vessels.',
-          'Vascular laser (PDL, KTP) or IPL clears existing telangiectasia in 2–4 sessions.',
           'Avoid vasodilating triggers during the 2 weeks pre- and post-laser.',
-          'Topicals will not erase fixed vessels — set expectations and plan a vascular procedure.',
         ];
       // ── General sensitivity ─────────────────────────────────────────
       case 'skinSensitivity':
@@ -825,22 +804,26 @@ class _RecoveryMetricDetailScreenState
           ),
           const SizedBox(height: 12),
           _weekByWeekCard(phases, color),
-          const SizedBox(height: 22),
-          ClinicalSectionHeader(
-            icon: Icons.lightbulb_outline_rounded,
-            title: 'What to Expect Now',
-            eyebrow: _phaseLabel,
-          ),
-          const SizedBox(height: 12),
-          _expectCard(expect, color),
-          const SizedBox(height: 22),
-          const ClinicalSectionHeader(
-            icon: Icons.spa_outlined,
-            title: 'Tips to Maintain Results',
-            eyebrow: 'Practical care',
-          ),
-          const SizedBox(height: 12),
-          _tipsCard(tips),
+          if (expect.trim().isNotEmpty) ...[
+            const SizedBox(height: 22),
+            ClinicalSectionHeader(
+              icon: Icons.lightbulb_outline_rounded,
+              title: 'What to Expect Now',
+              eyebrow: _phaseLabel,
+            ),
+            const SizedBox(height: 12),
+            _expectCard(expect, color),
+          ],
+          if (tips.isNotEmpty) ...[
+            const SizedBox(height: 22),
+            const ClinicalSectionHeader(
+              icon: Icons.spa_outlined,
+              title: 'Tips to Maintain Results',
+              eyebrow: 'Practical care',
+            ),
+            const SizedBox(height: 12),
+            _tipsCard(tips),
+          ],
           const SizedBox(height: 22),
           ClinicalSectionHeader(
             icon: Icons.edit_note_rounded,

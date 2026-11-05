@@ -1393,9 +1393,9 @@ class AcneRosaceaPhotoAnalyzer {
           detail:
               'Breakouts concentrated along the lower face, jawline, and chin '
               'classically reflect androgen-driven sebum activity — often '
-              'flaring 7–10 days before menses. Topical actives help, but a '
-              'conversation about spironolactone or combined oral contraceptives '
-              'with a dermatologist is worth having if this persists.',
+              'flaring 7–10 days before menses. Topical routines may help '
+              'comfort, and a cycle journal clarifies the pattern if this '
+              'persists.',
           accent: rose,
         ),
       );
@@ -1406,12 +1406,10 @@ class AcneRosaceaPhotoAnalyzer {
       out.add(
         const ClinicalInsight(
           icon: Icons.medical_services_rounded,
-          title: 'Cystic activity may warrant systemic therapy',
+          title: 'Cystic activity — track scarring risk closely',
           detail:
-              'Deep, painful nodules respond poorly to topicals alone and carry '
-              'meaningful scarring risk. Oral antibiotics, hormonal therapy, or '
-              'isotretinoin are evidence-based options worth discussing with '
-              'a dermatologist sooner rather than later.',
+              'Deep, painful nodules carry meaningful scarring risk. '
+              'Photograph weekly under the same lighting and never squeeze.',
           accent: coral,
         ),
       );
@@ -1735,7 +1733,7 @@ class AcneRosaceaPhotoAnalyzer {
     if (acne == DetectedAcneType.cystic && i.cysticActivity >= 7) {
       out.add(
         const ProcedureRecommendation(
-          name: 'Isotretinoin Consultation',
+          name: 'Specialist consultation',
           category: ProcedureCategory.systemicConsult,
           intensity: ProcedureIntensity.systemic,
           indication:
@@ -1763,12 +1761,12 @@ class AcneRosaceaPhotoAnalyzer {
         (i.cycleRelatedFlare && i.inflammatoryAcne >= 4)) {
       out.add(
         const ProcedureRecommendation(
-          name: 'Hormonal Workup (Spironolactone / OCP)',
+          name: 'Hormone-pattern tracking consult',
           category: ProcedureCategory.systemicConsult,
           intensity: ProcedureIntensity.systemic,
           indication:
               'Cycle-related lower-face breakouts respond predictably to '
-              'androgen-blocking spironolactone or combined oral contraceptives.',
+              'consistent cycle tracking and specialist guidance when breakouts persist.',
           pros: [
             'Addresses upstream driver, not surface symptoms',
             'Highly effective for jawline / chin pattern',
@@ -2026,7 +2024,7 @@ class PhotoAnalysisUi {
       case ProcedureCategory.light:
         return 'Light therapy';
       case ProcedureCategory.topicalPrescription:
-        return 'Prescription topical';
+        return 'Leave-on topical';
       case ProcedureCategory.systemicConsult:
         return 'Systemic consult';
       case ProcedureCategory.scarRevision:
