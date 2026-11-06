@@ -1368,7 +1368,7 @@ class ReportService {
 
           // ── Clinical interpretation / AI recovery insights ─────────────
           if (input.insights.isNotEmpty) ...[
-            _sectionHeading('Clinical Interpretation', navy),
+            _sectionHeading('Photo notes', navy),
             pw.SizedBox(height: 8),
             // Peptide / procedure-specific lead-in paragraph.
             pw.Container(
@@ -2810,7 +2810,7 @@ class ReportService {
     final p = _peptideProfileFor(heroName);
     final scans =
         '$scanCount scan${scanCount == 1 ? '' : 's'} recorded in this window';
-    return 'This Clinical Interpretation is generated specifically for '
+    return 'These photo notes are generated specifically for '
         '${p.canonicalName}, a ${p.mechanism}. The assessment below is '
         'derived from $scans and focuses on the indicators most relevant '
         'to ${p.canonicalName}: ${p.expectedEffects}. '
@@ -2821,7 +2821,7 @@ class ReportService {
   static String _bblClinicalLeadIn(int scanCount) {
     final scans =
         '$scanCount scan${scanCount == 1 ? '' : 's'} recorded in this window';
-    return 'This Clinical Interpretation is tailored to BBL recovery and gluteal fat transfer tracking. '
+    return 'These photo notes are tailored to BBL recovery and gluteal fat transfer tracking. '
         'The assessment is derived from $scans and focuses on body-contour signals: fat retention, volume satisfaction, skin retraction, swelling resolution, bruising clearance, contour evenness, and fibrosis or firmness. '
         'Findings should be reviewed alongside surgeon instructions, especially compression use, sitting restrictions, nutrition, and lymphatic drainage timing.';
   }
@@ -2829,7 +2829,7 @@ class ReportService {
   static String _bodyContouringClinicalLeadIn(String heroName, int scanCount) {
     final scans =
         '$scanCount scan${scanCount == 1 ? '' : 's'} recorded in this window';
-    return 'This Clinical Interpretation is tailored to $heroName using general body-contouring recovery logic. '
+    return 'These photo notes are tailored to $heroName using general body-contouring recovery logic. '
         'The assessment is derived from $scans and focuses on swelling, bruising, firmness or fibrosis, skin retraction, pigment change, contour evenness, and overall healing. '
         'Procedure-specific restrictions vary, so findings should be reviewed alongside provider instructions for compression, positioning, activity, nutrition, and lymphatic drainage timing.';
   }

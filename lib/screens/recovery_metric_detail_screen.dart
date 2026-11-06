@@ -398,12 +398,6 @@ class _RecoveryMetricDetailScreenState
             false,
           ),
           const _PhaseRow(
-            'Month 2–3 of therapy',
-            'Spironolactone or combined OCP '
-                'starts producing visible reduction in flare severity.',
-            false,
-          ),
-          const _PhaseRow(
             'Month 4–6 of therapy',
             'Cycle-related breakouts are '
                 'noticeably milder or absent. Track flares against a cycle '

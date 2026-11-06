@@ -532,18 +532,6 @@ class AIProductRecommendationEngine {
     ],
     'darkSpots': [
       {
-        'name': 'Hydroquinone 4% Fade Cream',
-        'brand': 'Prescription-strength (consult provider)',
-        'reason':
-            'Gold-standard for hyperpigmentation. Hydroquinone inhibits tyrosinase and prevents melanin production.',
-        'guidance':
-            'Apply to affected spots twice daily for 12+ weeks. Sun protection mandatory. Consult provider before use.',
-        'evidence': 'Listed ingredient',
-        'link': 'https://www.amazon.com/s?k=hydroquinone+4+percent+cream',
-        'image': 'https://via.placeholder.com/200x200?text=Hydroquinone',
-        'category': 'Maintenance',
-      },
-      {
         'name': 'Niacinamide + Vitamin C Serum',
         'brand': 'Mad Hippie',
         'reason':

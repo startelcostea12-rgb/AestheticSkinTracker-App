@@ -157,7 +157,7 @@ void main() {
       for (final key in ['redness', 'darkSpots', 'texture', 'pores']) {
         final high = AIProductRecommendationEngine.productsForConcern(key, 9);
         final mid = AIProductRecommendationEngine.productsForConcern(key, 6);
-        expect(high, hasLength(3), reason: key);
+        expect(high, hasLength(key == 'darkSpots' ? 2 : 3), reason: key);
         expect(
           high.map((p) => p.productName).toSet(),
           mid.map((p) => p.productName).toSet(),

@@ -396,27 +396,6 @@ class ScarAiAnalysisEngine {
           priorityScore: 68,
         ),
       );
-
-      if (triggeredCategories.contains('pigment_severe')) {
-        addRec(
-          const ScarProductRecommendation(
-            productName: 'Hydroquinone 4% Cream',
-            brandExamples: 'Tri-Luma (Rx), generic hydroquinone 4% (Rx)',
-            category: 'Depigmentation Agent',
-            icon: Icons.colorize_outlined,
-            accentColor: Color(0xFF4A148C),
-            indication:
-                'Confirmed post-inflammatory hyperpigmentation (PIH) — moderate-to-severe',
-            mechanism:
-                'Gold-standard tyrosinase inhibitor. Competitively inhibits conversion of L-DOPA to melanin in melanosomes, with progressive pigment lightening over 8–12 weeks. More potent than azelaic acid for established PIH.',
-            applicationNote:
-                'Apply a pea-sized amount to hyperpigmented areas only, twice daily. Not for use on unhealed skin. Use concurrently with SPF 50+. Limit continuous use to 5 months; cycle off to prevent ochronosis. Prescription required.',
-            evidenceLevel: EvidenceLevel.gradeA,
-            priorityScore: 72,
-            prescriptionOnly: true,
-          ),
-        );
-      }
     }
 
     // ── 4. ROUGH TEXTURE / SURFACE IRREGULARITY ───────────────────────────

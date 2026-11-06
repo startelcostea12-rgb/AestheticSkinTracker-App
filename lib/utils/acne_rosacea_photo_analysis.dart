@@ -1841,7 +1841,6 @@ class AcneRosaceaPhotoAnalyzer {
       out.add('Azelaic acid 10–20% AM + retinoid alternate PM');
     }
     if (ros != DetectedRosaceaPattern.none) {
-      out.add('Azelaic acid 15% gel — calms erythema + papules');
       out.add('Ceramide + niacinamide barrier moisturiser AM/PM');
     }
     if (i.sensitivity >= 5) {

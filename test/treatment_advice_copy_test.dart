@@ -8,6 +8,7 @@ void main() {
       r'Clinical interpretation|Clinical Recommendation|Clinician-Recommended Products|'
       r'Book a dermatologist appointment — topicals alone rarely control cystic disease\.|'
       r'Intralesional cortisone \(kenalog\)|Prescription topicals: azelaic acid 15%|'
+      r'Hydroquinone 4%|Azelaic acid 15% gel|Spironolactone or combined OCP|'
       r'Proven efficacy',
       caseSensitive: false,
     );
@@ -17,8 +18,11 @@ void main() {
       'lib/screens/recovery_metric_detail_screen.dart',
       'lib/screens/acne_rosacea_tracker_screen.dart',
       'lib/screens/scar_healing_tracker_screen.dart',
+      'lib/screens/scar_ai_analysis_sheet.dart',
       'lib/widgets/product_recommendation_card.dart',
       'lib/utils/ai_product_recommendation_engine.dart',
+      'lib/utils/acne_rosacea_photo_analysis.dart',
+      'lib/utils/report_service.dart',
       'lib/utils/acne_rosacea_intelligence.dart',
       'lib/utils/skin_metric_labels.dart',
       'lib/utils/procedure_metric_set.dart',

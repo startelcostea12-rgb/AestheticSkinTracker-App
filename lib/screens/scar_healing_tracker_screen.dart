@@ -2458,7 +2458,7 @@ class _ScarHealingTrackerScreenState extends State<ScarHealingTrackerScreen> {
               'Colour score of ${latest.colorMatch.toStringAsFixed(1)}/10 may reflect post-inflammatory '
               'hyperpigmentation (PIH) or hypopigmentation. '
               'SPF 50+ is the single most evidence-based intervention. '
-              'If PIH is confirmed, topical azelaic acid 20% or hydroquinone 4% under physician supervision '
+              'If PIH is confirmed, topical azelaic acid 20% under physician supervision '
               'can accelerate normalisation within 8�12 weeks.',
         ),
       );
