@@ -86,15 +86,17 @@ def _left_eye_only_mask(shape, points, skin_mask, *, side):
 _REAL_UNDER_EYE_MASK = main._under_eye_region_mask
 
 
-def test_phone_sized_mask_keeps_texture_but_darkness_needs_both_eyes(clear_face_input, caplog):
+def test_phone_sized_mask_keeps_texture_and_uses_the_measured_eye(clear_face_input, caplog):
     caplog.set_level(logging.INFO, logger=main.logger.name)
     result, zone = _analyze(clear_face_input, _phone_sized_mask)
     pixels = _logged_under_eye_pixels(caplog)
 
     assert 0 < pixels < 1500
-    assert zone["under_eye_dark_circle_density"] is None
-    assert "under_eye_dark_circle_density" not in result["metric_matrix"]
-    for key in ("under_eye_texture_density",):
+    assert zone["under_eye_dark_circle_density"] is not None
+    assert result["metric_matrix"]["under_eye_dark_circle_density"] == pytest.approx(
+        result["image_quality"]["under_eye_left_darkness_score"], abs=0.05
+    )
+    for key in UNDER_EYE_KEYS:
         assert result["metric_matrix"][key] == zone[key]
         assert key not in result["omitted_metric_reasons"]
         assert result["image_quality"][f"{key}_mask_kind"] == main.UNDER_EYE_MASK_KIND
@@ -108,7 +110,7 @@ def test_real_clear_face_mask_emits_both_metrics(clear_face_input, caplog):
     pixels = _logged_under_eye_pixels(caplog)
 
     for key in UNDER_EYE_KEYS:
-        if zone[key] == 0.0:
+        if key == "under_eye_texture_density" and zone[key] == 0.0:
             assert key not in result["metric_matrix"]
             assert result["omitted_metric_reasons"][key] == "insufficient_signal"
         else:
@@ -153,6 +155,41 @@ def test_missing_eye_diagnostics_are_omitted_not_zero(clear_face_input):
         assert f"under_eye_right_{field}" not in image_quality
 
 
+def test_measured_darkness_zero_is_emitted_and_exported(clear_face_input):
+    diagnostics = {
+        f"under_eye_{side}_darkness_{field}": value
+        for side in ("left", "right")
+        for field, value in (
+            ("band_median_L", 65.0),
+            ("reference_median_L", 67.0),
+            ("raw_L_delta", 2.0),
+            ("score", main.compute_under_eye_dark_circle_density(2.0)),
+        )
+    }
+    with mock.patch.object(
+        main, "_under_eye_darkness_diagnostics", return_value=diagnostics
+    ):
+        result, zone = _analyze(clear_face_input)
+    key = "under_eye_dark_circle_density"
+    assert zone[key] == 0.0
+    assert result["metric_matrix"][key] == 0.0
+    assert result["metric_status"][key] == "computed"
+    assert key not in result["omitted_metric_reasons"]
+    assert result["image_quality"][f"{key}_omit_reason"] is None
+    for field, value in diagnostics.items():
+        assert result["image_quality"][field] == value
+
+
+def test_missing_cheek_strip_keeps_darkness_missing(clear_face_input):
+    with mock.patch.object(main, "_under_eye_reference_mask", _empty_mask):
+        result, zone = _analyze(clear_face_input)
+    assert zone["under_eye_dark_circle_density"] is None
+    assert "under_eye_dark_circle_density" not in result["metric_matrix"]
+    assert result["omitted_metric_reasons"]["under_eye_dark_circle_density"] == "non_usable_value"
+    for side in ("left", "right"):
+        assert f"under_eye_{side}_darkness_score" not in result["image_quality"]
+
+
 def test_texture_and_pigment_values_do_not_depend_on_under_eye_band(clear_face_input):
     complete, _ = _analyze(clear_face_input)
     without_band, _ = _analyze(clear_face_input, _empty_mask)
@@ -182,5 +219,5 @@ def test_under_eye_roi_too_small_gate_is_gone():
 def test_under_eye_formula_versions_bumped():
     for key in UNDER_EYE_KEYS:
         assert main._metric_formula_version(key) == (
-            8 if key == "under_eye_dark_circle_density" else 7
+            9 if key == "under_eye_dark_circle_density" else 7
         )

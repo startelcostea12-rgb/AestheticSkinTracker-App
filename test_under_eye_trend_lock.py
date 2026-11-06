@@ -18,7 +18,7 @@ import test_metric_regression_batch as regression
 
 REPO_ROOT = Path(__file__).resolve().parent
 UNDER_EYE_KEYS = ("under_eye_texture_density", "under_eye_dark_circle_density")
-CURRENT_VERSION = {"under_eye_texture_density": 7, "under_eye_dark_circle_density": 8}
+CURRENT_VERSION = {"under_eye_texture_density": 7, "under_eye_dark_circle_density": 9}
 
 
 @pytest.fixture(scope="module")

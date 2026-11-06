@@ -2332,18 +2332,12 @@ def _under_eye_darkness_diagnostics(
     regions: Dict[str, np.ndarray],
 ) -> Dict[str, float]:
     shape = face_bgr.shape[:2]
-    l_channel = cv2.cvtColor(
-        face_bgr.astype(np.float32) / 255.0, cv2.COLOR_BGR2LAB
-    )[:, :, 0]
+    l_channel = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2LAB)[:, :, 0]
     diagnostics: Dict[str, float] = {}
     for side in ("left", "right"):
         band = _under_eye_region_mask(shape, points, face_skin_mask, side=side) > 0
-        cheek_mask = regions.get(f"{side}_cheek")
-        if cheek_mask is None:
-            continue
-        cheek = cv2.bitwise_and(
-            _as_binary_mask(cheek_mask, shape),
-            face_skin_mask,
+        cheek = _under_eye_reference_mask(
+            shape, points, face_skin_mask, side=side
         ) > 0
         if not np.any(band) or not np.any(cheek):
             continue
@@ -2355,7 +2349,7 @@ def _under_eye_darkness_diagnostics(
         diagnostics[f"{prefix}_reference_median_L"] = reference_l
         diagnostics[f"{prefix}_raw_L_delta"] = raw_delta
         diagnostics[f"{prefix}_score"] = compute_under_eye_dark_circle_density(
-            max(0.0, raw_delta) * (255.0 / 100.0)
+            max(0.0, raw_delta)
         )
     return diagnostics
 
@@ -3202,7 +3196,7 @@ def _compute_zone_based_metrics(
         if f"under_eye_{side}_darkness_score" in darkness_diagnostics
     ]
     under_eye_dark_circle_density = (
-        float(np.mean(darkness_scores)) if len(darkness_scores) == 2 else None
+        float(np.median(darkness_scores)) if darkness_scores else None
     )
     if np.any(peri_pixels) and np.any(reference_pixels):
         # Texture: fine-scale DoG energy on the band over the same energy on
@@ -4709,7 +4703,7 @@ METRIC_FORMULA_VERSION: Dict[str, int] = {
     # texture is fine-scale DoG energy on the band over the same strip.
     # v5: median of five frames in the app; v7 clips both strips to face skin.
     "under_eye_texture_density": 7,
-    "under_eye_dark_circle_density": 8,
+    "under_eye_dark_circle_density": 9,
     # v2: only boxes kept at YOLO_CONF_THRESHOLD contribute. v1 also added
     # 22 x the strongest rejected box, so zero kept boxes still scored
     # 0.7-3.6 on the regression fixtures; v1 and v2 are not comparable.
@@ -7241,7 +7235,10 @@ def analyze_skin_patch(
             and math.isfinite(metric_numeric)
             and metric_numeric > 0.0
         )
-        if has_positive_signal:
+        if has_positive_signal or (
+            metric_key == "under_eye_dark_circle_density"
+            and not _is_missing_metric_value(metric_numeric)
+        ):
             metric_confidence[metric_key] = _merge_confidence(
                 metric_confidence.get(metric_key, "low"),
                 "medium",
@@ -7294,6 +7291,7 @@ def analyze_skin_patch(
         small_roi_config = small_roi_zero_floor_metrics.get(metric_key)
         if (
             small_roi_config is not None
+            and metric_key != "under_eye_dark_circle_density"
             and numeric_value is not None
             and math.isfinite(numeric_value)
             and numeric_value <= 0.0

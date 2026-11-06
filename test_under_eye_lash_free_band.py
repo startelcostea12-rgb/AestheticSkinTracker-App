@@ -124,7 +124,7 @@ def test_reference_strip_sits_directly_below_the_band(zone_inputs):
         assert np.mean(np.nonzero(reference)[0]) > np.mean(np.nonzero(band)[0])
 
 
-def test_dark_circle_score_uses_side_cheek_skin_and_averages_eyes(zone_inputs):
+def test_dark_circle_score_uses_own_cheek_strip_and_median_of_eyes(zone_inputs):
     captured, _ = zone_inputs
     face = captured["face_bgr"]
     skin = captured["skin_mask"]
@@ -133,16 +133,18 @@ def test_dark_circle_score_uses_side_cheek_skin_and_averages_eyes(zone_inputs):
     regions = captured["regions"]
     zone = main._compute_zone_based_metrics(face, skin, regions, points)
     diagnostics = main._under_eye_darkness_diagnostics(face, points, face_skin, regions)
-    l_channel = cv2.cvtColor(face.astype(np.float32) / 255.0, cv2.COLOR_BGR2LAB)[:, :, 0]
+    l_channel = cv2.cvtColor(face, cv2.COLOR_BGR2LAB)[:, :, 0]
     scores = []
     for side in ("left", "right"):
-        cheek_pixels = cv2.bitwise_and(regions[f"{side}_cheek"], face_skin) > 0
+        cheek_pixels = main._under_eye_reference_mask(
+            face.shape[:2], points, face_skin, side=side
+        ) > 0
         prefix = f"under_eye_{side}_darkness"
         assert diagnostics[f"{prefix}_reference_median_L"] == pytest.approx(
             np.median(l_channel[cheek_pixels])
         )
         scores.append(diagnostics[f"{prefix}_score"])
-    assert zone["under_eye_dark_circle_density"] == round(float(np.mean(scores)), 1)
+    assert zone["under_eye_dark_circle_density"] == round(float(np.median(scores)), 1)
 
 
 def test_darkness_keeps_fractional_l_and_equal_eye_weights(zone_inputs):
@@ -180,6 +182,41 @@ def test_darkness_keeps_fractional_l_and_equal_eye_weights(zone_inputs):
             captured["regions"], captured["points"],
         )
     assert zone["under_eye_dark_circle_density"] == 20.5
+
+
+def test_darkness_ignores_brighter_cheek_regions_and_uses_each_own_strip(zone_inputs):
+    captured, _ = zone_inputs
+    face = np.full_like(captured["face_bgr"], 230)
+    face_skin = captured["face_skin_mask"]
+    points = captured["points"]
+    lab = np.zeros_like(face, dtype=np.float32)
+    lab[:, :, 0] = 212.0
+    for side, reference_l in (("left", 67.0), ("right", 80.0)):
+        band = main._under_eye_region_mask(
+            face.shape[:2], points, face_skin, side=side
+        ) > 0
+        cheek = main._under_eye_reference_mask(
+            face.shape[:2], points, face_skin, side=side
+        ) > 0
+        lab[band, 0] = 65.0
+        lab[cheek, 0] = reference_l
+    with mock.patch.object(main.cv2, "cvtColor", return_value=lab) as conversion:
+        diagnostics = main._under_eye_darkness_diagnostics(
+            face, points, face_skin, captured["regions"]
+        )
+    assert conversion.call_args.args[0] is face
+    assert main.UNDER_EYE_DARK_CIRCLE_DEAD_ZONE_L_UNITS == 8.0
+    assert main.UNDER_EYE_DARK_CIRCLE_SCORE_MULTIPLIER == 1.2
+    assert diagnostics["under_eye_left_darkness_reference_median_L"] == 67.0
+    assert diagnostics["under_eye_left_darkness_score"] == 0.0
+    assert diagnostics["under_eye_right_darkness_reference_median_L"] == 80.0
+    assert diagnostics["under_eye_right_darkness_score"] == pytest.approx(8.4)
+    with mock.patch.object(main, "_under_eye_darkness_diagnostics", return_value=diagnostics):
+        zone = main._compute_zone_based_metrics(
+            captured["face_bgr"], captured["skin_mask"],
+            captured["regions"], points,
+        )
+    assert zone["under_eye_dark_circle_density"] == 4.2
 
 
 def test_texture_is_the_band_over_reference_dog_ratio(zone_inputs, caplog):
@@ -224,7 +261,7 @@ def test_logging_diagnostics_include_each_eye_measurement(zone_inputs):
 def test_formula_versions_bumped_and_old_baselines_refused():
     for key in UNDER_EYE_KEYS:
         current_version = main._metric_formula_version(key)
-        assert current_version == (8 if key == "under_eye_dark_circle_density" else 7)
+        assert current_version == (9 if key == "under_eye_dark_circle_density" else 7)
         for old in range(1, current_version):
             assert (
                 main._trend_lock_reason(

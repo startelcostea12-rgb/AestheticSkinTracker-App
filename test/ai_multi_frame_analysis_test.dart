@@ -1583,6 +1583,74 @@ void main() {
   });
 
   test(
+    'measured under-eye zero is saved and exported despite legacy eye scores',
+    () {
+      const key = 'under_eye_dark_circle_density';
+      final frames = [
+        for (var index = 0; index < 5; index++)
+          {
+            'metric_matrix': {key: 0.0, 'pigment_load': 9.0},
+            'metric_formula_versions': {key: 9, 'pigment_load': 2},
+            'metric_status': {key: 'computed'},
+            'image_quality': {
+              'under_eye_left_dark_circle_density': 35.0,
+              'under_eye_right_dark_circle_density': 45.0,
+              'under_eye_left_darkness_score': 0.0,
+              'under_eye_right_darkness_score': 0.0,
+            },
+          },
+      ];
+      final aggregate = averageBackendAnalysisFrames(
+        frames,
+        requestedFrames: 5,
+      );
+      expect((aggregate.response['metric_matrix'] as Map)[key], 0.0);
+      expect((aggregate.response['metric_matrix'] as Map)['pigment_load'], 9.0);
+      expect(aggregate.response['metric_formula_versions'], {
+        key: 9,
+        'pigment_load': 2,
+      });
+      expect(
+        (aggregate.response['omitted_metric_reasons'] as Map?)?[key],
+        isNull,
+      );
+      final saved = ScanHistoryEntry.fromJson(
+        ScanHistoryEntry(
+          id: 'measured-under-eye-zero',
+          timestamp: DateTime.utc(2026, 11, 6),
+          scanType: ScanHistoryEntry.scanTypeAiAnalysis,
+          estimatedSkinAge: 0,
+          metrics: const <String, double>{key: 0.0},
+          rawPayload: {
+            ...aggregate.response,
+            aiScanPerFrameDiagnosticsKey: buildAiScanPerFrameDiagnostics(
+              frameResponses: frames,
+              frameExposureMetadata: const <AiScanFrameExposure>[],
+              frameCount: 5,
+            ),
+          },
+        ).toJson(),
+      );
+      expect(saved.metrics[key], 0.0);
+      expect((saved.rawPayload!['metric_matrix'] as Map)[key], 0.0);
+      final rows = AiScanDataCsvExporter.format([
+        saved,
+      ], registryBaselineScanIds: const {}).split('\r\n');
+      final header = rows.first.split(',');
+      final values = rows[1].split(',');
+      expect(values[header.indexOf('${key}_value')], '0.0');
+      expect(
+        values[header.indexOf('frame1_under_eye_left_dark_circle_density')],
+        '35.0',
+      );
+      expect(
+        values[header.indexOf('frame1_under_eye_right_dark_circle_density')],
+        '45.0',
+      );
+    },
+  );
+
+  test(
     'the lash-free under-eye band kind and pixel counts reach the export',
     () {
       final frameResponse = {
