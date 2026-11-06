@@ -12,6 +12,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import 'last_comparable_pair.dart';
+import 'progress_summary.dart';
 import 'scan_note.dart';
 
 const String comparablePairPdfClinicPlaceholder = '[Clinic name]';
@@ -105,7 +106,11 @@ Future<Uint8List> buildComparablePairPdf(
               for (final key in comparablePairMetricKeys)
                 pw.TableRow(
                   children: [
-                    cell(comparablePairMetricLabels[key]!),
+                    cell(
+                      progressTrendLabel(pair, key) == 'Not comparable'
+                          ? '${comparablePairMetricLabels[key]}\nNot comparable'
+                          : comparablePairMetricLabels[key]!,
+                    ),
                     if (baseline != null)
                       cell(_value(pair.baselineValue(key)), right: true),
                     cell(_value(pair.latestValue(key)), right: true),

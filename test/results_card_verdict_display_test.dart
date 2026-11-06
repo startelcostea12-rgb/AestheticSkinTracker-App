@@ -346,7 +346,9 @@ void main() {
   });
 
   group('trusted metrics keep their verdicts', () {
-    testWidgets('texture can still show stable', (tester) async {
+    testWidgets('small texture move shows its number without stable', (
+      tester,
+    ) async {
       await _pumpLive(
         tester,
         _payload({
@@ -359,7 +361,11 @@ void main() {
           ),
         }),
       );
-      expect(_cardText(tester, 'texture_smoothness'), contains('Stable'));
+      expect(
+        _cardText(tester, 'texture_smoothness'),
+        isNot(contains('Stable')),
+      );
+      expect(_cardText(tester, 'texture_smoothness'), contains('50.5'));
     });
 
     testWidgets('pigment can still show improved in its verdict colour', (

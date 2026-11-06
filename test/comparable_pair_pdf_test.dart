@@ -100,6 +100,26 @@ void main() {
     }
   });
 
+  test('a locked report row says only Not comparable', () async {
+    final text = (await _pdf(
+      ComparablePair(
+        baseline: _scan('base', 1),
+        latest: _scan(
+          'later',
+          2,
+          offset: 20,
+          locks: {'pigment_load': 'lighting_mismatch'},
+        ),
+      ),
+    )).text;
+    expect(text, contains('Not comparable'));
+    expect(text, isNot(contains('Improved')));
+    expect(text, isNot(contains('Worsened')));
+    expect(text, isNot(contains('Stable')));
+    expect(text, isNot(contains('%')));
+    expect(text, isNot(contains('->')));
+  });
+
   test('the latest scan alone says no prior comparable scan', () async {
     final pdf = await _pdf(lastComparablePair([_scan('only', 3)])!);
     expect(pdf.text, contains('Scan: Oct 3, 2026 9:30 AM'));

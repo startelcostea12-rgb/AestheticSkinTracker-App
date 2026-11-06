@@ -20,6 +20,45 @@ const Map<String, double> directionalDisplayNoiseFloors = <String, double>{
   'structural_firmness_elasticity': 5.0,
 };
 
+const String lampScanDriftSource =
+    'Oct 25-Nov 6 lamp scans: daily median, ISO 100 or 125, '
+    'Bv 3.0-3.6, gray card not applied.';
+
+const Map<String, double> lampScanDriftSpans = <String, double>{
+  'localized_redness': 12.3,
+  'rosacea_severity': 9.9,
+  'structural_firmness_elasticity': 8.3,
+  'skin_tone_radiance_evenness': 7.6,
+  'pigment_load': 5.5,
+  'texture_smoothness': 5.1,
+  'pore_visibility': 4.6,
+  'chin_pore_visibility': 3.4,
+  'wrinkle_load': 4.2,
+  'diffuse_flushing_erythema': 3.4,
+};
+
+bool exceedsDisplayClaimBar(
+  String key,
+  double current,
+  double baseline, {
+  double? noiseFloor,
+}) {
+  if (displayNoVerdictMetrics.contains(key) ||
+      !current.isFinite ||
+      !baseline.isFinite) {
+    return false;
+  }
+  final bars = <double>[
+    if (lampScanDriftSpans[key] case final double span) span,
+    if (displayVerdictNoiseFloors[key] case final double floor) floor,
+    if (directionalDisplayNoiseFloors[key] case final double floor) floor,
+    if (noiseFloor != null && noiseFloor.isFinite) noiseFloor,
+  ];
+  return bars.every(
+    (bar) => current > baseline + bar || baseline > current + bar,
+  );
+}
+
 bool isWithinDirectionalDisplayNoise(
   String key,
   double current,
@@ -78,7 +117,7 @@ const Set<String> displayNoVerdictMetrics = <String>{
   'under_eye_dark_circle_density',
   'under_eye_texture_density',
   'pore_contraction_index',
-  'localized_redness',
   'rosacea_severity',
   'wrinkle_load',
+  'diffuse_flushing_erythema',
 };

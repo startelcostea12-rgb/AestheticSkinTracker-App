@@ -1141,7 +1141,7 @@ void main() {
       },
     };
 
-    void expectPoreContractionHidden() {
+    void expectPoreContractionHidden({bool live = false}) {
       expect(
         find.byKey(const ValueKey('result_metric_pore_contraction_index')),
         findsNothing,
@@ -1153,8 +1153,11 @@ void main() {
       );
       expect(poreCard, findsOneWidget);
       expect(
-        find.descendant(of: poreCard, matching: find.text('Stable - change within tracking noise')),
-        findsWidgets,
+        find.descendant(
+          of: poreCard,
+          matching: find.text('Stable - change within tracking noise'),
+        ),
+        live ? findsNothing : findsWidgets,
       );
     }
 
@@ -1186,7 +1189,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expectPoreContractionHidden();
+      expectPoreContractionHidden(live: true);
     });
 
     test('both live views in the screen pass the hidden-metric set', () {
@@ -1286,7 +1289,7 @@ void main() {
     Finder inCard(String key, Finder matching) =>
         find.descendant(of: card(key), matching: matching);
 
-    testWidgets('a 1.0-point texture move shows Stable with no percent', (
+    testWidgets('a 1.0-point texture move shows its number with no claim', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -1307,7 +1310,7 @@ void main() {
           'texture_smoothness',
           find.text('Stable - change within tracking noise'),
         ),
-        findsWidgets,
+        findsNothing,
       );
       expect(inCard('texture_smoothness', find.text('Improved')), findsNothing);
       expect(
@@ -1324,9 +1327,7 @@ void main() {
       );
     });
 
-    testWidgets('a move exactly at the floor keeps its verdict', (
-      tester,
-    ) async {
+    testWidgets('a move exactly at the floor has no verdict', (tester) async {
       await tester.pumpWidget(
         liveHarness(
           basePayload(
@@ -1339,7 +1340,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(inCard('texture_smoothness', find.text('Improved')), findsWidgets);
+      expect(inCard('texture_smoothness', find.text('Improved')), findsNothing);
     });
 
     testWidgets('a 6.5-point texture move shows improved or worsened', (
@@ -1365,82 +1366,86 @@ void main() {
       }
     });
 
-    testWidgets('every floored metric: below is Stable, at the floor keeps '
-        'its verdict', (tester) async {
-      const floors = <String, double>{
-        'pigment_load': 3.0,
-        'pore_visibility': 3.0,
-        'skin_tone_radiance_evenness': 4.0,
-        'diffuse_flushing_erythema': 2.0,
-        'glabellar_wrinkle_depth': 6.4,
-        'structural_firmness_elasticity': 5.0,
-        'sebum_excess_oil_gloss': 4.0,
-        'texture_smoothness': 5.4,
-      };
-      expect(displayVerdictNoiseFloors, floors);
-      expect(displayStableFloorMetrics, floors.keys.toSet());
-      // glabellar_wrinkle_depth and sebum_excess_oil_gloss get no card on
-      // this layout (the parser emits none), so their floors only reach the
-      // export.
-      const noCard = {'glabellar_wrinkle_depth', 'sebum_excess_oil_gloss'};
-      expect(
-        LuxeMetricParser.parseTimelinePayload({
-          'metric_matrix': {for (final key in floors.keys) key: 30.0},
-        }).map((m) => m.key).toSet().intersection(noCard),
-        isEmpty,
-      );
-      // diffuse_flushing_erythema keeps its floor entry above but, as
-      // an untrusted metric, shows no verdict on the live cards at all
-      // (covered in results_card_verdict_display_test.dart).
-      const noVerdictOnCard = {'diffuse_flushing_erythema'};
-      for (final MapEntry(key: key, value: storedFloor) in floors.entries) {
-        if (noCard.contains(key) || noVerdictOnCard.contains(key)) continue;
-        final floor = directionalDisplayNoiseFloors[key] ?? storedFloor;
-        await tester.pumpWidget(
-          liveHarness(
-            basePayload(
-              baseline: 30.0,
-              current: 30.0 + floor - 0.1,
-              metricKey: key,
-              trendStatus: {key: 'worsened'},
-              trendDeltas: {key: 12.0},
+    testWidgets(
+      'every floored metric: below and at the display bar have no verdict',
+      (tester) async {
+        const floors = <String, double>{
+          'pigment_load': 3.0,
+          'pore_visibility': 3.0,
+          'skin_tone_radiance_evenness': 4.0,
+          'diffuse_flushing_erythema': 2.0,
+          'glabellar_wrinkle_depth': 6.4,
+          'structural_firmness_elasticity': 5.0,
+          'sebum_excess_oil_gloss': 4.0,
+          'texture_smoothness': 5.4,
+        };
+        expect(displayVerdictNoiseFloors, floors);
+        expect(displayStableFloorMetrics, floors.keys.toSet());
+        // glabellar_wrinkle_depth and sebum_excess_oil_gloss get no card on
+        // this layout (the parser emits none), so their floors only reach the
+        // export.
+        const noCard = {'glabellar_wrinkle_depth', 'sebum_excess_oil_gloss'};
+        expect(
+          LuxeMetricParser.parseTimelinePayload({
+            'metric_matrix': {for (final key in floors.keys) key: 30.0},
+          }).map((m) => m.key).toSet().intersection(noCard),
+          isEmpty,
+        );
+        // diffuse_flushing_erythema keeps its floor entry above but, as
+        // an untrusted metric, shows no verdict on the live cards at all
+        // (covered in results_card_verdict_display_test.dart).
+        const noVerdictOnCard = {'diffuse_flushing_erythema'};
+        for (final MapEntry(key: key, value: storedFloor) in floors.entries) {
+          if (noCard.contains(key) || noVerdictOnCard.contains(key)) continue;
+          final drift = lampScanDriftSpans[key] ?? storedFloor;
+          final floor = drift > storedFloor ? drift : storedFloor;
+          await tester.pumpWidget(
+            liveHarness(
+              basePayload(
+                baseline: 30.0,
+                current: 30.0 + floor - 0.1,
+                metricKey: key,
+                trendStatus: {key: 'worsened'},
+                trendDeltas: {key: 12.0},
+              ),
             ),
-          ),
-        );
-        await tester.pumpAndSettle();
-        expect(
-          inCard(key, find.text('Stable - change within tracking noise')),
-          findsWidgets,
-          reason: '$key below its floor',
-        );
-        expect(inCard(key, find.text('Worsened')), findsNothing, reason: key);
-        expect(
-          inCard(key, find.textContaining('%')),
-          findsNothing,
-          reason: key,
-        );
+          );
+          await tester.pumpAndSettle();
+          expect(
+            inCard(key, find.text('Stable - change within tracking noise')),
+            findsNothing,
+            reason: '$key below its floor',
+          );
+          expect(inCard(key, find.text('Worsened')), findsNothing, reason: key);
+          expect(
+            inCard(key, find.textContaining('%')),
+            findsNothing,
+            reason: key,
+          );
 
-        await tester.pumpWidget(
-          liveHarness(
-            basePayload(
-              baseline: 5.0,
-              current: 5.0 + floor,
-              metricKey: key,
-              trendStatus: {key: 'worsened'},
-              trendDeltas: {key: 20.0},
+          await tester.pumpWidget(
+            liveHarness(
+              basePayload(
+                baseline: 5.0,
+                current: 5.0 + floor,
+                metricKey: key,
+                trendStatus: {key: 'worsened'},
+                trendDeltas: {key: 20.0},
+              ),
             ),
-          ),
-        );
-        await tester.pumpAndSettle();
-        expect(
-          inCard(key, find.text('Stable - change within tracking noise')),
-          findsWidgets,
-          reason: '$key at its floor',
-        );
-      }
-    });
+          );
+          await tester.pumpAndSettle();
+          expect(
+            inCard(key, find.text('Stable - change within tracking noise')),
+            findsNothing,
+            reason: '$key at its floor',
+          );
+          expect(inCard(key, find.text('Worsened')), findsNothing, reason: key);
+        }
+      },
+    );
 
-    testWidgets('texture: 3.9 points stays Stable, 4.1 keeps its verdict', (
+    testWidgets('texture: 3.9 points has no claim, 5.5 keeps its verdict', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -1460,7 +1465,7 @@ void main() {
           'texture_smoothness',
           find.text('Stable - change within tracking noise'),
         ),
-        findsWidgets,
+        findsNothing,
       );
       expect(inCard('texture_smoothness', find.text('Improved')), findsNothing);
       expect(
@@ -1472,7 +1477,7 @@ void main() {
         liveHarness(
           basePayload(
             baseline: 10.0,
-            current: 14.1,
+            current: 15.5,
             metricKey: 'texture_smoothness',
             trendStatus: {'texture_smoothness': 'improved'},
             trendDeltas: {'texture_smoothness': 5.0},
@@ -1487,7 +1492,7 @@ void main() {
       );
     });
 
-    testWidgets('radiance: 3.9 points stays Stable, 4.1 keeps its verdict', (
+    testWidgets('radiance: 3.9 points has no claim, 7.7 keeps its verdict', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -1507,7 +1512,7 @@ void main() {
           'skin_tone_radiance_evenness',
           find.text('Stable - change within tracking noise'),
         ),
-        findsWidgets,
+        findsNothing,
       );
       expect(
         inCard('skin_tone_radiance_evenness', find.text('Improved')),
@@ -1522,7 +1527,7 @@ void main() {
         liveHarness(
           basePayload(
             baseline: 30.0,
-            current: 34.1,
+            current: 37.7,
             metricKey: 'skin_tone_radiance_evenness',
             trendStatus: {'skin_tone_radiance_evenness': 'improved'},
             trendDeltas: {'skin_tone_radiance_evenness': 15.0},
@@ -1536,8 +1541,9 @@ void main() {
       );
     });
 
-    testWidgets('firmness uses its 5-point floor', (tester) async {
-      // 4.6 points: below the floor reads Stable.
+    testWidgets('firmness uses its 8.3-point drift above the existing floor', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         liveHarness(
           basePayload(
@@ -1555,7 +1561,7 @@ void main() {
           'structural_firmness_elasticity',
           find.text('Stable - change within tracking noise'),
         ),
-        findsWidgets,
+        findsNothing,
       );
       expect(
         inCard('structural_firmness_elasticity', find.text('Worsened')),
@@ -1566,12 +1572,11 @@ void main() {
         findsNothing,
       );
 
-      // 5.5 points: at or above the floor keeps its verdict.
       await tester.pumpWidget(
         liveHarness(
           basePayload(
             baseline: 55.8,
-            current: 50.3,
+            current: 47.4,
             metricKey: 'structural_firmness_elasticity',
             trendStatus: {'structural_firmness_elasticity': 'worsened'},
             trendDeltas: {'structural_firmness_elasticity': -9.9},
@@ -1585,7 +1590,7 @@ void main() {
       );
     });
 
-    testWidgets('pores and pigment are Stable inside their display floors', (
+    testWidgets('pores and pigment are number-only inside their display bars', (
       tester,
     ) async {
       for (final key in const ['pore_visibility', 'pigment_load']) {
@@ -1605,7 +1610,7 @@ void main() {
           await tester.pumpAndSettle();
           expect(
             inCard(key, find.text('Stable - change within tracking noise')),
-            findsWidgets,
+            findsNothing,
             reason: '$key $status 2.9',
           );
           for (final label in const ['Improved', 'Worsened']) {
@@ -1619,7 +1624,7 @@ void main() {
         liveHarness(
           basePayload(
             baseline: 30.0,
-            current: 25.9,
+            current: 25.3,
             metricKey: 'pore_visibility',
             trendStatus: {'pore_visibility': 'improved'},
             trendDeltas: {'pore_visibility': 8.7},
@@ -1640,14 +1645,14 @@ void main() {
         'under_eye_dark_circle_density',
         'under_eye_texture_density',
         'pore_contraction_index',
-        'localized_redness',
+        'diffuse_flushing_erythema',
         'rosacea_severity',
         'wrinkle_load',
       });
       for (final key in displayNoVerdictMetrics) {
         expect(
           displayVerdictNoiseFloors.containsKey(key),
-          isFalse,
+          key == 'diffuse_flushing_erythema' ? isTrue : isFalse,
           reason: key,
         );
       }
@@ -1658,7 +1663,7 @@ void main() {
         'under_eye_dark_circle_density',
         'under_eye_texture_density',
         'pore_contraction_index',
-        'localized_redness',
+        'diffuse_flushing_erythema',
         'rosacea_severity',
         'wrinkle_load',
       ];
@@ -2054,7 +2059,9 @@ void main() {
       matching: matching,
     );
 
-    testWidgets('within the display floor reads Stable', (tester) async {
+    testWidgets('within the display floor shows the number only', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         live(
           basePayload(
@@ -2072,7 +2079,7 @@ void main() {
           'skin_tone_radiance_evenness',
           find.text('Stable - change within tracking noise'),
         ),
-        findsWidgets,
+        findsNothing,
       );
       expect(
         inCard(

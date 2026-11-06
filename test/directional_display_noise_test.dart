@@ -84,42 +84,50 @@ String _cardText(WidgetTester tester, String key) => tester
     .join('\n');
 
 void main() {
+  test('texture uses its existing 5.4 floor above the lamp drift', () {
+    expect(displayVerdictNoiseFloors['texture_smoothness'], 5.4);
+    expect(exceedsDisplayClaimBar('texture_smoothness', 25.4, 20), isFalse);
+    expect(exceedsDisplayClaimBar('texture_smoothness', 25.5, 20), isTrue);
+    expect(lampScanDriftSource, contains('ISO 100 or 125'));
+    expect(lampScanDriftSource, contains('gray card not applied'));
+  });
+
   final cases = [
     (
       key: 'skin_tone_radiance_evenness',
       move: 0.8,
       status: 'improved',
-      label: 'Stable',
+      label: null,
     ),
     (
       key: 'skin_tone_radiance_evenness',
-      move: 5.0,
+      move: 8.0,
       status: 'improved',
       label: 'Improved',
     ),
-    (key: 'pigment_load', move: 2.5, status: 'worsened', label: 'Stable'),
-    (key: 'pigment_load', move: 3.5, status: 'worsened', label: 'Worsened'),
+    (key: 'pigment_load', move: 5.0, status: 'worsened', label: null),
+    (key: 'pigment_load', move: 6.0, status: 'worsened', label: 'Worsened'),
     (
       key: 'structural_firmness_elasticity',
       move: 4.5,
       status: 'improved',
-      label: 'Stable',
+      label: null,
     ),
     (
       key: 'structural_firmness_elasticity',
-      move: 6.0,
+      move: 9.0,
       status: 'improved',
       label: 'Improved',
     ),
-    (key: 'texture_smoothness', move: 3.9, status: 'improved', label: 'Stable'),
+    (key: 'texture_smoothness', move: 5.3, status: 'improved', label: null),
     (
       key: 'texture_smoothness',
-      move: 4.1,
+      move: 5.5,
       status: 'improved',
       label: 'Improved',
     ),
-    (key: 'pore_visibility', move: 3.9, status: 'worsened', label: 'Stable'),
-    (key: 'pore_visibility', move: 4.1, status: 'worsened', label: 'Worsened'),
+    (key: 'pore_visibility', move: 4.5, status: 'worsened', label: null),
+    (key: 'pore_visibility', move: 5.0, status: 'worsened', label: 'Worsened'),
   ];
   for (final sample in cases) {
     testWidgets(
@@ -128,18 +136,21 @@ void main() {
         final payload = _payload(sample.key, sample.move, sample.status);
         await _results(tester, payload);
         final text = _cardText(tester, sample.key);
-        expect(text, contains(sample.label));
+        if (sample.label != null) expect(text, contains(sample.label!));
         expect(text, contains((20.0 + sample.move).toStringAsFixed(1)));
-        expect(
-          find.textContaining(
-            '${liveResultsShortLabels[sample.key]}: ${sample.label}.',
-          ),
-          findsWidgets,
-        );
-        if (sample.label == 'Stable') {
+        if (sample.label != null) {
+          expect(
+            find.textContaining(
+              '${liveResultsShortLabels[sample.key]}: ${sample.label}.',
+            ),
+            findsWidgets,
+          );
+        } else {
           expect(text, isNot(contains('%')));
           expect(text, isNot(contains('Improved')));
           expect(text, isNot(contains('Worsened')));
+          expect(text, isNot(contains('Stable')));
+          expect(text, isNot(contains('->')));
         }
         final pair = _pair(payload, sample.key);
         expect(progressTrendLabel(pair, sample.key), sample.label);
@@ -149,14 +160,12 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(
-          tester
-              .widget<Text>(
-                find.byKey(ValueKey('last_pair_trend_${sample.key}')),
-              )
-              .data,
-          sample.label,
-        );
+        final trend = find.byKey(ValueKey('last_pair_trend_${sample.key}'));
+        if (sample.label == null) {
+          expect(trend, findsNothing);
+        } else {
+          expect(tester.widget<Text>(trend).data, sample.label);
+        }
         expect(find.textContaining('%'), findsNothing);
         expect(payload['metric_matrix'], {sample.key: 20.0 + sample.move});
         expect(payload['trend_status'], {sample.key: sample.status});
@@ -164,17 +173,15 @@ void main() {
     );
   }
 
-  for (final entry in directionalDisplayNoiseFloors.entries) {
-    testWidgets('${entry.key} at the exact floor is stable', (tester) async {
+  for (final entry in lampScanDriftSpans.entries) {
+    testWidgets('${entry.key} at the exact drift has no claim', (tester) async {
       final payload = _payload(entry.key, entry.value, 'worsened');
       await _results(tester, payload);
       final text = _cardText(tester, entry.key);
-      expect(text, contains('Stable'));
+      expect(text, isNot(contains('Stable')));
+      expect(text, isNot(contains('Worsened')));
       expect(text, isNot(contains('%')));
-      expect(
-        progressTrendLabel(_pair(payload, entry.key), entry.key),
-        'Stable',
-      );
+      expect(progressTrendLabel(_pair(payload, entry.key), entry.key), isNull);
     });
   }
 
@@ -192,6 +199,42 @@ void main() {
       );
     });
   }
+
+  testWidgets('a locked row without a stored baseline stays Not comparable', (
+    tester,
+  ) async {
+    final payload = _payload(
+      'wrinkle_load',
+      50,
+      'improved',
+      lock: 'lighting_mismatch',
+    )..remove('baseline_metric_matrix');
+    await _results(tester, payload);
+    final text = _cardText(tester, 'wrinkle_load');
+    expect(text, contains('Not comparable'));
+    expect(text, isNot(contains('Improved')));
+    expect(text, isNot(contains('Stable')));
+    expect(text, isNot(contains('%')));
+  });
+
+  testWidgets('a locked wrinkle row stays Not comparable', (tester) async {
+    final payload = _payload(
+      'wrinkle_load',
+      50,
+      'improved',
+      lock: 'lighting_mismatch',
+    );
+    await _results(tester, payload);
+    final text = _cardText(tester, 'wrinkle_load');
+    expect(text, contains('Not comparable'));
+    expect(text, isNot(contains('Improved')));
+    expect(text, isNot(contains('Stable')));
+    expect(text, isNot(contains('%')));
+    expect(
+      progressTrendLabel(_pair(payload, 'wrinkle_load'), 'wrinkle_load'),
+      'Not comparable',
+    );
+  });
 
   testWidgets(
     'wide frame range is Not comparable despite a large average move',
@@ -232,12 +275,12 @@ void main() {
   );
 
   for (final key in [
-    'localized_redness',
     'wrinkle_load',
     'rosacea_severity',
     'diffuse_flushing_erythema',
     'under_eye_dark_circle_density',
     'under_eye_texture_density',
+    'pore_contraction_index',
   ]) {
     testWidgets('$key stays number-only', (tester) async {
       await _results(tester, _payload(key, 15.0, 'improved'));

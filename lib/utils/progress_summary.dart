@@ -10,7 +10,6 @@ import 'display_noise_floors.dart';
 import 'last_comparable_pair.dart';
 
 String? progressTrendLabel(ComparablePair pair, String key) {
-  if (displayNoVerdictMetrics.contains(key)) return null;
   final payload = pair.latest.rawPayload ?? const <String, dynamic>{};
   Map<dynamic, dynamic> node(String name) {
     final direct = payload[name];
@@ -22,6 +21,7 @@ String? progressTrendLabel(ComparablePair pair, String key) {
 
   final lock = node('trend_lock_reasons')[key]?.toString().trim() ?? '';
   if (lock.isNotEmpty) return 'Not comparable';
+  if (displayNoVerdictMetrics.contains(key)) return null;
   if (pair.baseline == null) return null;
   double? number(dynamic value) {
     final parsed = value is num ? value.toDouble() : double.tryParse('$value');
@@ -50,16 +50,14 @@ String? progressTrendLabel(ComparablePair pair, String key) {
   final previous = pair.baselineValue(key);
   if (current == null || previous == null) return null;
   if (previous == 0.0 && current != 0.0) return null;
+  if (!exceedsDisplayClaimBar(
+    key,
+    current,
+    previous,
+    noiseFloor: number(node('metric_noise_floor_2sd')[key]),
+  )) {
+    return null;
+  }
   if (status == 'stable') return 'Stable';
-  if (isWithinDirectionalDisplayNoise(key, current, previous)) return 'Stable';
-  if (directionalDisplayNoiseFloors.containsKey(key)) {
-    return status == 'improved' ? 'Improved' : 'Worsened';
-  }
-  final floor = displayVerdictNoiseFloors[key];
-  if (floor != null &&
-      displayStableFloorMetrics.contains(key) &&
-      (current - previous).abs() < floor) {
-    return 'Stable';
-  }
   return status == 'improved' ? 'Improved' : 'Worsened';
 }

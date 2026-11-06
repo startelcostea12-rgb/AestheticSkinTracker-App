@@ -374,84 +374,140 @@ void main() {
       return rows[1].split(',')[header.indexOf('${key}_trend_status')];
     }
 
-    testWidgets('a 1.0-point texture move is Stable on the card and export', (
+    testWidgets(
+      'a 1.0-point texture move is number-only but still exports stable',
+      (tester) async {
+        final payload = savedPayload('texture_smoothness', 57.0, 58.0);
+        expect(exportedStatus(payload, 'texture_smoothness'), 'stable');
+
+        await tester.pumpWidget(liveCard(payload));
+        await tester.pumpAndSettle();
+        expect(
+          inCard(
+            'texture_smoothness',
+            find.text('Stable - change within tracking noise'),
+          ),
+          findsNothing,
+        );
+        expect(
+          inCard('texture_smoothness', find.textContaining('%')),
+          findsNothing,
+        );
+        expect(find.text('Texture: Stable.'), findsNothing);
+        expect(
+          inCard('texture_smoothness', find.textContaining('58.0')),
+          findsWidgets,
+        );
+      },
+    );
+
+    testWidgets(
+      'zero baseline to 40 has no stable, percent or starting point',
+      (tester) async {
+        final payload = savedPayload(
+          'texture_smoothness',
+          0,
+          40,
+          status: 'stable',
+        );
+        expect(exportedStatus(payload, 'texture_smoothness'), isEmpty);
+        expect(
+          (payload['trend_deltas'] as Map).containsKey('texture_smoothness'),
+          isFalse,
+        );
+        await tester.pumpWidget(liveCard(payload));
+        await tester.pumpAndSettle();
+        expect(
+          inCard('texture_smoothness', find.textContaining('%')),
+          findsNothing,
+        );
+        expect(
+          inCard('texture_smoothness', find.textContaining('Stable')),
+          findsNothing,
+        );
+        expect(
+          inCard('texture_smoothness', find.textContaining('Starting point')),
+          findsNothing,
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: LuxeReportLayout(
+                  rawPayload: {
+                    ...payload,
+                    'trend_status': {'texture_smoothness': 'stable'},
+                    'trend_deltas': {'texture_smoothness': 0.0},
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          inCard('texture_smoothness', find.textContaining('Stable')),
+          findsNothing,
+        );
+        expect(
+          inCard('texture_smoothness', find.textContaining('%')),
+          findsNothing,
+        );
+        expect(
+          inCard('texture_smoothness', find.textContaining('Starting point')),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets('zero baseline to zero never displays a percent', (
       tester,
     ) async {
-      final payload = savedPayload('texture_smoothness', 57.0, 58.0);
-      expect(exportedStatus(payload, 'texture_smoothness'), 'stable');
-
+      final payload = savedPayload(
+        'texture_smoothness',
+        0,
+        0,
+        status: 'stable',
+      );
       await tester.pumpWidget(liveCard(payload));
       await tester.pumpAndSettle();
-      expect(
-        inCard(
-          'texture_smoothness',
-          find.text('Stable - change within tracking noise'),
-        ),
-        findsWidgets,
-      );
       expect(
         inCard('texture_smoothness', find.textContaining('%')),
         findsNothing,
       );
-      expect(find.text('Texture: Stable.'), findsOneWidget);
+      expect(
+        inCard('texture_smoothness', find.textContaining('Starting point')),
+        findsNothing,
+      );
     });
 
-    testWidgets('zero baseline to 40 has no stable, percent or starting point', (tester) async {
-      final payload = savedPayload('texture_smoothness', 0, 40, status: 'stable');
-      expect(exportedStatus(payload, 'texture_smoothness'), isEmpty);
-      expect((payload['trend_deltas'] as Map).containsKey('texture_smoothness'), isFalse);
-      await tester.pumpWidget(liveCard(payload));
-      await tester.pumpAndSettle();
-      expect(inCard('texture_smoothness', find.textContaining('%')), findsNothing);
-      expect(inCard('texture_smoothness', find.textContaining('Stable')), findsNothing);
-      expect(inCard('texture_smoothness', find.textContaining('Starting point')), findsNothing);
-      await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(
-        child: LuxeReportLayout(rawPayload: {
-          ...payload,
-          'trend_status': {'texture_smoothness': 'stable'},
-          'trend_deltas': {'texture_smoothness': 0.0},
-        }),
-      ))));
-      await tester.pumpAndSettle();
-      expect(inCard('texture_smoothness', find.textContaining('Stable')), findsNothing);
-      expect(inCard('texture_smoothness', find.textContaining('%')), findsNothing);
-      expect(inCard('texture_smoothness', find.textContaining('Starting point')), findsNothing);
-    });
-
-    testWidgets('zero baseline to zero never displays a percent', (tester) async {
-      final payload = savedPayload('texture_smoothness', 0, 0, status: 'stable');
-      await tester.pumpWidget(liveCard(payload));
-      await tester.pumpAndSettle();
-      expect(inCard('texture_smoothness', find.textContaining('%')), findsNothing);
-      expect(inCard('texture_smoothness', find.textContaining('Starting point')), findsNothing);
-    });
-
-    testWidgets('pigment, pores, firmness below their floors read Stable', (
-      tester,
-    ) async {
-      for (final (key, move) in const [
-        ('pigment_load', 1.0),
-        ('pore_visibility', 1.2),
-        ('structural_firmness_elasticity', 4.0),
-      ]) {
-        final payload = savedPayload(
-          key,
-          20.0,
-          20.0 + move,
-          status: 'worsened',
-        );
-        expect(exportedStatus(payload, key), 'stable', reason: key);
-        expect((payload['trend_deltas'] as Map)[key], 0.0);
-        await tester.pumpWidget(liveCard(payload));
-        await tester.pumpAndSettle();
-        expect(
-          inCard(key, find.text('Stable - change within tracking noise')),
-          findsWidgets,
-          reason: key,
-        );
-        expect(inCard(key, find.textContaining('%')), findsNothing);
-      }
-    });
+    testWidgets(
+      'pigment, pores, firmness keep saved stable but display numbers only',
+      (tester) async {
+        for (final (key, move) in const [
+          ('pigment_load', 1.0),
+          ('pore_visibility', 1.2),
+          ('structural_firmness_elasticity', 4.0),
+        ]) {
+          final payload = savedPayload(
+            key,
+            20.0,
+            20.0 + move,
+            status: 'worsened',
+          );
+          expect(exportedStatus(payload, key), 'stable', reason: key);
+          expect((payload['trend_deltas'] as Map)[key], 0.0);
+          await tester.pumpWidget(liveCard(payload));
+          await tester.pumpAndSettle();
+          expect(
+            inCard(key, find.text('Stable - change within tracking noise')),
+            findsNothing,
+            reason: key,
+          );
+          expect(inCard(key, find.textContaining('%')), findsNothing);
+        }
+      },
+    );
 
     test(
       'every live display floor saves and exports stable without a percent',

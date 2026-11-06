@@ -47,7 +47,14 @@ bool shouldShowTrendVerdict(String metricKey) =>
 bool showsTrendVerdictOnCard(LuxeMetric metric, {required bool liveDisplay}) =>
     liveDisplay
     ? !displayNoVerdictMetrics.contains(metric.key) &&
-          !untrustedTrendVerdictMetrics.contains(metric.key)
+          !untrustedTrendVerdictMetrics.contains(metric.key) &&
+          (!metric.hasBaselineValue ||
+              exceedsDisplayClaimBar(
+                metric.key,
+                metric.currentScore,
+                metric.baselineScore,
+                noiseFloor: metric.currentNoiseFloor2sd,
+              ))
     : metric.showTrendVerdict && metric.key != 'localized_redness';
 
 /// True when, on the live results views, [metric] carries a trend lock
@@ -2486,6 +2493,22 @@ class _MetricCard extends StatelessWidget {
   _MetricRowData _buildMetricRowData() {
     final hasComparisonContext =
         showProgressComparison || metric.hasBaselineValue;
+    if (liveLockOverridesStatus(metric, liveDisplay: applyDisplayNoiseFloors)) {
+      return _MetricRowData(
+        baselineValue: metric.baselineScore,
+        currentValue: metric.currentScore,
+        trendDelta: null,
+        badgePercent: null,
+        badgeValueText: null,
+        subtext: '',
+        initialBaseline: !metric.hasBaselineValue,
+        honestyStatus: _HonestyStatus.noVerdict,
+        honestyLabel: 'Not comparable',
+        trendLocked: true,
+        hasRealBaseline: metric.hasBaselineValue,
+        hasComparableCurrentValue: metric.hasComparableCurrentValue,
+      );
+    }
     if (!hasComparisonContext && !_showVerdict) {
       return _MetricRowData(
         baselineValue: 0.0,

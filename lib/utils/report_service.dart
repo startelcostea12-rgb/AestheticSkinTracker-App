@@ -26,6 +26,7 @@ import '../models/scan_history.dart';
 import '../widgets/report_share_helper.dart' as rsh;
 import 'app_logger.dart';
 import 'app_prefs.dart';
+import 'display_noise_floors.dart';
 import 'procedure_intelligence.dart';
 import 'trend_label_resolver.dart';
 import 'report_disclaimer.dart';
@@ -38,6 +39,24 @@ String reportChangeText(double pct, {bool locked = false}) {
   if (locked) return '—';
   final magnitude = pct.abs().toStringAsFixed(1);
   return pct >= 0 ? '+$magnitude%' : '$magnitude%';
+}
+
+bool reportDisplayClaimAllowed(
+  String metricKey,
+  double baseline,
+  double current, {
+  String? lockReason,
+  double? noiseFloor,
+}) {
+  if (lockReason?.trim().isNotEmpty ?? false) return false;
+  final canonicalKey = shortMetricKeyToCanonical[metricKey] ?? metricKey;
+  final scale = shortMetricKeyToCanonical.containsKey(metricKey) ? 10.0 : 1.0;
+  return exceedsDisplayClaimBar(
+    canonicalKey,
+    current * scale,
+    baseline * scale,
+    noiseFloor: noiseFloor,
+  );
 }
 
 bool reportMetricHasSavedSource(
@@ -1026,6 +1045,7 @@ class ReportService {
                 latestRaw: scans.first.metrics,
                 trendStatus: _scanTrendStatusMap(scans.first),
                 trendLockReason: _scanTrendLockReasonMap(scans.first),
+                noiseFloors: _scanNoiseFloorMap(scans.first),
               ),
             ],
           ]),
@@ -1305,6 +1325,8 @@ class ReportService {
                 latestRaw: scans.first.metrics,
                 procedureType: metricProcedureType,
                 heroName: trackedDisplay.title,
+                trendLockReason: _scanTrendLockReasonMap(scans.first),
+                noiseFloors: _scanNoiseFloorMap(scans.first),
               ),
             ],
           ]),
@@ -1339,6 +1361,8 @@ class ReportService {
               procedureType: metricProcedureType,
               baselineRaw: scans.last.metrics,
               latestRaw: scans.first.metrics,
+              trendLockReason: _scanTrendLockReasonMap(scans.first),
+              noiseFloors: _scanNoiseFloorMap(scans.first),
             ),
           ],
 
@@ -1561,6 +1585,8 @@ class ReportService {
     String? procedureType,
     Map<String, double>? baselineRaw,
     Map<String, double>? latestRaw,
+    Map<String, String>? trendLockReason,
+    Map<String, double>? noiseFloors,
   }) {
     final allDefs = clinicalMetricsForProcedure(procedureType);
 
@@ -1599,15 +1625,31 @@ class ReportService {
       if (b == null || l == null) continue;
       final pct = metricPctChange(b, l, lowerIsBetter: def.lowerIsBetter);
       final isImprovement = pct >= 0;
-      final changeText = reportChangeText(pct);
-      final isImproving = isImprovement && pct.abs() > 0.5;
-      final isWorsening = !isImprovement && pct.abs() > 0.5;
-      final clinicalSig = isImproving
+      final canonicalKey =
+          shortMetricKeyToCanonical[def.sourceKey] ?? def.sourceKey;
+      final lock = trendLockReason?[canonicalKey];
+      final showClaim = reportDisplayClaimAllowed(
+        def.sourceKey,
+        b,
+        l,
+        lockReason: lock,
+        noiseFloor: noiseFloors?[canonicalKey],
+      );
+      final changeText = showClaim ? reportChangeText(pct) : '';
+      final isImproving = showClaim && isImprovement && pct.abs() > 0.5;
+      final isWorsening = showClaim && !isImprovement && pct.abs() > 0.5;
+      final clinicalSig = lock?.trim().isNotEmpty == true
+          ? 'Not comparable'
+          : !showClaim
+          ? ''
+          : isImproving
           ? 'Recorded change of ${pct.abs().toStringAsFixed(1)}%.'
           : isWorsening
           ? 'Decline of ${pct.abs().toStringAsFixed(1)}% - monitor closely.'
           : 'Stable measurement - within expected range.';
-      final recommendation = isImproving
+      final recommendation = !showClaim
+          ? ''
+          : isImproving
           ? 'Continue your current regimen.'
           : isWorsening
           ? 'Consult your provider for tailored recommendations.'
@@ -2401,6 +2443,19 @@ class ReportService {
     return source.map((key, value) => MapEntry(key, value.toString()));
   }
 
+  static Map<String, double> _scanNoiseFloorMap(ScanHistoryEntry? scan) {
+    final payload = scan?.rawPayload ?? const <String, dynamic>{};
+    final nested = _asDynamicMap(payload['luxeResultsPayload']);
+    final source = _asDynamicMap(
+      nested['metric_noise_floor_2sd'] ?? payload['metric_noise_floor_2sd'],
+    );
+    return {
+      for (final entry in source.entries)
+        if (double.tryParse(entry.value.toString()) case final double floor)
+          if (floor.isFinite) entry.key: floor,
+    };
+  }
+
   static pw.Widget _metricsTable(
     SkinMetrics baseline,
     SkinMetrics latest,
@@ -2415,6 +2470,7 @@ class ReportService {
     Map<String, double>? latestRaw,
     Map<String, String>? trendStatus,
     Map<String, String>? trendLockReason,
+    Map<String, double>? noiseFloors,
   }) {
     // Clinical color tokens (kept here to avoid extra params from caller).
     const navy = PdfColor.fromInt(0xFF1E2A3A);
@@ -2523,15 +2579,21 @@ class ReportService {
         trendStatus: backendTrendStatus,
         trendLockReason: backendTrendLockReason,
       );
-      final changeText = reportChangeText(
-        pct,
-        locked: resolvedTrend?.lockShortLabel != null,
+      final showClaim = reportDisplayClaimAllowed(
+        sourceKey ?? '',
+        b,
+        l,
+        lockReason: backendTrendLockReason,
+        noiseFloor: noiseFloors?[canonicalKey],
       );
-      final isImproving = resolvedTrend?.isImproved ?? false;
-      final isWorsening = resolvedTrend?.isWorsened ?? false;
-      final isStableVerdict = resolvedTrend?.isStable ?? false;
+      final changeText = showClaim ? reportChangeText(pct) : '';
+      final isImproving = showClaim && (resolvedTrend?.isImproved ?? false);
+      final isWorsening = showClaim && (resolvedTrend?.isWorsened ?? false);
+      final isStableVerdict = showClaim && (resolvedTrend?.isStable ?? false);
       final hasBackendVerdict = resolvedTrend != null;
-      final suggestion = isImproving
+      final suggestion = !showClaim
+          ? ''
+          : isImproving
           ? (row['suggestionImproving'] as String? ?? '')
           : isWorsening
           ? (row['suggestionWorsening'] as String? ?? '')
@@ -2547,7 +2609,11 @@ class ReportService {
       } else if (shortSuggestion.isNotEmpty && !shortSuggestion.endsWith('.')) {
         shortSuggestion = '$shortSuggestion.';
       }
-      final statusLabel = isImproving
+      final statusLabel = backendTrendLockReason?.trim().isNotEmpty == true
+          ? 'Not comparable'
+          : !showClaim
+          ? ''
+          : isImproving
           ? 'IMPROVING'
           : isWorsening
           ? 'DECLINING'
@@ -2665,6 +2731,8 @@ class ReportService {
     Map<String, double>? latestRaw,
     String? procedureType,
     String heroName = '',
+    Map<String, String>? trendLockReason,
+    Map<String, double>? noiseFloors,
   }) {
     const navy = PdfColor.fromInt(0xFF1E2A3A);
     const teal = PdfColor.fromInt(0xFF3E7C7E);
@@ -2679,6 +2747,16 @@ class ReportService {
       final b = def.valueFromRaw(baselineRaw ?? const {}, baseline);
       final l = def.valueFromRaw(latestRaw ?? const {}, latest);
       if (b == null || l == null) continue;
+      final canonicalKey =
+          shortMetricKeyToCanonical[def.sourceKey] ?? def.sourceKey;
+      if (!reportDisplayClaimAllowed(
+        def.sourceKey,
+        b,
+        l,
+        lockReason: trendLockReason?[canonicalKey],
+        noiseFloor: noiseFloors?[canonicalKey],
+      ))
+        continue;
       final pct = metricPctChange(b, l, lowerIsBetter: def.lowerIsBetter);
       if (pct > bestPct) {
         bestPct = pct;

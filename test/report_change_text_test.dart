@@ -23,6 +23,32 @@ void main() {
     final source = File('lib/utils/report_service.dart').readAsStringSync();
     expect('reportChangeText('.allMatches(source).length, 4); // 1 def + 3 uses
     expect(source, isNot(contains("? '+' : '-'")));
-    expect(source, contains('locked: resolvedTrend?.lockShortLabel != null'));
+    expect(source, contains('reportDisplayClaimAllowed('));
+    expect(source, contains("? 'Not comparable'"));
   });
+
+  test(
+    'PDF claims use the drift and existing floor without changing values',
+    () {
+      expect(reportDisplayClaimAllowed('pigment_load', 20, 25), isFalse);
+      expect(reportDisplayClaimAllowed('pigment_load', 20, 26), isTrue);
+      expect(reportDisplayClaimAllowed('darkSpots', 2, 2.5), isFalse);
+      expect(reportDisplayClaimAllowed('darkSpots', 2, 2.6), isTrue);
+      expect(
+        reportDisplayClaimAllowed('texture_smoothness', 20, 25.4),
+        isFalse,
+      );
+      expect(reportDisplayClaimAllowed('texture_smoothness', 20, 25.5), isTrue);
+      expect(reportDisplayClaimAllowed('wrinkle_load', 20, 90), isFalse);
+      expect(
+        reportDisplayClaimAllowed(
+          'pigment_load',
+          20,
+          90,
+          lockReason: 'lighting_mismatch',
+        ),
+        isFalse,
+      );
+    },
+  );
 }
