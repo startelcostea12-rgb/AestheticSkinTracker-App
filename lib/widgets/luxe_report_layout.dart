@@ -74,6 +74,7 @@ const Map<String, String> liveResultsShortLabels = <String, String>{
   'pore_visibility': 'Pores',
   'localized_redness': 'Redness',
   'wrinkle_load': 'Wrinkles',
+  'glabellar_wrinkle_depth': 'Elevens',
   'rosacea_severity': 'Rosacea',
   'diffuse_flushing_erythema': 'Flushing',
   'under_eye_dark_circle_density': 'Under-eye darkness',
@@ -341,6 +342,7 @@ class LuxeMetricParser {
     'texture_smoothness',
     'pore_visibility',
     'wrinkle_load',
+    'glabellar_wrinkle_depth',
     'pigment_load',
     'rosacea_severity',
     'diffuse_flushing_erythema',
@@ -526,6 +528,11 @@ class LuxeMetricParser {
         currentKeys: ['wrinkle_load'],
       ),
       _ServerMetricSpec(
+        deltaKey: 'glabellar_wrinkle_depth',
+        name: 'Elevens',
+        currentKeys: ['glabellar_wrinkle_depth'],
+      ),
+      _ServerMetricSpec(
         deltaKey: 'pigment_load',
         name: 'Pigment Load',
         currentKeys: [
@@ -575,7 +582,9 @@ class LuxeMetricParser {
       if (!_isDisplayableClinicalKey(key)) continue;
       final rawValue = _asDouble(entry.value);
       final allowZeroForCoreKeys =
-          key == 'localized_redness' || key == 'texture_smoothness';
+          key == 'localized_redness' ||
+          key == 'texture_smoothness' ||
+          key == 'glabellar_wrinkle_depth';
       if (!rawValue.isFinite || (!allowZeroForCoreKeys && rawValue <= 0.0)) {
         continue;
       }
@@ -992,13 +1001,7 @@ class LuxeMetricParser {
         ]);
         break;
       case 'wrinkle_load':
-        base.addAll([
-          'wrinkle_load',
-          'wrinkle',
-          'wrinkle_score',
-          'glabellar_wrinkle_depth',
-          'fine_lines',
-        ]);
+        base.addAll(['wrinkle_load', 'wrinkle', 'wrinkle_score', 'fine_lines']);
         break;
       case 'pore_visibility':
         break;

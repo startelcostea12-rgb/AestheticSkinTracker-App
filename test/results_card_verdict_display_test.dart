@@ -403,6 +403,7 @@ void main() {
 
   group('plain card wording', () {
     const trusted = <String>[
+      'glabellar_wrinkle_depth',
       'texture_smoothness',
       'pigment_load',
       'skin_tone_radiance_evenness',

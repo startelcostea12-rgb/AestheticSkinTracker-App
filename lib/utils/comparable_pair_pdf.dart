@@ -126,7 +126,7 @@ Future<Uint8List> buildComparablePairPdf(
             ),
             for (final entry in pair.lockReasons.entries)
               pw.Text(
-                '${entry.key.replaceAll('_', ' ')}: '
+                '${comparablePairMetricLabels[entry.key] ?? entry.key.replaceAll('_', ' ')}: '
                 '${entry.value.replaceAll('_', ' ')}',
               ),
           ],

@@ -8,7 +8,7 @@ library;
 import '../models/scan_history.dart';
 import 'ai_comparison_baseline.dart';
 
-/// The six metrics shown for a comparable pair (home card and PDF).
+/// Metrics shown for a comparable pair (home card and PDF).
 const List<String> comparablePairMetricKeys = <String>[
   'texture_smoothness',
   'pigment_load',
@@ -16,6 +16,7 @@ const List<String> comparablePairMetricKeys = <String>[
   'structural_firmness_elasticity',
   'pore_visibility',
   'localized_redness',
+  'glabellar_wrinkle_depth',
 ];
 
 const Map<String, String> comparablePairMetricLabels = <String, String>{
@@ -25,6 +26,7 @@ const Map<String, String> comparablePairMetricLabels = <String, String>{
   'structural_firmness_elasticity': 'Face Shape Stability',
   'pore_visibility': 'Pore visibility',
   'localized_redness': 'Redness',
+  'glabellar_wrinkle_depth': 'Elevens',
 };
 
 class ComparablePair {
@@ -101,7 +103,10 @@ ComparablePair? lastComparablePair(Iterable<ScanHistoryEntry> scans) {
       continue;
     }
     final locks = _lockReasons(scan);
-    if (comparablePairMetricKeys.any(locks.containsKey)) continue;
+    if (comparablePairMetricKeys
+        .where((key) => key != 'glabellar_wrinkle_depth')
+        .any(locks.containsKey))
+      continue;
     return ComparablePair(latest: scan, baseline: baseline, lockReasons: locks);
   }
   return ComparablePair(latest: aiScans.first);

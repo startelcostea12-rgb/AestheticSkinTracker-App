@@ -33,6 +33,7 @@ ScanHistoryEntry _scan(
       'pore_visibility': 13.1 + offset,
       'localized_redness': 8.4 + offset,
       'wrinkle_load': 28.0,
+      'glabellar_wrinkle_depth': 20.0 + offset,
     },
     'trend_lock_reasons': locks,
     aiComparisonBaselineScanIdKey: comparedWith,
@@ -115,7 +116,7 @@ void main() {
       );
     }
 
-    testWidgets('shows both timestamps, six absolute values and locks', (
+    testWidgets('shows both timestamps, seven absolute values and locks', (
       tester,
     ) async {
       await pump(
@@ -163,6 +164,37 @@ void main() {
       expect(find.text('No prior comparable scan.'), findsOneWidget);
       expect(find.text('Oct 3, 2026 · 9:30 AM'), findsOneWidget);
       expect(find.text('59.0'), findsOneWidget);
+    });
+
+    testWidgets('a locked Elevens row keeps the value and Not comparable', (
+      tester,
+    ) async {
+      final pair = lastComparablePair([
+        _scan('base', 1),
+        _scan(
+          'later',
+          2,
+          comparedWith: 'base',
+          offset: 7,
+          locks: {'glabellar_wrinkle_depth': 'lighting_mismatch'},
+        ),
+      ])!;
+      expect(pair.hasBaseline, isTrue);
+      await pump(tester, pair);
+      expect(find.text('Elevens'), findsOneWidget);
+      expect(find.text('27.0'), findsOneWidget);
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(
+                const ValueKey('last_pair_trend_glabellar_wrinkle_depth'),
+              ),
+            )
+            .data,
+        'Not comparable',
+      );
+      expect(find.textContaining('glabellar wrinkle depth'), findsNothing);
+      expect(find.textContaining('%'), findsNothing);
     });
   });
 

@@ -29,6 +29,7 @@ ScanHistoryEntry _scan(
       'structural_firmness_elasticity': 50.5 + offset,
       'pore_visibility': 13.1 + offset,
       'localized_redness': 8.4 + offset,
+      'glabellar_wrinkle_depth': 20.0 + offset,
     },
     'trend_status': {'texture_smoothness': 'improved'},
     'trend_deltas': {'texture_smoothness': 12.5},
@@ -52,7 +53,7 @@ Future<({String raw, String text})> _pdf(ComparablePair pair) async {
 
 void main() {
   test(
-    'one page with clinic, both dates, six values and lock reasons',
+    'one page with clinic, both dates, seven values and lock reasons',
     () async {
       final pair = lastComparablePair([
         _scan('base', 1),
@@ -77,6 +78,8 @@ void main() {
         '60.0',
         '8.4',
         '9.4',
+        '20.0',
+        '21.0',
         'wrinkle load: region position mismatch',
       ]) {
         expect(text, contains(expected), reason: expected);
@@ -98,6 +101,26 @@ void main() {
     for (final arrow in ['->', '<-', '+']) {
       expect(text, isNot(contains(arrow)), reason: arrow);
     }
+  });
+
+  test('locked Elevens retains the pair and its report row', () async {
+    final pair = lastComparablePair([
+      _scan('base', 1),
+      _scan(
+        'later',
+        2,
+        comparedWith: 'base',
+        offset: 7,
+        locks: {'glabellar_wrinkle_depth': 'lighting_mismatch'},
+      ),
+    ])!;
+    expect(pair.hasBaseline, isTrue);
+    final text = (await _pdf(pair)).text;
+    expect(text, contains('Elevens Not comparable'));
+    expect(text, contains('27.0'));
+    expect(text.toLowerCase(), isNot(contains('glabellar wrinkle depth')));
+    expect(text, isNot(contains('Improved')));
+    expect(text, isNot(contains('%')));
   });
 
   test('a locked report row says only Not comparable', () async {

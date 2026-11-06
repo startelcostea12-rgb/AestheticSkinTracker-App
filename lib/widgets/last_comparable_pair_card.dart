@@ -155,7 +155,7 @@ class LastComparablePairCard extends StatelessWidget {
           if (pair.lockReasons.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text(
-              'Locks on this scan: ${pair.lockReasons.entries.map((e) => '${e.key.replaceAll('_', ' ')} (${lockReasonText(e.value)})').join('; ')}',
+              'Locks on this scan: ${pair.lockReasons.entries.map((e) => '${comparablePairMetricLabels[e.key] ?? e.key.replaceAll('_', ' ')} (${lockReasonText(e.value)})').join('; ')}',
               key: const ValueKey('last_pair_lock_reasons'),
               style: TextStyle(
                 color: ink.withValues(alpha: 0.75),

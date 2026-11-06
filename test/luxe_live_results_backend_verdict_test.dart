@@ -1381,10 +1381,8 @@ void main() {
         };
         expect(displayVerdictNoiseFloors, floors);
         expect(displayStableFloorMetrics, floors.keys.toSet());
-        // glabellar_wrinkle_depth and sebum_excess_oil_gloss get no card on
-        // this layout (the parser emits none), so their floors only reach the
-        // export.
-        const noCard = {'glabellar_wrinkle_depth', 'sebum_excess_oil_gloss'};
+        // Sebum has no card on this layout; its floor still reaches the export.
+        const noCard = {'sebum_excess_oil_gloss'};
         expect(
           LuxeMetricParser.parseTimelinePayload({
             'metric_matrix': {for (final key in floors.keys) key: 30.0},

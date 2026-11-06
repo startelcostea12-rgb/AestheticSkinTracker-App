@@ -94,6 +94,18 @@ void main() {
 
   final cases = [
     (
+      key: 'glabellar_wrinkle_depth',
+      move: 6.4,
+      status: 'worsened',
+      label: null,
+    ),
+    (
+      key: 'glabellar_wrinkle_depth',
+      move: 7.0,
+      status: 'worsened',
+      label: 'Worsened',
+    ),
+    (
       key: 'skin_tone_radiance_evenness',
       move: 0.8,
       status: 'improved',
@@ -199,6 +211,70 @@ void main() {
       );
     });
   }
+
+  testWidgets('a measured-zero Elevens card renders under its short label', (
+    tester,
+  ) async {
+    final payload = _payload('glabellar_wrinkle_depth', 0, 'stable');
+    payload['metric_matrix'] = {'glabellar_wrinkle_depth': 0.0};
+    payload['baseline_metric_matrix'] = {'glabellar_wrinkle_depth': 0.0};
+    await _results(tester, payload);
+    final text = _cardText(tester, 'glabellar_wrinkle_depth');
+    expect(text, contains('Elevens'));
+    expect(text, contains('0.0'));
+    expect(text, isNot(contains('Glabellar Wrinkle Depth')));
+    expect(text, isNot(contains('Stable')));
+    expect(text, isNot(contains('%')));
+  });
+
+  test(
+    'Elevens is independent from the wrinkles baseline and has no drift entry',
+    () {
+      final metrics = LuxeMetricParser.parseTimelinePayload({
+        'metric_matrix': {'wrinkle_load': 40.0, 'glabellar_wrinkle_depth': 0.0},
+        'baseline_metric_matrix': {'glabellar_wrinkle_depth': 20.0},
+      });
+      final wrinkles = metrics.singleWhere(
+        (metric) => metric.key == 'wrinkle_load',
+      );
+      final elevens = metrics.singleWhere(
+        (metric) => metric.key == 'glabellar_wrinkle_depth',
+      );
+      expect(wrinkles.hasBaselineValue, isFalse);
+      expect(wrinkles.hasStoredBaselineValue, isFalse);
+      expect(elevens.name, 'Elevens');
+      expect(elevens.currentScore, 0.0);
+      expect(elevens.baselineScore, 20.0);
+      expect(displayVerdictNoiseFloors['glabellar_wrinkle_depth'], 6.4);
+      expect(
+        lampScanDriftSpans.containsKey('glabellar_wrinkle_depth'),
+        isFalse,
+      );
+    },
+  );
+
+  testWidgets('a locked Elevens row stays Not comparable', (tester) async {
+    final payload = _payload(
+      'glabellar_wrinkle_depth',
+      7,
+      'improved',
+      lock: 'lighting_mismatch',
+    );
+    await _results(tester, payload);
+    final text = _cardText(tester, 'glabellar_wrinkle_depth');
+    expect(text, contains('Not comparable'));
+    expect(text, isNot(contains('Glabellar Wrinkle Depth')));
+    expect(text, isNot(contains('Improved')));
+    expect(text, isNot(contains('Stable')));
+    expect(text, isNot(contains('%')));
+    expect(
+      progressTrendLabel(
+        _pair(payload, 'glabellar_wrinkle_depth'),
+        'glabellar_wrinkle_depth',
+      ),
+      'Not comparable',
+    );
+  });
 
   testWidgets('a locked row without a stored baseline stays Not comparable', (
     tester,
