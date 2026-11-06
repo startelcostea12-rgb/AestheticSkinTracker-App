@@ -54,7 +54,7 @@ Rect? faceRectInCoverViewport({
     (sourceFaceRect.bottom * scale + offsetY) / viewportSize.height,
   );
   final visible = mapped.intersect(const Rect.fromLTWH(0, 0, 1, 1));
-  return visible.isEmpty ? null : visible;
+  return visible.isEmpty ? null : mapped;
 }
 
 List<SkinHeatmapSpot> faceAnchoredLaserSpots({

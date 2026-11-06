@@ -155,6 +155,33 @@ void main() {
     },
   );
 
+  test('portrait cover crop preserves the full face box and spot anchors', () {
+    final faceRect = faceRectInCoverViewport(
+      sourceFaceRect: const Rect.fromLTRB(20, 20, 80, 180),
+      sourceSize: const Size(100, 200),
+      viewportSize: const Size.square(100),
+    );
+    expect(faceRect, const Rect.fromLTRB(0.2, -0.3, 0.8, 1.3));
+
+    final spots = faceAnchoredLaserSpots(
+      faceRect: faceRect,
+      redness: 1,
+      wrinkles: 1,
+      improvement: 1,
+    );
+    final foreheadSpots = spots.where(
+      (spot) => spot.tone == SkinHeatmapTone.wrinkles,
+    );
+    expect(foreheadSpots, hasLength(2));
+    for (final forehead in foreheadSpots) {
+      expect((forehead.alignment.y + 1) / 2, closeTo(0.084, 1e-9));
+    }
+    final chin = spots.singleWhere(
+      (spot) => spot.tone == SkinHeatmapTone.improvement,
+    );
+    expect((chin.alignment.y + 1) / 2, closeTo(1.076, 1e-9));
+  });
+
   test('no detected face means no laser stencil spots', () {
     expect(
       faceAnchoredLaserSpots(
