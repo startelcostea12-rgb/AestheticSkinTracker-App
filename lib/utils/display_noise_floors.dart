@@ -9,9 +9,44 @@
 /// it keeps its own verdict. Any other metric listed here would show its
 /// number with no verdict and no percent at or below the floor.
 ///
-/// Texture, pigment, radiance and pores use the same floors as the saved
-/// trend status (measuredStableNoiseFloors), so the card and the export
-/// agree; these are also the floors exported as <metric>_noise_floor.
+/// The directional display floors below are for cards and summaries only;
+/// at or below them an existing verdict reads Stable with no percentage.
+/// They do not change saved comparison floors or CSV metadata.
+const Map<String, double> directionalDisplayNoiseFloors = <String, double>{
+  'texture_smoothness': 4.0,
+  'pigment_load': 3.0,
+  'pore_visibility': 4.0,
+  'skin_tone_radiance_evenness': 4.0,
+  'structural_firmness_elasticity': 5.0,
+};
+
+bool isWithinDirectionalDisplayNoise(
+  String key,
+  double current,
+  double baseline,
+) {
+  final floor = directionalDisplayNoiseFloors[key];
+  return floor != null && (current - baseline).abs() <= floor;
+}
+
+bool hasWideDisplayFrameRange({
+  double? min,
+  double? max,
+  double? noiseFloor,
+  int? contributors,
+}) =>
+    contributors != null &&
+    contributors >= 2 &&
+    min != null &&
+    max != null &&
+    noiseFloor != null &&
+    min.isFinite &&
+    max.isFinite &&
+    noiseFloor.isFinite &&
+    max - min > noiseFloor;
+
+/// Existing display/CSV noise-floor metadata, independent of the visual
+/// directional suppression above.
 const Map<String, double> displayVerdictNoiseFloors = <String, double>{
   'pigment_load': 3.0,
   'pore_visibility': 3.0,

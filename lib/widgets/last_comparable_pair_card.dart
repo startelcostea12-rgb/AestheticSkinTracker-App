@@ -1,5 +1,5 @@
 // Home primary card: the last comparable pair of AI scans (or the latest
-// scan alone), absolute values only -- no arrows and no percentages.
+// scan alone), absolute values and display-gated labels -- no arrows or percentages.
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../app_theme.dart';
 import 'home_section_style.dart';
 import '../utils/last_comparable_pair.dart';
+import '../utils/progress_summary.dart';
 
 class LastComparablePairCard extends StatelessWidget {
   const LastComparablePairCard({
@@ -108,12 +109,26 @@ class LastComparablePairCard extends StatelessWidget {
                   children: [
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Text(
-                        comparablePairMetricLabels[key]!,
-                        style: const TextStyle(
-                          color: ink,
-                          fontWeight: FontWeight.w700,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            comparablePairMetricLabels[key]!,
+                            style: const TextStyle(
+                              color: ink,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          if (progressTrendLabel(pair, key) case final label?)
+                            Text(
+                              label,
+                              key: ValueKey('last_pair_trend_$key'),
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: ink.withValues(alpha: 0.7),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                     Padding(

@@ -67,7 +67,7 @@ void main() {
     expect(progressTrendLabel(pair, 'texture_smoothness'), 'Stable');
     // Below its 3.0 display floor: Stable, as on the live card.
     expect(progressTrendLabel(pair, 'pigment_load'), 'Stable');
-    expect(progressTrendLabel(pair, 'pore_visibility'), 'Worsened');
+    expect(progressTrendLabel(pair, 'pore_visibility'), 'Stable');
     // Not a valid verdict: insufficient signal / no status.
     expect(progressTrendLabel(pair, 'skin_tone_radiance_evenness'), isNull);
     expect(progressTrendLabel(pair, 'structural_firmness_elasticity'), isNull);
@@ -88,7 +88,7 @@ void main() {
       ),
       baseline: scans.first,
     );
-    expect(progressTrendLabel(locked, 'texture_smoothness'), isNull);
+    expect(progressTrendLabel(locked, 'texture_smoothness'), 'Not comparable');
     final alone = ComparablePair(latest: scans.last);
     expect(progressTrendLabel(alone, 'texture_smoothness'), isNull);
     // A pair with a lock on a shown metric is never the summary's pair.

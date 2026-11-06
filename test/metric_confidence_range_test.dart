@@ -208,13 +208,13 @@ void main() {
           home: Scaffold(
             body: LuxeReportLayout(
               rawPayload: {
-                'metric_matrix': {'localized_redness': 44.0},
-                'metric_confidence': {'localized_redness': 'high'},
+                'metric_matrix': {'texture_smoothness': 44.0},
+                'metric_confidence': {'texture_smoothness': 'high'},
                 'multi_frame_analysis': {
                   'requested_frames': 3,
-                  'metric_contributor_counts': {'localized_redness': 3},
+                  'metric_contributor_counts': {'texture_smoothness': 3},
                   'metric_ranges': {
-                    'localized_redness': {
+                    'texture_smoothness': {
                       'min': 42.0,
                       'max': 45.0,
                       'count': 3,
@@ -240,8 +240,8 @@ void main() {
             home: Scaffold(
               body: LuxeReportLayout(
                 rawPayload: {
-                  'metric_matrix': {'localized_redness': 44.0},
-                  'metric_confidence': {'localized_redness': 'medium'},
+                  'metric_matrix': {'texture_smoothness': 44.0},
+                  'metric_confidence': {'texture_smoothness': 'medium'},
                 },
               ),
             ),

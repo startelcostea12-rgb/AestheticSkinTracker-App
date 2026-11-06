@@ -10,8 +10,6 @@ import 'display_noise_floors.dart';
 import 'last_comparable_pair.dart';
 
 String? progressTrendLabel(ComparablePair pair, String key) {
-  final baseline = pair.baseline;
-  if (baseline == null) return null;
   if (displayNoVerdictMetrics.contains(key)) return null;
   final payload = pair.latest.rawPayload ?? const <String, dynamic>{};
   Map<dynamic, dynamic> node(String name) {
@@ -23,7 +21,27 @@ String? progressTrendLabel(ComparablePair pair, String key) {
   }
 
   final lock = node('trend_lock_reasons')[key]?.toString().trim() ?? '';
-  if (lock.isNotEmpty) return null;
+  if (lock.isNotEmpty) return 'Not comparable';
+  if (pair.baseline == null) return null;
+  double? number(dynamic value) {
+    final parsed = value is num ? value.toDouble() : double.tryParse('$value');
+    return parsed != null && parsed.isFinite ? parsed : null;
+  }
+
+  final multiFrame = node('multi_frame_analysis');
+  final ranges = multiFrame['metric_ranges'];
+  final range = ranges is Map && ranges[key] is Map
+      ? ranges[key] as Map
+      : const {};
+  final counts = multiFrame['metric_contributor_counts'];
+  final count = counts is Map ? counts[key] : range['count'];
+  if (hasWideDisplayFrameRange(
+    min: number(range['min']),
+    max: number(range['max']),
+    noiseFloor: number(node('metric_noise_floor_2sd')[key]),
+    contributors: number(count)?.toInt(),
+  ))
+    return 'Not comparable';
   final status = node('trend_status')[key]?.toString().trim().toLowerCase();
   if (status != 'improved' && status != 'worsened' && status != 'stable') {
     return null;
@@ -33,6 +51,10 @@ String? progressTrendLabel(ComparablePair pair, String key) {
   if (current == null || previous == null) return null;
   if (previous == 0.0 && current != 0.0) return null;
   if (status == 'stable') return 'Stable';
+  if (isWithinDirectionalDisplayNoise(key, current, previous)) return 'Stable';
+  if (directionalDisplayNoiseFloors.containsKey(key)) {
+    return status == 'improved' ? 'Improved' : 'Worsened';
+  }
   final floor = displayVerdictNoiseFloors[key];
   if (floor != null &&
       displayStableFloorMetrics.contains(key) &&

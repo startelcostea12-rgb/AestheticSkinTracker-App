@@ -81,7 +81,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Localized Redness'), findsOneWidget);
-    expect(find.textContaining('Current Clear (0.0)'), findsWidgets);
+    expect(find.textContaining('0.0'), findsWidgets);
   });
 
   testWidgets('zero baseline compares without a percentage', (tester) async {
@@ -114,7 +114,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Baseline 0.0'), findsWidgets);
+    expect(LuxeMetricParser.parseTimelinePayload(payload).single.baselineScore, 0.0);
+    expect(find.textContaining('2.3'), findsWidgets);
     final rednessCard = find.byKey(
       const ValueKey('result_metric_localized_redness'),
     );

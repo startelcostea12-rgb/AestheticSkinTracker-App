@@ -392,7 +392,7 @@ void main() {
     expect(
       find.descendant(
         of: card,
-        matching: find.text('Stable - change within tracking noise'),
+        matching: find.text('Not comparable'),
       ),
       findsWidgets,
     );
@@ -411,7 +411,7 @@ void main() {
     (tester) async {
       final payload = basePayload(
         baseline: 8.0,
-        current: 12.0,
+        current: 12.1,
         metricKey: 'pore_visibility',
         trendStatus: {'pore_visibility': 'worsened'},
         trendDeltas: {'pore_visibility': 50.0},
@@ -533,7 +533,7 @@ void main() {
     expect(
       find.descendant(
         of: card,
-        matching: find.text('No verdict for this metric'),
+        matching: find.text('Not comparable'),
       ),
       findsOneWidget,
     );
@@ -587,7 +587,7 @@ void main() {
     expect(
       find.descendant(
         of: card,
-        matching: find.textContaining('Not comparable:'),
+        matching: find.textContaining('Not comparable'),
       ),
       findsOneWidget,
     );
@@ -677,7 +677,7 @@ void main() {
         of: card,
         matching: find.text('Stable - change within tracking noise'),
       ),
-      findsWidgets,
+      findsNothing,
     );
     expect(
       find.descendant(
@@ -711,7 +711,7 @@ void main() {
     final card = find.byKey(const ValueKey('result_metric_localized_redness'));
     expect(
       find.descendant(of: card, matching: find.text('Improved')),
-      findsWidgets,
+      findsNothing,
     );
     expect(
       find.descendant(
@@ -749,7 +749,7 @@ void main() {
         of: card,
         matching: find.text('No verdict for this metric'),
       ),
-      findsOneWidget,
+      findsNothing,
     );
   });
 
@@ -769,7 +769,7 @@ void main() {
     expect(
       find.descendant(
         of: card,
-        matching: find.textContaining('Not comparable:'),
+        matching: find.textContaining('Not comparable'),
       ),
       findsOneWidget,
     );
@@ -783,7 +783,7 @@ void main() {
   });
 
   testWidgets(
-    'firmness hides a 3-point change but preserves a 5-point verdict',
+    'firmness is Stable inside five points and directional above five',
     (tester) async {
       Future<void> pumpFirmness(double current) async {
         await tester.pumpWidget(
@@ -815,17 +815,17 @@ void main() {
       expect(
         find.descendant(
           of: card,
-          matching: find.text('No verdict for this metric'),
+          matching: find.text('Stable - change within tracking noise'),
         ),
         findsOneWidget,
       );
 
-      await pumpFirmness(45.0);
+      await pumpFirmness(46.0);
       card = find.byKey(
         const ValueKey('result_metric_structural_firmness_elasticity'),
       );
       expect(
-        find.descendant(of: card, matching: find.textContaining('45.0')),
+        find.descendant(of: card, matching: find.textContaining('46.0')),
         findsWidgets,
       );
       expect(
@@ -835,7 +835,7 @@ void main() {
     },
   );
 
-  testWidgets('pigment under a 2-point move keeps its verdict', (tester) async {
+  testWidgets('pigment inside three points is Stable', (tester) async {
     await tester.pumpWidget(
       harness(
         basePayload(
@@ -854,7 +854,7 @@ void main() {
       findsWidgets,
     );
     expect(
-      find.descendant(of: card, matching: find.text('Worsened')),
+      find.descendant(of: card, matching: find.text('Stable - change within tracking noise')),
       findsWidgets,
     );
     expect(
@@ -880,7 +880,7 @@ void main() {
       expect(
         find.descendant(
           of: rednessCard,
-          matching: find.textContaining('Not comparable:'),
+          matching: find.textContaining('Not comparable'),
         ),
         findsOneWidget,
       );
@@ -890,7 +890,7 @@ void main() {
         expect(
           find.descendant(
             of: card,
-            matching: find.textContaining('Not comparable:'),
+            matching: find.textContaining('Not comparable'),
           ),
           findsNothing,
         );
@@ -909,7 +909,7 @@ void main() {
         }
         if (key == 'pigment_load') {
           expect(
-            find.descendant(of: card, matching: find.text('Improved')),
+            find.descendant(of: card, matching: find.text('Stable - change within tracking noise')),
             findsOneWidget,
           );
         }
@@ -1103,7 +1103,7 @@ void main() {
         );
         expect(
           find.descendant(of: card, matching: find.text('Worsened')),
-          findsWidgets,
+          findsNothing,
         );
       });
     },
@@ -1153,7 +1153,7 @@ void main() {
       );
       expect(poreCard, findsOneWidget);
       expect(
-        find.descendant(of: poreCard, matching: find.text('Worsened')),
+        find.descendant(of: poreCard, matching: find.text('Stable - change within tracking noise')),
         findsWidgets,
       );
     }
@@ -1393,8 +1393,9 @@ void main() {
       // an untrusted metric, shows no verdict on the live cards at all
       // (covered in results_card_verdict_display_test.dart).
       const noVerdictOnCard = {'diffuse_flushing_erythema'};
-      for (final MapEntry(key: key, value: floor) in floors.entries) {
+      for (final MapEntry(key: key, value: storedFloor) in floors.entries) {
         if (noCard.contains(key) || noVerdictOnCard.contains(key)) continue;
+        final floor = directionalDisplayNoiseFloors[key] ?? storedFloor;
         await tester.pumpWidget(
           liveHarness(
             basePayload(
@@ -1432,21 +1433,21 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(
-          inCard(key, find.text('Worsened')),
+          inCard(key, find.text('Stable - change within tracking noise')),
           findsWidgets,
           reason: '$key at its floor',
         );
       }
     });
 
-    testWidgets('texture: 5.3 points stays Stable, 5.4 keeps its verdict', (
+    testWidgets('texture: 3.9 points stays Stable, 4.1 keeps its verdict', (
       tester,
     ) async {
       await tester.pumpWidget(
         liveHarness(
           basePayload(
             baseline: 10.0,
-            current: 15.3,
+            current: 13.9,
             metricKey: 'texture_smoothness',
             trendStatus: {'texture_smoothness': 'improved'},
             trendDeltas: {'texture_smoothness': 5.8},
@@ -1471,7 +1472,7 @@ void main() {
         liveHarness(
           basePayload(
             baseline: 10.0,
-            current: 15.4,
+            current: 14.1,
             metricKey: 'texture_smoothness',
             trendStatus: {'texture_smoothness': 'improved'},
             trendDeltas: {'texture_smoothness': 5.0},
@@ -1486,7 +1487,7 @@ void main() {
       );
     });
 
-    testWidgets('radiance: 3.9 points stays Stable, 4.0 keeps its verdict', (
+    testWidgets('radiance: 3.9 points stays Stable, 4.1 keeps its verdict', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -1521,7 +1522,7 @@ void main() {
         liveHarness(
           basePayload(
             baseline: 30.0,
-            current: 34.0,
+            current: 34.1,
             metricKey: 'skin_tone_radiance_evenness',
             trendStatus: {'skin_tone_radiance_evenness': 'improved'},
             trendDeltas: {'skin_tone_radiance_evenness': 15.0},
@@ -1584,7 +1585,7 @@ void main() {
       );
     });
 
-    testWidgets('pores and pigment: 2.9 stays Stable, 3.0 keeps its verdict', (
+    testWidgets('pores and pigment are Stable inside their display floors', (
       tester,
     ) async {
       for (final key in const ['pore_visibility', 'pigment_load']) {
@@ -1618,7 +1619,7 @@ void main() {
         liveHarness(
           basePayload(
             baseline: 30.0,
-            current: 27.0,
+            current: 25.9,
             metricKey: 'pore_visibility',
             trendStatus: {'pore_visibility': 'improved'},
             trendDeltas: {'pore_visibility': 8.7},
@@ -1680,10 +1681,6 @@ void main() {
             find.byKey(ValueKey('result_metric_$key')),
             findsNothing,
           );
-          continue;
-        }
-        if (key == 'wrinkle_load' || key == 'localized_redness') {
-          expect(inCard(key, find.text('Worsened')), findsWidgets);
           continue;
         }
         expect(

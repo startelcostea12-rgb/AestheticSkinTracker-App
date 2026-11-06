@@ -116,10 +116,7 @@ void main() {
           );
           final text = _cardText(tester, 'localized_redness');
           expect(text, contains((10.0 + move).toStringAsFixed(1)));
-          expect(_verdictWords.hasMatch(text), move > 5);
-          if (move > 5) {
-            expect(text.toLowerCase(), contains(status));
-          }
+          expect(_verdictWords.hasMatch(text), isFalse);
         });
       }
     }
@@ -188,10 +185,7 @@ void main() {
           );
           final text = _cardText(tester, 'wrinkle_load');
           expect(text, contains((20.0 + move).toStringAsFixed(1)));
-          expect(_verdictWords.hasMatch(text), move > 4);
-          if (move > 4) {
-            expect(text.toLowerCase(), contains(status));
-          }
+          expect(_verdictWords.hasMatch(text), isFalse);
         });
       }
     }
@@ -235,7 +229,10 @@ void main() {
           expect(card, findsNothing);
         } else {
           expect(card, findsOneWidget);
-          expect(_cardText(tester, 'wrinkle_load'), contains('Worsened'));
+          expect(
+            _verdictWords.hasMatch(_cardText(tester, 'wrinkle_load')),
+            isFalse,
+          );
         }
       });
     }

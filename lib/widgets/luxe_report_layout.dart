@@ -38,11 +38,6 @@ String? storedBaselineLabelFor(LuxeMetric metric) {
 bool shouldShowTrendVerdict(String metricKey) =>
     !metricsWithHiddenTrendVerdicts.contains(metricKey);
 
-const Map<String, double> measuredNoiseVerdictMinimumChanges = {
-  'wrinkle_load': 4.0,
-  'localized_redness': 5.0,
-};
-
 /// Whether [metric]'s card shows a trend verdict. On the live results views
 /// ([liveDisplay], i.e. applyDisplayNoiseFloors) this is decided by
 /// displayNoVerdictMetrics plus the untrusted metrics
@@ -50,11 +45,10 @@ const Map<String, double> measuredNoiseVerdictMinimumChanges = {
 /// never show a verdict; elsewhere by [LuxeMetric.showTrendVerdict].
 /// Display only: parsing (including baseline selection) is unchanged.
 bool showsTrendVerdictOnCard(LuxeMetric metric, {required bool liveDisplay}) =>
-    measuredNoiseVerdictMinimumChanges.containsKey(metric.key) ||
-    (liveDisplay
-        ? !displayNoVerdictMetrics.contains(metric.key) &&
-              !untrustedTrendVerdictMetrics.contains(metric.key)
-        : metric.showTrendVerdict);
+    liveDisplay
+    ? !displayNoVerdictMetrics.contains(metric.key) &&
+          !untrustedTrendVerdictMetrics.contains(metric.key)
+    : metric.showTrendVerdict && metric.key != 'localized_redness';
 
 /// True when, on the live results views, [metric] carries a trend lock
 /// reason. Such a metric shows only "Not comparable" even if a directional
@@ -1177,13 +1171,15 @@ String? _repeatNoiseHideReason({
   // (and the older firmness small-move rule below does not apply). For the
   // other floored metrics, a move at or below the floor shows no verdict.
   final normalizedKey = metricKey.trim().toLowerCase();
-  final minimumChange = measuredNoiseVerdictMinimumChanges[normalizedKey];
-  if (minimumChange != null && hasRealBaseline) {
-    if ((current - baseline).abs() <= minimumChange) {
-      return _hideReasonDisplayFloor;
-    }
-    return normalizedKey == 'localized_redness' && current <= 0.0
-        ? _hideReasonRednessZero
+  if (directionalDisplayNoiseFloors.containsKey(normalizedKey) &&
+      hasRealBaseline) {
+    final hasVerdict =
+        status == _HonestyStatus.improved ||
+        status == _HonestyStatus.worsened ||
+        status == _HonestyStatus.stable;
+    if (!hasVerdict) return null;
+    return isWithinDirectionalDisplayNoise(normalizedKey, current, baseline)
+        ? _displayStableBelowFloor
         : null;
   }
   final displayFloor = applyDisplayNoiseFloors
@@ -1258,18 +1254,21 @@ const Set<String> _trustedVerdictMetricKeys = <String>{
 
 bool _hasFrameSpreadAboveNoiseBand(LuxeMetric metric) {
   if (metric.usesBackendTrend &&
-      _trustedVerdictMetricKeys.contains(metric.key.trim().toLowerCase())) {
+      _trustedVerdictMetricKeys.contains(metric.key.trim().toLowerCase()) &&
+      !directionalDisplayNoiseFloors.containsKey(
+        metric.key.trim().toLowerCase(),
+      )) {
     return false;
   }
   final min = metric.currentRangeMin;
   final max = metric.currentRangeMax;
   final noiseFloor = metric.currentNoiseFloor2sd;
-  if (metric.contributorCount == null || metric.contributorCount! < 2) {
-    return false;
-  }
-  if (min == null || max == null || noiseFloor == null) return false;
-  if (!min.isFinite || !max.isFinite || !noiseFloor.isFinite) return false;
-  return max - min > noiseFloor;
+  return hasWideDisplayFrameRange(
+    min: min,
+    max: max,
+    noiseFloor: noiseFloor,
+    contributors: metric.contributorCount,
+  );
 }
 
 class _HonestyAssessment {
@@ -1475,7 +1474,7 @@ _HonestyAssessment _assessMetricHonesty({
   } else if (!hasRealBaseline) {
     status = _HonestyStatus.stable;
     reason = 'Starting point';
-  } else if (requireBackendVerdict && normalizedMetricKey != 'wrinkle_load') {
+  } else if (requireBackendVerdict) {
     status = _HonestyStatus.noVerdict;
     reason = 'No backend verdict supplied';
   } else if (pathUnknown) {
@@ -2076,7 +2075,7 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
       if (assessment.lockReason == null &&
           _hasFrameSpreadAboveNoiseBand(metric)) {
         statements.add(
-          '$metricName: No verdict for this metric '
+          '$metricName: Not comparable '
           '(${_noVerdictReasonText(metric, _noVerdictReasonFrameSpread)}).',
         );
         continue;
@@ -2514,7 +2513,6 @@ class _MetricCard extends StatelessWidget {
       // still wins.
       final lockReason = metric.backendTrendLockReason?.trim() ?? '';
       final locked =
-          applyDisplayNoiseFloors &&
           hasBaseline &&
           metric.hasComparableCurrentValue &&
           lockReason.isNotEmpty;
@@ -2662,7 +2660,8 @@ class _MetricCard extends StatelessWidget {
       // Live views: a locked card says only "Not comparable".
       honestyLabel:
           sharedLockOnCard ||
-              (applyDisplayNoiseFloors && assessment.lockReason != null)
+              (applyDisplayNoiseFloors && assessment.lockReason != null) ||
+              assessment.reason == _noVerdictReasonFrameSpread
           ? 'Not comparable'
           : honestyLabel,
       trendLocked: assessment.lockReason != null,
