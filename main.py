@@ -3167,25 +3167,34 @@ def _compute_zone_based_metrics(
                 baseline_p95_a=baseline_a_p95,
             )
     else:
-        redness_signal = max(side_spreads, default=0.0)
+        # First-scan / no stored a_p95: use the same both-cheek U-zone
+        # pixels as follow-ups. The score is U-zone p95 minus U-zone p10,
+        # with the existing first-scan dead zone and multiplier. Do not use
+        # the redder cheek alone.
+        if np.any(u_zone_pixels):
+            u_zone_p10 = float(
+                np.percentile(
+                    a_blur[u_zone_pixels],
+                    LOCALIZED_REDNESS_SELF_BASELINE_PERCENTILE,
+                )
+            )
+            redness_signal = p95_a - u_zone_p10
+        else:
+            redness_signal = 0.0
         if redness_diagnostics is not None:
             redness_diagnostics["branch"] = "within_cheek_spread"
             redness_diagnostics["baseline_p95_a"] = None
-            if side_spreads:
-                # max() keeps the first maximum, so ties resolve to the same
-                # cheek (left before right) the formula's value came from.
-                winner = side_spreads.index(redness_signal)
-                redness_diagnostics.update(
-                    cheek_side=side_names[winner],
-                    mask=side_masks[winner],
-                    p95_a_after_wb=side_p95s[winner],
-                )
+            redness_diagnostics.update(
+                cheek_side="both",
+                mask=u_zone_pixels,
+                p95_a_after_wb=p95_a,
+            )
         _redness_result = compute_localized_redness_and_rosacea(
             redness_signal,
             0.0,
             diffuse_density,
         )
-        redness_reference_source = "self_cheek_p10"
+        redness_reference_source = "self_u_zone_p10"
     if redness_diagnostics is not None:
         diag_mask = redness_diagnostics.get("mask")
         diag_pixels = int(np.count_nonzero(diag_mask)) if diag_mask is not None else 0
@@ -7870,6 +7879,8 @@ def analyze_skin_patch(
         cheek_side = redness_diagnostics.get("cheek_side")
         if cheek_side in {"left", "right"}:
             redness_mask_kind = f"{cheek_side}_cheek"
+        elif cheek_side == "both":
+            redness_mask_kind = "u_zone"
     elif redness_branch == "baseline_p95_anchor":
         redness_mask_kind = "u_zone"
 

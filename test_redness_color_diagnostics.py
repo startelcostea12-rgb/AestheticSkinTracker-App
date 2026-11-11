@@ -161,7 +161,7 @@ def _zone_fixture():
     return face, skin, regions
 
 
-def test_within_cheek_spread_branch_reports_the_winning_cheek():
+def test_first_scan_redness_uses_both_cheeks_not_the_winning_cheek():
     face, skin, regions = _zone_fixture()
     points = np.zeros((0, 2), dtype=np.float32)
     plain = main._compute_zone_based_metrics(face, skin, regions, points)
@@ -172,26 +172,74 @@ def test_within_cheek_spread_branch_reports_the_winning_cheek():
     assert logged == plain
 
     assert diagnostics["branch"] == "within_cheek_spread"
-    assert diagnostics["cheek_side"] == "left"
+    assert diagnostics["cheek_side"] == "both"
     assert diagnostics["both_cheeks_in_dead_zone"] is False
     assert diagnostics["baseline_p95_a"] is None
     lab = cv2.cvtColor(face, cv2.COLOR_BGR2LAB)
     a_blur = cv2.GaussianBlur(lab[:, :, 1].astype(np.float32), (0, 0), sigmaX=2.0)
+    u_zone = (regions["left_cheek"] > 0) | (regions["right_cheek"] > 0)
+    assert np.array_equal(diagnostics["mask"], u_zone)
+    u_p95 = float(np.percentile(a_blur[u_zone], 95))
+    u_p10 = float(np.percentile(a_blur[u_zone], 10))
     right_mask = regions["right_cheek"] > 0
-    assert np.array_equal(diagnostics["mask"], right_mask)
-    assert diagnostics["p95_a_after_wb"] == pytest.approx(
-        float(np.percentile(a_blur[right_mask], 95))
+    right_spread = float(np.percentile(a_blur[right_mask], 95)) - float(
+        np.percentile(a_blur[right_mask], 10)
     )
-    assert diagnostics["p10_a_after_wb"] == pytest.approx(
-        float(np.percentile(a_blur[right_mask], 10))
-    )
-    assert diagnostics["cheek_roi_pixels"] == int(np.count_nonzero(right_mask))
+    assert diagnostics["p95_a_after_wb"] == pytest.approx(u_p95)
+    assert diagnostics["p10_a_after_wb"] == pytest.approx(u_p10)
+    assert diagnostics["cheek_roi_pixels"] == int(np.count_nonzero(u_zone))
     assert diagnostics["mean_a_after_wb"] == pytest.approx(
-        float(np.mean(lab[:, :, 1][right_mask]))
+        float(np.mean(lab[:, :, 1].astype(np.float32)[u_zone]))
     )
-    assert diagnostics["mean_b_after_wb"] == pytest.approx(
-        float(np.mean(lab[:, :, 2][right_mask]))
+    assert (u_p95 - u_p10) != pytest.approx(right_spread)
+    # On this high-contrast fixture both the U-zone and winning-cheek
+    # spreads clip to 100; the milder fixture below checks the numeric change.
+    assert logged["localized_redness"] == 100.0
+
+
+def test_mild_asymmetric_redness_score_uses_both_cheeks():
+    lab = np.full((120, 120, 3), 128, dtype=np.uint8)
+    lab[:, :, 0] = 150
+    lab[:, :, 1] = 140
+    lab[:, :, 2] = 145
+    lab[60:80, 80:100, 1] = 152  # mild hot-spot, not clipped to 100
+    face = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    skin = np.full((120, 120), 255, dtype=np.uint8)
+    left = np.zeros((120, 120), dtype=np.uint8)
+    right = np.zeros((120, 120), dtype=np.uint8)
+    left[50:100, 5:50] = 255
+    right[50:100, 70:115] = 255
+    diagnostics = {}
+    result = main._compute_zone_based_metrics(
+        face,
+        skin,
+        {"left_cheek": left, "right_cheek": right},
+        np.zeros((0, 2), dtype=np.float32),
+        redness_diagnostics=diagnostics,
     )
+    a_blur = cv2.GaussianBlur(
+        cv2.cvtColor(face, cv2.COLOR_BGR2LAB)[:, :, 1].astype(np.float32),
+        (0, 0),
+        sigmaX=2.0,
+    )
+    u_zone = (left > 0) | (right > 0)
+    u_spread = float(np.percentile(a_blur[u_zone], 95)) - float(
+        np.percentile(a_blur[u_zone], 10)
+    )
+    right_spread = float(np.percentile(a_blur[right > 0], 95)) - float(
+        np.percentile(a_blur[right > 0], 10)
+    )
+    expected_u = main.compute_localized_redness_and_rosacea(u_spread, 0.0, 0.0)[
+        "localized_redness"
+    ]
+    expected_winner = main.compute_localized_redness_and_rosacea(
+        right_spread, 0.0, 0.0
+    )["localized_redness"]
+    assert diagnostics["cheek_side"] == "both"
+    assert u_spread != pytest.approx(right_spread)
+    assert expected_u != pytest.approx(expected_winner)
+    # Diffuse density is shared; the redness term itself follows the U-zone.
+    assert result["localized_redness"] != pytest.approx(expected_winner)
 
 
 def test_both_cheeks_inside_dead_zone_is_logged_without_changing_score():
@@ -356,7 +404,7 @@ def test_full_pipeline_emits_fields_without_changing_any_score():
         assert iq_with[key] == value
 
     assert iq_with["redness_branch"] in {"within_cheek_spread", "baseline_p95_anchor"}
-    assert iq_with["redness_cheek_side"] in {"left", "right"}
+    assert iq_with["redness_cheek_side"] in {"left", "right", "both"}
     assert isinstance(iq_with["redness_both_cheeks_in_dead_zone"], bool)
     assert iq_with["redness_cheek_p95_a_after_wb"] is not None
     assert iq_with["redness_cheek_p10_a_after_wb"] is not None
@@ -364,7 +412,7 @@ def test_full_pipeline_emits_fields_without_changing_any_score():
     assert iq_with["face_skin_pixels"] > iq_with["pore_roi_pixels"] > 0
     assert iq_with["u_zone_pixels"] > 0
     assert iq_with["cheek_side_convention"] == "subject_anatomical"
-    assert iq_with["localized_redness_mask_kind"] in {"left_cheek", "right_cheek"}
+    assert iq_with["localized_redness_mask_kind"] in {"left_cheek", "right_cheek", "u_zone"}
     assert iq_with["localized_redness_mask_pixels"] > 0
     assert iq_with["texture_smoothness_mask_kind"] == "forehead_skin"
     assert iq_with["texture_smoothness_mask_pixels"] > 0
@@ -387,3 +435,38 @@ def test_full_pipeline_emits_fields_without_changing_any_score():
     assert iq_without["redness_cheek_p95_a_before_wb"] is None
     assert iq_without["redness_cheek_p10_a_after_wb"] == iq_with["redness_cheek_p10_a_after_wb"]
     assert iq_without["redness_cheek_p95_a_after_wb"] == iq_with["redness_cheek_p95_a_after_wb"]
+
+
+def test_localized_redness_formula_version_stays_v4():
+    assert main.METRIC_FORMULA_VERSION["localized_redness"] == 4
+
+
+def test_followup_redness_still_uses_both_cheeks_against_stored_p95():
+    face, skin, regions = _zone_fixture()
+    diagnostics = {}
+    result = main._compute_zone_based_metrics(
+        face,
+        skin,
+        regions,
+        np.zeros((0, 2), dtype=np.float32),
+        baseline_matrix={"localized_redness": 20.0, "a_p95": 126.0},
+        redness_diagnostics=diagnostics,
+    )
+    assert diagnostics["branch"] == "baseline_p95_anchor"
+    assert diagnostics["cheek_side"] == "both"
+    assert diagnostics["baseline_p95_a"] == 126.0
+    assert diagnostics["p95_a_after_wb"] == pytest.approx(
+        diagnostics["u_zone_p95_a_after_wb"]
+    )
+    expected = main.compute_localized_redness_and_rosacea(
+        diagnostics["u_zone_p95_a_after_wb"],
+        126.0,
+        0.0,
+        dead_zone=main.LOCALIZED_REDNESS_FOLLOWUP_DEAD_ZONE_A_UNITS,
+        multiplier=main.LOCALIZED_REDNESS_FOLLOWUP_MULTIPLIER,
+        baseline_score=20.0,
+    )["localized_redness"]
+    # Follow-up constants, not the first-scan 9.0 / 8.34, still run.
+    assert result["localized_redness"] == pytest.approx(expected, abs=2.0)
+    assert main.LOCALIZED_REDNESS_FOLLOWUP_DEAD_ZONE_A_UNITS == 1.0
+    assert main.LOCALIZED_REDNESS_FOLLOWUP_MULTIPLIER == 2.55
