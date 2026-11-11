@@ -1359,26 +1359,6 @@ forceStableWithinLiveDisplayNoiseFloors({
         if (displayVerdictNoiseFloors[key] case final double floor) key: floor,
     },
   );
-  // Align the saved live status with the same strictest display rule the
-  // cards and summary already use. Floor table values stay unchanged.
-  // Claim-free metrics are left alone.
-  for (final key in {
-    ...displayedValues.keys.map((k) => k.toString()),
-    ...baselineMetricMatrix.keys.map((k) => k.toString()),
-  }) {
-    if (displayNoVerdictMetrics.contains(key)) continue;
-    final status = trend.trendStatus[key]?.trim().toLowerCase();
-    if (status == null || status == 'insufficient_signal') continue;
-    if (trend.trendLockReasons[key]?.trim().isNotEmpty ?? false) continue;
-    final current = _parseFiniteDouble(displayedValues[key]);
-    final baseline = _parseFiniteDouble(baselineMetricMatrix[key]);
-    if (current == null || baseline == null) continue;
-    if (baseline == 0.0 && current != 0.0) continue;
-    if (!exceedsDisplayClaimBar(key, current, baseline)) {
-      trend.trendStatus[key] = 'stable';
-      trend.trendDeltas[key] = 0.0;
-    }
-  }
   for (final entry in baselineMetricMatrix.entries) {
     final baseline = _parseFiniteDouble(entry.value);
     final current = _parseFiniteDouble(displayedValues[entry.key]);

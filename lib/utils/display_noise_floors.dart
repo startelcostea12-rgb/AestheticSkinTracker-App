@@ -4,10 +4,6 @@
 /// from main.py's METRIC_NOISE_FLOOR_2SD and from the saved-status
 /// measuredStableNoiseFloors.
 ///
-/// Scan detail, summary, and cards use [exceedsDisplayClaimBar] as the
-/// single verdict source of truth. The numeric values in the tables below
-/// are unchanged; when they disagree, the strictest bar wins.
-///
 /// For the metrics in [displayStableFloorMetrics], an unlocked move strictly
 /// below the floor shows "Stable" with no percentage, and a move at or above
 /// it keeps its own verdict. Any other metric listed here would show its
@@ -41,15 +37,6 @@ const Map<String, double> lampScanDriftSpans = <String, double>{
   'diffuse_flushing_erythema': 3.4,
 };
 
-/// Known conflicts among the unchanged tables (the authoritative claim bar
-/// is the maximum, i.e. the strictest [exceedsDisplayClaimBar] rule):
-/// - texture_smoothness: display 5.4, lamp 5.1, directional 4.0 → 5.4
-/// - pore_visibility: display 3.0, directional 4.0, lamp 4.6 → 4.6
-/// - pigment_load: display/directional 3.0, lamp 5.5 → 5.5
-/// - skin_tone_radiance_evenness: display/directional 4.0, lamp 7.6 → 7.6
-/// - structural_firmness_elasticity: display/directional 5.0, lamp 8.3 → 8.3
-/// - glabellar_wrinkle_depth: display 6.4 only → 6.4
-/// - measuredStableNoiseFloors has no Elevens entry; live display uses 6.4
 bool exceedsDisplayClaimBar(
   String key,
   double current,
@@ -70,20 +57,6 @@ bool exceedsDisplayClaimBar(
   return bars.every(
     (bar) => current > baseline + bar || baseline > current + bar,
   );
-}
-
-/// The largest existing display bar for [key], or null when [key] is
-/// claim-free or has no bar. Table values are not changed.
-double? displayClaimBar(String key, {double? noiseFloor}) {
-  if (displayNoVerdictMetrics.contains(key)) return null;
-  final bars = <double>[
-    if (lampScanDriftSpans[key] case final double span) span,
-    if (displayVerdictNoiseFloors[key] case final double floor) floor,
-    if (directionalDisplayNoiseFloors[key] case final double floor) floor,
-    if (noiseFloor != null && noiseFloor.isFinite) noiseFloor,
-  ];
-  if (bars.isEmpty) return null;
-  return bars.reduce((a, b) => a > b ? a : b);
 }
 
 bool isWithinDirectionalDisplayNoise(
