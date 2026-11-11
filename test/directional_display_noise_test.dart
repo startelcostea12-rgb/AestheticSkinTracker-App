@@ -1,4 +1,5 @@
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
+import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import 'package:aesthetic_skin_tracker/utils/display_noise_floors.dart';
 import 'package:aesthetic_skin_tracker/utils/last_comparable_pair.dart';
 import 'package:aesthetic_skin_tracker/utils/progress_summary.dart';
@@ -84,6 +85,34 @@ String _cardText(WidgetTester tester, String key) => tester
     .join('\n');
 
 void main() {
+  test('conflicting floor tables keep their values; the claim bar is the max', () {
+    expect(displayVerdictNoiseFloors['texture_smoothness'], 5.4);
+    expect(directionalDisplayNoiseFloors['texture_smoothness'], 4.0);
+    expect(lampScanDriftSpans['texture_smoothness'], 5.1);
+    expect(displayClaimBar('texture_smoothness'), 5.4);
+
+    expect(displayVerdictNoiseFloors['pore_visibility'], 3.0);
+    expect(directionalDisplayNoiseFloors['pore_visibility'], 4.0);
+    expect(lampScanDriftSpans['pore_visibility'], 4.6);
+    expect(displayClaimBar('pore_visibility'), 4.6);
+
+    expect(displayVerdictNoiseFloors['pigment_load'], 3.0);
+    expect(displayClaimBar('pigment_load'), 5.5);
+
+    expect(displayVerdictNoiseFloors['skin_tone_radiance_evenness'], 4.0);
+    expect(displayClaimBar('skin_tone_radiance_evenness'), 7.6);
+
+    expect(displayVerdictNoiseFloors['structural_firmness_elasticity'], 5.0);
+    expect(displayClaimBar('structural_firmness_elasticity'), 8.3);
+
+    expect(displayVerdictNoiseFloors['glabellar_wrinkle_depth'], 6.4);
+    expect(displayClaimBar('glabellar_wrinkle_depth'), 6.4);
+    expect(measuredStableNoiseFloors.containsKey('glabellar_wrinkle_depth'), isFalse);
+
+    expect(displayClaimBar('diffuse_flushing_erythema'), isNull);
+    expect(displayNoVerdictMetrics, contains('under_eye_dark_circle_density'));
+  });
+
   test('texture uses its existing 5.4 floor above the lamp drift', () {
     expect(displayVerdictNoiseFloors['texture_smoothness'], 5.4);
     expect(exceedsDisplayClaimBar('texture_smoothness', 25.4, 20), isFalse);

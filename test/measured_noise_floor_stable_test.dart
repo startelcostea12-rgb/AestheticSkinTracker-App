@@ -526,17 +526,24 @@ void main() {
     );
 
     test(
-      'display floor boundaries retain the existing verdict and percent',
+      'display floor boundaries follow the strictest existing claim bar',
       () {
         for (final key in displayStableFloorMetrics) {
-          final floor = displayVerdictNoiseFloors[key]!;
-          final payload = savedPayload(key, 5, 5 + floor);
+          if (displayNoVerdictMetrics.contains(key)) continue;
+          final bar = displayClaimBar(key)!;
+          final atBar = savedPayload(key, 5, 5 + bar);
           expect(
-            (payload['trend_status'] as Map)[key],
+            (atBar['trend_status'] as Map)[key],
+            'stable',
+            reason: key,
+          );
+          final above = savedPayload(key, 5, 5 + bar + 0.1);
+          expect(
+            (above['trend_status'] as Map)[key],
             'improved',
             reason: key,
           );
-          expect((payload['trend_deltas'] as Map)[key], 4.0, reason: key);
+          expect((above['trend_deltas'] as Map)[key], 4.0, reason: key);
         }
         final texture = savedPayload('texture_smoothness', 50, 56);
         expect(
