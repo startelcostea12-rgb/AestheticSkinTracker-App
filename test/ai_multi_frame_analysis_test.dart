@@ -175,7 +175,7 @@ void main() {
     }
   }
 
-  test('a blurry standard frame omits the mean instead of averaging two', () {
+  test('a blurry standard frame still flags the scan unusable', () {
     final frames = [
       _frameMetrics(number: 1, meanValue: 10, medianValue: 10),
       _frameMetrics(number: 2, meanValue: 1000, medianValue: 40, blurry: true),
@@ -189,17 +189,96 @@ void main() {
       frameNumbers: [1, 2, 3, 4, 5],
     );
     final matrix = aggregate.response['metric_matrix'] as Map;
-    expect(matrix.containsKey('texture_smoothness'), isFalse);
+    // Texture uses the median of the two non-blurry standard frames, but
+    // the scan itself is unusable and must not be saved.
+    expect(matrix['texture_smoothness'], 20.0);
     expect(matrix.containsKey('wrinkle_load'), isFalse);
-    expect(
-      (aggregate.response['metrics'] as Map).containsKey('texture_smoothness'),
-      isFalse,
-    );
     expect(aggregate.response[aiScanRejectedForBlurKey], isTrue);
     expect(
       aggregate.response['multi_frame_analysis'][aiScanRejectedForBlurKey],
       isTrue,
     );
+  });
+
+  test('three-frame median metrics drop one outlier instead of averaging it', () {
+    const keys = [
+      'texture_smoothness',
+      'pore_visibility',
+      'glabellar_wrinkle_depth',
+      'localized_redness',
+      'breakout_activity',
+    ];
+    expect(threeFrameMedianMetricKeys, keys.toSet());
+    final frames = [
+      for (final values in [
+        [10.0, 20.0, 1000.0],
+        [10.0, 1000.0],
+        [10.0],
+      ])
+        () {
+          return [
+            for (var i = 0; i < values.length; i++)
+              {
+                'metric_matrix': {for (final key in keys) key: values[i]},
+              },
+          ];
+        }(),
+    ];
+    final three = averageBackendAnalysisFrames(frames[0], requestedFrames: 3);
+    final two = averageBackendAnalysisFrames(frames[1], requestedFrames: 3);
+    final one = averageBackendAnalysisFrames(frames[2], requestedFrames: 3);
+    for (final key in keys) {
+      expect((three.response['metric_matrix'] as Map)[key], 20.0, reason: key);
+      expect(
+        three.response['multi_frame_analysis']['metric_ranges'][key],
+        {'min': 10.0, 'max': 1000.0, 'count': 3},
+        reason: key,
+      );
+      expect(three.metricContributorCounts[key], 3, reason: key);
+      // Two valid frames: median of the pair is their average.
+      expect((two.response['metric_matrix'] as Map)[key], 505.0, reason: key);
+      expect(
+        two.response['multi_frame_analysis']['metric_ranges'][key],
+        {'min': 10.0, 'max': 1000.0, 'count': 2},
+        reason: key,
+      );
+      expect((one.response['metric_matrix'] as Map)[key], 10.0, reason: key);
+      expect(one.metricContributorCounts[key], 1, reason: key);
+    }
+    // Unrelated mean metrics are unchanged; five-frame medians untouched.
+    final mixed = averageBackendAnalysisFrames([
+      {
+        'metric_matrix': {
+          'texture_smoothness': 10.0,
+          'pigment_load': 10.0,
+          'wrinkle_load': 10.0,
+        },
+      },
+      {
+        'metric_matrix': {
+          'texture_smoothness': 20.0,
+          'pigment_load': 20.0,
+          'wrinkle_load': 40.0,
+        },
+      },
+      {
+        'metric_matrix': {
+          'texture_smoothness': 1000.0,
+          'pigment_load': 1000.0,
+          'wrinkle_load': 20.0,
+        },
+      },
+      {
+        'metric_matrix': {'wrinkle_load': 50.0},
+      },
+      {
+        'metric_matrix': {'wrinkle_load': 30.0},
+      },
+    ], requestedFrames: 5);
+    final matrix = mixed.response['metric_matrix'] as Map;
+    expect(matrix['texture_smoothness'], 20.0);
+    expect(matrix['pigment_load'], closeTo((10 + 20 + 1000) / 3, 0.0001));
+    expect(matrix['wrinkle_load'], 30.0);
   });
 
   test('a blurry median frame omits only that five-frame median', () {
@@ -225,7 +304,7 @@ void main() {
   });
 
   test(
-    'blurry frames retain diagnostics and the scan can still be saved',
+    'blurry frames retain diagnostics and mark the scan unusable',
     () async {
       SharedPreferences.setMockInitialValues({});
       final frames = [
@@ -246,6 +325,13 @@ void main() {
           aggregate.response[aiScanPerFrameDiagnosticsKey] as List;
       expect(diagnostics, hasLength(5));
       expect(diagnostics[1]['frame_number'], 2);
+      expect(aggregate.response[aiScanRejectedForBlurKey], isTrue);
+      // Texture still has a diagnostic median of the two sharp standard
+      // frames, but the scan must not be used as a baseline or trend point.
+      expect(
+        (aggregate.response['metric_matrix'] as Map)['texture_smoothness'],
+        20.0,
+      );
       final saved = await SkinHistoryRepository.instance.saveScan(
         metrics: const <String, double>{},
         poseTemplate: 'Front',
@@ -253,10 +339,9 @@ void main() {
         captureQuality: 'normal',
         rawPayload: aggregate.response,
       );
-      final reloaded = await SkinHistoryRepository.instance.getAllScans();
-      expect(reloaded.any((scan) => scan.id == saved.id), isTrue);
       expect(saved.rawPayload![aiScanPerFrameDiagnosticsKey], hasLength(5));
-      expect(saved.rawPayload!['metric_matrix'], isEmpty);
+      expect(saved.rawPayload![aiScanRejectedForBlurKey], isTrue);
+      expect(scanPassesSingleScanBaselineGates(saved), isFalse);
     },
   );
 

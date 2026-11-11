@@ -650,6 +650,22 @@ const Set<String> fiveFrameMedianMetricKeys = <String>{
   'under_eye_texture_density',
 };
 
+/// Metrics that used to be the raw mean of frames 1-3. They are now the
+/// median of the valid standard-frame values, so one outlier cannot swing
+/// the scan. Under-eye / wrinkle five-frame medians are unchanged.
+///
+/// When only two frames are valid, the result is the median of those two
+/// (the average of the pair). When only one frame is valid, that single
+/// value is used. Frame min/max export columns still cover every valid
+/// contributing frame, including the outlier the median down-weights.
+const Set<String> threeFrameMedianMetricKeys = <String>{
+  'texture_smoothness',
+  'pore_visibility',
+  'glabellar_wrinkle_depth',
+  'localized_redness',
+  'breakout_activity',
+};
+
 double _medianOf(List<double> values) {
   final sorted = List<double>.of(values)..sort();
   final mid = sorted.length ~/ 2;
@@ -782,6 +798,11 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
         }
         continue;
       }
+      averagedMatrix[entry.key] = _medianOf(entry.value);
+    } else if (threeFrameMedianMetricKeys.contains(entry.key)) {
+      // Median of the valid frames 1-3 values. Two valid frames yield the
+      // average of the pair; one valid frame yields that value.
+      if (entry.value.isEmpty) continue;
       averagedMatrix[entry.key] = _medianOf(entry.value);
     } else if (omitMeanMetrics) {
       continue;

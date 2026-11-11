@@ -26,7 +26,7 @@ LuxeMetric _metric({
 
 void main() {
   group('metric precision display', () {
-    test('1 preserves real samples and derives mean min max and count', () {
+    test('1 preserves real samples and derives median min max and count', () {
       final aggregate = averageBackendAnalysisFrames(
         [
           {'metric_matrix': {'localized_redness': 42.0}},
@@ -36,7 +36,8 @@ void main() {
         requestedFrames: 3,
       );
 
-      expect(aggregate.response['metric_matrix'], {'localized_redness': 131 / 3});
+      // Median of 42, 44, 45 is 44; min/max still cover every valid frame.
+      expect(aggregate.response['metric_matrix'], {'localized_redness': 44.0});
       final multi = aggregate.response['multi_frame_analysis'] as Map;
       expect(multi['metric_frame_values'], {
         'localized_redness': [42.0, 45.0, 44.0],
