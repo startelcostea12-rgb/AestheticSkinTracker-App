@@ -4661,21 +4661,22 @@ TREND_FLOOR_ONLY_METRICS = {"structural_firmness_elasticity"}
 # floors should be read as "the largest noise observed so far", not as
 # values known to be cross-session comparable. Revisit once more
 # repeatability sessions (ideally multiple subjects and devices) accumulate.
-# Values are 2 standard deviations of a session's 5 scan means, in each
-# metric's own 0-100 units -- see _trend_delta_and_status's use of this
-# table for how it gates trend claims.
+# The texture, pigment, pore, radiance, firmness, and glabellar entries use
+# same-lamp repeat pairs since Nov 7 23:51:49 (scan_1794113509229), with the
+# same formula versions. Other entries retain their earlier 2-SD estimates.
+# All floors are in each metric's own 0-100 units.
 METRIC_NOISE_FLOOR_2SD: Dict[str, float] = {
     "localized_redness": 6.8,
     "rosacea_severity": 3.9,
-    "glabellar_wrinkle_depth": 6.4,
-    "texture_smoothness": 5.4,
+    "glabellar_wrinkle_depth": 5.0,
+    "texture_smoothness": 4.0,
     "wrinkle_load": 3.7,
     "under_eye_dark_circle_density": 14.1,
     "under_eye_texture_density": 6.0,
     "structural_firmness_elasticity": 5.0,
     "pigment_load": 3.0,
     "skin_tone_radiance_evenness": 4.0,
-    "pore_visibility": 3.0,
+    "pore_visibility": 5.0,
     "breakout_activity": 13.1,
     "sebum_excess_oil_gloss": 4.0,
     "diffuse_flushing_erythema": 2.0,
@@ -5208,7 +5209,14 @@ def _trend_delta_and_status(
                 # "stable" here would be a confident-sounding claim this
                 # metric's own measured noise floor doesn't support.
                 return 0.0, "insufficient_signal"
-        elif absolute_delta < noise_floor:
+        elif absolute_delta < noise_floor or (
+            metric_key in {
+                "texture_smoothness", "pigment_load", "pore_visibility",
+                "skin_tone_radiance_evenness", "structural_firmness_elasticity",
+                "glabellar_wrinkle_depth",
+            }
+            and not (current > baseline + noise_floor or baseline > current + noise_floor)
+        ):
             return 0.0, "stable"
 
     floor_only = noise_floor is not None and metric_key in TREND_FLOOR_ONLY_METRICS

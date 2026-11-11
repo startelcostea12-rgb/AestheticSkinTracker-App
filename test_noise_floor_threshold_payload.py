@@ -40,8 +40,17 @@ def test_shared_noise_floors_match_across_production_maps():
             source,
             re.DOTALL,
         )
+        if match is None:
+            alias = re.search(rf"\b{name}\s*=\s*(\w+);", source)
+            assert alias is not None, f"Missing production map: {name}"
+            return dart_map("lib/utils/display_noise_floors.dart", alias.group(1))
         assert match is not None, f"Missing production map: {name}"
-        return ast.literal_eval(match.group(1))
+        body = match.group(1)
+        inherited = {}
+        for spread in re.findall(r"\.\.\.(\w+)\s*,", body):
+            inherited.update(dart_map(relative_path, spread))
+        body = re.sub(r"\.\.\.\w+\s*,", "", body)
+        return {**inherited, **ast.literal_eval(body)}
 
     measured = dart_map(
         "lib/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart",
@@ -49,15 +58,17 @@ def test_shared_noise_floors_match_across_production_maps():
     )
     display = dart_map("lib/utils/display_noise_floors.dart", "displayVerdictNoiseFloors")
     expected = {
-        "texture_smoothness": 5.4,
-        "glabellar_wrinkle_depth": 6.4,
+        "texture_smoothness": 4.0,
+        "glabellar_wrinkle_depth": 5.0,
         "pigment_load": 3.0,
         "skin_tone_radiance_evenness": 4.0,
-        "pore_visibility": 3.0,
+        "pore_visibility": 5.0,
+        "structural_firmness_elasticity": 5.0,
     }
     assert set(measured) == {
         "texture_smoothness", "pigment_load", "skin_tone_radiance_evenness",
         "pore_visibility", "structural_firmness_elasticity",
+        "glabellar_wrinkle_depth",
     }
     assert set(display) == set(expected) | {
         "structural_firmness_elasticity", "sebum_excess_oil_gloss",

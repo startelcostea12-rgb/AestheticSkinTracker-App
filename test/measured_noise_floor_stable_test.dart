@@ -31,11 +31,12 @@ _apply(
 void main() {
   test('the floors are as specified', () {
     expect(measuredStableNoiseFloors, {
-      'texture_smoothness': 5.4,
+      'texture_smoothness': 4.0,
       'pigment_load': 3.0,
       'skin_tone_radiance_evenness': 4.0,
-      'pore_visibility': 3.0,
+      'pore_visibility': 5.0,
       'structural_firmness_elasticity': 5.0,
+      'glabellar_wrinkle_depth': 5.0,
     });
     // Same floors on the live cards and in the export.
     for (final key in const [
@@ -53,8 +54,8 @@ void main() {
     }
   });
 
-  test('a 1.0-point texture move is stable with no percentage', () {
-    final result = _apply('texture_smoothness', 57.0, 58.0);
+  test('a 3-point texture move is stable with no percentage', () {
+    final result = _apply('texture_smoothness', 61.7, 58.7);
     expect(result.trendStatus['texture_smoothness'], 'stable');
     expect(result.trendDeltas['texture_smoothness'], 0.0);
   });
@@ -73,23 +74,24 @@ void main() {
     expect(down.trendStatus['texture_smoothness'], 'worsened');
   });
 
-  test('a move exactly at the floor is not forced to stable', () {
+  test('a move exactly at the floor is stable', () {
     expect(
       _apply(
         'texture_smoothness',
         10.0,
-        15.4,
+        14.0,
       ).trendStatus['texture_smoothness'],
-      'improved',
+      'stable',
     );
   });
 
   test('pigment, radiance, pores, and firmness follow the same rule', () {
     for (final (key, below, above) in const [
-      ('pigment_load', 2.9, 3.0),
-      ('skin_tone_radiance_evenness', 3.9, 4.0),
-      ('pore_visibility', 2.9, 3.0),
-      ('structural_firmness_elasticity', 4.0, 5.0),
+      ('pigment_load', 2.9, 3.1),
+      ('skin_tone_radiance_evenness', 3.9, 4.1),
+      ('pore_visibility', 4.9, 6.0),
+      ('structural_firmness_elasticity', 4.0, 5.1),
+      ('glabellar_wrinkle_depth', 4.9, 5.1),
     ]) {
       final under = _apply(key, 20.0, 20.0 + below, status: 'worsened');
       expect(under.trendStatus[key], 'stable', reason: key);
@@ -526,17 +528,22 @@ void main() {
     );
 
     test(
-      'display floor boundaries retain the existing verdict and percent',
+      'repeat floor boundaries save stable; unlisted rules stay unchanged',
       () {
         for (final key in displayStableFloorMetrics) {
           final floor = displayVerdictNoiseFloors[key]!;
           final payload = savedPayload(key, 5, 5 + floor);
+          final updatedFloor = sameLampRepeatNoiseFloors.containsKey(key);
           expect(
             (payload['trend_status'] as Map)[key],
-            'improved',
+            updatedFloor ? 'stable' : 'improved',
             reason: key,
           );
-          expect((payload['trend_deltas'] as Map)[key], 4.0, reason: key);
+          expect(
+            (payload['trend_deltas'] as Map)[key],
+            updatedFloor ? 0.0 : 4.0,
+            reason: key,
+          );
         }
         final texture = savedPayload('texture_smoothness', 50, 56);
         expect(

@@ -84,10 +84,14 @@ String _cardText(WidgetTester tester, String key) => tester
     .join('\n');
 
 void main() {
-  test('texture uses its existing 5.4 floor above the lamp drift', () {
-    expect(displayVerdictNoiseFloors['texture_smoothness'], 5.4);
-    expect(exceedsDisplayClaimBar('texture_smoothness', 25.4, 20), isFalse);
-    expect(exceedsDisplayClaimBar('texture_smoothness', 25.5, 20), isTrue);
+  test('current repeat floors supersede the older lamp drift', () {
+    expect(displayVerdictNoiseFloors['texture_smoothness'], 4.0);
+    expect(exceedsDisplayClaimBar('texture_smoothness', 24.0, 20), isFalse);
+    expect(
+      exceedsDisplayClaimBar('texture_smoothness', 24.1, 20, noiseFloor: 5.4),
+      isTrue,
+    );
+    expect(sameLampRepeatFloorSource, contains('scan_1794113509229'));
     expect(lampScanDriftSource, contains('ISO 100 or 125'));
     expect(lampScanDriftSource, contains('gray card not applied'));
   });
@@ -95,7 +99,7 @@ void main() {
   final cases = [
     (
       key: 'glabellar_wrinkle_depth',
-      move: 6.4,
+      move: 5.0,
       status: 'worsened',
       label: null,
     ),
@@ -117,7 +121,7 @@ void main() {
       status: 'improved',
       label: 'Improved',
     ),
-    (key: 'pigment_load', move: 5.0, status: 'worsened', label: null),
+    (key: 'pigment_load', move: 3.0, status: 'worsened', label: null),
     (key: 'pigment_load', move: 6.0, status: 'worsened', label: 'Worsened'),
     (
       key: 'structural_firmness_elasticity',
@@ -131,7 +135,7 @@ void main() {
       status: 'improved',
       label: 'Improved',
     ),
-    (key: 'texture_smoothness', move: 5.3, status: 'improved', label: null),
+    (key: 'texture_smoothness', move: 3.0, status: 'improved', label: null),
     (
       key: 'texture_smoothness',
       move: 5.5,
@@ -139,7 +143,7 @@ void main() {
       label: 'Improved',
     ),
     (key: 'pore_visibility', move: 4.5, status: 'worsened', label: null),
-    (key: 'pore_visibility', move: 5.0, status: 'worsened', label: 'Worsened'),
+    (key: 'pore_visibility', move: 6.0, status: 'worsened', label: 'Worsened'),
   ];
   for (final sample in cases) {
     testWidgets(
@@ -185,7 +189,10 @@ void main() {
     );
   }
 
-  for (final entry in lampScanDriftSpans.entries) {
+  for (final entry in <String, double>{
+    ...lampScanDriftSpans,
+    ...sameLampRepeatNoiseFloors,
+  }.entries) {
     testWidgets('${entry.key} at the exact drift has no claim', (tester) async {
       final payload = _payload(entry.key, entry.value, 'worsened');
       await _results(tester, payload);
@@ -196,6 +203,18 @@ void main() {
       expect(progressTrendLabel(_pair(payload, entry.key), entry.key), isNull);
     });
   }
+
+  testWidgets('redness under twelve points has no direction', (tester) async {
+    final payload = _payload('localized_redness', 10.9, 'worsened');
+    payload['metric_matrix'] = {'localized_redness': 10.9};
+    payload['baseline_metric_matrix'] = {'localized_redness': 0.0};
+    await _results(tester, payload);
+    final text = _cardText(tester, 'localized_redness');
+    expect(text, contains('10.9'));
+    expect(text, isNot(contains('Improved')));
+    expect(text, isNot(contains('Worsened')));
+    expect(text, isNot(contains('%')));
+  });
 
   for (final lock in ['lighting_mismatch', 'formula_version_mismatch']) {
     testWidgets('$lock beats the display floor', (tester) async {
@@ -245,7 +264,7 @@ void main() {
       expect(elevens.name, 'Elevens');
       expect(elevens.currentScore, 0.0);
       expect(elevens.baselineScore, 20.0);
-      expect(displayVerdictNoiseFloors['glabellar_wrinkle_depth'], 6.4);
+      expect(displayVerdictNoiseFloors['glabellar_wrinkle_depth'], 5.0);
       expect(
         lampScanDriftSpans.containsKey('glabellar_wrinkle_depth'),
         isFalse,

@@ -26,8 +26,8 @@ from main import (
 
 
 class FirmnessLiveFloorTests(unittest.TestCase):
-    def test_four_point_move_is_stable_and_five_clears_the_floor(self) -> None:
-        for current, expected in ((94.0, "stable"), (95.0, "improved")):
+    def test_five_point_move_is_stable_and_larger_move_clears_the_floor(self) -> None:
+        for current, expected in ((94.0, "stable"), (95.0, "stable"), (95.1, "improved")):
             delta, status = _trend_delta_and_status(
             "structural_firmness_elasticity", current, 90.0,
                 "primary_roi", "primary_roi", 8.0,
@@ -37,7 +37,7 @@ class FirmnessLiveFloorTests(unittest.TestCase):
                 current_guide_type="facial", baseline_guide_type="facial",
             )
             self.assertEqual(status, expected)
-            self.assertEqual(delta, 0.0 if expected == "stable" else 5.6)
+            self.assertEqual(delta, 0.0 if expected == "stable" else 5.7)
 
 
 class ZeroBaselineTrendTests(unittest.TestCase):
@@ -976,15 +976,15 @@ class MeasuredNoiseFloorGateTests(unittest.TestCase):
             {
                 "localized_redness": 6.8,
                 "rosacea_severity": 3.9,
-                "glabellar_wrinkle_depth": 6.4,
-                "texture_smoothness": 5.4,
+                "glabellar_wrinkle_depth": 5.0,
+                "texture_smoothness": 4.0,
                 "wrinkle_load": 3.7,
                 "under_eye_dark_circle_density": 14.1,
                 "under_eye_texture_density": 6.0,
                 "structural_firmness_elasticity": 5.0,
                 "pigment_load": 3.0,
                 "skin_tone_radiance_evenness": 4.0,
-                "pore_visibility": 3.0,
+                "pore_visibility": 5.0,
                 "breakout_activity": 13.1,
                 "sebum_excess_oil_gloss": 4.0,
                 "diffuse_flushing_erythema": 2.0,

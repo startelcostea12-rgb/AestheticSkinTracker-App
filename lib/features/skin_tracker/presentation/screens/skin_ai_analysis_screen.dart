@@ -1273,20 +1273,14 @@ downgradeTrendBelowMeasuredNoiseFloor({
 }
 
 /// Per-metric noise floors measured from same-lamp repeat pairs, in each
-/// metric's own 0-100 points. A move strictly below its floor is reported
+/// metric's own 0-100 points. A move at or below its floor is reported
 /// as "stable" (see [forceStableWithinMeasuredNoiseFloors]). Separate from
 /// the backend's METRIC_NOISE_FLOOR_2SD and from the live cards'
 /// displayVerdictNoiseFloors.
-const Map<String, double> measuredStableNoiseFloors = <String, double>{
-  'texture_smoothness': 5.4,
-  'pigment_load': 3.0,
-  'skin_tone_radiance_evenness': 4.0,
-  'pore_visibility': 3.0,
-  'structural_firmness_elasticity': 5.0,
-};
+const Map<String, double> measuredStableNoiseFloors = sameLampRepeatNoiseFloors;
 
 /// For the metrics in [measuredStableNoiseFloors]: when the averaged value's
-/// absolute change from the baseline is strictly below that metric's floor,
+/// absolute change from the baseline is at or below that metric's floor,
 /// the trend status becomes "stable" and its delta 0.0, so no percentage is
 /// shown. Locks take priority: a metric with any lock reason, or an
 /// "insufficient_signal" status, is left exactly as it is, and a metric
@@ -1316,7 +1310,10 @@ forceStableWithinMeasuredNoiseFloors({
     final baseline = _parseFiniteDouble(baselineMetricMatrix[key]);
     if (current == null || baseline == null) continue;
     if (baseline == 0.0 && current != 0.0) continue;
-    if ((current - baseline).abs() < entry.value) {
+    final withinRepeatFloor =
+        sameLampRepeatNoiseFloors.containsKey(key) &&
+        !(current > baseline + entry.value || baseline > current + entry.value);
+    if (withinRepeatFloor || (current - baseline).abs() < entry.value) {
       updatedStatus[key] = 'stable';
       updatedDeltas[key] = 0.0;
     }

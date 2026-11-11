@@ -1,8 +1,7 @@
-/// Display-only noise floors, in each metric's own 0-100 points, from the
-/// 62-pair same-session repeat data, used on the live results views. They
-/// never change a score, a backend trend status, or a lock, and are separate
-/// from main.py's METRIC_NOISE_FLOOR_2SD and from the saved-status
-/// measuredStableNoiseFloors.
+/// Noise-floor policy in each metric's own 0-100 points. The six current
+/// same-lamp repeat floors are shared by saved-status and display gates;
+/// unlisted metrics retain their earlier floor policy. Scores and locks
+/// are unchanged.
 ///
 /// For the metrics in [displayStableFloorMetrics], an unlocked move strictly
 /// below the floor shows "Stable" with no percentage, and a move at or above
@@ -12,13 +11,21 @@
 /// The directional display floors below are for cards and summaries only;
 /// at or below them an existing verdict reads Stable with no percentage.
 /// They do not change saved comparison floors or CSV metadata.
-const Map<String, double> directionalDisplayNoiseFloors = <String, double>{
+const String sameLampRepeatFloorSource =
+    'Baseline Nov 7 23:51:49 (scan_1794113509229); '
+    'same-lamp repeat pairs since then, same formula versions.';
+
+const Map<String, double> sameLampRepeatNoiseFloors = <String, double>{
   'texture_smoothness': 4.0,
   'pigment_load': 3.0,
-  'pore_visibility': 4.0,
+  'pore_visibility': 5.0,
   'skin_tone_radiance_evenness': 4.0,
   'structural_firmness_elasticity': 5.0,
+  'glabellar_wrinkle_depth': 5.0,
 };
+
+const Map<String, double> directionalDisplayNoiseFloors =
+    sameLampRepeatNoiseFloors;
 
 const String lampScanDriftSource =
     'Oct 25-Nov 6 lamp scans: daily median, ISO 100 or 125, '
@@ -47,6 +54,10 @@ bool exceedsDisplayClaimBar(
       !current.isFinite ||
       !baseline.isFinite) {
     return false;
+  }
+  final repeatFloor = sameLampRepeatNoiseFloors[key];
+  if (repeatFloor != null) {
+    return current > baseline + repeatFloor || baseline > current + repeatFloor;
   }
   final bars = <double>[
     if (lampScanDriftSpans[key] case final double span) span,
@@ -87,14 +98,9 @@ bool hasWideDisplayFrameRange({
 /// Existing display/CSV noise-floor metadata, independent of the visual
 /// directional suppression above.
 const Map<String, double> displayVerdictNoiseFloors = <String, double>{
-  'pigment_load': 3.0,
-  'pore_visibility': 3.0,
-  'skin_tone_radiance_evenness': 4.0,
+  ...sameLampRepeatNoiseFloors,
   'diffuse_flushing_erythema': 2.0,
-  'glabellar_wrinkle_depth': 6.4,
-  'structural_firmness_elasticity': 5.0,
   'sebum_excess_oil_gloss': 4.0,
-  'texture_smoothness': 5.4,
 };
 
 /// Metrics whose display floor means "Stable below the floor" rather than

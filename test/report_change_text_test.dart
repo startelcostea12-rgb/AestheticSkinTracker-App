@@ -30,12 +30,12 @@ void main() {
   test(
     'PDF claims use the drift and existing floor without changing values',
     () {
-      expect(reportDisplayClaimAllowed('pigment_load', 20, 25), isFalse);
+      expect(reportDisplayClaimAllowed('pigment_load', 20, 23), isFalse);
       expect(reportDisplayClaimAllowed('pigment_load', 20, 26), isTrue);
-      expect(reportDisplayClaimAllowed('darkSpots', 2, 2.5), isFalse);
+      expect(reportDisplayClaimAllowed('darkSpots', 2, 2.3), isFalse);
       expect(reportDisplayClaimAllowed('darkSpots', 2, 2.6), isTrue);
       expect(
-        reportDisplayClaimAllowed('texture_smoothness', 20, 25.4),
+        reportDisplayClaimAllowed('texture_smoothness', 20, 24.0),
         isFalse,
       );
       expect(reportDisplayClaimAllowed('texture_smoothness', 20, 25.5), isTrue);
