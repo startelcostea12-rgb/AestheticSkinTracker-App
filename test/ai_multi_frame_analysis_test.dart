@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
+import 'package:aesthetic_skin_tracker/utils/ai_capture_sharpness.dart';
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
 import 'package:aesthetic_skin_tracker/models/ai_scan_frame_exposure.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
@@ -104,6 +105,7 @@ void main() {
     final matrix = aggregate.response['metric_matrix'] as Map;
     expect(matrix['texture_smoothness'], 20.0);
     expect(matrix['wrinkle_load'], 30.0);
+    expect(aggregate.response[aiScanRejectedForBlurKey], isFalse);
     expect(aggregate.response['metric_formula_versions'], {
       'texture_smoothness': 5,
       'wrinkle_load': 5,
@@ -192,6 +194,11 @@ void main() {
     expect(
       (aggregate.response['metrics'] as Map).containsKey('texture_smoothness'),
       isFalse,
+    );
+    expect(aggregate.response[aiScanRejectedForBlurKey], isTrue);
+    expect(
+      aggregate.response['multi_frame_analysis'][aiScanRejectedForBlurKey],
+      isTrue,
     );
   });
 

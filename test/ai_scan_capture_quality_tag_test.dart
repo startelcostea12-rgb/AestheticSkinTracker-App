@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/camera_screen.dart';
+import 'package:aesthetic_skin_tracker/utils/ai_capture_sharpness.dart';
 import 'package:aesthetic_skin_tracker/models/procedure.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
@@ -136,6 +137,40 @@ void main() {
     });
   });
 
+  group('whole-scan sharpness rejection', () {
+    test('facial floor stays 36 and matches the shared constant', () {
+      expect(aiScanCropSharpnessFloor, 36.0);
+      expect(
+        sharpnessVarianceFloorFor(ProcedureCameraGuideType.facial),
+        aiScanCropSharpnessFloor,
+      );
+    });
+
+    test('a later soft frame rejects the burst even when frame 1 is sharp', () {
+      final sharp = imageSharpnessVarianceFromBytes(_png(_sharpCrop()));
+      final soft = imageSharpnessVarianceFromBytes(_png(_softCrop()));
+      expect(sharp, greaterThanOrEqualTo(aiScanCropSharpnessFloor));
+      expect(soft, greaterThan(0));
+      expect(soft, lessThan(aiScanCropSharpnessFloor));
+      expect(
+        aiScanFailsSharpnessFloor([sharp, sharp, soft, sharp, sharp]),
+        isTrue,
+      );
+      expect(
+        aiScanFailsSharpnessFloor([sharp, sharp, sharp, sharp, sharp]),
+        isFalse,
+      );
+    });
+
+    test('a zero-sharpness or empty burst is rejected', () {
+      expect(aiScanFailsSharpnessFloor(const <double>[]), isTrue);
+      expect(aiScanFailsSharpnessFloor(const [0.0, 80.0]), isTrue);
+      expect(cropSharpnessIsBelowFloor(0), isTrue);
+      expect(cropSharpnessIsBelowFloor(35.99), isTrue);
+      expect(cropSharpnessIsBelowFloor(36.0), isFalse);
+    });
+  });
+
   test('the AI-scan capture tags the uploaded crop, not the full still', () {
     final source = File(
       'lib/features/skin_tracker/presentation/screens/camera_screen.dart',
@@ -148,6 +183,9 @@ void main() {
     expect(body, contains('aiScanCaptureQualityFromUploadedCrop('));
     expect(body, contains('uploadedCrop: croppedFrames.first'));
     expect(body, contains('full_still_sharpness='));
+    expect(body, contains('aiScanFailsSharpnessFloor('));
+    expect(body, contains('imageSharpnessVarianceFromBytes(crop)'));
+    expect(body, contains('ai_scan_blur_reject_dialog'));
     expect(
       body,
       isNot(

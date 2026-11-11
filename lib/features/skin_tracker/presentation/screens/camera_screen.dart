@@ -31,6 +31,7 @@ import 'package:aesthetic_skin_tracker/widgets/adaptive_camera_guide_visuals.dar
 import 'package:aesthetic_skin_tracker/widgets/clinical_camera_guidance.dart';
 import 'package:aesthetic_skin_tracker/widgets/clinical_section_header.dart';
 import 'package:aesthetic_skin_tracker/widgets/image_crop_dialog.dart';
+import 'package:aesthetic_skin_tracker/utils/ai_capture_sharpness.dart';
 import 'package:aesthetic_skin_tracker/utils/gray_card_region.dart';
 import 'package:aesthetic_skin_tracker/widgets/gray_card_target_overlay.dart';
 import 'package:aesthetic_skin_tracker/utils/protocol_checklist.dart';
@@ -423,9 +424,8 @@ double imageSharpnessVarianceFromBytes(Uint8List bytes) {
 double sharpnessVarianceFloorFor(ProcedureCameraGuideType guideType) {
   switch (guideType) {
     case ProcedureCameraGuideType.facial:
-      // Slightly more forgiving for real-world smartphone / webcam captures
-      // while still warning when the frame is distractingly soft.
-      return 36.0;
+      // Shared with the backend (image_sharpness_variance / CROP_SHARPNESS_FLOOR).
+      return aiScanCropSharpnessFloor;
     case ProcedureCameraGuideType.body:
       // Body surfaces have lower high-frequency detail than facial skin.
       return 24.0;
@@ -5549,11 +5549,11 @@ class _CameraScreenState extends State<CameraScreen>
         burstSizeFields.add('${burstExifFields[i]} $sizeFields');
       }
 
-      // capture_quality is measured on the face crop that is uploaded
-      // (croppedFrames.first), not the uncropped still: a dark background
-      // can drag the full still under the floor while the face is sharp.
-      // The full still's sharpness is logged next to the tag on frame 1's
-      // burst line for comparison only.
+      // capture_quality's tag is still measured on croppedFrames.first
+      // (existing tag priority, including poor_angle beating blurry).
+      // Whole-scan rejection, though, checks every cropped frame's
+      // sharpness against the shared facial floor: a sharp frame 1 no
+      // longer lets a blurry later frame be saved as a normal scan.
       final qualityTag = aiScanCaptureQualityFromUploadedCrop(
         uploadedCrop: croppedFrames.first,
         fullStill: firstBytes,
@@ -5564,13 +5564,47 @@ class _CameraScreenState extends State<CameraScreen>
       );
       final captureQuality = qualityTag.tag;
       _lastCaptureQualityTag = captureQuality;
+      final frameCropSharpnesses = <double>[
+        for (final crop in croppedFrames) imageSharpnessVarianceFromBytes(crop),
+      ];
       if (burstSizeFields.isNotEmpty) {
         burstSizeFields[0] =
             '${burstSizeFields[0]} capture_quality=$captureQuality '
             'quality_source=uploaded_crop '
             'crop_sharpness=${qualityTag.cropSharpness.toStringAsFixed(2)} '
             'full_still_sharpness=${qualityTag.fullStillSharpness.toStringAsFixed(2)} '
-            'sharpness_floor=$_sharpnessVarianceFloor';
+            'sharpness_floor=$_sharpnessVarianceFloor '
+            'crop_sharpness_frames=${frameCropSharpnesses.map((s) => s.toStringAsFixed(2)).join(',')}';
+      }
+      if (aiScanFailsSharpnessFloor(
+        frameCropSharpnesses,
+        sharpnessFloor: _sharpnessVarianceFloor,
+      )) {
+        AppLogger.debug(
+          '[AI_SCAN_SHARPNESS] rejected frames=${frameCropSharpnesses.map((s) => s.toStringAsFixed(2)).join(',')} '
+          'floor=$_sharpnessVarianceFloor',
+        );
+        if (mounted) {
+          await showDialog<void>(
+            context: context,
+            barrierDismissible: false,
+            builder: (dialogContext) => AlertDialog(
+              key: const ValueKey('ai_scan_blur_reject_dialog'),
+              title: const Text('Scan too blurry'),
+              content: const Text(
+                'This scan is too soft to save or compare. '
+                'Hold the phone steady, keep the same distance, and retake.',
+              ),
+              actions: [
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Retake'),
+                ),
+              ],
+            ),
+          );
+        }
+        return;
       }
       AppLogger.debug(
         '[BURST_LUMINANCE] source=aiSkinAnalysis frames=$burstLuminances (logging only, selection unaffected)',

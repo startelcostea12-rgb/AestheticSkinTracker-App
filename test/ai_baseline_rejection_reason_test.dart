@@ -1,4 +1,5 @@
 import 'package:aesthetic_skin_tracker/features/skin_tracker/presentation/screens/skin_ai_analysis_screen.dart';
+import 'package:aesthetic_skin_tracker/utils/ai_capture_sharpness.dart';
 import 'package:aesthetic_skin_tracker/models/scan_history.dart';
 import 'package:aesthetic_skin_tracker/services/skin_history_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -83,6 +84,26 @@ void main() {
 
     test('a well-formed normal scan has no rejection reason', () {
       expect(aiBaselineRejectionReason(scan()), isNull);
+    });
+
+    test('a blur-rejected scan cannot become a baseline', () {
+      final reason = aiBaselineRejectionReason(
+        scan(extraPayload: {aiScanRejectedForBlurKey: true}),
+      );
+      expect(scanPassesSingleScanBaselineGates(scan(extraPayload: {
+        aiScanRejectedForBlurKey: true,
+      })), isFalse);
+      expect(reason, contains('blurry'));
+      expect(
+        aiBaselineRejectionReason(
+          scan(
+            extraPayload: {
+              'multi_frame_analysis': {aiScanRejectedForBlurKey: true},
+            },
+          ),
+        ),
+        contains('blurry'),
+      );
     });
 
     test('names a missing pose template', () {

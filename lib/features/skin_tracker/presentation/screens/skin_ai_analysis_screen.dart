@@ -409,6 +409,11 @@ String? aiBaselineRejectionReason(ScanHistoryEntry scan) {
       cardQuality['gray_card_baseline_eligible'] == false) {
     return 'Not saved as baseline: ${cardQuality['gray_card_message'] ?? payload['gray_card_message'] ?? 'the gray card could not be used. Please retake.'}';
   }
+  if (payload[aiScanRejectedForBlurKey] == true ||
+      _dynamicMap(payload['multi_frame_analysis'])[aiScanRejectedForBlurKey] ==
+          true) {
+    return 'Not saved as baseline: this scan was too blurry to use.';
+  }
   return null;
 }
 
@@ -998,6 +1003,7 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
       metricsNode[key] = grayCardSummary[key];
     }
   }
+  response[aiScanRejectedForBlurKey] = hasBlurryFrame;
   response['multi_frame_analysis'] = <String, dynamic>{
     'requested_frames': requestedFrames,
     'successful_frames': successfulResponses.length,
@@ -1011,6 +1017,7 @@ MultiFrameAnalysisAggregate averageBackendAnalysisFrames(
     'metric_ranges': metricRanges,
     if (fiveFrameMedianOmitted.isNotEmpty)
       'five_frame_median_omitted': fiveFrameMedianOmitted..sort(),
+    if (hasBlurryFrame) aiScanRejectedForBlurKey: true,
   };
 
   omitWrinkleForSmallFace(response);
@@ -3813,6 +3820,30 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
     _runAnalysis();
   }
 
+  /// Tells the user this burst is too blurry to save and must be retaken.
+  /// There is no "analyze anyway" path.
+  Future<void> _promptRetakeForBlur() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        key: const ValueKey('ai_scan_blur_reject_dialog'),
+        title: const Text('Scan too blurry'),
+        content: const Text(
+          'This scan is too soft to save or compare. '
+          'Hold the phone steady, keep the same distance, and retake.',
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Retake'),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Asks whether to retake before analyzing a capture whose brightness
   /// would lock it against the baseline. True = retake.
   Future<bool> _confirmRetakeForLighting(
@@ -3928,6 +3959,28 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       );
 
       final Map<String, double> previousMetrics = await _getPreviousMetrics();
+
+      // Pre-upload sharpness check: any frame below the shared crop
+      // sharpness floor makes the whole scan unusable. Retake only; the
+      // burst is not uploaded or saved.
+      if (_analysisFrameBytes.isNotEmpty) {
+        final sharpnessFloor =
+            _currentCaptureSharpness.floor ?? aiScanCropSharpnessFloor;
+        final cropSharpnesses = <double>[
+          for (final bytes in _analysisFrameBytes)
+            imageSharpnessVarianceFromBytes(bytes),
+        ];
+        if (aiScanFailsSharpnessFloor(
+          cropSharpnesses,
+          sharpnessFloor: sharpnessFloor,
+        )) {
+          if (!mounted) return;
+          await _promptRetakeForBlur();
+          if (!mounted) return;
+          setState(() => _stage = _Stage.capture);
+          return;
+        }
+      }
 
       // Pre-upload light check: if these frames would be locked as
       // lighting_mismatch against the baseline (same rule as the results),
@@ -4063,6 +4116,13 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         },
       );
       final backendResponse = aggregate.response;
+      if (backendResponse[aiScanRejectedForBlurKey] == true) {
+        if (!mounted) return;
+        await _promptRetakeForBlur();
+        if (!mounted) return;
+        setState(() => _stage = _Stage.capture);
+        return;
+      }
       AppLogger.debug(
         '[MultiFrameAnalysis] ${aggregate.successfulFrames}/${aggregate.requestedFrames} '
         'frames succeeded; contributors=${aggregate.metricContributorCounts}',

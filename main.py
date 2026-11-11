@@ -1457,6 +1457,62 @@ def _signed_lab_value(value: float | None) -> float | None:
     return round(float(value) - 128.0, 3)
 
 
+
+# Shared with the Flutter app's imageSharpnessVarianceFromBytes and
+# sharpnessVarianceFloorFor(facial). 4-neighbour Laplacian variance over
+# every 2nd pixel, clamped to 0-5000. The historical cv2 ksize=3
+# blur_score / IQA_BLUR_THRESHOLD=80 scale is a different unit and is
+# kept only for sharpness_score and other existing quality gates.
+CROP_SHARPNESS_FLOOR = 36.0
+
+
+def image_sharpness_variance(image_bgr: np.ndarray) -> float:
+    """Crop sharpness in the same units as the Flutter capture check.
+
+    A score strictly below CROP_SHARPNESS_FLOOR (including 0.0 for an
+    empty or tiny image) is unusable. Measured on the raw uploaded crop,
+    before white balance or CLAHE, so it can agree with the app.
+    """
+    if image_bgr is None or getattr(image_bgr, "size", 0) == 0:
+        return 0.0
+    if image_bgr.ndim == 3:
+        if image_bgr.shape[2] == 4:
+            gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGRA2GRAY)
+        else:
+            gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image_bgr
+    height, width = gray.shape[:2]
+    if width < 6 or height < 6:
+        return 0.0
+    gray_f = gray.astype(np.float64)
+    center = gray_f[1:-1:2, 1:-1:2]
+    left = gray_f[1:-1:2, 0:-2:2]
+    right = gray_f[1:-1:2, 2::2]
+    up = gray_f[0:-2:2, 1:-1:2]
+    down = gray_f[2::2, 1:-1:2]
+    # Trim to a common shape when a side has one extra sample.
+    rows = min(center.shape[0], left.shape[0], right.shape[0], up.shape[0], down.shape[0])
+    cols = min(center.shape[1], left.shape[1], right.shape[1], up.shape[1], down.shape[1])
+    if rows == 0 or cols == 0:
+        return 0.0
+    lap = (
+        (4.0 * center[:rows, :cols])
+        - left[:rows, :cols]
+        - right[:rows, :cols]
+        - up[:rows, :cols]
+        - down[:rows, :cols]
+    )
+    count = int(lap.size)
+    if count == 0:
+        return 0.0
+    mean = float(lap.mean())
+    variance = float((lap * lap).mean() - (mean * mean))
+    if not math.isfinite(variance):
+        return 0.0
+    return float(min(max(variance, 0.0), 5000.0))
+
+
 def assess_and_normalize_image(
     image_bytes: bytes, gray_card_region: Dict[str, float] | None = None
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
@@ -1482,9 +1538,14 @@ def _assess_and_normalize_image_with_pre_white_balance(
         raise ValueError("Decoded image is empty for IQA preprocessing.")
 
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    # Historical cv2 ksize=3 score: still drives sharpness_score and is
+    # echoed as blur_score / blur_threshold for diagnostics. image_blurry
+    # uses the shared 4-neighbour crop sharpness and floor of 36 so the
+    # app and backend cannot disagree.
     blur_score = float(cv2.Laplacian(gray, cv2.CV_64F, ksize=3).var())
     blur_threshold = float(os.getenv("IQA_BLUR_THRESHOLD", "80.0"))
-    image_blurry = blur_score < blur_threshold
+    crop_sharpness = image_sharpness_variance(image_bgr)
+    image_blurry = crop_sharpness < CROP_SHARPNESS_FLOOR
 
     pre_wb_lab = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2LAB)
     pre_wb_l, pre_wb_a, pre_wb_b = cv2.split(pre_wb_lab)
@@ -1586,6 +1647,8 @@ def _assess_and_normalize_image_with_pre_white_balance(
     return normalized_bgr, {
         "blur_score": round(blur_score, 2),
         "blur_threshold": round(blur_threshold, 2),
+        "crop_sharpness": round(crop_sharpness, 2),
+        "sharpness_floor": round(CROP_SHARPNESS_FLOOR, 2),
         "image_blurry": image_blurry,
         "lighting_mean_l": round(mean_l, 2),
         "lighting_std_l": round(std_l, 2),
