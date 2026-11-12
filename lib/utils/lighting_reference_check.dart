@@ -9,10 +9,12 @@ import 'untrusted_trend_metrics.dart';
 // signal (always computed). lighting_mean_l is the brightness backup.
 // Missing references fail open: the check does not lock.
 
-/// After-WB Euclidean color distance hypot(Δa, Δb) above this is a mismatch.
-/// Same-night non-card p90 was 1.34; Nov 7 same session vs baseline was
-/// 0.61–0.94; Nov 9 was 7.91–8.33; Nov 10 19:57 was 4.81–4.83.
-const double lightingRefColorAfterWbLimit = 3.0;
+/// After-WB Euclidean color distance hypot(Δa, Δb) at or above this is a
+/// mismatch. Same-night non-card p90 was 1.34 and p95 1.78; Nov 7 same
+/// session vs baseline was 0.61–0.94; Nov 9 was 7.91–8.33; Nov 10 19:57 was
+/// 4.81–4.83. Tightened from 3.0 after Nov 11 21:12 follow-ups at 2.51 and
+/// 2.62 passed while pigment still moved past its floor.
+const double lightingRefColorAfterWbLimit = 2.0;
 
 /// |Δlighting_mean_l| above this is a mismatch. Same-night max was 6.93.
 const double lightingRefMeanLLimit = 8.0;
@@ -99,7 +101,7 @@ LightingReferenceCheck evaluateLightingReferenceCheck({
   }
 
   final failed = <String>[];
-  if (colorDelta != null && colorDelta > lightingRefColorAfterWbLimit) {
+  if (colorDelta != null && colorDelta >= lightingRefColorAfterWbLimit) {
     failed.add('color_after_wb');
   }
   if (lDelta != null && lDelta > lightingRefMeanLLimit) {

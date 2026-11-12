@@ -66,6 +66,87 @@ void main() {
       expect(check.failedSignals, contains('color_after_wb'));
     });
 
+    test('same-night pairs under 2.0 match', () {
+      for (final distance in [0.65, 1.34, 1.78, 1.99]) {
+        final check = evaluateLightingReferenceCheck(
+          currentPayload: qualityPayload(
+            lightingMeanL: 120.0,
+            aAfterWb: 5.0 + distance,
+            bAfterWb: 10.0,
+          ),
+          baselinePayload: qualityPayload(
+            lightingMeanL: 120.0,
+            aAfterWb: 5.0,
+            bAfterWb: 10.0,
+          ),
+        );
+        expect(check.status, 'match', reason: 'distance $distance');
+        expect(check.lockReason, isNull);
+      }
+    });
+
+    test('color distance of exactly 2.0 locks', () {
+      expect(lightingRefColorAfterWbLimit, 2.0);
+      expect(lightingRefMeanLLimit, 8.0);
+      final check = evaluateLightingReferenceCheck(
+        currentPayload: qualityPayload(
+          lightingMeanL: 120.0,
+          aAfterWb: 7.0,
+          bAfterWb: 10.0,
+        ),
+        baselinePayload: qualityPayload(
+          lightingMeanL: 120.0,
+          aAfterWb: 5.0,
+          bAfterWb: 10.0,
+        ),
+      );
+      expect(check.colorDeltaAfterWb, 2.0);
+      expect(check.status, 'mismatch');
+      expect(check.lockReason, 'lighting_mismatch');
+      expect(check.failedSignals, ['color_after_wb']);
+    });
+
+    test('Nov 11 21:12 cases (2.51, 2.62) lock and clear verdicts', () {
+      for (final c in [(d: 2.506, l: 4.81), (d: 2.622, l: 1.84)]) {
+        final current = qualityPayload(
+          lightingMeanL: baseline.l + c.l,
+          aAfterWb: baseline.a,
+          bAfterWb: baseline.b + c.d,
+        );
+        final base = qualityPayload(
+          lightingMeanL: baseline.l,
+          aAfterWb: baseline.a,
+          bAfterWb: baseline.b,
+        );
+        final check = evaluateLightingReferenceCheck(
+          currentPayload: current,
+          baselinePayload: base,
+        );
+        expect(check.colorDeltaAfterWb, closeTo(c.d, 1e-6));
+        expect(check.status, 'mismatch');
+        expect(check.lockReason, 'lighting_mismatch');
+        final result = lockTrendsForLightingReferenceMismatch(
+          trendStatus: const {
+            'pigment_load': 'worsened',
+            'texture_smoothness': 'stable',
+          },
+          trendDeltas: const {
+            'pigment_load': -51.8,
+            'texture_smoothness': -1.6,
+          },
+          trendLockReasons: const {},
+          currentPayload: current,
+          baselinePayload: base,
+        );
+        expect(result.trendStatus, isEmpty);
+        expect(result.trendDeltas, isEmpty);
+        expect(result.trendLockReasons, {
+          'pigment_load': 'lighting_mismatch',
+          'texture_smoothness': 'lighting_mismatch',
+        });
+      }
+    });
+
     test('missing references fail open', () {
       final noBaseline = evaluateLightingReferenceCheck(
         currentPayload: qualityPayload(

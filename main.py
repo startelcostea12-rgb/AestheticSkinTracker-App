@@ -5126,8 +5126,11 @@ def _source_resolutions_comparable(
 # excluding inconsistent gray-card application: median 0.65, p90 1.34,
 # p95 1.78. Nov 7 same session vs this baseline: 0.61–0.94. Nov 9 21:41
 # vs baseline: 7.91–8.33. Nov 10 19:57 vs baseline: 4.81–4.83.
-# LIGHTING_REF_COLOR_AFTER_WB_LIMIT 3.0 is about 2× the same-night p90
-# and well below both mismatch nights.
+# LIGHTING_REF_COLOR_AFTER_WB_LIMIT 2.0 (a distance of 2.0 or more locks)
+# sits above the same-night p95 (1.78) and well below both mismatch
+# nights. It was tightened from 3.0 after Nov 11 21:12 follow-ups at
+# 2.51 and 2.62 passed under 3.0 while pigment still moved past its floor
+# as the evening's light drifted.
 #
 # |Δlighting_mean_l|, same-night: median 0.97, p90 5.17, max 6.93.
 # Nov 9's first scan was only 1.06 from baseline on L (color, not
@@ -5140,7 +5143,7 @@ def _source_resolutions_comparable(
 # Nov 11 19:55 and Nov 10 22:23 do not have these reference fields in the
 # server log or the 60-scan export, so they were not used to set the
 # threshold.
-LIGHTING_REF_COLOR_AFTER_WB_LIMIT = 3.0
+LIGHTING_REF_COLOR_AFTER_WB_LIMIT = 2.0
 LIGHTING_REF_MEAN_L_LIMIT = 8.0
 
 # Same keys the app already treats as claim-free (no improved/worsened/
@@ -5251,7 +5254,7 @@ def _evaluate_lighting_reference_check(
         }
 
     failed: list[str] = []
-    if color_delta is not None and color_delta > LIGHTING_REF_COLOR_AFTER_WB_LIMIT:
+    if color_delta is not None and color_delta >= LIGHTING_REF_COLOR_AFTER_WB_LIMIT:
         failed.append("color_after_wb")
     if l_delta is not None and l_delta > LIGHTING_REF_MEAN_L_LIMIT:
         failed.append("lighting_mean_l")

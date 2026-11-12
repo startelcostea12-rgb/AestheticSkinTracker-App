@@ -43,6 +43,46 @@ class LightingReferenceEvaluationTests(unittest.TestCase):
         self.assertGreater(check["color_delta_after_wb"], LIGHTING_REF_COLOR_AFTER_WB_LIMIT)
         self.assertIn("color_after_wb", check["failed_signals"])
 
+    def test_same_night_pairs_under_limit_match(self) -> None:
+        # Same-night p95 (1.78) and just under the limit (1.99) both match.
+        base = {"lighting_mean_l": 120.0, "whole_image_mean_a_after_wb": 5.0, "whole_image_mean_b_after_wb": 10.0}
+        for distance in (0.65, 1.34, 1.78, 1.99):
+            current = dict(base, whole_image_mean_a_after_wb=5.0 + distance)
+            check = _evaluate_lighting_reference_check(current, base)
+            self.assertEqual(check["status"], "match", distance)
+            self.assertIsNone(check["lock_reason"])
+
+    def test_color_distance_at_limit_locks(self) -> None:
+        self.assertEqual(LIGHTING_REF_COLOR_AFTER_WB_LIMIT, 2.0)
+        self.assertEqual(LIGHTING_REF_MEAN_L_LIMIT, 8.0)
+        base = {"lighting_mean_l": 120.0, "whole_image_mean_a_after_wb": 5.0, "whole_image_mean_b_after_wb": 10.0}
+        current = dict(base, whole_image_mean_a_after_wb=7.0)
+        check = _evaluate_lighting_reference_check(current, base)
+        self.assertEqual(check["color_delta_after_wb"], 2.0)
+        self.assertEqual(check["status"], "mismatch")
+        self.assertEqual(check["lock_reason"], "lighting_mismatch")
+        self.assertEqual(check["failed_signals"], ["color_after_wb"])
+
+    def test_nov11_2112_cases_lock_and_clear_verdicts(self) -> None:
+        # Nov 11 21:12:26 (2.506, dL 4.81) and 21:12:53 (2.622, dL 1.84).
+        for distance, l_shift in ((2.506, 4.81), (2.622, 1.84)):
+            current = _quality(L=122.92 + l_shift, a=5.689, b=9.788 + distance)
+            check = _evaluate_lighting_reference_check(current, BASELINE)
+            self.assertAlmostEqual(check["color_delta_after_wb"], distance, places=6)
+            self.assertEqual(check["status"], "mismatch")
+            self.assertEqual(check["lock_reason"], "lighting_mismatch")
+            self.assertEqual(check["failed_signals"], ["color_after_wb"])
+            status = {"pigment_load": "worsened", "texture_smoothness": "stable"}
+            deltas = {"pigment_load": -51.8, "texture_smoothness": -1.6}
+            reasons: dict = {}
+            _apply_lighting_reference_trend_lock(status, deltas, reasons, check)
+            self.assertEqual(status, {})
+            self.assertEqual(deltas, {})
+            self.assertEqual(
+                reasons,
+                {"pigment_load": "lighting_mismatch", "texture_smoothness": "lighting_mismatch"},
+            )
+
     def test_brightness_only_shift_locks(self) -> None:
         # Color matches; L moves past the 8.0 same-night ceiling.
         current = _quality(L=122.92 + 8.1, a=5.689, b=9.788)
