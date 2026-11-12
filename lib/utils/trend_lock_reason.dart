@@ -78,7 +78,7 @@ String? trendLockReasonShortLabel(String? reason) {
     case 'region_mismatch':
       return 'Standalone entry — redness was read from a different skin region than your baseline';
     case 'lighting_mismatch':
-      return 'Standalone entry — capture brightness differed too much from your baseline';
+      return 'Lighting differs from your baseline';
     case 'scene_color_mismatch':
       return 'Standalone entry — scene color differed too much from your baseline';
     case 'region_position_mismatch':
@@ -118,7 +118,7 @@ String? trendLockReasonDetail(String? reason) {
     case 'region_mismatch':
       return 'Redness was read from a different skin region (one cheek vs. both cheeks) than in your baseline, so the change is not directly comparable.';
     case 'lighting_mismatch':
-      return 'The scan brightness differed too much from your baseline, or exposure metadata was unavailable, so the values are not directly comparable.';
+      return 'Lighting or color differed too much from your baseline, so the values are not directly comparable.';
     case 'scene_color_mismatch':
       return 'The whole-image color differed too much from your baseline to compare pigment reliably.';
     case 'region_position_mismatch':

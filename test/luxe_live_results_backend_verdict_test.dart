@@ -390,10 +390,7 @@ void main() {
       findsWidgets,
     );
     expect(
-      find.descendant(
-        of: card,
-        matching: find.text('Not comparable'),
-      ),
+      find.descendant(of: card, matching: find.text('Not comparable')),
       findsWidgets,
     );
     expect(
@@ -531,10 +528,7 @@ void main() {
 
     final card = find.byKey(const ValueKey('result_metric_pigment_load'));
     expect(
-      find.descendant(
-        of: card,
-        matching: find.text('Not comparable'),
-      ),
+      find.descendant(of: card, matching: find.text('Not comparable')),
       findsOneWidget,
     );
     expect(
@@ -854,7 +848,10 @@ void main() {
       findsWidgets,
     );
     expect(
-      find.descendant(of: card, matching: find.text('Stable - change within tracking noise')),
+      find.descendant(
+        of: card,
+        matching: find.text('Stable - change within tracking noise'),
+      ),
       findsWidgets,
     );
     expect(
@@ -909,7 +906,10 @@ void main() {
         }
         if (key == 'pigment_load') {
           expect(
-            find.descendant(of: card, matching: find.text('Stable - change within tracking noise')),
+            find.descendant(
+              of: card,
+              matching: find.text('Stable - change within tracking noise'),
+            ),
             findsOneWidget,
           );
         }
@@ -1683,10 +1683,7 @@ void main() {
         );
         await tester.pumpAndSettle();
         if (key == 'pore_contraction_index') {
-          expect(
-            find.byKey(ValueKey('result_metric_$key')),
-            findsNothing,
-          );
+          expect(find.byKey(ValueKey('result_metric_$key')), findsNothing);
           continue;
         }
         expect(
@@ -2272,10 +2269,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(banner, findsOneWidget);
-      expect(
-        find.text('Not comparable: lighting differed from your baseline'),
-        findsOneWidget,
-      );
+      expect(find.text('Lighting differs from your baseline'), findsOneWidget);
       // Cards keep their numbers but no longer repeat the full reason.
       expect(
         find.textContaining('Not comparable: capture brightness'),

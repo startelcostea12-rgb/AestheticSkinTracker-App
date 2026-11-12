@@ -1594,7 +1594,7 @@ String _shortLockReasonPhrase(String reason) {
     case 'region_mismatch':
       return 'redness was read from a different skin region than your baseline';
     case 'lighting_mismatch':
-      return 'capture brightness differed too much from your baseline';
+      return 'lighting differs from your baseline';
     case 'scene_color_mismatch':
       return 'scene color differed too much from your baseline to compare pigment';
     case 'region_position_mismatch':
@@ -1994,7 +1994,7 @@ class _LuxeReportLayoutState extends State<LuxeReportLayout>
   Widget _buildScanWideLockBanner(String reason) {
     final isLighting = reason == 'lighting_mismatch';
     final title = isLighting
-        ? 'Not comparable: lighting differed from your baseline'
+        ? 'Lighting differs from your baseline'
         : 'Not comparable: scoring was updated since your baseline';
     final body = isLighting
         ? 'None of this scan\'s metrics can be compared. Retake under your '

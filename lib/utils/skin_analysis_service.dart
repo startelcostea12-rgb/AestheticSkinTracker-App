@@ -1,4 +1,5 @@
 import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
+
 import 'dart:convert';
 import 'dart:async';
 
@@ -126,23 +127,28 @@ class SkinAnalysisService {
     AppLogger.debug('[SkinAnalysisService] POST $uri');
 
     try {
-      final response = await http.post(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          ...BackendConfig.apiKeyHeaders,
-        },
-        body: jsonEncode({
-          'imageBytes': base64Encode(bytes),
-          if (filename != null) 'filename': filename,
-          if (baselineMetricMatrix != null && baselineMetricMatrix.isNotEmpty)
-            'baselineMetricMatrix': baselineMetricMatrix,
-          if (baselineExtractionPaths != null && baselineExtractionPaths.isNotEmpty)
-            'baselineExtractionPaths': baselineExtractionPaths,
-          if (baselineFormulaVersions != null && baselineFormulaVersions.isNotEmpty)
-            'baselineFormulaVersions': baselineFormulaVersions,
-        }),
-      ).timeout(_requestTimeout);
+      final response = await http
+          .post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              ...BackendConfig.apiKeyHeaders,
+            },
+            body: jsonEncode({
+              'imageBytes': base64Encode(bytes),
+              if (filename != null) 'filename': filename,
+              if (baselineMetricMatrix != null &&
+                  baselineMetricMatrix.isNotEmpty)
+                'baselineMetricMatrix': baselineMetricMatrix,
+              if (baselineExtractionPaths != null &&
+                  baselineExtractionPaths.isNotEmpty)
+                'baselineExtractionPaths': baselineExtractionPaths,
+              if (baselineFormulaVersions != null &&
+                  baselineFormulaVersions.isNotEmpty)
+                'baselineFormulaVersions': baselineFormulaVersions,
+            }),
+          )
+          .timeout(_requestTimeout);
 
       AppLogger.debug(
         '[SkinAnalysisService] Backend status: ${response.statusCode}',
@@ -256,7 +262,9 @@ class SkinAnalysisService {
       }
       return null;
     } catch (e) {
-      AppLogger.debug('[SkinAnalysisService] Body silhouette request failed: $e');
+      AppLogger.debug(
+        '[SkinAnalysisService] Body silhouette request failed: $e',
+      );
       return null;
     }
   }
@@ -268,6 +276,7 @@ class SkinAnalysisService {
     Map<String, dynamic>? baselineMetricMatrix,
     Map<String, String>? baselineExtractionPaths,
     Map<String, int>? baselineFormulaVersions,
+    Map<String, dynamic>? baselineImageQuality,
     Uint8List? grayCardPatch,
     bool allowBackend = false,
     http.Client? httpClient,
@@ -275,9 +284,7 @@ class SkinAnalysisService {
     _ensureBackendAllowed(allowBackend);
     await UploadGate.ensureCanUpload();
     if (image == null) {
-      throw ImageCaptureStateWarning(
-        'Upload blocked: image cannot be null.',
-      );
+      throw ImageCaptureStateWarning('Upload blocked: image cannot be null.');
     }
 
     final targetUri = uri ?? BackendConfig.analyzeSingleSkinUri;
@@ -292,7 +299,8 @@ class SkinAnalysisService {
       mergedFields['sensitivity_score'] = inferredSafety['sensitivity_score']!;
     }
     if (!_hasNonEmptyField(mergedFields, 'compromised_barrier')) {
-      mergedFields['compromised_barrier'] = inferredSafety['compromised_barrier']!;
+      mergedFields['compromised_barrier'] =
+          inferredSafety['compromised_barrier']!;
     }
     if (baselineMetricMatrix != null &&
         baselineMetricMatrix.isNotEmpty &&
@@ -312,6 +320,11 @@ class SkinAnalysisService {
       mergedFields['baseline_formula_versions'] = jsonEncode(
         baselineFormulaVersions,
       );
+    }
+    if (baselineImageQuality != null &&
+        baselineImageQuality.isNotEmpty &&
+        !_hasNonEmptyField(mergedFields, 'baseline_image_quality')) {
+      mergedFields['baseline_image_quality'] = jsonEncode(baselineImageQuality);
     }
 
     final request = http.MultipartRequest('POST', targetUri)
@@ -338,11 +351,13 @@ class SkinAnalysisService {
     }
 
     try {
-        final streamed = await (httpClient?.send(request) ?? request.send())
+      final streamed = await (httpClient?.send(request) ?? request.send())
           .timeout(_requestTimeout);
       final response = await http.Response.fromStream(streamed);
 
-      AppLogger.debug('[SkinAnalysisService] Multipart status: ${response.statusCode}');
+      AppLogger.debug(
+        '[SkinAnalysisService] Multipart status: ${response.statusCode}',
+      );
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception(
@@ -453,11 +468,15 @@ class SkinAnalysisService {
     // profile words never infer a rosacea score.
     final rosacea = resolveRosaceaSafetyScore(recentRosacea);
     final sensitivity =
-        (recentSensitivity ?? profileSensitivity ?? defaultSensitivity)
-            .clamp(0.0, 10.0);
+        (recentSensitivity ?? profileSensitivity ?? defaultSensitivity).clamp(
+          0.0,
+          10.0,
+        );
 
     final compromisedBarrier =
-        barrierConcern || sensitivity >= 7.0 || (profile?.skinType == SkinType.sensitive);
+        barrierConcern ||
+        sensitivity >= 7.0 ||
+        (profile?.skinType == SkinType.sensitive);
 
     return {
       'rosacea_score': rosacea.toStringAsFixed(1),

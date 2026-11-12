@@ -17,11 +17,13 @@
 // so derivations and scoring stay consistent with the tracker.
 
 import 'package:aesthetic_skin_tracker/utils/app_logger.dart';
+
 import 'dart:async' show unawaited;
 import 'dart:convert' show base64Decode, base64Encode, jsonEncode, utf8;
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -50,6 +52,7 @@ import 'package:aesthetic_skin_tracker/utils/free_scan_limit.dart';
 import 'package:aesthetic_skin_tracker/widgets/consistent_setup_guide.dart';
 import 'package:aesthetic_skin_tracker/widgets/gray_card_sample_card.dart';
 import 'package:aesthetic_skin_tracker/utils/untrusted_trend_metrics.dart';
+import 'package:aesthetic_skin_tracker/utils/lighting_reference_check.dart';
 import 'package:aesthetic_skin_tracker/utils/comparable_pair_pdf.dart';
 import 'package:aesthetic_skin_tracker/utils/last_comparable_pair.dart';
 import 'package:aesthetic_skin_tracker/widgets/scan_note_field.dart';
@@ -57,7 +60,9 @@ import 'package:aesthetic_skin_tracker/utils/protocol_checklist.dart';
 import 'package:aesthetic_skin_tracker/widgets/lighting_tip_card.dart';
 import 'package:aesthetic_skin_tracker/utils/ai_scan_mode.dart';
 import 'package:aesthetic_skin_tracker/widgets/paywall_screen.dart';
+
 import 'free_local_scan_results_screen.dart';
+
 import 'package:aesthetic_skin_tracker/utils/gray_card_region.dart';
 import 'package:aesthetic_skin_tracker/utils/backend_config.dart';
 import 'package:aesthetic_skin_tracker/utils/skin_analysis_service.dart'
@@ -1528,17 +1533,26 @@ lockPigmentTrendForSceneColorMismatch({
   final updatedDeltas = Map<String, double>.from(trendDeltas);
   final updatedLockReasons = Map<String, String>.from(trendLockReasons);
   final current = _parseFiniteDouble(
-    _payloadNode(currentPayload, 'image_quality')['whole_image_mean_a_before_wb'],
+    _payloadNode(
+      currentPayload,
+      'image_quality',
+    )['whole_image_mean_a_before_wb'],
   );
   final baseline = _parseFiniteDouble(
-    _payloadNode(baselinePayload, 'image_quality')['whole_image_mean_a_before_wb'],
+    _payloadNode(
+      baselinePayload,
+      'image_quality',
+    )['whole_image_mean_a_before_wb'],
   );
   if (current != null && baseline != null && (current - baseline).abs() > 3.0) {
     if (trendStatus.containsKey('pigment_load') ||
         trendDeltas.containsKey('pigment_load')) {
       updatedStatus.remove('pigment_load');
       updatedDeltas.remove('pigment_load');
-      updatedLockReasons.putIfAbsent('pigment_load', () => 'scene_color_mismatch');
+      updatedLockReasons.putIfAbsent(
+        'pigment_load',
+        () => 'scene_color_mismatch',
+      );
     }
   }
   return (
@@ -1617,12 +1631,10 @@ bool rollingTrendScanQualifies({
       reference.captureQuality?.trim().toLowerCase() != 'normal') {
     return false;
   }
-  final candidateBv = _representativeScanExposure(
-    candidate.payload,
-  ).brightnessValue;
-  final referenceBv = _representativeScanExposure(
-    reference.payload,
-  ).brightnessValue;
+  final candidateBv = _representativeScanExposure(candidate.payload)
+      .brightnessValue;
+  final referenceBv = _representativeScanExposure(reference.payload)
+      .brightnessValue;
   if (candidateBv == null ||
       referenceBv == null ||
       (candidateBv - referenceBv).abs() >
@@ -2663,8 +2675,7 @@ String _joinWithCommasAndAndPure(List<String> items) {
   if (concerns.isEmpty) {
     return (
       headline: 'Scan captured',
-      subheadline:
-          "Backend metrics aren't available yet for this scan — check back after processing finishes.",
+      subheadline: "Backend metrics aren't available yet for this scan — check back after processing finishes.",
     );
   }
 
@@ -2981,9 +2992,8 @@ Future<bool> openPaywallIfFreeScanCapReached(BuildContext context) async {
     return false;
   }
   if (!context.mounted) return true;
-  await Navigator.of(
-    context,
-  ).push(MaterialPageRoute<void>(builder: (_) => const PaywallScreen()));
+  await Navigator.of(context)
+      .push(MaterialPageRoute<void>(builder: (_) => const PaywallScreen()));
   return true;
 }
 
@@ -3637,8 +3647,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
 
       if (_region == null) {
         setState(() {
-          _focusAreaError =
-              'Please select a focus area before generating your progress report.';
+          _focusAreaError = 'Please select a focus area before generating your progress report.';
         });
         return;
       }
@@ -3647,9 +3656,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       unawaited(_runAnalysis());
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Camera unavailable: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Camera unavailable: $e')));
     }
   }
 
@@ -3725,9 +3733,8 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
       });
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('$errorLabel: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('$errorLabel: $e')));
     }
   }
 
@@ -3829,8 +3836,7 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
   void _onRunPressed() {
     if (_region == null) {
       setState(() {
-        _focusAreaError =
-            'Please select a focus area before generating your progress report.';
+        _focusAreaError = 'Please select a focus area before generating your progress report.';
       });
       return;
     }
@@ -4114,6 +4120,9 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         baselineFormulaVersions: storedBaselineFormulaVersions.isEmpty
             ? null
             : storedBaselineFormulaVersions,
+        baselineImageQuality: baselineImageQualityForLightingCheck(
+          _previousFocusAreaScan?.rawPayload,
+        ),
         grayCardPatch: withGrayCard && frameNumber - 1 < _grayCardPatches.length
             ? _grayCardPatches[frameNumber - 1]
             : null,
@@ -4246,10 +4255,19 @@ class _SkinAiAnalysisScreenState extends State<SkinAiAnalysisScreen> {
         baselinePayload:
             _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
       );
+      final lightingReferenceAdjustedTrend =
+          lockTrendsForLightingReferenceMismatch(
+            trendStatus: lightingAdjustedTrend.trendStatus,
+            trendDeltas: lightingAdjustedTrend.trendDeltas,
+            trendLockReasons: lightingAdjustedTrend.trendLockReasons,
+            currentPayload: backendResponse,
+            baselinePayload:
+                _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
+          );
       final regionAdjustedTrend = lockTrendsForRegionPositionMismatch(
-        trendStatus: lightingAdjustedTrend.trendStatus,
-        trendDeltas: lightingAdjustedTrend.trendDeltas,
-        trendLockReasons: lightingAdjustedTrend.trendLockReasons,
+        trendStatus: lightingReferenceAdjustedTrend.trendStatus,
+        trendDeltas: lightingReferenceAdjustedTrend.trendDeltas,
+        trendLockReasons: lightingReferenceAdjustedTrend.trendLockReasons,
         currentPayload: backendResponse,
         baselinePayload:
             _previousFocusAreaScan?.rawPayload ?? const <String, dynamic>{},
@@ -9644,13 +9662,11 @@ class SkinAiAnalysisResultsScreen extends StatelessWidget {
                 ),
                 children: const [
                   TextSpan(
-                    text:
-                        'These are AI-assisted observations, not medical advice. ',
+                    text: 'These are AI-assisted observations, not medical advice. ',
                     style: TextStyle(fontWeight: FontWeight.w900),
                   ),
                   TextSpan(
-                    text:
-                        'They are not a diagnosis and are for personal cosmetic tracking only. Consult a dermatologist or qualified healthcare professional for medical concerns.',
+                    text: 'They are not a diagnosis and are for personal cosmetic tracking only. Consult a dermatologist or qualified healthcare professional for medical concerns.',
                   ),
                 ],
               ),
@@ -9718,9 +9734,8 @@ class SkinAiAnalysisResultsScreen extends StatelessWidget {
                         color: const Color(0xFFB76E79).withValues(alpha: 0.18),
                         borderRadius: BorderRadius.circular(999),
                         border: Border.all(
-                          color: const Color(
-                            0xFFB76E79,
-                          ).withValues(alpha: 0.55),
+                          color: const Color(0xFFB76E79)
+                              .withValues(alpha: 0.55),
                           width: 0.8,
                         ),
                       ),

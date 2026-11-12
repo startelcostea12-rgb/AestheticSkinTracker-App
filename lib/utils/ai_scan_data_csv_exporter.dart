@@ -1,4 +1,5 @@
 import 'package:aesthetic_skin_tracker/utils/ai_head_angle.dart';
+
 import '../models/scan_history.dart';
 import 'ai_capture_sharpness.dart';
 import 'ai_comparison_baseline.dart';
@@ -75,6 +76,10 @@ class AiScanDataCsvExporter {
     'image_quality.whole_image_mean_b_before_wb',
     'image_quality.whole_image_mean_a_after_wb',
     'image_quality.whole_image_mean_b_after_wb',
+    'image_quality.lighting_reference_check_status',
+    'image_quality.lighting_reference_color_delta_after_wb',
+    'image_quality.lighting_reference_lighting_mean_l_delta',
+    'image_quality.lighting_reference_unavailable_reason',
     'image_quality.wb_a_adjustment_post_clip',
     'image_quality.wb_b_adjustment_post_clip',
     'image_quality.redness_branch',
@@ -357,10 +362,12 @@ class AiScanDataCsvExporter {
       'image_height':
           scan.sourceImageHeight ??
           _storedValue(payload, const ['source_image_height']),
-      'baseline_source_image_width':
-          _storedValue(payload, const ['baseline_source_image_width']),
-      'baseline_source_image_height':
-          _storedValue(payload, const ['baseline_source_image_height']),
+      'baseline_source_image_width': _storedValue(payload, const [
+        'baseline_source_image_width',
+      ]),
+      'baseline_source_image_height': _storedValue(payload, const [
+        'baseline_source_image_height',
+      ]),
       ...flattenedQuality,
       'a_p95': _payloadMap(payload, 'metric_matrix')['a_p95'],
     };
@@ -434,9 +441,8 @@ class AiScanDataCsvExporter {
       'modelUsed',
       'model_used',
     };
-    return _payloadCandidates(
-      payload,
-    ).any((candidate) => markers.any(candidate.containsKey));
+    return _payloadCandidates(payload)
+        .any((candidate) => markers.any(candidate.containsKey));
   }
 
   static Map<String, dynamic> _payloadMap(

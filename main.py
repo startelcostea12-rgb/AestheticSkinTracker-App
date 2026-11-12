@@ -5109,6 +5109,195 @@ def _source_resolutions_comparable(
     )
 
 
+# Lighting/color reference check for follow-up vs baseline. This does not
+# change metric values, noise floors, formula versions, or metric keys.
+# It only clears trend_status / trend_deltas and sets trend_lock_reasons
+# to "lighting_mismatch" when the scan's lighting or color reference is
+# meaningfully different from the baseline night.
+#
+# Thresholds were set from the 60-scan export against baseline
+# scan_1794113509229_799146572 (2026-11-07T23:51:49) and from same-night
+# back-to-back pairs (<3 min). Preferred reference: whole-image mean a*
+# and b* after white balance (always computed; gray-card values are
+# present on only 9/60 scans, so they are not required). Brightness
+# backup: lighting_mean_l, also always computed.
+#
+# After-WB Euclidean color distance hypot(Δa, Δb), same-night pairs
+# excluding inconsistent gray-card application: median 0.65, p90 1.34,
+# p95 1.78. Nov 7 same session vs this baseline: 0.61–0.94. Nov 9 21:41
+# vs baseline: 7.91–8.33. Nov 10 19:57 vs baseline: 4.81–4.83.
+# LIGHTING_REF_COLOR_AFTER_WB_LIMIT 3.0 is about 2× the same-night p90
+# and well below both mismatch nights.
+#
+# |Δlighting_mean_l|, same-night: median 0.97, p90 5.17, max 6.93.
+# Nov 9's first scan was only 1.06 from baseline on L (color, not
+# brightness, drove that night). LIGHTING_REF_MEAN_L_LIMIT 8.0 is above
+# every same-night pair and still catches a large brightness-only shift.
+#
+# If a required reference is missing on either scan, that signal is
+# skipped (fail open). If no signal can be evaluated, the check does not
+# lock and records status "lighting_reference_unavailable".
+# Nov 11 19:55 and Nov 10 22:23 do not have these reference fields in the
+# server log or the 60-scan export, so they were not used to set the
+# threshold.
+LIGHTING_REF_COLOR_AFTER_WB_LIMIT = 3.0
+LIGHTING_REF_MEAN_L_LIMIT = 8.0
+
+# Same keys the app already treats as claim-free (no improved/worsened/
+# stable chip). The lighting-reference lock must not add a verdict or a
+# lock label to these metrics, including under-eye.
+TREND_CLAIM_FREE_METRICS = {
+    "pore_contraction_index",
+    "under_eye_dark_circle_density",
+    "under_eye_texture_density",
+    "wrinkle_load",
+    "rosacea_severity",
+    "diffuse_flushing_erythema",
+}
+
+_LIGHTING_REF_FIELDS = (
+    "lighting_mean_l",
+    "whole_image_mean_a_after_wb",
+    "whole_image_mean_b_after_wb",
+)
+
+
+def _finite_lighting_ref(value: Any) -> float | None:
+    number = safe_float(value)
+    if number is None or not math.isfinite(number):
+        return None
+    return float(number)
+
+
+def _parse_image_quality_map(raw: Any) -> Dict[str, Any]:
+    """Lenient parser for a baseline image_quality object or JSON string.
+
+    Invalid input becomes {} so the lighting check can fail open instead of
+    rejecting the scan.
+    """
+    if raw is None:
+        return {}
+    payload = raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return {}
+        try:
+            payload = json.loads(text)
+        except Exception:
+            logger.info("Baseline image_quality JSON could not be parsed; lighting check will fail open.")
+            return {}
+    if not isinstance(payload, dict):
+        return {}
+    return dict(payload)
+
+
+def _lighting_reference_values(quality: Dict[str, Any] | None) -> Dict[str, float | None]:
+    source = quality or {}
+    return {field: _finite_lighting_ref(source.get(field)) for field in _LIGHTING_REF_FIELDS}
+
+
+def _evaluate_lighting_reference_check(
+    current_quality: Dict[str, Any] | None,
+    baseline_quality: Dict[str, Any] | None,
+) -> Dict[str, Any]:
+    """Compare a follow-up scan's lighting/color reference to the baseline.
+
+    Returns a diagnostic dict. status is one of:
+      - "no_baseline": no baseline quality was provided (first scan / fail open)
+      - "lighting_reference_unavailable": required fields missing (fail open)
+      - "match": references are within the measured thresholds
+      - "mismatch": lock trend verdicts with reason lighting_mismatch
+    """
+    empty_result = {
+        "status": "no_baseline",
+        "lock_reason": None,
+        "color_delta_after_wb": None,
+        "lighting_mean_l_delta": None,
+        "color_limit": LIGHTING_REF_COLOR_AFTER_WB_LIMIT,
+        "lighting_mean_l_limit": LIGHTING_REF_MEAN_L_LIMIT,
+        "unavailable_reason": None,
+        "failed_signals": [],
+    }
+    if not baseline_quality:
+        return empty_result
+
+    current = _lighting_reference_values(current_quality)
+    baseline = _lighting_reference_values(baseline_quality)
+    color_ready = all(
+        current[field] is not None and baseline[field] is not None
+        for field in ("whole_image_mean_a_after_wb", "whole_image_mean_b_after_wb")
+    )
+    l_ready = (
+        current["lighting_mean_l"] is not None
+        and baseline["lighting_mean_l"] is not None
+    )
+
+    color_delta = None
+    if color_ready:
+        color_delta = math.hypot(
+            current["whole_image_mean_a_after_wb"] - baseline["whole_image_mean_a_after_wb"],
+            current["whole_image_mean_b_after_wb"] - baseline["whole_image_mean_b_after_wb"],
+        )
+    l_delta = None
+    if l_ready:
+        l_delta = abs(current["lighting_mean_l"] - baseline["lighting_mean_l"])
+
+    if color_delta is None and l_delta is None:
+        return {
+            **empty_result,
+            "status": "lighting_reference_unavailable",
+            "unavailable_reason": "missing_lighting_or_color_reference",
+        }
+
+    failed: list[str] = []
+    if color_delta is not None and color_delta > LIGHTING_REF_COLOR_AFTER_WB_LIMIT:
+        failed.append("color_after_wb")
+    if l_delta is not None and l_delta > LIGHTING_REF_MEAN_L_LIMIT:
+        failed.append("lighting_mean_l")
+
+    mismatch = bool(failed)
+    return {
+        "status": "mismatch" if mismatch else "match",
+        "lock_reason": "lighting_mismatch" if mismatch else None,
+        "color_delta_after_wb": None if color_delta is None else round(color_delta, 3),
+        "lighting_mean_l_delta": None if l_delta is None else round(l_delta, 3),
+        "color_limit": LIGHTING_REF_COLOR_AFTER_WB_LIMIT,
+        "lighting_mean_l_limit": LIGHTING_REF_MEAN_L_LIMIT,
+        "unavailable_reason": None,
+        "failed_signals": failed,
+    }
+
+
+def _apply_lighting_reference_trend_lock(
+    trend_status: Dict[str, Any],
+    trend_deltas: Dict[str, Any],
+    trend_lock_reasons: Dict[str, Any],
+    check: Dict[str, Any],
+) -> None:
+    """Clear directional verdicts on a lighting mismatch; keep raw metrics.
+
+    Claim-free metrics, including under-eye, are left unchanged.
+    """
+    if check.get("status") != "mismatch":
+        return
+    for key in list(trend_status.keys()):
+        if key in TREND_CLAIM_FREE_METRICS:
+            continue
+        trend_status.pop(key, None)
+        trend_deltas.pop(key, None)
+        trend_lock_reasons[key] = "lighting_mismatch"
+
+
+def _lighting_reference_quality_fields(check: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "lighting_reference_check_status": check.get("status"),
+        "lighting_reference_color_delta_after_wb": check.get("color_delta_after_wb"),
+        "lighting_reference_lighting_mean_l_delta": check.get("lighting_mean_l_delta"),
+        "lighting_reference_unavailable_reason": check.get("unavailable_reason"),
+    }
+
+
 def _trend_delta_and_status(
     metric_key: str,
     current: float,
@@ -6524,6 +6713,7 @@ def analyze_skin_patch(
     guide_type: str | None = None,
     baseline_guide_type: str | None = None,
     pre_white_balance_bgr: np.ndarray | None = None,
+    baseline_image_quality: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """Core math analytics processor combined with 0-100 linear calibration scoring.
 
@@ -7603,6 +7793,16 @@ def analyze_skin_patch(
         normalized_baseline_matrix,
         baseline_ssim,
     )
+    lighting_reference_check = _evaluate_lighting_reference_check(
+        quality_profile,
+        baseline_image_quality,
+    )
+    _apply_lighting_reference_trend_lock(
+        trend_status,
+        trend_deltas,
+        trend_lock_reasons,
+        lighting_reference_check,
+    )
 
     # LEGACY top-level duplicates, NOT canonical producers (see the
     # CANONICAL_METRIC_ORDER producer registry comment above and
@@ -7954,6 +8154,7 @@ def analyze_skin_patch(
         # Exported for diagnostics; does not reject or alter metric values.
         "head_pose_pitch": round(float(export_head_pose_pitch), 4),
         "head_pose_yaw": round(float(export_head_pose_yaw), 4),
+        **_lighting_reference_quality_fields(lighting_reference_check),
     }
 
     response_payload = {
@@ -8671,6 +8872,9 @@ async def analyze_skin(request: Request):
         baseline_guide_type = body.get("baselineGuideType") or body.get(
             "baseline_guide_type"
         )
+        parsed_baseline_image_quality = _parse_image_quality_map(
+            body.get("baselineImageQuality") or body.get("baseline_image_quality")
+        )
 
         if not image_b64:
             raise HTTPException(status_code=422, detail="Missing image data (imageBytes / image_bytes / image)")
@@ -8721,6 +8925,7 @@ async def analyze_skin(request: Request):
             guide_type=str(guide_type) if guide_type else None,
             baseline_guide_type=str(baseline_guide_type) if baseline_guide_type else None,
             pre_white_balance_bgr=pre_white_balance_image,
+            baseline_image_quality=parsed_baseline_image_quality or None,
         )
         debug = result.get("model_debug", {})
         logger.info(
@@ -8820,6 +9025,7 @@ async def analyze_skin_single(
     gray_card_region: str | None = Form(None),
     gray_card_image: UploadFile | None = File(None),
     gray_card_still_region: str | None = Form(None),
+    baseline_image_quality: str | None = Form(None),
 ):
     try:
         _reject_non_finite_safety_score("rosacea_score", rosacea_score)
@@ -8832,6 +9038,9 @@ async def analyze_skin_single(
         parsed_baseline_formula_versions = _normalize_baseline_metric_formula_versions(
             baseline_formula_versions,
             CANONICAL_METRIC_ORDER,
+        )
+        parsed_baseline_image_quality = _parse_image_quality_map(
+            baseline_image_quality
         )
         parsed_capture_quality = _normalize_capture_quality(capture_quality)
         parsed_baseline_capture_quality = _normalize_capture_quality(
@@ -8894,6 +9103,7 @@ async def analyze_skin_single(
             guide_type=guide_type,
             baseline_guide_type=baseline_guide_type,
             pre_white_balance_bgr=pre_white_balance_image,
+            baseline_image_quality=parsed_baseline_image_quality or None,
         )
         debug = results.get("model_debug", {})
         logger.info(
